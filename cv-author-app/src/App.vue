@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, defineComponent, h, onBeforeUnmount, ref, watch, type PropType } from "vue";
 import { parseSync, stringify, type INode } from "svgson";
 
 type SvgCandidate = {
@@ -14,18 +14,32 @@ type CoordinateSystem = "Cartesian" | "Polar" | "Geographic" | "None";
 type CoordinateFilter = "All" | CoordinateSystem;
 type IconKind = "all" | "cartesian" | "polar" | "geographic" | "none";
 
-type CanvasItem = {
+type CanvasBaseNode = {
   id: string;
-  candidateId: string;
   name: string;
-  content: string;
-  viewBox: string;
   width: number;
   height: number;
   x: number;
   y: number;
-  groupId?: string;
+  scaleX: number;
+  scaleY: number;
 };
+
+type CanvasLeafNode = CanvasBaseNode & {
+  kind: "leaf";
+  candidateId: string;
+  content: string;
+  viewBox: string;
+  contentMinX: number;
+  contentMinY: number;
+};
+
+type CanvasGroupNode = CanvasBaseNode & {
+  kind: "group";
+  children: CanvasNode[];
+};
+
+type CanvasNode = CanvasLeafNode | CanvasGroupNode;
 
 type Point = {
   x: number;
@@ -48,6 +62,8 @@ type ParsedSvgElement = {
   height: number;
   offsetX: number;
   offsetY: number;
+  contentMinX: number;
+  contentMinY: number;
 };
 
 type ParsedSvgTemplate = {
@@ -89,6 +105,15 @@ type Interaction = MoveInteraction | MarqueeInteraction | ScaleInteraction;
 type SelectionUnit = {
   key: string;
   itemIds: string[];
+  bounds: Bounds;
+};
+
+type AbsoluteNodeFrame = {
+  node: CanvasNode;
+  x: number;
+  y: number;
+  scaleX: number;
+  scaleY: number;
   bounds: Bounds;
 };
 
@@ -488,6 +513,8 @@ function buildWholeSvgElement(svg: SVGSVGElement, viewBox: string) {
       height: safeHeight,
       offsetX: 0,
       offsetY: 0,
+      contentMinX: parsedViewBox?.minX ?? 0,
+      contentMinY: parsedViewBox?.minY ?? 0,
     } satisfies ParsedSvgElement,
   ];
 }
@@ -565,14 +592,30 @@ function extractSvgElements(
     .map(({ node, ancestors }) => {
       const wrappedNode = buildWrappedAstNode(rootAst, ancestors, node);
       const content = `${defsMarkup}${stringify(wrappedNode)}`;
+      const bounds =
+        measureSvgContentBounds(
+          content,
+          viewBox,
+          Math.max(rootBounds.width, 1),
+          Math.max(rootBounds.height, 1),
+        ) ?? {
+          minX: rootBounds.minX,
+          minY: rootBounds.minY,
+          maxX: rootBounds.minX + rootBounds.width,
+          maxY: rootBounds.minY + rootBounds.height,
+          width: Math.max(rootBounds.width, 1),
+          height: Math.max(rootBounds.height, 1),
+        };
 
       return {
         content,
         viewBox,
-        width: Math.max(rootBounds.width, 1),
-        height: Math.max(rootBounds.height, 1),
-        offsetX: 0,
-        offsetY: 0,
+        width: Math.max(bounds.width, 1),
+        height: Math.max(bounds.height, 1),
+        offsetX: bounds.minX - rootBounds.minX,
+        offsetY: bounds.minY - rootBounds.minY,
+        contentMinX: bounds.minX,
+        contentMinY: bounds.minY,
       } satisfies ParsedSvgElement;
     });
 
@@ -674,16 +717,172 @@ function normalizeBounds(firstPoint: Point, secondPoint: Point) {
   } satisfies Bounds;
 }
 
-function boundsFromItem(item: CanvasItem) {
+function boundsFromNodeFrame(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  scaleX: number,
+  scaleY: number,
+) {
   return {
-    minX: item.x,
-    minY: item.y,
-    maxX: item.x + item.width,
-    maxY: item.y + item.height,
-    width: item.width,
-    height: item.height,
+    minX: x,
+    minY: y,
+    maxX: x + width * scaleX,
+    maxY: y + height * scaleY,
+    width: width * scaleX,
+    height: height * scaleY,
   } satisfies Bounds;
 }
+
+function boundsFromRect(x: number, y: number, width: number, height: number) {
+  return {
+    minX: x,
+    minY: y,
+    maxX: x + width,
+    maxY: y + height,
+    width,
+    height,
+  } satisfies Bounds;
+}
+
+function getNodeTransform(node: CanvasNode) {
+  return `translate(${node.x} ${node.y}) scale(${node.scaleX} ${node.scaleY})`;
+}
+
+function computeAbsoluteFrame(
+  node: CanvasNode,
+  parentX = 0,
+  parentY = 0,
+  parentScaleX = 1,
+  parentScaleY = 1,
+): AbsoluteNodeFrame {
+  const x = parentX + node.x * parentScaleX;
+  const y = parentY + node.y * parentScaleY;
+  const scaleX = parentScaleX * node.scaleX;
+  const scaleY = parentScaleY * node.scaleY;
+
+  return {
+    node,
+    x,
+    y,
+    scaleX,
+    scaleY,
+    bounds: boundsFromNodeFrame(x, y, node.width, node.height, scaleX, scaleY),
+  };
+}
+
+function cloneCanvasNode(node: CanvasNode): CanvasNode {
+  if (node.kind === "leaf") {
+    return { ...node };
+  }
+
+  return {
+    ...node,
+    children: node.children.map((child) => cloneCanvasNode(child)),
+  };
+}
+
+function bakeParentTransformIntoNode(
+  node: CanvasNode,
+  parentX: number,
+  parentY: number,
+  parentScaleX: number,
+  parentScaleY: number,
+): CanvasNode {
+  const cloned = cloneCanvasNode(node);
+
+  cloned.x = parentX + cloned.x * parentScaleX;
+  cloned.y = parentY + cloned.y * parentScaleY;
+  cloned.scaleX *= parentScaleX;
+  cloned.scaleY *= parentScaleY;
+
+  return cloned;
+}
+
+function findRootNode(nodeId: string) {
+  return canvasNodes.value.find((node) => node.id === nodeId) ?? null;
+}
+
+function getRootFrames() {
+  return canvasNodes.value.map((node) => computeAbsoluteFrame(node));
+}
+
+const CanvasNodeView: any = defineComponent({
+  name: "CanvasNodeView",
+  props: {
+    node: {
+      type: Object as PropType<CanvasNode>,
+      required: true,
+    },
+    interactive: {
+      type: Boolean,
+      default: false,
+    },
+    selected: {
+      type: Boolean,
+      default: false,
+    },
+  },
+  setup(props): () => any {
+    return () => {
+      const NodeView = CanvasNodeView;
+      const nodeChildren: any[] =
+        props.node.kind === "group"
+          ? props.node.children.map((child) =>
+              h(NodeView, {
+                key: child.id,
+                node: child,
+                interactive: false,
+                selected: false,
+              }),
+            )
+          : [
+              h("g", {
+                class: "canvas-object__content",
+                transform: `translate(${-props.node.contentMinX} ${-props.node.contentMinY})`,
+                innerHTML: props.node.content,
+              }),
+            ];
+
+      const children: any[] = [
+        ...nodeChildren,
+      ];
+
+      if (props.interactive) {
+        children.push(
+          h("rect", {
+            class: "canvas-object__hitbox",
+            x: 0,
+            y: 0,
+            width: props.node.width,
+            height: props.node.height,
+            fill: "#ffffff",
+            "fill-opacity": "0.001",
+            stroke: "transparent",
+            "stroke-width": 1,
+            "vector-effect": "non-scaling-stroke",
+            "pointer-events": "all",
+            onPointerdown: (event: PointerEvent) =>
+              onCanvasNodePointerDown(props.node, event),
+          }),
+        );
+      }
+
+      return h(
+        "g",
+        {
+          class: [
+            "canvas-object",
+            props.selected ? "canvas-object--selected" : "",
+          ],
+          transform: getNodeTransform(props.node),
+        },
+        children,
+      );
+    };
+  },
+});
 
 const candidates = Object.entries(previewModules)
   .map(([id, src]) => {
@@ -717,7 +916,7 @@ const candidates = Object.entries(previewModules)
 const selectedCoordinateSystem = ref<"All" | CoordinateSystem>("All");
 const selectedChartType = ref("All");
 const canvasRef = ref<HTMLElement | null>(null);
-const canvasItems = ref<CanvasItem[]>([]);
+const canvasNodes = ref<CanvasNode[]>([]);
 const selectedIds = ref<string[]>([]);
 const interaction = ref<Interaction | null>(null);
 const draggedCandidateId = ref<string | null>(null);
@@ -823,11 +1022,34 @@ const filteredCandidates = computed(() => {
   });
 });
 
-const selectedItems = computed(() =>
-  canvasItems.value.filter((item) => selectedIds.value.includes(item.id)),
+function findNodeById(nodes: CanvasNode[], nodeId: string): CanvasNode | null {
+  for (const node of nodes) {
+    if (node.id === nodeId) {
+      return node;
+    }
+
+    if (node.kind === "group") {
+      const found = findNodeById(node.children, nodeId);
+      if (found) {
+        return found;
+      }
+    }
+  }
+
+  return null;
+}
+
+function getRootNode(nodeId: string) {
+  return canvasNodes.value.find((node) => node.id === nodeId) ?? null;
+}
+
+const selectedNodes = computed(() =>
+  selectedIds.value
+    .map((id) => getRootNode(id))
+    .filter((node): node is CanvasNode => !!node),
 );
 
-const selectionBounds = computed(() => computeBounds(selectedIds.value));
+const selectionBounds = computed<Bounds | null>(() => computeBounds(selectedIds.value));
 
 const marqueeBounds = computed(() => {
   if (!interaction.value || interaction.value.type !== "marquee") {
@@ -840,10 +1062,10 @@ const marqueeBounds = computed(() => {
   );
 });
 
-const selectionUnits = computed(() => getSelectionUnits(selectedIds.value));
-const canGroup = computed(() => selectionUnits.value.length > 1);
+const selectionUnits = computed<SelectionUnit[]>(() => getSelectionUnits(selectedIds.value));
+const canGroup = computed(() => selectedNodes.value.length > 1);
 const canUngroup = computed(() =>
-  selectedItems.value.some((item) => item.groupId),
+  selectedNodes.value.some((node) => node.kind === "group"),
 );
 
 function getCandidate(candidateId: string) {
@@ -886,7 +1108,7 @@ async function loadSvgTemplate(candidateId: string) {
   return promise;
 }
 
-function createCanvasItemsFromTemplate(
+function createCanvasNodesFromTemplate(
   sourceId: string,
   name: string,
   template: ParsedSvgTemplate,
@@ -905,19 +1127,24 @@ function createCanvasItemsFromTemplate(
     const instanceId = crypto.randomUUID();
 
     return {
+      kind: "leaf",
       id: instanceId,
       candidateId: sourceId,
       name: `${name}-${index + 1}`,
       content: scopeSvgContent(element.content, instanceId),
       viewBox: element.viewBox,
-      width: Math.max(element.width * scale, 1),
-      height: Math.max(element.height * scale, 1),
+      width: Math.max(element.width, 1),
+      height: Math.max(element.height, 1),
       x: x + element.offsetX * scale,
       y: y + element.offsetY * scale,
-    } satisfies CanvasItem;
+      scaleX: scale,
+      scaleY: scale,
+      contentMinX: element.contentMinX,
+      contentMinY: element.contentMinY,
+    } satisfies CanvasLeafNode;
   });
 
-  canvasItems.value.push(...nextItems);
+  canvasNodes.value.push(...nextItems);
   const firstItem = nextItems[0];
   setSelection(firstItem ? [firstItem.id] : []);
   setImportNotice(
@@ -940,35 +1167,18 @@ function setImportNotice(message: string) {
   }, 4000);
 }
 
-function getGroupMembers(groupId: string) {
-  return canvasItems.value
-    .filter((item) => item.groupId === groupId)
-    .map((item) => item.id);
-}
-
 function normalizeSelection(ids: string[]) {
   const normalized = new Set<string>();
 
   ids.forEach((id) => {
-    const item = canvasItems.value.find((entry) => entry.id === id);
-
-    if (!item) {
-      return;
+    if (getRootNode(id)) {
+      normalized.add(id);
     }
-
-    if (item.groupId) {
-      getGroupMembers(item.groupId).forEach((memberId) =>
-        normalized.add(memberId),
-      );
-      return;
-    }
-
-    normalized.add(item.id);
   });
 
-  return canvasItems.value
-    .filter((item) => normalized.has(item.id))
-    .map((item) => item.id);
+  return canvasNodes.value
+    .filter((node) => normalized.has(node.id))
+    .map((node) => node.id);
 }
 
 function setSelection(ids: string[]) {
@@ -990,70 +1200,73 @@ function toggleSelection(ids: string[]) {
   setSelection([...selectedIds.value, ...targetIds]);
 }
 
+function collectNodeBounds(
+  node: CanvasNode,
+  parentX = 0,
+  parentY = 0,
+  parentScaleX = 1,
+  parentScaleY = 1,
+): Bounds {
+  const x = parentX + node.x * parentScaleX;
+  const y = parentY + node.y * parentScaleY;
+  const scaleX = parentScaleX * node.scaleX;
+  const scaleY = parentScaleY * node.scaleY;
+  let bounds = boundsFromNodeFrame(x, y, node.width, node.height, scaleX, scaleY);
+
+  if (node.kind === "group") {
+    let merged: Bounds | null = null;
+
+    node.children.forEach((child) => {
+      merged = mergeBounds(
+        merged,
+        collectNodeBounds(child, x, y, scaleX, scaleY),
+      );
+    });
+
+    if (merged) {
+      bounds = merged;
+    }
+  }
+
+  return bounds;
+}
+
 function computeBounds(ids: string[]) {
   if (ids.length === 0) {
     return null;
   }
 
-  const items = canvasItems.value.filter((item) => ids.includes(item.id));
+  let merged: Bounds | null = null;
 
-  if (items.length === 0) {
-    return null;
-  }
+  ids.forEach((id) => {
+    const node = getRootNode(id);
 
-  const minX = Math.min(...items.map((item) => item.x));
-  const minY = Math.min(...items.map((item) => item.y));
-  const maxX = Math.max(...items.map((item) => item.x + item.width));
-  const maxY = Math.max(...items.map((item) => item.y + item.height));
+    if (!node) {
+      return;
+    }
 
-  return {
-    minX,
-    minY,
-    maxX,
-    maxY,
-    width: maxX - minX,
-    height: maxY - minY,
-  } satisfies Bounds;
+    merged = mergeBounds(merged, collectNodeBounds(node));
+  });
+
+  return merged;
 }
 
 function getSelectionUnits(ids: string[]) {
-  const idSet = new Set(ids);
-  const units: SelectionUnit[] = [];
-  const visitedGroups = new Set<string>();
+  return ids
+    .map((id) => {
+      const node = getRootNode(id);
 
-  canvasItems.value.forEach((item) => {
-    if (!idSet.has(item.id)) {
-      return;
-    }
-
-    if (item.groupId) {
-      if (visitedGroups.has(item.groupId)) {
-        return;
+      if (!node) {
+        return null;
       }
 
-      const memberIds = getGroupMembers(item.groupId);
-      const bounds = computeBounds(memberIds);
-
-      if (bounds) {
-        units.push({
-          key: `group:${item.groupId}`,
-          itemIds: memberIds,
-          bounds,
-        });
-      }
-
-      visitedGroups.add(item.groupId);
-      return;
-    }
-
-    units.push({
-      key: `item:${item.id}`,
-      itemIds: [item.id],
-      bounds: boundsFromItem(item),
-    });
-  });
-
-  return units;
+      return {
+        key: `node:${id}`,
+        itemIds: [id],
+        bounds: collectNodeBounds(node),
+      } satisfies SelectionUnit;
+    })
+    .filter((unit): unit is SelectionUnit => !!unit);
 }
 
 async function createCanvasItem(candidate: SvgCandidate, point: Point) {
@@ -1061,19 +1274,19 @@ async function createCanvasItem(candidate: SvgCandidate, point: Point) {
 
   try {
     const template = await loadSvgTemplate(candidate.id);
-    createCanvasItemsFromTemplate(candidate.id, candidate.name, template, point);
+    createCanvasNodesFromTemplate(candidate.id, candidate.name, template, point);
   } finally {
     loadingDrop.value = false;
   }
 }
 
-async function createCanvasItemsFromFile(file: File, point: Point) {
+async function createCanvasNodesFromFile(file: File, point: Point) {
   loadingDrop.value = true;
 
   try {
     const markup = await file.text();
     const template = parseSvgTemplate(markup);
-    createCanvasItemsFromTemplate(
+    createCanvasNodesFromTemplate(
       `file:${file.name}:${crypto.randomUUID()}`,
       file.name.replace(/\.svg$/i, ""),
       template,
@@ -1114,7 +1327,7 @@ async function onCanvasDrop(event: DragEvent) {
   });
 
   if (droppedFile) {
-    await createCanvasItemsFromFile(droppedFile, point);
+    await createCanvasNodesFromFile(droppedFile, point);
     draggedCandidateId.value = null;
     return;
   }
@@ -1157,7 +1370,7 @@ function startMove(itemIds: string[], event: PointerEvent) {
 
   const snapshots = Object.fromEntries(
     itemIds.map((itemId) => {
-      const item = canvasItems.value.find((entry) => entry.id === itemId);
+      const item = getRootNode(itemId);
       return [itemId, { x: item?.x ?? 0, y: item?.y ?? 0 }];
     }),
   );
@@ -1173,14 +1386,14 @@ function startMove(itemIds: string[], event: PointerEvent) {
   attachPointerListeners();
 }
 
-function onCanvasItemPointerDown(item: CanvasItem, event: PointerEvent) {
+function onCanvasNodePointerDown(node: CanvasNode, event: PointerEvent) {
   if (event.button !== 0) {
     return;
   }
 
   event.stopPropagation();
 
-  const targetIds = normalizeSelection([item.id]);
+  const targetIds = normalizeSelection([node.id]);
   const hasModifier = event.shiftKey || event.metaKey || event.ctrlKey;
 
   if (hasModifier) {
@@ -1188,7 +1401,7 @@ function onCanvasItemPointerDown(item: CanvasItem, event: PointerEvent) {
     return;
   }
 
-  const nextSelection = selectedIds.value.includes(item.id)
+  const nextSelection = selectedIds.value.includes(node.id)
     ? selectedIds.value
     : targetIds;
   setSelection(nextSelection);
@@ -1218,7 +1431,7 @@ function onScaleHandlePointerDown(handle: ScaleHandle, event: PointerEvent) {
 
   const snapshots = Object.fromEntries(
     selectedIds.value.map((itemId) => {
-      const item = canvasItems.value.find((entry) => entry.id === itemId);
+      const item = getRootNode(itemId);
       return [
         itemId,
         {
@@ -1261,7 +1474,7 @@ function updateMoveInteraction(
   );
 
   moveInteraction.itemIds.forEach((itemId) => {
-    const item = canvasItems.value.find((entry) => entry.id === itemId);
+    const item = getRootNode(itemId);
     const snapshot = moveInteraction.snapshots[itemId];
 
     if (!item || !snapshot) {
@@ -1315,7 +1528,7 @@ function updateScaleInteraction(
   } satisfies Bounds;
 
   scaleInteraction.itemIds.forEach((itemId) => {
-    const item = canvasItems.value.find((entry) => entry.id === itemId);
+    const item = getRootNode(itemId);
     const snapshot = scaleInteraction.snapshots[itemId];
 
     if (!item || !snapshot) {
@@ -1329,31 +1542,9 @@ function updateScaleInteraction(
 
     item.x = nextBounds.minX + leftRatio * nextBounds.width;
     item.y = nextBounds.minY + topRatio * nextBounds.height;
-    item.width = Math.max(widthRatio * nextBounds.width, 12);
-    item.height = Math.max(heightRatio * nextBounds.height, 12);
+    item.scaleX = Math.max((widthRatio * nextBounds.width) / item.width, 0.01);
+    item.scaleY = Math.max((heightRatio * nextBounds.height) / item.height, 0.01);
   });
-}
-
-function onWindowPointerMove(event: PointerEvent) {
-  const activeInteraction = interaction.value;
-
-  if (!activeInteraction) {
-    return;
-  }
-
-  const point = toCanvasPoint(event.clientX, event.clientY);
-
-  if (activeInteraction.type === "marquee") {
-    activeInteraction.currentPoint = point;
-    return;
-  }
-
-  if (activeInteraction.type === "move") {
-    updateMoveInteraction(point, activeInteraction);
-    return;
-  }
-
-  updateScaleInteraction(point, activeInteraction);
 }
 
 function finalizeMarqueeSelection(marqueeInteraction: MarqueeInteraction) {
@@ -1367,9 +1558,9 @@ function finalizeMarqueeSelection(marqueeInteraction: MarqueeInteraction) {
     return;
   }
 
-  const hitIds = canvasItems.value
+  const hitIds = canvasNodes.value
     .filter((item) => {
-      const itemBounds = boundsFromItem(item);
+      const itemBounds = collectNodeBounds(item);
       return !(
         itemBounds.maxX < bounds.minX ||
         itemBounds.minX > bounds.maxX ||
@@ -1395,7 +1586,7 @@ function onWindowPointerUp() {
 
 function moveItems(itemIds: string[], dx: number, dy: number) {
   itemIds.forEach((itemId) => {
-    const item = canvasItems.value.find((entry) => entry.id === itemId);
+    const item = getRootNode(itemId);
 
     if (!item) {
       return;
@@ -1407,41 +1598,102 @@ function moveItems(itemIds: string[], dx: number, dy: number) {
 }
 
 function groupSelectedItems() {
-  if (!canGroup.value) {
+  const groupBounds = selectionBounds.value;
+
+  if (!canGroup.value || !groupBounds) {
     return;
   }
 
+  const selectedSet = new Set(selectedIds.value);
+  const insertIndex = canvasNodes.value.findIndex((node) => selectedSet.has(node.id));
   const nextGroupId = crypto.randomUUID();
+  const nextChildren = canvasNodes.value
+    .filter((node) => selectedSet.has(node.id))
+    .map((node) => ({
+      ...node,
+      x: node.x - groupBounds.minX,
+      y: node.y - groupBounds.minY,
+    }));
 
-  selectedIds.value.forEach((itemId) => {
-    const item = canvasItems.value.find((entry) => entry.id === itemId);
+  canvasNodes.value = canvasNodes.value.filter((node) => !selectedSet.has(node.id));
+  canvasNodes.value.splice(
+    insertIndex < 0 ? canvasNodes.value.length : insertIndex,
+    0,
+    {
+      kind: "group",
+      id: nextGroupId,
+      name: `group-${nextGroupId.slice(0, 8)}`,
+      x: groupBounds.minX,
+      y: groupBounds.minY,
+      width: groupBounds.width,
+      height: groupBounds.height,
+      scaleX: 1,
+      scaleY: 1,
+      children: nextChildren,
+    } satisfies CanvasGroupNode,
+  );
 
-    if (item) {
-      item.groupId = nextGroupId;
-    }
-  });
-
-  setSelection(selectedIds.value);
+  setSelection([nextGroupId]);
 }
 
 function ungroupSelectedItems() {
-  const groupIds = new Set(
-    selectedItems.value
-      .map((item) => item.groupId)
-      .filter((groupId): groupId is string => !!groupId),
+  const selectedGroupIds = new Set(
+    selectedNodes.value
+      .filter((node): node is CanvasGroupNode => node.kind === "group")
+      .map((node) => node.id),
   );
 
-  if (groupIds.size === 0) {
+  if (selectedGroupIds.size === 0) {
     return;
   }
 
-  canvasItems.value.forEach((item) => {
-    if (item.groupId && groupIds.has(item.groupId)) {
-      item.groupId = undefined;
+  const nextRoots: CanvasNode[] = [];
+  const nextSelection: string[] = [];
+
+  canvasNodes.value.forEach((node) => {
+    if (node.kind !== "group" || !selectedGroupIds.has(node.id)) {
+      nextRoots.push(node);
+      return;
     }
+
+    node.children.forEach((child) => {
+      const flattened = {
+        ...child,
+        x: node.x + child.x * node.scaleX,
+        y: node.y + child.y * node.scaleY,
+        scaleX: child.scaleX * node.scaleX,
+        scaleY: child.scaleY * node.scaleY,
+      } satisfies CanvasNode;
+
+      nextRoots.push(flattened);
+      nextSelection.push(flattened.id);
+    });
   });
 
-  selectedIds.value = [...selectedIds.value];
+  canvasNodes.value = nextRoots;
+  setSelection(nextSelection);
+}
+
+function onWindowPointerMove(event: PointerEvent) {
+  const activeInteraction = interaction.value;
+
+  if (!activeInteraction) {
+    return;
+  }
+
+  const point = toCanvasPoint(event.clientX, event.clientY);
+
+  if (activeInteraction.type === "marquee") {
+    activeInteraction.currentPoint = point;
+    return;
+  }
+
+  if (activeInteraction.type === "move") {
+    updateMoveInteraction(point, activeInteraction);
+    return;
+  }
+
+  updateScaleInteraction(point, activeInteraction);
 }
 
 function alignSelection(
@@ -1490,11 +1742,11 @@ function alignSelection(
 }
 
 const scaleHandles = computed(() => {
-  if (!selectionBounds.value) {
+  const bounds = selectionBounds.value;
+
+  if (!bounds) {
     return [];
   }
-
-  const bounds = selectionBounds.value;
 
   return [
     { key: "nw", x: bounds.minX, y: bounds.minY },
@@ -1594,7 +1846,6 @@ onBeforeUnmount(() => {
         :class="{ 'canvas-board--dragging': draggedCandidateId }"
         @dragover="onCanvasDragOver"
         @drop="onCanvasDrop"
-        @pointerdown="onCanvasPointerDown"
       >
         <div class="toolbar toolbar--floating">
           <button
@@ -1665,7 +1916,7 @@ onBeforeUnmount(() => {
             class="ghost-button"
             type="button"
             @click="
-              canvasItems = [];
+              canvasNodes = [];
               selectedIds = [];
             "
           >
@@ -1674,7 +1925,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div
-          v-if="canvasItems.length === 0 && !loadingDrop"
+          v-if="canvasNodes.length === 0 && !loadingDrop"
           class="empty-state"
         >
           Drag a library SVG or a local .svg file here. Imported graphics are
@@ -1686,50 +1937,47 @@ onBeforeUnmount(() => {
         <div v-if="importNotice" class="import-notice">{{ importNotice }}</div>
 
         <svg
-          v-for="item in canvasItems"
-          :key="item.id"
-          class="canvas-object"
-          :class="{ 'canvas-object--selected': selectedIds.includes(item.id) }"
-          :style="{
-            left: `${item.x}px`,
-            top: `${item.y}px`,
-            width: `${item.width}px`,
-            height: `${item.height}px`,
-          }"
-          :viewBox="item.viewBox"
-          preserveAspectRatio="xMinYMin meet"
-          @pointerdown="onCanvasItemPointerDown(item, $event)"
-          v-html="item.content"
-        ></svg>
-
-        <svg class="selection-overlay" preserveAspectRatio="none">
-          <rect
-            v-if="marqueeBounds"
-            class="marquee-box"
-            :x="marqueeBounds.minX"
-            :y="marqueeBounds.minY"
-            :width="marqueeBounds.width"
-            :height="marqueeBounds.height"
+          class="canvas-scene"
+          preserveAspectRatio="none"
+          @pointerdown="onCanvasPointerDown"
+        >
+          <CanvasNodeView
+            v-for="node in canvasNodes"
+            :key="node.id"
+            :node="node"
+            :selected="selectedIds.includes(node.id)"
+            :interactive="true"
           />
 
-          <g v-if="selectionBounds">
+          <g class="selection-overlay">
             <rect
-              class="selection-box"
-              :x="selectionBounds.minX"
-              :y="selectionBounds.minY"
-              :width="selectionBounds.width"
-              :height="selectionBounds.height"
+              v-if="marqueeBounds"
+              class="marquee-box"
+              :x="marqueeBounds.minX"
+              :y="marqueeBounds.minY"
+              :width="marqueeBounds.width"
+              :height="marqueeBounds.height"
             />
 
-            <circle
-              v-for="handle in scaleHandles"
-              :key="handle.key"
-              class="selection-handle"
-              :cx="handle.x"
-              :cy="handle.y"
-              r="6"
-              @pointerdown="onScaleHandlePointerDown(handle.key, $event)"
-            />
+            <g v-if="selectionBounds">
+              <rect
+                class="selection-box"
+                :x="selectionBounds.minX"
+                :y="selectionBounds.minY"
+                :width="selectionBounds.width"
+                :height="selectionBounds.height"
+              />
+
+              <circle
+                v-for="handle in scaleHandles"
+                :key="handle.key"
+                class="selection-handle"
+                :cx="handle.x"
+                :cy="handle.y"
+                r="6"
+                @pointerdown="onScaleHandlePointerDown(handle.key, $event)"
+              />
+            </g>
           </g>
         </svg>
       </section>
@@ -2078,20 +2326,37 @@ onBeforeUnmount(() => {
   z-index: 2;
 }
 
-.canvas-object {
+.canvas-scene {
   position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   overflow: visible;
+}
+
+.canvas-object {
   cursor: move;
   user-select: none;
   touch-action: none;
 }
 
-.canvas-object:hover {
-  outline: 1px dashed rgba(28, 126, 214, 0.32);
-  outline-offset: 1px;
+.canvas-object__hitbox {
+  fill: rgba(255, 255, 255, 0.001);
+  stroke: transparent;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 
-.canvas-object :deep(*) {
+.canvas-object:hover .canvas-object__hitbox {
+  stroke: rgba(28, 126, 214, 0.32);
+  stroke-dasharray: 4 3;
+}
+
+.canvas-object__content {
+  overflow: visible;
+}
+
+.canvas-object__content :deep(*) {
   pointer-events: none;
 }
 
@@ -2100,10 +2365,6 @@ onBeforeUnmount(() => {
 }
 
 .selection-overlay {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
   pointer-events: none;
   overflow: visible;
 }
