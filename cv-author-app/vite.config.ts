@@ -37,7 +37,9 @@ function svgDeletePlugin(): Plugin {
         }
 
         try {
+          await server.watcher.unwatch(filePath)
           await unlink(filePath)
+          server.moduleGraph.invalidateAll()
           response.statusCode = 204
           response.end()
         } catch (error) {

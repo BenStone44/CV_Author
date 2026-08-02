@@ -108,6 +108,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     return normalizedChartType !== "bespoke"
       && !deletedCandidateIds.value.has(candidate.id);
   }
+  function isVisibleChartType(candidate: SvgCandidate) {
+    return candidate.chartType.replace(/^_+/, "").toLowerCase() !== "bespoke";
+  }
 
   const previewableCandidates = computed(() =>
     [...generatedCandidates.value, ...candidates.filter(isAvailableCandidate)],
@@ -118,7 +121,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const availableChartTypes = computed(() => {
     const names = new Set(
       candidates
-        .filter(isAvailableCandidate)
+        .filter(isVisibleChartType)
         .filter((c) => coordinateSystemMatches(c.coordinateSystem))
         .map((c) => c.chartType),
     );
