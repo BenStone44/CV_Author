@@ -93,6 +93,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const selectedCoordinateSystems = ref<Set<CoordinateSystem>>(new Set());
   const selectedChartType = ref("All");
   const generatedCandidates = ref<SvgCandidate[]>([]);
+  const deletedCandidateIds = ref(new Set<string>());
 
   function toggleCoordinateSystem(value: CoordinateSystem) {
     selectedCoordinateSystems.value = selectedCoordinateSystems.value.has(value)
@@ -102,9 +103,14 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function coordinateSystemMatches(coordinateSystem: CoordinateSystem) {
     return selectedCoordinateSystems.value.size === 0 || selectedCoordinateSystems.value.has(coordinateSystem);
   }
+  function isAvailableCandidate(candidate: SvgCandidate) {
+    const normalizedChartType = candidate.chartType.replace(/^_+/, "").toLowerCase();
+    return normalizedChartType !== "bespoke"
+      && !deletedCandidateIds.value.has(candidate.id);
+  }
 
   const previewableCandidates = computed(() =>
-    [...generatedCandidates.value, ...candidates],
+    [...generatedCandidates.value, ...candidates.filter(isAvailableCandidate)],
   );
   const compositionCandidates = computed(() =>
     generatedCandidates.value,
@@ -112,6 +118,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const availableChartTypes = computed(() => {
     const names = new Set(
       candidates
+        .filter(isAvailableCandidate)
         .filter((c) => coordinateSystemMatches(c.coordinateSystem))
         .map((c) => c.chartType),
     );
@@ -122,10 +129,25 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   }, { immediate: true });
   const filteredCandidates = computed(() => {
     return candidates.filter((c) => {
+      if (!isAvailableCandidate(c)) return false;
       const chartTypeMatches = selectedChartType.value === "All" || c.chartType === selectedChartType.value;
       return coordinateSystemMatches(c.coordinateSystem) && chartTypeMatches;
     });
   });
+  async function deleteSvgCandidate(candidate: SvgCandidate) {
+    if (candidate.compositionType) return;
+    const fileName = candidate.id.split("/").pop();
+    if (!fileName?.toLowerCase().endsWith(".svg")) return;
+    const response = await fetch(`/api/svg-candidates/${encodeURIComponent(fileName)}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(message || `Unable to delete ${fileName}`);
+    }
+    deletedCandidateIds.value = new Set([...deletedCandidateIds.value, candidate.id]);
+    setImportNotice(`${fileName} deleted.`);
+  }
 
   // --- canvas state ---
   const canvasNodes = ref<CanvasNode[]>([]);
@@ -1001,6 +1023,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     compositionCandidates,
     availableChartTypes,
     filteredCandidates,
+    deleteSvgCandidate,
     canvasNodes,
     viewZoom,
     viewPan,

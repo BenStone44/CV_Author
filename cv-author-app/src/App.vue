@@ -18,6 +18,7 @@ const {
   availableChartTypes,
   filteredCandidates,
   compositionCandidates,
+  deleteSvgCandidate,
   canvasNodes,
   viewZoom,
   viewPan,
@@ -99,6 +100,16 @@ async function selectCompositionCandidate(candidate: SvgCandidate) {
   if (candidate.unavailable) return;
   await insertCompositionCandidate(candidate);
   closeCompositionCandidates();
+}
+
+async function confirmDeleteSvgCandidate(candidate: SvgCandidate) {
+  const fileName = candidate.id.split("/").pop() ?? candidate.name;
+  if (!window.confirm(`Delete ${fileName} from charts_svg?`)) return;
+  try {
+    await deleteSvgCandidate(candidate);
+  } catch (error) {
+    window.alert(error instanceof Error ? error.message : `Unable to delete ${fileName}`);
+  }
 }
 
 function onCompositionKeyDown(event: KeyboardEvent) {
@@ -190,6 +201,22 @@ onBeforeUnmount(() => {
                   {{ candidate.compositionType }}
                 </span>
               </div>
+              <button
+                class="candidate-card__delete"
+                type="button"
+                title="Delete SVG file"
+                :aria-label="`Delete ${candidate.name}`"
+                draggable="false"
+                @pointerdown.stop
+                @click.stop="confirmDeleteSvgCandidate(candidate)"
+              >
+                <svg viewBox="0 0 18 18" aria-hidden="true">
+                  <path d="M3.5 5h11" />
+                  <path d="M7 5V3.5h4V5" />
+                  <path d="M5 5l.7 9h6.6l.7-9" />
+                  <path d="M7.5 7.5v4M10.5 7.5v4" />
+                </svg>
+              </button>
             </article>
           </div>
         </div>
@@ -709,7 +736,7 @@ onBeforeUnmount(() => {
     linear-gradient(135deg, #edf7ff 0%, #eef3f8 48%, #dce8f7 100%);
 }
 .sidebar {
-  --browser-panel-height: 170px;
+  --browser-panel-height: 50vh;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -868,6 +895,7 @@ onBeforeUnmount(() => {
   padding-right: 4px;
 }
 .candidate-card {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -890,6 +918,42 @@ onBeforeUnmount(() => {
 }
 .candidate-card:active {
   cursor: grabbing;
+}
+.candidate-card__delete {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(24, 33, 47, 0.12);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #64748b;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+.candidate-card:hover .candidate-card__delete,
+.candidate-card__delete:focus-visible {
+  opacity: 1;
+}
+.candidate-card__delete:hover {
+  background: #fff0f0;
+  color: #c92a2a;
+}
+.candidate-card__delete svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .candidate-card__preview {
   position: relative;
