@@ -10,7 +10,7 @@ import type {
   FlattenedSvgLeaf,
 } from "./types";
 
-const previewModules = import.meta.glob("../../charts_svg/*.svg", {
+const previewModules = import.meta.glob("../../charts_snapshots/*.webp", {
   eager: true,
   import: "default",
 }) as Record<string, string>;
@@ -112,8 +112,18 @@ export function toFileName(path: string) {
     path
       .split("/")
       .pop()
-      ?.replace(/\.svg$/i, "") ?? path
+      ?.replace(/\.(?:svg|webp)$/i, "") ?? path
   );
+}
+
+const previewSrcByName = new Map(
+  Object.entries(previewModules).map(([path, src]) => [toFileName(path), src]),
+);
+
+function getPreviewSrc(name: string) {
+  const src = previewSrcByName.get(name);
+  if (!src) throw new Error(`Missing WebP snapshot for ${name}`);
+  return src;
 }
 
 function toCategory(name: string) {
@@ -557,11 +567,17 @@ export async function loadSvgTemplate(candidateId: string): Promise<ParsedSvgTem
   return promise;
 }
 
-export const candidates: SvgCandidate[] = Object.entries(previewModules)
-  .map(([id, src]) => {
+export const candidates: SvgCandidate[] = Object.keys(rawSvgLoaders)
+  .map((id) => {
     const name = toFileName(id);
     const chartType = toCategory(name);
-    return { id, name, chartType, coordinateSystem: resolveCoordinateSystem(chartType), src };
+    return {
+      id,
+      name,
+      chartType,
+      coordinateSystem: resolveCoordinateSystem(chartType),
+      src: getPreviewSrc(name),
+    };
   })
   .sort((left, right) => {
     const coordinateCompare = collator.compare(left.coordinateSystem, right.coordinateSystem);
