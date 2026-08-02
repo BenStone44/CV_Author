@@ -102,9 +102,12 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function coordinateSystemMatches(coordinateSystem: CoordinateSystem) {
     return selectedCoordinateSystems.value.size === 0 || selectedCoordinateSystems.value.has(coordinateSystem);
   }
+  function isVisibleCandidate(candidate: SvgCandidate) {
+    return candidate.chartType.replace(/^_+/, "").toLowerCase() !== "bespoke";
+  }
 
   const previewableCandidates = computed(() =>
-    [...generatedCandidates.value, ...candidates],
+    [...generatedCandidates.value, ...candidates.filter(isVisibleCandidate)],
   );
   const compositionCandidates = computed(() =>
     generatedCandidates.value,
@@ -112,6 +115,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const availableChartTypes = computed(() => {
     const names = new Set(
       candidates
+        .filter(isVisibleCandidate)
         .filter((c) => coordinateSystemMatches(c.coordinateSystem))
         .map((c) => c.chartType),
     );
@@ -122,6 +126,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   }, { immediate: true });
   const filteredCandidates = computed(() => {
     return candidates.filter((c) => {
+      if (!isVisibleCandidate(c)) return false;
       const chartTypeMatches = selectedChartType.value === "All" || c.chartType === selectedChartType.value;
       return coordinateSystemMatches(c.coordinateSystem) && chartTypeMatches;
     });
