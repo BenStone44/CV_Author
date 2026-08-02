@@ -709,7 +709,7 @@ onBeforeUnmount(() => {
     linear-gradient(135deg, #edf7ff 0%, #eef3f8 48%, #dce8f7 100%);
 }
 .sidebar {
-  --browser-panel-height: 50vh;
+  --browser-panel-height: 170px;
   display: flex;
   flex-direction: column;
   gap: 14px;
