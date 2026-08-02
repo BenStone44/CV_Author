@@ -15,6 +15,44 @@ const previewModules = import.meta.glob("../../charts_svg/*.svg", {
   import: "default",
 }) as Record<string, string>;
 
+// SVG filenames listed here are excluded before the library is rendered.
+export const excludedCandidateIds = new Set<string>([
+  "_bespoke1.svg",
+  "_bespoke2.svg",
+  "_bespoke5.svg",
+  "_bespoke12.svg",
+  "_bespoke13.svg",
+  "_bespoke18.svg",
+  "_bespoke22.svg",
+  "_bespoke23.svg",
+  "_bespoke27.svg",
+  "AreaChart4.svg",
+  "AreaChart8.svg",
+  "AreaChart13.svg",
+  "AreaChart15.svg",
+  "AreaChart16.svg",
+  "AreaChart17.svg",
+  "AreaChart22.svg",
+  "AreaChart23.svg",
+  "AreaChart24.svg",
+  "AreaChart25.svg",
+  "AreaChart26.svg",
+  "BarChart24.svg",
+  "BoxAndWhisker23.svg",
+  "BoxAndWhisker25.svg",
+  "BubbleChart11.svg",
+  "BubbleChart22.svg",
+  "BubbleChart24.svg",
+  "BulletChart2.svg",
+  "BulletChart19.svg",
+  "Calendar5.svg",
+  "Calendar9.svg",
+]);
+
+function getCandidateFileName(id: string) {
+  return id.split("/").pop() ?? id;
+}
+
 const rawSvgLoaders = import.meta.glob("../../charts_svg/*.svg", {
   import: "default",
   query: "?raw",
@@ -558,6 +596,7 @@ export async function loadSvgTemplate(candidateId: string): Promise<ParsedSvgTem
 }
 
 export const candidates: SvgCandidate[] = Object.entries(previewModules)
+  .filter(([id]) => !excludedCandidateIds.has(getCandidateFileName(id)))
   .map(([id, src]) => {
     const name = toFileName(id);
     const chartType = toCategory(name);

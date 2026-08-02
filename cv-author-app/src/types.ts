@@ -4,11 +4,15 @@ export type SvgCandidate = {
   chartType: string;
   coordinateSystem: CoordinateSystem;
   src: string;
+  compositionType?: CompositionType;
+  svgMarkup?: string;
+  unavailable?: boolean;
 };
 
+export type CompositionType = "layer" | "facet" | "concat" | "nested";
+
 export type CoordinateSystem = "Cartesian" | "Polar" | "Geographic" | "None";
-export type CoordinateFilter = "All" | CoordinateSystem;
-export type IconKind = "all" | "cartesian" | "polar" | "geographic" | "none";
+export type IconKind = "cartesian" | "polar" | "geographic" | "none";
 
 export type CanvasBaseNode = {
   id: string;
@@ -19,6 +23,7 @@ export type CanvasBaseNode = {
   y: number;
   scaleX: number;
   scaleY: number;
+  rotation: number;
 };
 
 export type CanvasLeafNode = CanvasBaseNode & {
@@ -90,6 +95,16 @@ export type ParsedSvgTemplate = {
 
 export type ScaleHandle = "nw" | "ne" | "sw" | "se";
 
+export type RotateInteraction = {
+  type: "rotate";
+  startPoint: Point;
+  center: Point;
+  startAngle: number;
+  itemIds: string[];
+  snapshots: Record<string, { x: number; y: number; rotation: number }>;
+  historyCommitted: boolean;
+};
+
 export type MoveInteraction = {
   type: "move";
   startPoint: Point;
@@ -128,6 +143,7 @@ export type Interaction =
   | MoveInteraction
   | MarqueeInteraction
   | ScaleInteraction
+  | RotateInteraction
   | PanInteraction;
 
 export type CanvasHistorySnapshot = {

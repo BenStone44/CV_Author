@@ -1,0 +1,237 @@
+{
+  "layer": {
+    "description": "Overlay multiple marks in the same coordinate system",
+    "usage": "Use 'layer' array with multiple spec objects",
+    "characteristics": [
+      "All layers share the same space",
+      "Scales are shared by default",
+      "Marks are drawn on top of each other",
+      "Can combine different mark types",
+      "Visual overlay only - no structural hierarchy"
+    ],
+    "data_transformation": "No transformation - each layer uses same or different data",
+    "when_to_use": [
+      "Combining line and point marks",
+      "Adding reference lines or annotations",
+      "Overlaying multiple series with different visual encodings",
+      "Creating dual-encoding visualizations"
+    ],
+    "examples": [
+      {
+        "scenario": "Line chart with point markers",
+        "description": "Overlay points on a line to show both trend and individual values",
+        "structure": "layer: [line mark, point mark] - both use same x/y scales"
+      },
+      {
+        "scenario": "Bar chart with average line",
+        "description": "Show bars for individual values with a horizontal line indicating mean",
+        "structure": "layer: [bar mark, rule mark] - rule shows aggregate statistic"
+      },
+      {
+        "scenario": "Scatter plot with confidence ellipse",
+        "description": "Points with statistical overlay showing distribution",
+        "structure": "layer: [point mark, area mark] - area computed from point data"
+      }
+    ],
+    "key_properties": {
+      "coordinates": {
+        "description": "Optional, applies to all layers",
+        "values": ["cartesian", "polar"]
+      },
+      "resolve": {
+        "description": "Control scale sharing between layers",
+        "example": {
+          "scale": {
+            "position.y": "independent"
+          }
+        }
+      }
+    }
+  },
+
+  "facet": {
+    "description": "Create small multiples by splitting data into subsets",
+    "usage": "Use 'facet' to define the faceting field(s), then use 'each column', 'each row', or 'each grid' to specify the visualization for each facet",
+    "characteristics": [
+      "Each facet is an independent visualization",
+      "Each facet has its own scales",
+      "Data is logically grouped by facet field",
+      "All facets use the same mark and encoding structure"
+    ],
+    "data_transformation": "struct[] → struct[][] (grouped by facet field)",
+    "when_to_use": [
+      "Comparing patterns across categories",
+      "Showing same visualization for different groups",
+      "Reducing visual clutter from overlapping data",
+      "Enabling detailed comparison of subsets"
+    ],
+    "examples": [
+      {
+        "scenario": "Sales trends by region",
+        "description": "Show time series for each region in separate panels",
+        "structure": "facet by 'region' → each column shows line chart for one region"
+      },
+      {
+        "scenario": "Distribution comparison across categories",
+        "description": "Histogram for each product category",
+        "structure": "facet by 'category' → each row shows histogram for one category"
+      },
+      {
+        "scenario": "Multi-dimensional comparison",
+        "description": "Scatter plots across two categorical dimensions",
+        "structure": "facet by 'year' and 'country' → grid layout with scatter plot in each cell"
+      },
+      {
+        "scenario": "Mirrored comparison (population pyramid style)",
+        "description": "Compare two groups with mirrored facets for symmetrical comparison",
+        "structure": "facet by 'gender' with x-axis mirroring → male on left, female on right (mirrored horizontally)",
+        "note": "Can mirror on x-axis or y-axis depending on layout orientation"
+      }
+    ],
+    "key_properties": {
+      "facet": {
+        "description": "Field(s) to split data by",
+        "fields": {
+          "field": "Primary faceting field",
+          "type": "Field data type",
+          "field2": "Optional second field for grid layout",
+          "type2": "Second field data type"
+        }
+      },
+      "facet_wrappers": {
+        "each column": "Facets arranged horizontally (left to right)",
+        "each row": "Facets arranged vertically (top to bottom)",
+        "each grid": "Facets arranged in 2D grid (requires field + field2)"
+      }
+    }
+  },
+
+  "concat": {
+    "description": "Arrange different views together without data transformation",
+    "usage": "Use 'concat' object with 'layout' field, then use 'same row', 'same column', or 'spec' array to specify the views",
+    "characteristics": [
+      "No data transformation - each view maintains original structure",
+      "Views can use shared or independent datasets",
+      "Each view can have different mark types and encodings",
+      "Can share axes using resolve.scale"
+    ],
+    "data_transformation": "No transformation - each view uses its own data",
+    "when_to_use": [
+      "Showing different visualizations side by side",
+      "Creating dashboard-style layouts",
+      "Comparing different aspects of data",
+      "Building multi-view coordinated visualizations"
+    ],
+    "examples": [
+      {
+        "scenario": "Overview + detail dashboard",
+        "description": "Bar chart showing totals next to table showing details",
+        "structure": "concat: {layout: 'same row'} → [bar chart, table] - different mark types"
+      },
+      {
+        "scenario": "Multi-metric comparison",
+        "description": "Line chart for revenue above bar chart for units sold",
+        "structure": "concat: {layout: 'same column'} → [line chart, bar chart] - shared x-axis via resolve"
+      },
+      {
+        "scenario": "Coordinated views",
+        "description": "Scatter plot with marginal histograms",
+        "structure": "concat: {layout: 'crossing'} → scatter at center, histograms on margins"
+      }
+    ],
+    "key_properties": {
+      "concat": {
+        "description": "Concatenation configuration",
+        "fields": {
+          "layout": "Layout type: 'same row', 'same column', or 'crossing'"
+        }
+      },
+      "layouts": {
+        "same row": "Views arranged horizontally (left to right)",
+        "same column": "Views arranged vertically (top to bottom)",
+        "crossing": "Views positioned at different locations with optional shared axes"
+      },
+      "resolve": {
+        "description": "Control axis and scale sharing",
+        "example": {
+          "scale": {
+            "x": { "shared": [1, 3] },
+            "y": { "shared": [1, 2] }
+          }
+        }
+      }
+    }
+  },
+
+  "nested": {
+    "description": "Embed child visualizations within parent marks",
+    "usage": "Use 'nested' with 'parent' and 'child' specifications",
+    "characteristics": [
+      "Child visualizations are embedded inside parent marks",
+      "Parent mark must have a valid canvas (not N/A)",
+      "Child size is constrained by parent size when canvas is 'inner'",
+      "Creates hierarchical visual structure",
+      "Each parent instance gets its own child visualization",
+      "Represents structural hierarchy, not just visual overlay"
+    ],
+    "data_transformation": "struct[] → struct[][] (outer: parent elements, inner: child data for each parent)",
+    "when_to_use": [
+      "Showing detail within aggregated views",
+      "Creating nested pie charts or donuts",
+      "Embedding small charts in scatter points",
+      "Displaying hierarchical relationships",
+      "Replacing graph/tree nodes with visualizations",
+      "Each parent element needs its own independent child view"
+    ],
+    "examples": [
+      {
+        "scenario": "Tree nodes as pie charts",
+        "description": "Replace each tree node with a pie chart showing category breakdown",
+        "structure": "nested: {parent: tree mark, child: pie chart} - each node becomes a pie",
+        "why_not_layer": "Layer would overlay one pie on entire tree; nested creates one pie per node"
+      },
+      {
+        "scenario": "Graph nodes as bar charts",
+        "description": "Each node in a network shows a bar chart of metrics",
+        "structure": "nested: {parent: graph mark, child: bar chart} - each node has its own bars",
+        "why_not_layer": "Layer cannot bind different data to each node position"
+      },
+      {
+        "scenario": "Nested donuts (sunburst alternative)",
+        "description": "Outer ring contains inner rings for hierarchical data",
+        "structure": "nested: {parent: arc mark, child: arc mark} - structural parent-child relationship",
+        "why_not_layer": "Layer would just overlay arcs; nested respects hierarchy and sizing"
+      },
+      {
+        "scenario": "Scatter plot with embedded sparklines",
+        "description": "Each point in scatter contains a time series sparkline",
+        "structure": "nested: {parent: point mark, child: line chart} - each point gets its own trend",
+        "why_not_layer": "Layer would show one line for all points; nested shows one line per point"
+      },
+      {
+        "scenario": "Map regions with internal charts",
+        "description": "Each geographic region contains a bar chart of local data",
+        "structure": "nested: {parent: geo mark, child: bar chart} - charts positioned within regions",
+        "why_not_layer": "Layer cannot position different charts inside different regions"
+      }
+    ],
+    "nested_vs_layer": {
+      "nested": "Structural hierarchy - each parent gets its own child instance with different data",
+      "layer": "Visual overlay - marks share coordinate system, no parent-child data binding",
+      "key_difference": "Nested creates N child visualizations (one per parent), layer creates 1 overlay for all"
+    },
+    "key_properties": {
+      "nested": {
+        "description": "Nested composition configuration",
+        "fields": {
+          "parent": "Parent mark specification",
+          "child": "Child visualization configuration"
+        }
+      },
+      "child": {
+        "canvas": "Where child is drawn: 'inner' (inside parent) or 'top' (on top of parent)",
+        "configuration": "Child visualization spec"
+      }
+    }
+  }
+}

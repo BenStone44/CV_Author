@@ -16,6 +16,7 @@ export const CanvasNodeView: any = defineComponent({
       const NodeView = CanvasNodeView;
       const sharedProps = {
         class: ["canvas-object", props.selected ? "canvas-object--selected" : ""],
+        "data-node-id": props.node.id,
         transform: props.node.kind === "leaf"
           ? getLeafNodeTransform(props.node)
           : getNodeTransform(props.node),
@@ -29,7 +30,19 @@ export const CanvasNodeView: any = defineComponent({
       };
 
       if (props.node.kind === "leaf") {
-        return h("g", { ...sharedProps, innerHTML: props.node.content });
+        return h("g", { ...sharedProps }, [
+          // Keep a stable hit area for thin strokes and hollow SVG shapes.
+          h("rect", {
+            x: props.node.contentMinX,
+            y: props.node.contentMinY,
+            width: Math.max(props.node.width, 1),
+            height: Math.max(props.node.height, 1),
+            fill: "transparent",
+            "pointer-events": "all",
+            style: { pointerEvents: "all" },
+          }),
+          h("g", { innerHTML: props.node.content, style: { pointerEvents: "none" } }),
+        ]);
       }
 
       return h(

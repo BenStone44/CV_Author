@@ -20,15 +20,34 @@ export function normalizeBounds(firstPoint: Point, secondPoint: Point): Bounds {
 }
 
 export function boundsFromNodeFrame(
-  x: number, y: number, width: number, height: number, scaleX: number, scaleY: number,
+  x: number, y: number, width: number, height: number, scaleX: number, scaleY: number, rotation = 0,
 ): Bounds {
+  if (rotation === 0) {
+    return {
+      minX: x,
+      minY: y,
+      maxX: x + width * scaleX,
+      maxY: y + height * scaleY,
+      width: width * scaleX,
+      height: height * scaleY,
+    };
+  }
+  const radians = rotation * Math.PI / 180;
+  const cx = x + width * scaleX / 2;
+  const cy = y + height * scaleY / 2;
+  const corners: Array<{ x: number; y: number }> = [
+    { x, y }, { x: x + width * scaleX, y },
+    { x, y: y + height * scaleY }, { x: x + width * scaleX, y: y + height * scaleY },
+  ].map(({ x: px, y: py }) => {
+    const dx = px - cx; const dy = py - cy;
+    return { x: cx + dx * Math.cos(radians) - dy * Math.sin(radians), y: cy + dx * Math.sin(radians) + dy * Math.cos(radians) };
+  });
+  const minX = Math.min(...corners.map((p) => p.x));
+  const minY = Math.min(...corners.map((p) => p.y));
+  const maxX = Math.max(...corners.map((p) => p.x));
+  const maxY = Math.max(...corners.map((p) => p.y));
   return {
-    minX: x,
-    minY: y,
-    maxX: x + width * scaleX,
-    maxY: y + height * scaleY,
-    width: width * scaleX,
-    height: height * scaleY,
+    minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY,
   };
 }
 
@@ -42,11 +61,15 @@ export function mergeBounds(current: Bounds | null, next: Bounds): Bounds {
 }
 
 export function getNodeTransform(node: CanvasNode) {
-  return `translate(${node.x} ${node.y}) scale(${node.scaleX} ${node.scaleY})`;
+  const cx = node.width / 2;
+  const cy = node.height / 2;
+  return `translate(${node.x + cx * node.scaleX} ${node.y + cy * node.scaleY}) rotate(${node.rotation}) scale(${node.scaleX} ${node.scaleY}) translate(${-cx} ${-cy})`;
 }
 
 export function getLeafNodeTransform(node: CanvasLeafNode) {
-  return `translate(${node.x - node.contentMinX * node.scaleX} ${node.y - node.contentMinY * node.scaleY}) scale(${node.scaleX} ${node.scaleY})`;
+  const cx = node.contentMinX + node.width / 2;
+  const cy = node.contentMinY + node.height / 2;
+  return `translate(${node.x + node.width * node.scaleX / 2} ${node.y + node.height * node.scaleY / 2}) rotate(${node.rotation}) scale(${node.scaleX} ${node.scaleY}) translate(${-cx} ${-cy})`;
 }
 
 export function computeAbsoluteFrame(
@@ -60,7 +83,7 @@ export function computeAbsoluteFrame(
   const y = parentY + node.y * parentScaleY;
   const scaleX = parentScaleX * node.scaleX;
   const scaleY = parentScaleY * node.scaleY;
-  return { node, x, y, scaleX, scaleY, bounds: boundsFromNodeFrame(x, y, node.width, node.height, scaleX, scaleY) };
+  return { node, x, y, scaleX, scaleY, bounds: boundsFromNodeFrame(x, y, node.width, node.height, scaleX, scaleY, node.rotation) };
 }
 
 export function cloneCanvasNode(node: CanvasNode): CanvasNode {
@@ -79,7 +102,7 @@ export function collectNodeBounds(
   const y = parentY + node.y * parentScaleY;
   const scaleX = parentScaleX * node.scaleX;
   const scaleY = parentScaleY * node.scaleY;
-  let bounds = boundsFromNodeFrame(x, y, node.width, node.height, scaleX, scaleY);
+  let bounds = boundsFromNodeFrame(x, y, node.width, node.height, scaleX, scaleY, node.rotation);
   if (node.kind === "group") {
     let merged: Bounds | null = null;
     node.children.forEach((child) => {
@@ -99,4 +122,27 @@ export function computeBounds(nodes: CanvasNode[], ids: string[]): Bounds | null
     merged = mergeBounds(merged, collectNodeBounds(node));
   });
   return merged;
+}
+
+function serializeCanvasNode(node: CanvasNode): string {
+  const transform = node.kind === "leaf"
+    ? getLeafNodeTransform(node)
+    : getNodeTransform(node);
+  const content = node.kind === "leaf"
+    ? node.content
+    : node.children.map((child) => serializeCanvasNode(child)).join("");
+  return `<g transform="${transform}">${content}</g>`;
+}
+
+export function createCanvasNodesSvgMarkup(nodes: CanvasNode[], bounds: Bounds): string {
+  const width = Math.max(bounds.width, 1);
+  const height = Math.max(bounds.height, 1);
+  const normalizedNodes = nodes.map((node) => {
+    const clone = cloneCanvasNode(node);
+    clone.x -= bounds.minX;
+    clone.y -= bounds.minY;
+    return clone;
+  });
+  const content = normalizedNodes.map((node) => serializeCanvasNode(node)).join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">${content}</svg>`;
 }
