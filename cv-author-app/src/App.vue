@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { CanvasCoordinateGuideView, CanvasNodeView } from "./CanvasNodeView";
+import CsvDataPanel from "./CsvDataPanel.vue";
 import type { CompositionType, SvgCandidate } from "./types";
 import {
   useCanvasStore,
@@ -204,7 +205,9 @@ onBeforeUnmount(() => {
       </div>
     </aside>
 
-    <main class="workspace">
+    <div class="workbench">
+      <CsvDataPanel />
+      <main class="workspace">
       <section
         ref="canvasRef"
         class="canvas-board"
@@ -707,7 +710,8 @@ onBeforeUnmount(() => {
           <span>°</span>
         </label>
       </section>
-    </main>
+      </main>
+    </div>
   </div>
 </template>
 
@@ -715,7 +719,9 @@ onBeforeUnmount(() => {
 .app-shell {
   display: flex;
   flex-direction: column;
+  height: 100vh;
   min-height: 100vh;
+  overflow: hidden;
   background:
     radial-gradient(
       circle at top left,
@@ -957,7 +963,15 @@ onBeforeUnmount(() => {
   flex-direction: column;
   flex: 1;
   min-width: 0;
+  min-height: 0;
   padding: 10px;
+}
+.workbench {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 .toolbar {
   display: grid;
@@ -1250,7 +1264,7 @@ onBeforeUnmount(() => {
 .canvas-board {
   position: relative;
   flex: 1;
-  min-height: 680px;
+  min-height: 0;
   overflow: hidden;
   border: 1px solid rgba(24, 33, 47, 0.08);
   border-radius: 28px;
@@ -1502,6 +1516,16 @@ onBeforeUnmount(() => {
     width: min(360px, calc(100% - 24px));
     min-width: 0;
     max-height: calc(100% - 268px);
+  }
+}
+@media (max-width: 760px) {
+  .app-shell {
+    height: auto;
+    overflow: visible;
+  }
+  .workbench {
+    flex-direction: column;
+    overflow: visible;
   }
 }
 </style>
