@@ -67,6 +67,7 @@ export type ParsedSvgLeafTemplateNode = {
 
 export type ParsedSvgGroupTemplateNode = {
   kind: "group";
+  name?: string;
   bounds: Bounds;
   children: ParsedSvgTemplateNode[];
 };

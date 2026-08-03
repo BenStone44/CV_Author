@@ -9,22 +9,23 @@ import type {
   ParsedSvgTemplate,
   FlattenedSvgLeaf,
 } from "./types";
+import { selectedChartNames } from "./selectedCharts";
+import {
+  previewSrcByName,
+  rawSvgSourceByName,
+} from "virtual:chart-assets";
 
-const previewModules = import.meta.glob("../../charts_snapshots/*.webp", {
-  eager: true,
-  import: "default",
-}) as Record<string, string>;
-
-const rawSvgLoaders = import.meta.glob("../../charts_svg/*.svg", {
-  import: "default",
-  query: "?raw",
-}) as Record<string, () => Promise<string>>;
+const rawSvgLoaders = Object.fromEntries(
+  Object.values(rawSvgSourceByName).map(({ id, loader }) => [id, loader]),
+);
 
 export const collator = new Intl.Collator("en", {
   numeric: true,
   sensitivity: "base",
 });
 const templateCache = new Map<string, Promise<ParsedSvgTemplate>>();
+const svgIdLookupCache = new WeakMap<SVGSVGElement, Map<string, Element>>();
+const clipBoundsCache = new WeakMap<SVGGraphicsElement, Map<string, Bounds | null>>();
 const SVG_NS = "http://www.w3.org/2000/svg";
 const ignoredSvgTags = new Set([
   "defs",
@@ -112,17 +113,13 @@ export function toFileName(path: string) {
     path
       .split("/")
       .pop()
-      ?.replace(/\.(?:svg|webp)$/i, "") ?? path
+      ?.replace(/\.(?:png|svg|webp)$/i, "") ?? path
   );
 }
 
-const previewSrcByName = new Map(
-  Object.entries(previewModules).map(([path, src]) => [toFileName(path), src]),
-);
-
 function getPreviewSrc(name: string) {
   const src = previewSrcByName.get(name);
-  if (!src) throw new Error(`Missing WebP snapshot for ${name}`);
+  if (!src) throw new Error(`Missing VisAnatomy PNG preview for ${name}`);
   return src;
 }
 
@@ -238,14 +235,28 @@ function hasVisibleSvgPaint(element: SVGGraphicsElement, style: CSSStyleDeclarat
   if (alwaysVisibleSvgTags.has(tagName)) return true;
   const strokeWidth = parseDimension(style.strokeWidth);
   const hasStroke =
-    style.stroke !== "none" &&
+    isVisiblePaint(style.stroke, style.strokeOpacity) &&
     (!Number.isFinite(strokeWidth) || strokeWidth > 0);
-  const hasFill = style.fill !== "none";
+  const hasFill = isVisiblePaint(style.fill, style.fillOpacity);
   const hasMarkers =
     style.markerStart !== "none" ||
     style.markerMid !== "none" ||
     style.markerEnd !== "none";
   return hasStroke || hasFill || hasMarkers;
+}
+
+function isVisiblePaint(paint: string, opacity: string) {
+  const normalizedPaint = paint.trim().toLowerCase();
+  const numericOpacity = Number.parseFloat(opacity);
+  if (
+    normalizedPaint === "none" ||
+    normalizedPaint === "transparent" ||
+    (Number.isFinite(numericOpacity) && numericOpacity <= 0)
+  ) {
+    return false;
+  }
+  const alphaMatch = normalizedPaint.match(/rgba?\([^)]*[,/]\s*(\d*\.?\d+%?)\s*\)$/);
+  return !alphaMatch?.[1] || Number.parseFloat(alphaMatch[1]) > 0;
 }
 
 function transformSvgPoint(matrix: DOMMatrix | SVGMatrix, x: number, y: number): Point {
@@ -268,6 +279,134 @@ function mergeBounds(current: Bounds | null, next: Bounds): Bounds {
   return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
 }
 
+function boundsFromTransformedBox(
+  box: { x: number; y: number; width: number; height: number },
+  matrix: DOMMatrix,
+): Bounds {
+  const corners = [
+    transformSvgPoint(matrix, box.x, box.y),
+    transformSvgPoint(matrix, box.x, box.y + box.height),
+    transformSvgPoint(matrix, box.x + box.width, box.y),
+    transformSvgPoint(matrix, box.x + box.width, box.y + box.height),
+  ];
+  const minX = Math.min(...corners.map((point) => point.x));
+  const minY = Math.min(...corners.map((point) => point.y));
+  const maxX = Math.max(...corners.map((point) => point.x));
+  const maxY = Math.max(...corners.map((point) => point.y));
+  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
+}
+
+function intersectBounds(first: Bounds, second: Bounds): Bounds | null {
+  const minX = Math.max(first.minX, second.minX);
+  const minY = Math.max(first.minY, second.minY);
+  const maxX = Math.min(first.maxX, second.maxX);
+  const maxY = Math.min(first.maxY, second.maxY);
+  if (maxX < minX || maxY < minY) return null;
+  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
+}
+
+function getClipPathId(value: string) {
+  const match = value.match(/url\(["']?[^#)]*#([^"')\s]+)["']?\)/i);
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
+
+function getSvgElementById(rootSvg: SVGSVGElement, id: string) {
+  let lookup = svgIdLookupCache.get(rootSvg);
+  if (!lookup) {
+    lookup = new Map(
+      Array.from(rootSvg.querySelectorAll("[id]"))
+        .map((candidate) => [candidate.getAttribute("id"), candidate] as const)
+        .filter((entry): entry is [string, Element] => !!entry[0]),
+    );
+    svgIdLookupCache.set(rootSvg, lookup);
+  }
+  return lookup.get(id) ?? null;
+}
+
+function measureClipPathBounds(
+  rootSvg: SVGSVGElement,
+  owner: SVGGraphicsElement,
+  clipPath: SVGElement,
+): Bounds | null {
+  const rootMatrix = rootSvg.getCTM();
+  const ownerMatrix = owner.getCTM();
+  if (!rootMatrix || !ownerMatrix) return null;
+
+  let coordinateMatrix = toDomMatrix(rootMatrix).inverse().multiply(toDomMatrix(ownerMatrix));
+  if (clipPath.getAttribute("clipPathUnits")?.toLowerCase() === "objectboundingbox") {
+    const ownerBounds = owner.getBBox();
+    if (ownerBounds.width <= 0 || ownerBounds.height <= 0) return null;
+    coordinateMatrix = coordinateMatrix
+      .translate(ownerBounds.x, ownerBounds.y)
+      .scale(ownerBounds.width, ownerBounds.height);
+  }
+
+  let definitionContext: Element | null = clipPath.parentElement;
+  while (
+    definitionContext &&
+    definitionContext !== rootSvg &&
+    !(definitionContext instanceof SVGGraphicsElement)
+  ) {
+    definitionContext = definitionContext.parentElement;
+  }
+  const contextMatrix = definitionContext instanceof SVGGraphicsElement
+    ? definitionContext.getCTM()
+    : rootMatrix;
+  if (!contextMatrix) return null;
+
+  let result: Bounds | null = null;
+  Array.from(clipPath.querySelectorAll("*"))
+    .filter((candidate): candidate is SVGGraphicsElement =>
+      candidate instanceof SVGGraphicsElement &&
+      terminalSvgTags.has(candidate.tagName.toLowerCase()))
+    .forEach((candidate) => {
+      try {
+        if (window.getComputedStyle(candidate).display === "none") return;
+        const candidateMatrix = candidate.getCTM();
+        if (!candidateMatrix) return;
+        const definitionMatrix = toDomMatrix(contextMatrix)
+          .inverse()
+          .multiply(toDomMatrix(candidateMatrix));
+        result = mergeBounds(
+          result,
+          boundsFromTransformedBox(candidate.getBBox(), coordinateMatrix.multiply(definitionMatrix)),
+        );
+      } catch {
+        // A malformed clip shape should not discard otherwise measurable content.
+      }
+    });
+  return result;
+}
+
+function clipRenderableBounds(
+  rootSvg: SVGSVGElement,
+  element: SVGGraphicsElement,
+  initialBounds: Bounds,
+) {
+  let result: Bounds | null = initialBounds;
+  let owner: Element | null = element;
+  while (result && owner && owner !== rootSvg) {
+    if (owner instanceof SVGGraphicsElement) {
+      const clipPathId = getClipPathId(window.getComputedStyle(owner).clipPath);
+      const clipPath = clipPathId ? getSvgElementById(rootSvg, clipPathId) : null;
+      if (clipPath instanceof SVGElement && clipPath.tagName.toLowerCase() === "clippath") {
+        let ownerCache = clipBoundsCache.get(owner);
+        if (!ownerCache) {
+          ownerCache = new Map();
+          clipBoundsCache.set(owner, ownerCache);
+        }
+        if (!ownerCache.has(clipPathId!)) {
+          ownerCache.set(clipPathId!, measureClipPathBounds(rootSvg, owner, clipPath));
+        }
+        const clipBounds = ownerCache.get(clipPathId!) ?? null;
+        if (clipBounds) result = intersectBounds(result, clipBounds);
+      }
+    }
+    owner = owner.parentElement;
+  }
+  return result;
+}
+
 function getRenderableSvgBounds(rootSvg: SVGSVGElement, element: SVGGraphicsElement): Bounds | null {
   const style = window.getComputedStyle(element);
   if (
@@ -284,33 +423,30 @@ function getRenderableSvgBounds(rootSvg: SVGSVGElement, element: SVGGraphicsElem
     const rootMatrix = rootSvg.getCTM();
     if (!matrix || !rootMatrix) return null;
     const localMatrix = toDomMatrix(rootMatrix).inverse().multiply(toDomMatrix(matrix));
+    const bounds = boundsFromTransformedBox(rawBounds, localMatrix);
     const strokeWidth = parseDimension(style.strokeWidth);
-    const padding =
-      style.stroke !== "none" && Number.isFinite(strokeWidth)
-        ? strokeWidth / 2 + 0.5
-        : 0;
-    const minX = rawBounds.x - padding;
-    const minY = rawBounds.y - padding;
-    const maxX = rawBounds.x + rawBounds.width + padding;
-    const maxY = rawBounds.y + rawBounds.height + padding;
-    const corners = [
-      transformSvgPoint(localMatrix, minX, minY),
-      transformSvgPoint(localMatrix, minX, maxY),
-      transformSvgPoint(localMatrix, maxX, minY),
-      transformSvgPoint(localMatrix, maxX, maxY),
-    ];
-    const bounds: Bounds = {
-      minX: Math.min(...corners.map((p) => p.x)),
-      minY: Math.min(...corners.map((p) => p.y)),
-      maxX: Math.max(...corners.map((p) => p.x)),
-      maxY: Math.max(...corners.map((p) => p.y)),
-      width: 0,
-      height: 0,
-    };
-    bounds.width = bounds.maxX - bounds.minX;
-    bounds.height = bounds.maxY - bounds.minY;
-    if (bounds.width < 0.25 && bounds.height < 0.25) return null;
-    return bounds;
+    if (
+      isVisiblePaint(style.stroke, style.strokeOpacity) &&
+      Number.isFinite(strokeWidth) &&
+      strokeWidth > 0
+    ) {
+      const strokeMatrix = style.vectorEffect === "non-scaling-stroke"
+        ? toDomMatrix(rootMatrix).inverse()
+        : localMatrix;
+      const halfStroke = strokeWidth / 2;
+      const paddingX = halfStroke * Math.hypot(strokeMatrix.a, strokeMatrix.c);
+      const paddingY = halfStroke * Math.hypot(strokeMatrix.b, strokeMatrix.d);
+      bounds.minX -= paddingX;
+      bounds.maxX += paddingX;
+      bounds.minY -= paddingY;
+      bounds.maxY += paddingY;
+      bounds.width = bounds.maxX - bounds.minX;
+      bounds.height = bounds.maxY - bounds.minY;
+    }
+    const clippedBounds = clipRenderableBounds(rootSvg, element, bounds);
+    if (!clippedBounds) return null;
+    if (clippedBounds.width < 0.25 && clippedBounds.height < 0.25) return null;
+    return clippedBounds;
   } catch {
     return null;
   }
@@ -448,7 +584,9 @@ function collectFlattenedSvgLeaves(rootSvg: SVGSVGElement, defsMarkup: string, v
     const tagName = element.tagName.toLowerCase();
     if (ignoredSvgTags.has(tagName) || nonRenderableContextTags.has(tagName)) return;
     if (tagName === "g") {
-      const nextPath = [...groupPath, `g-${nextGroupId}`];
+      const layerName = element.getAttribute("data-cv-layer");
+      const groupSegment = layerName ? `layer-${layerName}` : `g-${nextGroupId}`;
+      const nextPath = [...groupPath, groupSegment];
       const nextAncestors = element instanceof SVGElement ? [...groupAncestors, element] : groupAncestors;
       nextGroupId += 1;
       Array.from(element.children).forEach((child) => visit(child, nextPath, nextAncestors));
@@ -493,7 +631,9 @@ function buildSvgNodeTree(flattenedLeaves: FlattenedSvgLeaf[]): ParsedSvgTemplat
     let bounds: Bounds | null = null;
     children.forEach((child) => { bounds = mergeBounds(bounds, child.bounds); });
     if (children.length === 0 || !bounds) return null;
-    return { kind: "group", bounds, children } satisfies ParsedSvgGroupTemplateNode;
+    const segment = node.groupKey.split("/").at(-1) ?? "";
+    const name = segment.startsWith("layer-") ? segment.slice("layer-".length) : undefined;
+    return { kind: "group", name, bounds, children } satisfies ParsedSvgGroupTemplateNode;
   };
   return rootNodes.map(finalizeNode).filter((n): n is ParsedSvgTemplateNode => !!n);
 }
@@ -567,12 +707,13 @@ export async function loadSvgTemplate(candidateId: string): Promise<ParsedSvgTem
   return promise;
 }
 
-export const candidates: SvgCandidate[] = Object.keys(rawSvgLoaders)
-  .map((id) => {
-    const name = toFileName(id);
+export const candidates: SvgCandidate[] = selectedChartNames
+  .map((name) => {
+    const source = rawSvgSourceByName[name];
+    if (!source) throw new Error(`Missing VisAnatomy SVG source for ${name}`);
     const chartType = toCategory(name);
     return {
-      id,
+      id: source.id,
       name,
       chartType,
       coordinateSystem: resolveCoordinateSystem(chartType),

@@ -6,7 +6,7 @@ import sharp from "sharp";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const projectDirectory = resolve(scriptDirectory, "..");
-const sourceDirectory = resolve(projectDirectory, "../charts_svg");
+const sourceDirectory = resolve(projectDirectory, "../VisAnatomy/charts_svg");
 const outputDirectory = resolve(projectDirectory, "../charts_snapshots");
 const snapshotWidth = 352;
 const concurrency = Math.min(Math.max(cpus().length - 1, 1), 8);

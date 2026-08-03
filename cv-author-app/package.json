@@ -8,6 +8,7 @@
     "build": "run-p type-check \"build-only {@}\" --",
     "preview": "vite preview",
     "generate:snapshots": "node --no-warnings scripts/generate-chart-snapshots.mjs",
+    "split:charts": "node --no-warnings scripts/split-chart-layers.mjs",
     "build-only": "vite build",
     "type-check": "vue-tsc --build"
   },
