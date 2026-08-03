@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 
@@ -9,6 +10,7 @@ import { selectedChartNames } from './src/selectedCharts'
 const virtualChartAssetsId = 'virtual:chart-assets'
 const resolvedVirtualChartAssetsId = `\0${virtualChartAssetsId}`
 const visAnatomyDirectory = fileURLToPath(new URL('../VisAnatomy', import.meta.url))
+const coordinateSystemsPath = resolve(visAnatomyDirectory, 'charts_svg_separated', 'coordinate-systems.json')
 
 function chartAssetsPlugin(): Plugin {
   return {
@@ -31,11 +33,22 @@ function chartAssetsPlugin(): Plugin {
         const sourceId = `../../VisAnatomy/charts_svg_separated/data-binding/${name}.svg`
         return `${JSON.stringify(name)}: { id: ${JSON.stringify(sourceId)}, loader: () => import(${JSON.stringify(`${path}?raw`)}).then((module) => module.default) }`
       })
+      let coordinateAxesByName: Record<string, unknown> = {}
+      try {
+        const metadata = JSON.parse(readFileSync(coordinateSystemsPath, 'utf8'))
+        coordinateAxesByName = metadata?.charts ?? {}
+      } catch {
+        // Coordinate metadata is optional until the layer split command has run.
+      }
+      const coordinateEntries = selectedChartNames.map((name) =>
+        `${JSON.stringify(name)}: ${JSON.stringify(coordinateAxesByName[name] ?? null)}`,
+      )
 
       return [
         ...previewImports,
         `export const previewSrcByName = new Map([${previewEntries.join(',')}]);`,
         `export const rawSvgSourceByName = {${svgEntries.join(',')}};`,
+        `export const coordinateAxesByName = {${coordinateEntries.join(',')}};`,
       ].join('\n')
     },
   }

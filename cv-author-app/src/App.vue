@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { CanvasNodeView } from "./CanvasNodeView";
+import { CanvasCoordinateGuideView, CanvasNodeView } from "./CanvasNodeView";
 import type { CompositionType, SvgCandidate } from "./types";
 import {
   useCanvasStore,
@@ -55,6 +55,7 @@ const {
   onCanvasNodeContextMenu,
   onScaleHandlePointerDown,
   onRotateHandlePointerDown,
+  onCoordinateOriginPointerDown,
   setSelectionRotation,
   onCandidateDragStart,
   onCandidateDragEnd,
@@ -63,6 +64,7 @@ const {
   redoCanvasChange,
   clearCanvas,
   deleteSelectedNodes,
+  reverseCoordinateAxis,
   copySelectedNodes,
   pasteClipboardNodes,
   groupSelectedItems,
@@ -83,6 +85,12 @@ const activeCompositionOption = computed(() =>
 const activeCompositionCandidates = computed(() =>
   compositionCandidates.value.filter(
     (candidate) => candidate.compositionType === activeCompositionType.value,
+  ),
+);
+const selectedCanvasNodesWithCoordinateGuides = computed(() =>
+  canvasNodes.value.filter((node) =>
+    selectedIds.value.includes(node.id)
+    && !!node.coordinateGuide,
   ),
 );
 
@@ -667,6 +675,14 @@ onBeforeUnmount(() => {
                 />
               </g>
             </g>
+            <CanvasCoordinateGuideView
+              v-for="node in selectedCanvasNodesWithCoordinateGuides"
+              :key="`coordinate-guide-${node.id}`"
+              :node="node"
+              :view-zoom="viewZoom"
+              :on-origin-pointer-down="onCoordinateOriginPointerDown"
+              :on-axis-reverse="reverseCoordinateAxis"
+            />
           </g>
         </svg>
         <label
@@ -1300,6 +1316,88 @@ onBeforeUnmount(() => {
 }
 .canvas-object--selected {
   filter: drop-shadow(0 10px 18px rgba(28, 126, 214, 0.18));
+}
+.coordinate-guide-layer {
+  overflow: visible;
+  pointer-events: none;
+}
+.coordinate-guide-layer :deep(.coordinate-guide) {
+  overflow: visible;
+  pointer-events: none;
+}
+.coordinate-guide-layer :deep(.coordinate-axis-line),
+.coordinate-guide-layer :deep(.coordinate-axis-arrowhead) {
+  fill: none;
+  stroke: #111;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+.coordinate-guide-layer :deep(.coordinate-axis-arrowhead) {
+  stroke-linejoin: round;
+}
+.coordinate-guide-layer :deep(.coordinate-axis-line--tail) {
+  opacity: 0.72;
+}
+.coordinate-guide-layer :deep(.coordinate-origin-handle) {
+  fill: #111;
+  stroke: none;
+  pointer-events: none;
+}
+.coordinate-guide-layer :deep(.coordinate-origin-hit-target) {
+  fill: transparent;
+  stroke: transparent;
+  pointer-events: all;
+  cursor: grab;
+  touch-action: none;
+}
+.coordinate-guide-layer :deep(.coordinate-origin-hit-target:active) {
+  cursor: grabbing;
+}
+.coordinate-guide-layer :deep(.coordinate-axis-reverse-control) {
+  opacity: 0.42;
+  pointer-events: all;
+  cursor: pointer;
+  touch-action: none;
+  transition: opacity 120ms ease;
+}
+.coordinate-guide-layer :deep(.coordinate-axis-reverse-hit-target) {
+  fill: transparent;
+  stroke: transparent;
+  pointer-events: all;
+}
+.coordinate-guide-layer :deep(.coordinate-axis-reverse-outline) {
+  fill: rgba(255, 255, 255, 0.82);
+  stroke: #111;
+  stroke-width: 1.3;
+  stroke-dasharray: 3 3;
+  pointer-events: none;
+}
+.coordinate-guide-layer :deep(.coordinate-axis-reverse-icon) {
+  fill: none;
+  stroke: #111;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.coordinate-guide-layer :deep(.coordinate-axis-reverse-control:hover .coordinate-axis-reverse-icon) {
+  stroke-width: 2.3;
+}
+.coordinate-guide-layer :deep(.coordinate-axis-reverse-control:hover) {
+  opacity: 1;
+}
+.coordinate-guide-layer :deep(.polar-coordinate-ring) {
+  fill: none;
+  stroke: rgba(17, 17, 17, 0.62);
+  stroke-width: 1.4;
+}
+.coordinate-guide-layer :deep(.polar-coordinate-spoke) {
+  stroke: rgba(17, 17, 17, 0.78);
+  stroke-width: 1.5;
+}
+.coordinate-guide-layer :deep(.polar-coordinate-origin) {
+  fill: #111;
+  stroke: none;
 }
 .selection-overlay {
   pointer-events: none;

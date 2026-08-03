@@ -6,4 +6,9 @@ declare module "virtual:chart-assets" {
     string,
     { id: string; loader: () => Promise<string> }
   >;
+  export const coordinateAxesByName: Record<string, {
+    origin: { x: number; y: number } | null;
+    xAxisDirection: { x: number; y: number } | null;
+    yAxisDirection: { x: number; y: number } | null;
+  } | null>;
 }

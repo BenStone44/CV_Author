@@ -20,11 +20,14 @@ import type {
   PanInteraction,
   ScaleInteraction,
   RotateInteraction,
+  CoordinateOriginInteraction,
   ScaleHandle,
   SelectionUnit,
   Bounds,
   Point,
   ParsedSvgTemplate,
+  ParsedSvgTemplateNode,
+  ElementOrientation,
   SvgCandidate,
   CompositionType,
   LayerOrderAction,
@@ -172,6 +175,23 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const screenX = clientX - (rect?.left ?? 0);
     const screenY = clientY - (rect?.top ?? 0);
     return { x: (screenX - viewPan.value.x) / viewZoom.value, y: (screenY - viewPan.value.y) / viewZoom.value };
+  }
+  function toNodeLocalPoint(node: CanvasNode, point: Point): Point {
+    const center = {
+      x: node.x + node.width * node.scaleX / 2,
+      y: node.y + node.height * node.scaleY / 2,
+    };
+    const radians = -node.rotation * Math.PI / 180;
+    const dx = point.x - center.x;
+    const dy = point.y - center.y;
+    const unrotated = {
+      x: center.x + dx * Math.cos(radians) - dy * Math.sin(radians),
+      y: center.y + dx * Math.sin(radians) + dy * Math.cos(radians),
+    };
+    return {
+      x: (node.kind === "leaf" ? node.contentMinX : 0) + (unrotated.x - node.x) / node.scaleX,
+      y: (node.kind === "leaf" ? node.contentMinY : 0) + (unrotated.y - node.y) / node.scaleY,
+    };
   }
   function getCandidate(candidateId: string) {
     return generatedCandidates.value.find((c) => c.id === candidateId)
@@ -329,14 +349,27 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     selectedIds.value = [];
     contextMenu.value = null;
   }
+  function reverseCoordinateAxis(target: CanvasNode, axis: "x" | "y") {
+    const node = getRootNode(target.id);
+    if (node?.coordinateGuide?.type !== "Cartesian") return;
+    pushCanvasHistory();
+    if (axis === "x") {
+      node.coordinateGuide.xDirection = node.coordinateGuide.xDirection === 1 ? -1 : 1;
+    } else {
+      node.coordinateGuide.yDirection = node.coordinateGuide.yDirection === 1 ? -1 : 1;
+    }
+  }
   function closeContextMenu() { contextMenu.value = null; }
 
   function cloneCanvasNodeForPaste(node: CanvasNode): CanvasNode {
     const nextId = crypto.randomUUID();
+    const coordinateGuide = node.coordinateGuide
+      ? { ...node.coordinateGuide, origin: { ...node.coordinateGuide.origin } }
+      : node.coordinateGuide;
     if (node.kind === "leaf") {
-      return { ...node, id: nextId, name: `${node.name} copy`, content: scopeSvgContent(node.content, nextId) };
+      return { ...node, coordinateGuide, id: nextId, name: `${node.name} copy`, content: scopeSvgContent(node.content, nextId) };
     }
-    return { ...node, id: nextId, name: `${node.name} copy`, children: node.children.map((c) => cloneCanvasNodeForPaste(c)) };
+    return { ...node, coordinateGuide, id: nextId, name: `${node.name} copy`, children: node.children.map((c) => cloneCanvasNodeForPaste(c)) };
   }
   function copySelectedNodes() {
     const sel = new Set(selectedIds.value);
@@ -370,6 +403,88 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   // --- import ---
   function countTemplateNodes(nodes: import("./types").ParsedSvgTemplateNode[]): number {
     return nodes.reduce((count, n) => n.kind === "leaf" ? count + 1 : count + 1 + countTemplateNodes(n.children), 0);
+  }
+  function collectElementOrientations(node: ParsedSvgTemplateNode): ElementOrientation[] {
+    if (node.kind === "leaf") return node.orientation ? [node.orientation] : [];
+    return node.children.flatMap(collectElementOrientations);
+  }
+  function solveOrientationCenter(
+    orientations: ElementOrientation[],
+    usePerpendicularDirection: boolean,
+  ): { point: Point; error: number } | null {
+    const solve = (items: ElementOrientation[]) => {
+      let a = 0, b = 0, c = 0, rhsX = 0, rhsY = 0, totalWeight = 0;
+      items.forEach((orientation) => {
+        const direction = usePerpendicularDirection
+          ? { x: -orientation.direction.y, y: orientation.direction.x }
+          : orientation.direction;
+        const normal = { x: -direction.y, y: direction.x };
+        const weight = Math.max(0.01, orientation.confidence * orientation.confidence);
+        const projection = normal.x * orientation.point.x + normal.y * orientation.point.y;
+        a += weight * normal.x * normal.x;
+        b += weight * normal.x * normal.y;
+        c += weight * normal.y * normal.y;
+        rhsX += weight * normal.x * projection;
+        rhsY += weight * normal.y * projection;
+        totalWeight += weight;
+      });
+      const determinant = a * c - b * b;
+      if (items.length < 3 || totalWeight <= 0 || determinant <= (a + c) * 0.000001) return null;
+      return {
+        x: (rhsX * c - b * rhsY) / determinant,
+        y: (a * rhsY - b * rhsX) / determinant,
+      };
+    };
+    const distanceToLine = (orientation: ElementOrientation, point: Point) => {
+      const direction = usePerpendicularDirection
+        ? { x: -orientation.direction.y, y: orientation.direction.x }
+        : orientation.direction;
+      return Math.abs(
+        -direction.y * (point.x - orientation.point.x)
+        + direction.x * (point.y - orientation.point.y),
+      );
+    };
+
+    const initial = solve(orientations);
+    if (!initial) return null;
+    const distances = orientations.map((orientation) => distanceToLine(orientation, initial));
+    const sortedDistances = [...distances].sort((left, right) => left - right);
+    const median = sortedDistances[Math.floor(sortedDistances.length / 2)] ?? 0;
+    const threshold = Math.max(median * 2.5, 0.5);
+    const inliers = orientations.filter((_, index) => (distances[index] ?? Infinity) <= threshold);
+    const point = solve(inliers.length >= 3 ? inliers : orientations) ?? initial;
+    let weightedError = 0;
+    let totalWeight = 0;
+    orientations.forEach((orientation) => {
+      const weight = Math.max(0.01, orientation.confidence * orientation.confidence);
+      const distance = distanceToLine(orientation, point);
+      weightedError += weight * distance * distance;
+      totalWeight += weight;
+    });
+    return { point, error: Math.sqrt(weightedError / Math.max(totalWeight, 0.0001)) };
+  }
+  function estimatePolarOrigin(node: ParsedSvgTemplateNode): Point {
+    const fallback = {
+      x: node.bounds.minX + node.bounds.width / 2,
+      y: node.bounds.minY + node.bounds.height / 2,
+    };
+    const orientations = collectElementOrientations(node)
+      .filter((orientation) => orientation.confidence >= 0.12)
+      .slice(0, 600);
+    const candidates = [
+      solveOrientationCenter(orientations, false),
+      solveOrientationCenter(orientations, true),
+    ].filter((candidate): candidate is { point: Point; error: number } => !!candidate)
+      .filter(({ point }) =>
+        point.x >= node.bounds.minX - node.bounds.width * 0.15
+        && point.x <= node.bounds.maxX + node.bounds.width * 0.15
+        && point.y >= node.bounds.minY - node.bounds.height * 0.15
+        && point.y <= node.bounds.maxY + node.bounds.height * 0.15,
+      )
+      .sort((left, right) => left.error - right.error);
+    const best = candidates[0];
+    const maximumUsefulError = Math.max(node.bounds.width, node.bounds.height) * 0.2;
+    return best && best.error <= maximumUsefulError ? best.point : fallback;
   }
   function setImportNotice(message: string) {
     importNotice.value = message;
@@ -543,6 +658,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     template: ParsedSvgTemplate,
     point: Point,
     forceOuterGroup = false,
+    coordinateSystem: CoordinateSystem = "None",
   ) {
     const initialWidth = 800;
     const scale = initialWidth / template.width;
@@ -557,14 +673,39 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       const nodeY = isRoot ? y + (node.bounds.minY - template.minY) * scale : node.bounds.minY - parentBounds!.minY;
       const nodeScaleX = isRoot ? scale : 1;
       const nodeScaleY = isRoot ? scale : 1;
+      const coordinateGuide = !isRoot
+        ? null
+        : coordinateSystem === "Cartesian"
+          ? {
+            type: "Cartesian" as const,
+            origin: {
+              x: node.kind === "leaf" ? node.contentMinX : 0,
+              y: node.kind === "leaf"
+                ? node.contentMinY + node.bounds.height
+                : node.bounds.height,
+            },
+            xDirection: 1 as const,
+            yDirection: -1 as const,
+          }
+          : coordinateSystem === "Polar"
+            ? {
+              type: "Polar" as const,
+              origin: (() => {
+                const inferred = estimatePolarOrigin(node);
+                return node.kind === "leaf"
+                  ? inferred
+                  : { x: inferred.x - node.bounds.minX, y: inferred.y - node.bounds.minY };
+              })(),
+            }
+            : null;
       if (node.kind === "leaf") {
         const id = crypto.randomUUID();
         nameCounters.leaf += 1;
-        return { kind: "leaf", id, candidateId: sourceId, name: `${name}-${nameCounters.leaf}`, content: scopeSvgContent(node.content, id), viewBox: node.viewBox, width: Math.max(node.bounds.width, 1), height: Math.max(node.bounds.height, 1), x: nodeX, y: nodeY, scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, contentMinX: node.contentMinX, contentMinY: node.contentMinY } satisfies CanvasLeafNode;
+        return { kind: "leaf", id, candidateId: sourceId, name: `${name}-${nameCounters.leaf}`, content: scopeSvgContent(node.content, id), viewBox: node.viewBox, width: Math.max(node.bounds.width, 1), height: Math.max(node.bounds.height, 1), x: nodeX, y: nodeY, scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, contentMinX: node.contentMinX, contentMinY: node.contentMinY, coordinateGuide } satisfies CanvasLeafNode;
       }
       nameCounters.group += 1;
       const groupName = node.name ? `${name}-${node.name}` : `${name}-group-${nameCounters.group}`;
-      return { kind: "group", id: crypto.randomUUID(), name: groupName, x: nodeX, y: nodeY, width: Math.max(node.bounds.width, 1), height: Math.max(node.bounds.height, 1), scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, children: node.children.map((c) => instantiateNode(c, node.bounds)) } satisfies CanvasGroupNode;
+      return { kind: "group", id: crypto.randomUUID(), name: groupName, x: nodeX, y: nodeY, width: Math.max(node.bounds.width, 1), height: Math.max(node.bounds.height, 1), scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, coordinateGuide, children: node.children.map((c) => instantiateNode(c, node.bounds)) } satisfies CanvasGroupNode;
     };
     let nextItems = template.nodes.map((n) => instantiateNode(n, null));
     if (forceOuterGroup && (nextItems.length !== 1 || nextItems[0]?.kind !== "group")) {
@@ -606,6 +747,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         template,
         point,
         !!candidate.compositionType,
+        candidate.coordinateSystem,
       );
     }
     finally { loadingDrop.value = false; }
@@ -620,7 +762,13 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   }
   async function createCanvasNodesFromFile(file: File, point: Point) {
     loadingDrop.value = true;
-    try { const markup = await file.text(); const t = parseSvgTemplate(markup); createCanvasNodesFromTemplate(`file:${file.name}:${crypto.randomUUID()}`, file.name.replace(/\.svg$/i, ""), t, point); }
+    try {
+      const markup = await file.text();
+      const name = file.name.replace(/\.svg$/i, "");
+      const coordinateSystem = candidates.find((candidate) => candidate.name === name)?.coordinateSystem ?? "None";
+      const t = parseSvgTemplate(markup);
+      createCanvasNodesFromTemplate(`file:${file.name}:${crypto.randomUUID()}`, name, t, point, false, coordinateSystem);
+    }
     finally { loadingDrop.value = false; }
   }
 
@@ -707,6 +855,20 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     interaction.value = { type: "rotate", startPoint: point, center, startAngle: Math.atan2(point.y - center.y, point.x - center.x), itemIds: [...selectedIds.value], snapshots, historyCommitted: false };
     attachPointerListeners();
   }
+  function onCoordinateOriginPointerDown(node: CanvasNode, event: PointerEvent) {
+    if (event.button !== 0 || node.coordinateGuide?.type !== "Cartesian") return;
+    event.preventDefault();
+    event.stopPropagation();
+    const point = toCanvasPoint(event.clientX, event.clientY);
+    interaction.value = {
+      type: "coordinate-origin",
+      nodeId: node.id,
+      startPoint: point,
+      startOrigin: { ...node.coordinateGuide.origin },
+      historyCommitted: false,
+    };
+    attachPointerListeners();
+  }
   function updateRotateInteraction(currentPoint: Point, ri: RotateInteraction) {
     const angle = Math.atan2(currentPoint.y - ri.center.y, currentPoint.x - ri.center.x) - ri.startAngle;
     const degrees = angle * 180 / Math.PI;
@@ -755,6 +917,17 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const scale = clamp(rawScale, Math.min(minScale, maxScale), maxScale);
     si.itemIds.forEach((id) => { const item = getRootNode(id); const snap = si.snapshots[id]; if (!item || !snap) return; item.x = anchor.x + (snap.x - anchor.x) * scale; item.y = anchor.y + (snap.y - anchor.y) * scale; item.scaleX = Math.max(snap.scaleX * scale, 0.01); item.scaleY = Math.max(snap.scaleY * scale, 0.01); });
   }
+  function updateCoordinateOriginInteraction(currentPoint: Point, ci: CoordinateOriginInteraction) {
+    const node = getRootNode(ci.nodeId);
+    if (!node || node.coordinateGuide?.type !== "Cartesian") return;
+    const localPoint = toNodeLocalPoint(node, currentPoint);
+    const minX = node.kind === "leaf" ? node.contentMinX : 0;
+    const minY = node.kind === "leaf" ? node.contentMinY : 0;
+    node.coordinateGuide.origin = {
+      x: clamp(localPoint.x, minX, minX + node.width),
+      y: clamp(localPoint.y, minY, minY + node.height),
+    };
+  }
   function finalizeMarqueeSelection(mi: MarqueeInteraction) {
     const bounds = normalizeBounds(mi.startPoint, mi.currentPoint);
     if (bounds.width < 3 && bounds.height < 3) { selectedIds.value = []; return; }
@@ -788,6 +961,14 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (ai.type === "rotate") {
       if (!ai.historyCommitted && Math.hypot(point.x - ai.startPoint.x, point.y - ai.startPoint.y) > 0.1) { pushCanvasHistory(); ai.historyCommitted = true; }
       updateRotateInteraction(point, ai);
+      return;
+    }
+    if (ai.type === "coordinate-origin") {
+      if (!ai.historyCommitted && Math.hypot(point.x - ai.startPoint.x, point.y - ai.startPoint.y) > 0.1) {
+        pushCanvasHistory();
+        ai.historyCommitted = true;
+      }
+      updateCoordinateOriginInteraction(point, ai);
       return;
     }
     if (!ai.historyCommitted && (Math.abs(point.x - ai.startPoint.x) > 0.1 || Math.abs(point.y - ai.startPoint.y) > 0.1)) { pushCanvasHistory(); ai.historyCommitted = true; }
@@ -1046,6 +1227,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     onCanvasNodeContextMenu,
     onScaleHandlePointerDown,
     onRotateHandlePointerDown,
+    onCoordinateOriginPointerDown,
     setSelectionRotation,
     onCandidateDragStart,
     onCandidateDragEnd,
@@ -1054,6 +1236,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     redoCanvasChange,
     clearCanvas,
     deleteSelectedNodes,
+    reverseCoordinateAxis,
     copySelectedNodes,
     pasteClipboardNodes,
     selectedCoordinateSystems,

@@ -8,6 +8,7 @@ import type {
   ParsedSvgTemplateNode,
   ParsedSvgTemplate,
   FlattenedSvgLeaf,
+  ElementOrientation,
 } from "./types";
 import { selectedChartNames } from "./selectedCharts";
 import {
@@ -139,7 +140,7 @@ const polarChartTypes = new Set([
 ]);
 
 const geographicChartTypes = new Set(["GeoHeatmap"]);
-const noCoordinateChartTypes = new Set(["CirclePacking", "WordCloud"]);
+const noCoordinateChartTypes = new Set(["Calendar", "CirclePacking", "WordCloud"]);
 
 function resolveCoordinateSystem(chartType: string): CoordinateSystem {
   if (geographicChartTypes.has(chartType)) return "Geographic";
@@ -577,6 +578,62 @@ function flattenSvgLeafElement(
   return target;
 }
 
+function measureElementOrientation(
+  rootSvg: SVGSVGElement,
+  source: SVGGraphicsElement,
+): ElementOrientation | undefined {
+  if (!(source instanceof SVGGeometryElement)) return undefined;
+  const elementMatrix = source.getCTM();
+  const rootMatrix = rootSvg.getCTM();
+  if (!elementMatrix || !rootMatrix) return undefined;
+
+  let totalLength = 0;
+  try {
+    totalLength = source.getTotalLength();
+  } catch {
+    return undefined;
+  }
+  if (!Number.isFinite(totalLength) || totalLength <= 0) return undefined;
+
+  const matrix = toDomMatrix(rootMatrix).inverse().multiply(toDomMatrix(elementMatrix));
+  const sampleCount = 32;
+  const points: Point[] = [];
+  try {
+    for (let index = 0; index < sampleCount; index += 1) {
+      const point = source.getPointAtLength(totalLength * index / sampleCount);
+      points.push(transformSvgPoint(matrix, point.x, point.y));
+    }
+  } catch {
+    return undefined;
+  }
+
+  const point = points.reduce(
+    (sum, current) => ({ x: sum.x + current.x / sampleCount, y: sum.y + current.y / sampleCount }),
+    { x: 0, y: 0 },
+  );
+  let xx = 0;
+  let xy = 0;
+  let yy = 0;
+  points.forEach((current) => {
+    const dx = current.x - point.x;
+    const dy = current.y - point.y;
+    xx += dx * dx;
+    xy += dx * dy;
+    yy += dy * dy;
+  });
+  const trace = xx + yy;
+  if (!Number.isFinite(trace) || trace <= 0.0001) return undefined;
+  const spread = Math.hypot(xx - yy, 2 * xy);
+  const confidence = spread / trace;
+  if (!Number.isFinite(confidence) || confidence < 0.08) return undefined;
+  const angle = 0.5 * Math.atan2(2 * xy, xx - yy);
+  return {
+    point,
+    direction: { x: Math.cos(angle), y: Math.sin(angle) },
+    confidence,
+  };
+}
+
 function collectFlattenedSvgLeaves(rootSvg: SVGSVGElement, defsMarkup: string, viewBox: string): FlattenedSvgLeaf[] {
   const leaves: FlattenedSvgLeaf[] = [];
   let nextGroupId = 0;
@@ -597,7 +654,15 @@ function collectFlattenedSvgLeaves(rootSvg: SVGSVGElement, defsMarkup: string, v
       const bounds = getRenderableSvgBounds(rootSvg, element);
       if (!bounds) return;
       const flattenedElement = flattenSvgLeafElement(rootSvg, element, groupAncestors);
-      leaves.push({ groupPath, content: `${defsMarkup}${serializeSvgNode(flattenedElement)}`, viewBox, bounds, contentMinX: bounds.minX, contentMinY: bounds.minY });
+      leaves.push({
+        groupPath,
+        content: `${defsMarkup}${serializeSvgNode(flattenedElement)}`,
+        viewBox,
+        bounds,
+        contentMinX: bounds.minX,
+        contentMinY: bounds.minY,
+        orientation: measureElementOrientation(rootSvg, element),
+      });
       return;
     }
     Array.from(element.children).forEach((child) => visit(child, groupPath, groupAncestors));
@@ -623,7 +688,15 @@ function buildSvgNodeTree(flattenedLeaves: FlattenedSvgLeaf[]): ParsedSvgTemplat
       }
       siblings = groupNode.children;
     });
-    siblings.push({ kind: "leaf", content: leaf.content, viewBox: leaf.viewBox, bounds: leaf.bounds, contentMinX: leaf.contentMinX, contentMinY: leaf.contentMinY });
+    siblings.push({
+      kind: "leaf",
+      content: leaf.content,
+      viewBox: leaf.viewBox,
+      bounds: leaf.bounds,
+      contentMinX: leaf.contentMinX,
+      contentMinY: leaf.contentMinY,
+      orientation: leaf.orientation,
+    });
   });
   const finalizeNode = (node: GroupBuildNode | ParsedSvgLeafTemplateNode): ParsedSvgTemplateNode | null => {
     if (node.kind === "leaf") return node;

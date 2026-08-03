@@ -87,8 +87,15 @@ export function computeAbsoluteFrame(
 }
 
 export function cloneCanvasNode(node: CanvasNode): CanvasNode {
-  if (node.kind === "leaf") return { ...node };
-  return { ...node, children: node.children.map((child) => cloneCanvasNode(child)) };
+  const coordinateGuide = node.coordinateGuide
+    ? { ...node.coordinateGuide, origin: { ...node.coordinateGuide.origin } }
+    : node.coordinateGuide;
+  if (node.kind === "leaf") return { ...node, coordinateGuide };
+  return {
+    ...node,
+    coordinateGuide,
+    children: node.children.map((child) => cloneCanvasNode(child)),
+  };
 }
 
 export function collectNodeBounds(

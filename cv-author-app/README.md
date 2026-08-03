@@ -23,6 +23,14 @@ named subset. Known upstream SVG/annotation export mismatches are documented in
 The `data-binding` directory is the minimal layer for composition: it contains
 only graphical elements with non-empty `encodingInfo` (including expanded
 group bindings), without chart titles, legends, annotations, or backgrounds.
+The same command also writes `../VisAnatomy/charts_svg_separated/coordinate-systems.json`.
+It records each generated chart's axis origin and unit directions; unavailable
+values are `null` when the annotation does not provide enough axis geometry.
+Coordinates use the source SVG coordinate space (therefore positive Y points
+downward), and direction vectors are normalized.
+When a chart carrying this metadata is selected on the canvas, the editor draws
+the two corresponding arrows from the recorded origin; charts with `null`
+metadata remain unchanged.
 
 This template should help get you started developing with Vue 3 in Vite.
 

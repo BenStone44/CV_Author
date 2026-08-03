@@ -269,6 +269,118 @@ function formatNumber(value) {
   return Number(value.toFixed(4)).toString();
 }
 
+function coordinatePoint(x, y) {
+  return { x: Number(formatNumber(x)), y: Number(formatNumber(y)) };
+}
+
+function axisGeometry(annotation, axis) {
+  const allElements = annotation.allElements ?? {};
+  const pathIds = new Set();
+  collectNestedStrings(axis?.path, pathIds);
+  let candidates = [...pathIds]
+    .map((id) => allElements[id])
+    .filter((element) =>
+      element &&
+      ["left", "top", "right", "bottom"].every((key) => finiteNumber(element[key])),
+    );
+  if (candidates.length === 0) {
+    const roles = axis?.channel === "x"
+      ? new Set(["X Axis Line"])
+      : axis?.channel === "y"
+        ? new Set(["Y Axis Line"])
+        : axis?.channel === "angular"
+          ? new Set(["Angular Axis Line"])
+          : new Set(["Radian Axis Line"]);
+    candidates = Object.values(allElements).filter((element) =>
+      roles.has(String(element?.role)) &&
+      ["left", "top", "right", "bottom"].every((key) => finiteNumber(element[key])),
+    );
+  }
+  if (candidates.length === 0) return null;
+
+  const element = candidates[0];
+  const left = element.left;
+  const top = element.top;
+  const right = element.right;
+  const bottom = element.bottom;
+  const width = Math.abs(right - left);
+  const height = Math.abs(bottom - top);
+  if (String(element.type).toLowerCase() === "circle") {
+    return { kind: "circle", center: coordinatePoint((left + right) / 2, (top + bottom) / 2) };
+  }
+
+  // Annotation bounds are sufficient for the straight axis lines used by the dataset.
+  if (width === 0 && height === 0) return null;
+  if (width >= height) {
+    const y = (top + bottom) / 2;
+    return { kind: "line", start: { x: left, y }, end: { x: right, y } };
+  }
+  const x = (left + right) / 2;
+  return { kind: "line", start: { x, y: top }, end: { x, y: bottom } };
+}
+
+function lineIntersection(first, second) {
+  const dx1 = first.end.x - first.start.x;
+  const dy1 = first.end.y - first.start.y;
+  const dx2 = second.end.x - second.start.x;
+  const dy2 = second.end.y - second.start.y;
+  const denominator = dx1 * dy2 - dy1 * dx2;
+  if (Math.abs(denominator) < 1e-9) return null;
+  const offsetX = second.start.x - first.start.x;
+  const offsetY = second.start.y - first.start.y;
+  const parameter = (offsetX * dy2 - offsetY * dx2) / denominator;
+  return { x: first.start.x + parameter * dx1, y: first.start.y + parameter * dy1 };
+}
+
+function axisDirection(axis, origin) {
+  if (!axis || axis.kind !== "line") return null;
+  const preferred = axis.channel === "y" ? { x: 0, y: -1 } : { x: 1, y: 0 };
+  const endpoints = [axis.start, axis.end];
+  const endpoint = endpoints
+    .map((point) => ({ point, distance: (point.x - origin.x) ** 2 + (point.y - origin.y) ** 2 }))
+    .filter(({ distance }) => distance > 1e-9)
+    .sort((left, right) => {
+      const leftProjection = (left.point.x - origin.x) * preferred.x + (left.point.y - origin.y) * preferred.y;
+      const rightProjection = (right.point.x - origin.x) * preferred.x + (right.point.y - origin.y) * preferred.y;
+      return rightProjection - leftProjection;
+    })[0]?.point;
+  if (!endpoint) return null;
+  const length = Math.hypot(endpoint.x - origin.x, endpoint.y - origin.y);
+  return coordinatePoint((endpoint.x - origin.x) / length, (endpoint.y - origin.y) / length);
+}
+
+function extractCoordinateSystem(annotation) {
+  const axes = Array.isArray(annotation.referenceElements?.axes)
+    ? annotation.referenceElements.axes
+    : [];
+  if (axes.length === 0) {
+    return { origin: null, xAxisDirection: null, yAxisDirection: null };
+  }
+
+  const xAxisDefinition = axes.find((axis) => axis?.channel === "x" || axis?.channel === "angular");
+  const yAxisDefinition = axes.find((axis) => axis?.channel === "y" || axis?.channel === "radian");
+  const xAxis = axisGeometry(annotation, xAxisDefinition);
+  const yAxis = axisGeometry(annotation, yAxisDefinition);
+  let origin = null;
+  if (xAxis?.kind === "circle") {
+    origin = xAxis.center;
+  } else if (xAxis?.kind === "line" && yAxis?.kind === "line") {
+    const intersection = lineIntersection(xAxis, yAxis);
+    if (intersection) origin = coordinatePoint(intersection.x, intersection.y);
+  } else if (yAxis?.kind === "circle") {
+    origin = yAxis.center;
+  }
+
+  if (!origin) return { origin: null, xAxisDirection: null, yAxisDirection: null };
+  if (xAxis) xAxis.channel = xAxisDefinition?.channel === "angular" ? "x" : xAxisDefinition?.channel;
+  if (yAxis) yAxis.channel = yAxisDefinition?.channel === "radian" ? "y" : yAxisDefinition?.channel;
+  return {
+    origin,
+    xAxisDirection: axisDirection(xAxis, { x: Number(origin.x), y: Number(origin.y) }),
+    yAxisDirection: axisDirection(yAxis, { x: Number(origin.x), y: Number(origin.y) }),
+  };
+}
+
 function parseViewBox(value) {
   if (typeof value !== "string") return null;
   const values = value.trim().split(/[\s,]+/).map(Number);
@@ -524,6 +636,7 @@ const manifest = {
     coordinateDirectory,
     contentDirectory,
     dataBindingDirectory,
+    coordinateSystems: join(options.output, "coordinate-systems.json"),
   },
   summary: {
     requested: requestedNames.length,
@@ -540,12 +653,32 @@ const manifest = {
   },
   charts: [],
 };
+const coordinateSystems = {
+  version: 1,
+  generatedAt: manifest.generatedAt,
+  source: {
+    annotationsDirectory: options.annotations,
+    dataBindingDirectory,
+  },
+  charts: {},
+};
 
 for (const requestedName of requestedNames) {
   const lookupName = requestedName.toLowerCase();
   const svgFileName = svgFiles.get(lookupName);
   const annotationFileName = annotationFiles.get(lookupName);
-  const result = { name: requestedName, status: "generated", warnings: [] };
+  const emptyCoordinateSystem = {
+    origin: null,
+    xAxisDirection: null,
+    yAxisDirection: null,
+  };
+  const result = {
+    name: requestedName,
+    status: "generated",
+    warnings: [],
+    coordinateSystem: emptyCoordinateSystem,
+  };
+  coordinateSystems.charts[requestedName] = emptyCoordinateSystem;
 
   if (!svgFileName || !annotationFileName) {
     result.status = "error";
@@ -565,6 +698,9 @@ for (const requestedName of requestedNames) {
       parse(svgSource),
       Promise.resolve(JSON.parse(annotationSource)),
     ]);
+    const coordinateSystem = extractCoordinateSystem(annotation);
+    result.coordinateSystem = coordinateSystem;
+    coordinateSystems.charts[requestedName] = coordinateSystem;
     const inferredViewport = ensureSvgViewport(root, annotation);
     const dataBindingBaseViewport = resolveBaseViewport(root, inferredViewport);
 
@@ -694,6 +830,10 @@ for (const requestedName of requestedNames) {
 }
 
 await writeAtomically(join(options.output, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+await writeAtomically(
+  join(options.output, "coordinate-systems.json"),
+  `${JSON.stringify(coordinateSystems, null, 2)}\n`,
+);
 
 console.log(
   [

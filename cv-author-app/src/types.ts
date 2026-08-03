@@ -9,6 +9,26 @@ export type SvgCandidate = {
   unavailable?: boolean;
 };
 
+export type CartesianCoordinateGuide = {
+  type: "Cartesian";
+  origin: Point;
+  xDirection: 1 | -1;
+  yDirection: 1 | -1;
+};
+
+export type PolarCoordinateGuide = {
+  type: "Polar";
+  origin: Point;
+};
+
+export type CoordinateGuide = CartesianCoordinateGuide | PolarCoordinateGuide;
+
+export type ElementOrientation = {
+  point: Point;
+  direction: Point;
+  confidence: number;
+};
+
 export type CompositionType = "layer" | "facet" | "concat" | "nested";
 
 export type CoordinateSystem = "Cartesian" | "Polar" | "Geographic" | "None";
@@ -24,6 +44,7 @@ export type CanvasBaseNode = {
   scaleX: number;
   scaleY: number;
   rotation: number;
+  coordinateGuide?: CoordinateGuide | null;
 };
 
 export type CanvasLeafNode = CanvasBaseNode & {
@@ -63,6 +84,7 @@ export type ParsedSvgLeafTemplateNode = {
   bounds: Bounds;
   contentMinX: number;
   contentMinY: number;
+  orientation?: ElementOrientation;
 };
 
 export type ParsedSvgGroupTemplateNode = {
@@ -83,6 +105,7 @@ export type FlattenedSvgLeaf = {
   bounds: Bounds;
   contentMinX: number;
   contentMinY: number;
+  orientation?: ElementOrientation;
 };
 
 export type ParsedSvgTemplate = {
@@ -127,6 +150,14 @@ export type PanInteraction = {
   startPan: Point;
 };
 
+export type CoordinateOriginInteraction = {
+  type: "coordinate-origin";
+  nodeId: string;
+  startPoint: Point;
+  startOrigin: Point;
+  historyCommitted: boolean;
+};
+
 export type ScaleInteraction = {
   type: "scale";
   handle: ScaleHandle;
@@ -145,6 +176,7 @@ export type Interaction =
   | MarqueeInteraction
   | ScaleInteraction
   | RotateInteraction
+  | CoordinateOriginInteraction
   | PanInteraction;
 
 export type CanvasHistorySnapshot = {
