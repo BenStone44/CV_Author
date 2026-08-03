@@ -4,6 +4,7 @@ import type {
   Bounds,
   Point,
   AbsoluteNodeFrame,
+  ChartSpec,
 } from "./types";
 
 export function clamp(value: number, min: number, max: number) {
@@ -86,14 +87,49 @@ export function computeAbsoluteFrame(
   return { node, x, y, scaleX, scaleY, bounds: boundsFromNodeFrame(x, y, node.width, node.height, scaleX, scaleY, node.rotation) };
 }
 
+export function cloneChartSpec(chartSpec: ChartSpec | null | undefined) {
+  if (!chartSpec) return chartSpec;
+  return {
+    ...chartSpec,
+    encodings: {
+      ...(chartSpec.encodings.x ? { x: { ...chartSpec.encodings.x } } : {}),
+      ...(chartSpec.encodings.y ? { y: { ...chartSpec.encodings.y } } : {}),
+    },
+    series: chartSpec.series ? { ...chartSpec.series } : undefined,
+    scales: chartSpec.scales
+      ? {
+        ...(chartSpec.scales.x
+          ? { x: { ...chartSpec.scales.x, domain: [...chartSpec.scales.x.domain] as [string, string] | [number, number], range: [...chartSpec.scales.x.range] as [number, number] } }
+          : {}),
+        ...(chartSpec.scales.y
+          ? { y: { ...chartSpec.scales.y, domain: [...chartSpec.scales.y.domain] as [string, string] | [number, number], range: [...chartSpec.scales.y.range] as [number, number] } }
+          : {}),
+      }
+      : undefined,
+    plotArea: chartSpec.plotArea ? { ...chartSpec.plotArea } : undefined,
+    styleTokens: chartSpec.styleTokens
+      ? { ...chartSpec.styleTokens, palette: [...chartSpec.styleTokens.palette] }
+      : undefined,
+    renderer: chartSpec.renderer ? { ...chartSpec.renderer } : undefined,
+  };
+}
+
 export function cloneCanvasNode(node: CanvasNode): CanvasNode {
   const coordinateGuide = node.coordinateGuide
     ? { ...node.coordinateGuide, origin: { ...node.coordinateGuide.origin } }
     : node.coordinateGuide;
-  if (node.kind === "leaf") return { ...node, coordinateGuide };
+  const chartSpec = cloneChartSpec(node.chartSpec);
+  const layerSpec = node.layerSpec
+    ? { ...node.layerSpec, x: { ...node.layerSpec.x }, y: { ...node.layerSpec.y }, children: node.layerSpec.children.map((child) => ({ ...child, chartSpec: cloneChartSpec(child.chartSpec)! })) }
+    : node.layerSpec;
+  const nestedSpec = node.nestedSpec ? { ...node.nestedSpec, valueFields: [...node.nestedSpec.valueFields] } : node.nestedSpec;
+  if (node.kind === "leaf") return { ...node, coordinateGuide, chartSpec, layerSpec, nestedSpec };
   return {
     ...node,
     coordinateGuide,
+    chartSpec,
+    layerSpec,
+    nestedSpec,
     children: node.children.map((child) => cloneCanvasNode(child)),
   };
 }
@@ -135,9 +171,9 @@ function serializeCanvasNode(node: CanvasNode): string {
   const transform = node.kind === "leaf"
     ? getLeafNodeTransform(node)
     : getNodeTransform(node);
-  const content = node.kind === "leaf"
+  const content = node.renderedContent ?? (node.kind === "leaf"
     ? node.content
-    : node.children.map((child) => serializeCanvasNode(child)).join("");
+    : node.children.map((child) => serializeCanvasNode(child)).join(""));
   return `<g transform="${transform}">${content}</g>`;
 }
 

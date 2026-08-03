@@ -1,25 +1,35 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { FileSpreadsheet, Lock, Trash2, Unlock, Upload } from "@lucide/vue";
-import Papa from "papaparse";
 import defaultCsv from "../../case1.csv?raw";
+import { useDatasetStore } from "./useDatasetStore";
+import type { DataColumnType } from "./types";
 
 const previewRowLimit = 250;
 
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const panelRef = ref<HTMLElement | null>(null);
 const dataTableRef = ref<HTMLTableElement | null>(null);
-const fileName = ref("");
-const headers = ref<string[]>([]);
-const rows = ref<string[][]>([]);
-const parseError = ref("");
-const parseWarning = ref("");
-const isLoading = ref(false);
 const isDragging = ref(false);
 const expandedWidth = ref(304);
 const canExpand = ref(false);
 const isLocked = ref(false);
+const {
+  activeDataset,
+  parseError,
+  parseWarning,
+  isLoading,
+  importDataset,
+  clearActiveDataset,
+  setColumnType,
+} = useDatasetStore();
 
+const fileName = computed(() => activeDataset.value?.name ?? "");
+const columns = computed(() => activeDataset.value?.columns ?? []);
+const headers = computed(() => columns.value.map((column) => column.name));
+const rows = computed(() =>
+  activeDataset.value?.rows.map((row) => headers.value.map((header) => row[header] ?? "")) ?? [],
+);
 const hasData = computed(() => headers.value.length > 0);
 const previewRows = computed(() => rows.value.slice(0, previewRowLimit));
 const tableStatus = computed(() => {
@@ -51,12 +61,7 @@ function updateExpandedWidth() {
 }
 
 function clearData() {
-  fileName.value = "";
-  headers.value = [];
-  rows.value = [];
-  parseError.value = "";
-  parseWarning.value = "";
-  isLoading.value = false;
+  clearActiveDataset();
   expandedWidth.value = 304;
   canExpand.value = false;
   isLocked.value = false;
@@ -67,60 +72,10 @@ function openFilePicker() {
   fileInputRef.value?.click();
 }
 
-function normalizeRow(row: unknown[]): string[] {
-  return row.map((cell) => (cell == null ? "" : String(cell)));
-}
-
 function importCsv(file: File) {
-  if (!file.name.toLowerCase().endsWith(".csv")) {
-    parseError.value = "Choose a CSV file.";
-    return;
-  }
-
-  isLoading.value = true;
-  parseError.value = "";
-  parseWarning.value = "";
-
-  Papa.parse<unknown[]>(file, {
-    skipEmptyLines: "greedy",
-    complete(result) {
-      const parsedRows = result.data.map(normalizeRow);
-      const columnCount = parsedRows.reduce(
-        (maximum, row) => Math.max(maximum, row.length),
-        0,
-      );
-
-      if (parsedRows.length === 0 || columnCount === 0) {
-        clearData();
-        fileName.value = file.name;
-        parseError.value = "The CSV file is empty.";
-        return;
-      }
-
-      const sourceHeaders = parsedRows[0] ?? [];
-      headers.value = Array.from({ length: columnCount }, (_, index) => {
-        const header = sourceHeaders[index]?.trim();
-        return header || `Column ${index + 1}`;
-      });
-      rows.value = parsedRows
-        .slice(1)
-        .map((row) =>
-          Array.from({ length: columnCount }, (_, index) => row[index] ?? ""),
-        );
-      fileName.value = file.name;
-      parseWarning.value =
-        result.errors.length > 0
-          ? `${result.errors.length} parsing warning${result.errors.length === 1 ? "" : "s"}`
-          : "";
-      isLoading.value = false;
-      void nextTick(updateExpandedWidth);
-      if (fileInputRef.value) fileInputRef.value.value = "";
-    },
-    error(error) {
-      clearData();
-      fileName.value = file.name;
-      parseError.value = error.message || "Unable to read the CSV file.";
-    },
+  void importDataset(file).then(() => {
+    void nextTick(updateExpandedWidth);
+    if (fileInputRef.value) fileInputRef.value.value = "";
   });
 }
 
@@ -140,9 +95,15 @@ function toggleLock() {
   isLocked.value = !isLocked.value;
 }
 
+function onColumnTypeChange(columnName: string, event: Event) {
+  const dataset = activeDataset.value;
+  const type = (event.target as HTMLSelectElement).value as DataColumnType;
+  if (dataset) setColumnType(dataset.id, columnName, type);
+}
+
 onMounted(() => {
   window.addEventListener("resize", updateExpandedWidth);
-  importCsv(new File([defaultCsv], "case1.csv", { type: "text/csv" }));
+  if (!activeDataset.value) importCsv(new File([defaultCsv], "case1.csv", { type: "text/csv" }));
 });
 onBeforeUnmount(() =>
   window.removeEventListener("resize", updateExpandedWidth),
@@ -238,7 +199,16 @@ onBeforeUnmount(() =>
               scope="col"
               :title="header"
             >
-              {{ header }}
+              <span>{{ header }}</span>
+              <select
+                :value="columns[columnIndex]?.type"
+                aria-label="Column type"
+                @change="onColumnTypeChange(header, $event)"
+              >
+                <option value="nominal">nominal</option>
+                <option value="temporal">temporal</option>
+                <option value="quantitative">quantitative</option>
+              </select>
             </th>
           </tr>
         </thead>
@@ -499,6 +469,23 @@ onBeforeUnmount(() =>
   background: #edf3f8;
   color: #33465b;
   font-weight: 700;
+}
+
+.data-table thead th span,
+.data-table thead th small {
+  display: block;
+}
+
+.data-table thead th select {
+  width: 100%;
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #708298;
+  font-size: 9px;
+  font-weight: 500;
+  text-transform: uppercase;
 }
 
 .data-table tbody tr:nth-child(even) td,

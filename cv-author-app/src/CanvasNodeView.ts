@@ -1,5 +1,5 @@
 import { defineComponent, h, type PropType } from "vue";
-import type { CanvasNode, Point } from "./types";
+import type { CanvasNode, EncodingChannel, Point } from "./types";
 import { getNodeTransform, getLeafNodeTransform } from "./canvasUtils";
 
 function arrowHead(end: Point, direction: Point, size: number) {
@@ -21,6 +21,7 @@ function cartesianCoordinateOverlay(
   viewZoom: number,
   onOriginPointerDown?: (node: CanvasNode, event: PointerEvent) => void,
   onAxisReverse?: (node: CanvasNode, axis: "x" | "y") => void,
+  onAxisSelect?: (node: CanvasNode, channel: EncodingChannel) => void,
 ) {
   const guide = node.coordinateGuide;
   if (guide?.type !== "Cartesian") return null;
@@ -41,6 +42,8 @@ function cartesianCoordinateOverlay(
   const yArrowEnd = yDirection === 1 ? yEnd : yStart;
   const yTailEnd = yDirection === 1 ? yStart : yEnd;
   const renderedScale = Math.max(Math.abs(node.scaleX), Math.abs(node.scaleY), 0.0001) * Math.max(viewZoom, 0.0001);
+  const xEncoding = node.chartSpec?.encodings.x;
+  const yEncoding = node.chartSpec?.encodings.y;
 
   const line = (className: string, start: Point, end: Point) => h("line", {
     class: ["coordinate-axis-line", className],
@@ -92,17 +95,56 @@ function cartesianCoordinateOverlay(
       }),
     ]);
   };
+  const axisHitTarget = (channel: EncodingChannel, start: Point, end: Point) => h("line", {
+    class: ["coordinate-axis-hit-target", `coordinate-axis-hit-target--${channel}`],
+    role: "button",
+    "aria-label": `Bind ${channel.toUpperCase()} axis`,
+    x1: start.x,
+    y1: start.y,
+    x2: end.x,
+    y2: end.y,
+    "vector-effect": "non-scaling-stroke",
+    onPointerdown: onAxisSelect
+      ? (event: PointerEvent) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onAxisSelect(node, channel);
+      }
+      : undefined,
+  });
+  const encodingLabel = (channel: EncodingChannel, field: string) => {
+    const isX = channel === "x";
+    const x = isX ? (minX + maxX) / 2 : guide.origin.x - 25 / renderedScale;
+    const y = isX ? guide.origin.y + 25 / renderedScale : (minY + maxY) / 2;
+    return h("text", {
+      class: ["coordinate-axis-binding-label", `coordinate-axis-binding-label--${channel}`],
+      x,
+      y,
+      "font-size": 12 / renderedScale,
+      "text-anchor": "middle",
+      "dominant-baseline": "middle",
+      transform: isX ? undefined : `rotate(-90 ${x} ${y})`,
+    }, field);
+  };
+  if (node.renderedContent) {
+    return h("g", { class: "coordinate-guide coordinate-guide--cartesian coordinate-guide--semantic" }, [
+      axisHitTarget("x", xStart, xEnd),
+      axisHitTarget("y", yStart, yEnd),
+    ]);
+  }
   return h("g", { class: "coordinate-guide coordinate-guide--cartesian" }, [
-    line("coordinate-axis-line--tail coordinate-axis-line--x", xTailEnd, guide.origin),
-    line("coordinate-axis-line--arrow coordinate-axis-line--x", guide.origin, xArrowEnd),
+    line(`coordinate-axis-line--tail coordinate-axis-line--x${xEncoding ? " coordinate-axis-line--bound" : ""}`, xTailEnd, guide.origin),
+    line(`coordinate-axis-line--arrow coordinate-axis-line--x${xEncoding ? " coordinate-axis-line--bound" : ""}`, guide.origin, xArrowEnd),
+    axisHitTarget("x", xStart, xEnd),
     reverseTarget("x", xArrowEnd, { x: xDirection, y: 0 }),
     h("path", {
       class: "coordinate-axis-arrowhead coordinate-axis-line--x",
       d: arrowHead(xArrowEnd, { x: xDirection, y: 0 }, arrowSize),
       "vector-effect": "non-scaling-stroke",
     }),
-    line("coordinate-axis-line--tail coordinate-axis-line--y", yTailEnd, guide.origin),
-    line("coordinate-axis-line--arrow coordinate-axis-line--y", guide.origin, yArrowEnd),
+    line(`coordinate-axis-line--tail coordinate-axis-line--y${yEncoding ? " coordinate-axis-line--bound" : ""}`, yTailEnd, guide.origin),
+    line(`coordinate-axis-line--arrow coordinate-axis-line--y${yEncoding ? " coordinate-axis-line--bound" : ""}`, guide.origin, yArrowEnd),
+    axisHitTarget("y", yStart, yEnd),
     reverseTarget("y", yArrowEnd, { x: 0, y: yDirection }),
     h("path", {
       class: "coordinate-axis-arrowhead coordinate-axis-line--y",
@@ -131,6 +173,8 @@ function cartesianCoordinateOverlay(
       "pointer-events": "none",
       "vector-effect": "non-scaling-stroke",
     }),
+    ...(xEncoding ? [encodingLabel("x", xEncoding.field)] : []),
+    ...(yEncoding ? [encodingLabel("y", yEncoding.field)] : []),
   ]);
 }
 
@@ -189,10 +233,12 @@ export const CanvasNodeView: any = defineComponent({
     selected: { type: Boolean, default: false },
     onNodePointerDown: { type: Function as PropType<(node: CanvasNode, event: PointerEvent) => void>, default: null },
     onNodeContextMenu: { type: Function as PropType<(node: CanvasNode, event: MouseEvent) => void>, default: null },
+    onMarkPointerDown: { type: Function as PropType<(node: CanvasNode, event: PointerEvent) => void>, default: null },
   },
   setup(props): () => any {
     return () => {
       const NodeView = CanvasNodeView;
+      const markHandler = (props as any).onMarkPointerDown as ((node: CanvasNode, event: PointerEvent) => void) | null;
       const sharedProps = {
         class: ["canvas-object", props.selected ? "canvas-object--selected" : ""],
         "data-node-id": props.node.id,
@@ -217,10 +263,24 @@ export const CanvasNodeView: any = defineComponent({
             width: Math.max(props.node.width, 1),
             height: Math.max(props.node.height, 1),
             fill: "transparent",
-            "pointer-events": "all",
-            style: { pointerEvents: "all" },
+            "pointer-events": markHandler ? "none" : "all",
+            style: { pointerEvents: markHandler ? "none" : "all" },
           }),
-          h("g", { innerHTML: props.node.content, style: { pointerEvents: "none" } }),
+          h("g", { class: props.node.renderedContent && markHandler ? "semantic-rendered-content" : undefined, innerHTML: props.node.renderedContent ?? props.node.content, style: { pointerEvents: props.node.renderedContent && markHandler ? "all" : "none" }, onPointerdown: props.node.renderedContent && markHandler ? (event: PointerEvent) => markHandler(props.node, event) : undefined }),
+        ]);
+      }
+
+      if (props.node.renderedContent) {
+        return h("g", sharedProps, [
+          h("rect", {
+            x: 0,
+            y: 0,
+            width: Math.max(props.node.width, 1),
+            height: Math.max(props.node.height, 1),
+            fill: "transparent",
+            "pointer-events": markHandler ? "none" : "all",
+          }),
+          h("g", { class: markHandler ? "semantic-rendered-content" : undefined, innerHTML: props.node.renderedContent, style: { pointerEvents: markHandler ? "all" : "none" }, onPointerdown: markHandler ? (event: PointerEvent) => markHandler(props.node, event) : undefined }),
         ]);
       }
 
@@ -250,6 +310,10 @@ export const CanvasCoordinateGuideView = defineComponent({
       type: Function as PropType<(node: CanvasNode, axis: "x" | "y") => void>,
       default: null,
     },
+    onAxisSelect: {
+      type: Function as PropType<(node: CanvasNode, channel: EncodingChannel) => void>,
+      default: null,
+    },
   },
   setup(props) {
     return () => {
@@ -259,6 +323,7 @@ export const CanvasCoordinateGuideView = defineComponent({
           props.viewZoom,
           props.onOriginPointerDown ?? undefined,
           props.onAxisReverse ?? undefined,
+          props.onAxisSelect ?? undefined,
         )
         : polarCoordinateOverlay(props.node, props.viewZoom);
       if (!overlay) return null;

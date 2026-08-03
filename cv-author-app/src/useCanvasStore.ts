@@ -31,7 +31,20 @@ import type {
   SvgCandidate,
   CompositionType,
   LayerOrderAction,
+  AxisBindingTarget,
+  EncodingChannel,
+  ChartSpec,
+  LayerSpec,
+  NestedSpec,
+  SemanticSelection,
 } from "./types";
+import { useDatasetStore } from "./useDatasetStore";
+import { scoreSeriesCandidates } from "./seriesInference";
+import {
+  extractChartStyleTokens,
+  isLineChartType,
+  renderLineChart,
+} from "./lineRenderer";
 import {
   candidates,
   loadSvgTemplate,
@@ -48,7 +61,9 @@ import {
   collectNodeBounds,
   computeBounds,
   createCanvasNodesSvgMarkup,
+  cloneChartSpec,
 } from "./canvasUtils";
+import { renderLayerChart, renderNestedPie } from "./semanticRenderer";
 
 const historyLimit = 50;
 export const MIN_ZOOM = 0.25;
@@ -92,6 +107,7 @@ export function getFilterIconSvg(icon: IconKind): string {
 }
 
 export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
+  const { datasets, activeDataset, getDataset } = useDatasetStore();
   // --- sidebar state ---
   const selectedCoordinateSystems = ref<Set<CoordinateSystem>>(new Set());
   const selectedChartType = ref("All");
@@ -149,6 +165,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const draggedCandidateId = ref<string | null>(null);
   const loadingDrop = ref(false);
   const importNotice = ref<string | null>(null);
+  const axisBindingTarget = ref<AxisBindingTarget | null>(null);
+  const semanticSelection = ref<SemanticSelection | null>(null);
+  let restoredCanvas = false;
   let importNoticeTimer: number | null = null;
   let clipboardPasteCount = 0;
 
@@ -202,6 +221,28 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const selectedNodes = computed(() =>
     selectedIds.value.map((id) => getRootNode(id)).filter((n): n is CanvasNode => !!n),
   );
+  const axisBindingNode = computed(() =>
+    axisBindingTarget.value ? getRootNode(axisBindingTarget.value.nodeId) : null,
+  );
+  const axisBindingDataset = computed(() => {
+    const datasetId = axisBindingNode.value?.chartSpec?.datasetId;
+    return datasetId ? getDataset(datasetId) : activeDataset.value;
+  });
+  const axisBindingColumns = computed(() => axisBindingDataset.value?.columns ?? []);
+  const axisBindingValue = computed(() => {
+    const target = axisBindingTarget.value;
+    const node = axisBindingNode.value;
+    if (!target || !node) return "";
+    return node.chartSpec?.encodings[target.channel]?.field ?? "";
+  });
+  const axisBindingSeriesCandidates = computed(() => {
+    const node = axisBindingNode.value;
+    const dataset = axisBindingDataset.value;
+    if (!node?.chartSpec || !dataset || !isLineChartType(node.chartSpec.chartType)) return [];
+    return scoreSeriesCandidates(dataset, node.chartSpec);
+  });
+  const axisBindingSeriesValue = computed(() => axisBindingNode.value?.chartSpec?.series?.field ?? "");
+  const axisBindingRendererError = computed(() => axisBindingNode.value?.chartSpec?.renderer?.error ?? "");
   const selectionBounds = computed<Bounds | null>(() =>
     computeBounds(canvasNodes.value, selectedIds.value),
   );
@@ -239,7 +280,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const canDelete = computed(() => selectedNodes.value.length > 0);
   const canPaste = computed(() => clipboardNodes.value.length > 0);
   const canGroup = computed(() => selectedNodes.value.length > 1);
-  const canCompose = computed(() => selectedNodes.value.length > 1);
+  const canCompose = computed(() => selectedNodes.value.length > 1 || !!semanticSelection.value?.rowKey);
   const canFacet = computed(() => selectedNodes.value.length > 0);
   const canUngroup = computed(() => selectedNodes.value.some((n) => n.kind === "group"));
   const canMoveSelectionForward = computed(() => {
@@ -302,6 +343,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     detachPointerListeners();
     canvasNodes.value = snapshot.nodes.map((n) => cloneCanvasNode(n));
     setSelection(snapshot.selectedIds);
+    axisBindingTarget.value = null;
+    semanticSelection.value = null;
   }
   function undoCanvasChange() {
     const snapshot = undoStack.value.pop();
@@ -340,6 +383,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     pushCanvasHistory();
     canvasNodes.value = [];
     selectedIds.value = [];
+    axisBindingTarget.value = null;
+    semanticSelection.value = null;
   }
   function deleteSelectedNodes() {
     const sel = new Set(selectedIds.value);
@@ -347,7 +392,127 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     pushCanvasHistory();
     canvasNodes.value = canvasNodes.value.filter((n) => !sel.has(n.id));
     selectedIds.value = [];
+    if (axisBindingTarget.value && sel.has(axisBindingTarget.value.nodeId)) {
+      axisBindingTarget.value = null;
+    }
     contextMenu.value = null;
+    semanticSelection.value = null;
+  }
+
+  function renderSemanticNode(node: CanvasNode) {
+    if (!node.layerSpec || node.coordinateGuide?.type !== "Cartesian") return;
+    const dataset = getDataset(node.layerSpec.datasetId);
+    if (!dataset) return;
+    const lineChild = node.layerSpec.children.find((child) => child.role === "line");
+    if (!lineChild) return;
+    const chartSpec = { ...lineChild.chartSpec, encodings: { ...lineChild.chartSpec.encodings }, series: lineChild.chartSpec.series };
+    try {
+      const result = renderLayerChart({
+        chartId: node.id,
+        width: node.width,
+        height: node.height,
+        minX: 0,
+        minY: 0,
+        coordinateGuide: node.coordinateGuide,
+        chartSpec,
+        dataset,
+        layerSpec: node.layerSpec,
+      });
+      node.chartSpec = { ...chartSpec, scales: result.scales, plotArea: result.plotArea, renderer: { kind: "deterministic-line", version: 1, status: "ready" } };
+      node.renderedContent = result.content;
+      if (node.nestedSpec) {
+        const nested = renderNestedPie({ chartId: node.id, width: node.width, height: node.height, minX: 0, minY: 0, baseSpec: node.chartSpec, nestedSpec: node.nestedSpec, dataset });
+        node.renderedContent += nested.content;
+      }
+    } catch (error) {
+      node.renderedContent = null;
+      node.chartSpec = { ...chartSpec, renderer: { kind: "deterministic-line", version: 1, status: "error", error: error instanceof Error ? error.message : "Unable to render Layer." } };
+    }
+  }
+
+  function onSemanticMarkPointerDown(node: CanvasNode, event: PointerEvent) {
+    const target = event.target instanceof Element ? event.target.closest("[data-mark-role]") : null;
+    if (!(target instanceof Element)) return;
+    const role = target.getAttribute("data-mark-role") ?? "";
+    const rowKey = target.getAttribute("data-row-key") ?? undefined;
+    const dataset = node.layerSpec ? getDataset(node.layerSpec.datasetId) : node.chartSpec?.datasetId ? getDataset(node.chartSpec.datasetId) : activeDataset.value;
+    const row = dataset?.rows.find((item) => (dataset.primaryKey ?? []).map((field) => item[field] ?? "").join("|") === rowKey);
+    semanticSelection.value = { nodeId: node.id, role, rowKey, person: row?.person, time: row?.time };
+    const hasModifier = event.shiftKey || event.metaKey || event.ctrlKey;
+    if (hasModifier) toggleSelection([node.id]);
+    else setSelection([node.id]);
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function createSemanticLayer() {
+    // A newly dropped chart has an empty encoding spec. It is still a valid
+    // Layer child: inherit its missing bindings from the configured Cartesian
+    // chart, while keeping explicitly conflicting bindings invalid.
+    const nodes = selectedNodes.value.filter((node) => node.chartSpec && node.coordinateGuide?.type === "Cartesian");
+    if (nodes.length < 2) return false;
+    const configured = nodes.filter((node) => node.chartSpec!.encodings.x && node.chartSpec!.encodings.y);
+    const first = configured.find((node) => isLineChartType(node.chartSpec!.chartType)) ?? configured[0];
+    if (!first?.chartSpec?.encodings.x || !first.chartSpec.encodings.y) return false;
+    const sharedGuide = first.coordinateGuide;
+    if (sharedGuide?.type !== "Cartesian") return false;
+    const datasetId = first.chartSpec.datasetId;
+    const xField = first.chartSpec.encodings.x.field;
+    const yField = first.chartSpec.encodings.y.field;
+    if (!nodes.every((node) => {
+      const spec = node.chartSpec!;
+      return spec.datasetId === datasetId
+        && (!spec.encodings.x || spec.encodings.x.field === xField)
+        && (!spec.encodings.y || spec.encodings.y.field === yField);
+    })) return false;
+    const bounds = selectionBounds.value;
+    if (!bounds) return false;
+    const inheritedX = { ...first.chartSpec.encodings.x };
+    const inheritedY = { ...first.chartSpec.encodings.y };
+    const lineNode = nodes.find((node) => isLineChartType(node.chartSpec!.chartType));
+    if (!lineNode) return false;
+    const layer: CanvasGroupNode = {
+      kind: "group", id: crypto.randomUUID(), name: "Layer", x: bounds.minX, y: bounds.minY, width: Math.max(bounds.width, 1), height: Math.max(bounds.height, 1), scaleX: 1, scaleY: 1, rotation: 0,
+      coordinateGuide: { type: "Cartesian", origin: { x: 0, y: bounds.height }, xDirection: sharedGuide.xDirection, yDirection: sharedGuide.yDirection },
+      chartSpec: cloneChartSpec(first.chartSpec), layerSpec: {
+        type: "layer", datasetId, x: inheritedX, y: inheritedY,
+        children: nodes.map((node) => {
+          const source = cloneChartSpec(node.chartSpec)!;
+          const chartSpec: ChartSpec = {
+            ...source,
+            datasetId,
+            encodings: {
+              ...source.encodings,
+              x: source.encodings.x ?? inheritedX,
+              y: source.encodings.y ?? inheritedY,
+            },
+          };
+          return { nodeId: node.id, chartSpec, role: node.id === lineNode.id ? "line" : "scatter" };
+        }),
+      }, children: [],
+    };
+    pushCanvasHistory();
+    canvasNodes.value = canvasNodes.value.filter((node) => !selectedIds.value.includes(node.id));
+    canvasNodes.value.push(layer);
+    renderSemanticNode(layer);
+    setSelection([layer.id]);
+    return true;
+  }
+
+  function createNestedPie() {
+    const selection = semanticSelection.value;
+    if (!selection?.rowKey) return false;
+    const node = getRootNode(selection.nodeId);
+    const datasetId = node?.layerSpec?.datasetId ?? node?.chartSpec?.datasetId;
+    const dataset = datasetId ? getDataset(datasetId) : null;
+    if (!node?.chartSpec || !dataset) return false;
+    const nestedSpec: NestedSpec = { type: "nested", parentRowKey: selection.rowKey, parentChartNodeId: node.id, valueFields: ["water_kg", "fat_kg", "muscle_kg", "minerals_kg"], innerChartType: "PieChart" };
+    pushCanvasHistory();
+    node.nestedSpec = nestedSpec;
+    try {
+      renderSemanticNode(node);
+    } catch { /* preserve the original chart when nested rendering fails */ }
+    return true;
   }
   function reverseCoordinateAxis(target: CanvasNode, axis: "x" | "y") {
     const node = getRootNode(target.id);
@@ -358,18 +523,195 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     } else {
       node.coordinateGuide.yDirection = node.coordinateGuide.yDirection === 1 ? -1 : 1;
     }
+    renderLineNode(node);
+  }
+  function onCoordinateAxisSelect(target: CanvasNode, channel: EncodingChannel) {
+    const node = getRootNode(target.id);
+    if (!node || node.coordinateGuide?.type !== "Cartesian") return;
+    setSelection([node.id]);
+    axisBindingTarget.value = { nodeId: node.id, channel };
+    contextMenu.value = null;
+  }
+  function closeAxisBinding() {
+    axisBindingTarget.value = null;
+  }
+  function bindAxisField(fieldName: string) {
+    const target = axisBindingTarget.value;
+    const node = axisBindingNode.value;
+    const dataset = axisBindingDataset.value;
+    if (!target || !node || !dataset) return;
+    const column = dataset.columns.find((item) => item.name === fieldName);
+    if (!column) return;
+    const candidateId = node.kind === "leaf" ? node.candidateId : "";
+    pushCanvasHistory();
+    const encodings = {
+      ...node.chartSpec?.encodings,
+      [target.channel]: { field: column.name, type: column.type },
+    };
+    const series = node.chartSpec?.series?.field === column.name
+      ? undefined
+      : node.chartSpec?.series;
+    node.chartSpec = {
+      ...node.chartSpec,
+      chartType: node.chartSpec?.chartType ?? getCandidate(candidateId)?.chartType ?? node.name,
+      datasetId: dataset.id,
+      encodings,
+      series,
+    };
+    renderLineNode(node);
+    const keepInspectorOpen = isLineChartType(node.chartSpec.chartType)
+      && !!node.chartSpec.encodings.x
+      && !!node.chartSpec.encodings.y;
+    if (!keepInspectorOpen) axisBindingTarget.value = null;
+  }
+  function clearAxisBinding() {
+    const target = axisBindingTarget.value;
+    const node = axisBindingNode.value;
+    if (!target || !node?.chartSpec?.encodings[target.channel]) return;
+    pushCanvasHistory();
+    const encodings = { ...node.chartSpec.encodings };
+    delete encodings[target.channel];
+    node.chartSpec = {
+      ...node.chartSpec,
+      encodings,
+      scales: undefined,
+      plotArea: undefined,
+      renderer: undefined,
+    };
+    node.renderedContent = null;
+    axisBindingTarget.value = null;
+  }
+  function confirmSeriesField(fieldName: string) {
+    const node = axisBindingNode.value;
+    const dataset = axisBindingDataset.value;
+    if (!node?.chartSpec || !dataset) return;
+    const column = dataset.columns.find((item) => item.name === fieldName);
+    if (!column || column.type !== "nominal") return;
+    const boundFields = new Set(Object.values(node.chartSpec.encodings).map((encoding) => encoding?.field));
+    if (boundFields.has(fieldName)) return;
+    pushCanvasHistory();
+    node.chartSpec = {
+      ...node.chartSpec,
+      series: { field: column.name, type: column.type },
+    };
+    renderLineNode(node);
+    if (node.chartSpec.renderer?.status !== "error") axisBindingTarget.value = null;
+  }
+  function clearSeriesBinding() {
+    const node = axisBindingNode.value;
+    if (!node?.chartSpec?.series) return;
+    pushCanvasHistory();
+    node.chartSpec = {
+      ...node.chartSpec,
+      series: undefined,
+      scales: undefined,
+      plotArea: undefined,
+      renderer: undefined,
+    };
+    node.renderedContent = null;
   }
   function closeContextMenu() { contextMenu.value = null; }
+
+  function renderLineNode(node: CanvasNode) {
+    const chartSpec = node.chartSpec;
+    if (!chartSpec || !isLineChartType(chartSpec.chartType)) return;
+    const complete = chartSpec.encodings.x && chartSpec.encodings.y && chartSpec.series;
+    if (!complete || node.coordinateGuide?.type !== "Cartesian") {
+      node.renderedContent = null;
+      node.chartSpec = {
+        ...chartSpec,
+        scales: undefined,
+        plotArea: undefined,
+        renderer: undefined,
+      };
+      return;
+    }
+    const dataset = getDataset(chartSpec.datasetId);
+    if (!dataset) {
+      node.renderedContent = null;
+      node.chartSpec = {
+        ...chartSpec,
+        scales: undefined,
+        plotArea: undefined,
+        renderer: {
+          kind: "deterministic-line",
+          version: 1,
+          status: "error",
+          error: "The bound dataset is no longer available.",
+        },
+      };
+      return;
+    }
+    const syncEncodingType = (encoding: typeof chartSpec.encodings.x) => {
+      if (!encoding) return undefined;
+      const column = dataset.columns.find((item) => item.name === encoding.field);
+      return column ? { ...encoding, type: column.type } : encoding;
+    };
+    const seriesColumn = dataset.columns.find((item) => item.name === chartSpec.series?.field);
+    const syncedChartSpec: ChartSpec = {
+      ...chartSpec,
+      encodings: {
+        x: syncEncodingType(chartSpec.encodings.x),
+        y: syncEncodingType(chartSpec.encodings.y),
+      },
+      series: chartSpec.series && seriesColumn
+        ? { ...chartSpec.series, type: seriesColumn.type }
+        : chartSpec.series,
+    };
+    try {
+      const result = renderLineChart({
+        chartId: node.id,
+        width: node.width,
+        height: node.height,
+        minX: node.kind === "leaf" ? node.contentMinX : 0,
+        minY: node.kind === "leaf" ? node.contentMinY : 0,
+        coordinateGuide: node.coordinateGuide,
+        chartSpec: syncedChartSpec,
+        dataset,
+      });
+      node.renderedContent = result.content;
+      node.chartSpec = {
+        ...syncedChartSpec,
+        scales: result.scales,
+        plotArea: result.plotArea,
+        renderer: {
+          kind: "deterministic-line",
+          version: 1,
+          status: "ready",
+        },
+      };
+    } catch (error) {
+      node.renderedContent = null;
+      node.chartSpec = {
+        ...syncedChartSpec,
+        scales: undefined,
+        plotArea: undefined,
+        renderer: {
+          kind: "deterministic-line",
+          version: 1,
+          status: "error",
+          error: error instanceof Error ? error.message : "Unable to render this line chart.",
+        },
+      };
+    }
+  }
 
   function cloneCanvasNodeForPaste(node: CanvasNode): CanvasNode {
     const nextId = crypto.randomUUID();
     const coordinateGuide = node.coordinateGuide
       ? { ...node.coordinateGuide, origin: { ...node.coordinateGuide.origin } }
       : node.coordinateGuide;
+    const chartSpec = cloneChartSpec(node.chartSpec);
     if (node.kind === "leaf") {
-      return { ...node, coordinateGuide, id: nextId, name: `${node.name} copy`, content: scopeSvgContent(node.content, nextId) };
+      const clone = { ...node, coordinateGuide, chartSpec, id: nextId, name: `${node.name} copy`, content: scopeSvgContent(node.content, nextId) };
+      renderLineNode(clone);
+      renderSemanticNode(clone);
+      return clone;
     }
-    return { ...node, coordinateGuide, id: nextId, name: `${node.name} copy`, children: node.children.map((c) => cloneCanvasNodeForPaste(c)) };
+    const clone = { ...node, coordinateGuide, chartSpec, id: nextId, name: `${node.name} copy`, children: node.children.map((c) => cloneCanvasNodeForPaste(c)) };
+    renderLineNode(clone);
+    renderSemanticNode(clone);
+    return clone;
   }
   function copySelectedNodes() {
     const sel = new Set(selectedIds.value);
@@ -591,6 +933,16 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     };
   }
   function createCompositionCandidate(type: CompositionType) {
+    if (type === "layer") {
+      if (createSemanticLayer()) setImportNotice("Layer created with shared scales.");
+      else if (selectedNodes.value.length > 1) setImportNotice("Layer requires two compatible Cartesian charts with the same X/Y bindings.");
+      return;
+    }
+    if (type === "nested") {
+      if (createNestedPie()) setImportNotice("Nested Pie created for all dataset points.");
+      else setImportNotice("Select a point mark in a semantic Layer first.");
+      return;
+    }
     const bounds = selectionBounds.value;
     if ((type === "facet" ? !canFacet.value : !canCompose.value) || !bounds) return;
     const selected = new Set(selectedIds.value);
@@ -659,6 +1011,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     point: Point,
     forceOuterGroup = false,
     coordinateSystem: CoordinateSystem = "None",
+    chartType?: string,
+    datasetId?: string,
   ) {
     const initialWidth = 800;
     const scale = initialWidth / template.width;
@@ -667,6 +1021,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const x = clamp(point.x - size.width / 2, canvasBounds.minX, canvasBounds.maxX - size.width);
     const y = clamp(point.y - size.height / 2, canvasBounds.minY, canvasBounds.maxY - size.height);
     const nameCounters = { leaf: 0, group: 0 };
+    const styleTokens = chartType && isLineChartType(chartType)
+      ? extractChartStyleTokens(template)
+      : undefined;
     const instantiateNode = (node: import("./types").ParsedSvgTemplateNode, parentBounds: import("./types").Bounds | null): CanvasNode => {
       const isRoot = !parentBounds;
       const nodeX = isRoot ? x + (node.bounds.minX - template.minX) * scale : node.bounds.minX - parentBounds!.minX;
@@ -698,14 +1055,17 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
               })(),
             }
             : null;
+      const chartSpec = isRoot && chartType && datasetId && coordinateSystem !== "None"
+        ? { chartType, datasetId, encodings: {}, styleTokens } satisfies ChartSpec
+        : undefined;
       if (node.kind === "leaf") {
         const id = crypto.randomUUID();
         nameCounters.leaf += 1;
-        return { kind: "leaf", id, candidateId: sourceId, name: `${name}-${nameCounters.leaf}`, content: scopeSvgContent(node.content, id), viewBox: node.viewBox, width: Math.max(node.bounds.width, 1), height: Math.max(node.bounds.height, 1), x: nodeX, y: nodeY, scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, contentMinX: node.contentMinX, contentMinY: node.contentMinY, coordinateGuide } satisfies CanvasLeafNode;
+        return { kind: "leaf", id, candidateId: sourceId, name: `${name}-${nameCounters.leaf}`, content: scopeSvgContent(node.content, id), viewBox: node.viewBox, width: Math.max(node.bounds.width, 1), height: Math.max(node.bounds.height, 1), x: nodeX, y: nodeY, scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, contentMinX: node.contentMinX, contentMinY: node.contentMinY, coordinateGuide, chartSpec } satisfies CanvasLeafNode;
       }
       nameCounters.group += 1;
       const groupName = node.name ? `${name}-${node.name}` : `${name}-group-${nameCounters.group}`;
-      return { kind: "group", id: crypto.randomUUID(), name: groupName, x: nodeX, y: nodeY, width: Math.max(node.bounds.width, 1), height: Math.max(node.bounds.height, 1), scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, coordinateGuide, children: node.children.map((c) => instantiateNode(c, node.bounds)) } satisfies CanvasGroupNode;
+      return { kind: "group", id: crypto.randomUUID(), name: groupName, x: nodeX, y: nodeY, width: Math.max(node.bounds.width, 1), height: Math.max(node.bounds.height, 1), scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, coordinateGuide, chartSpec, children: node.children.map((c) => instantiateNode(c, node.bounds)) } satisfies CanvasGroupNode;
     };
     let nextItems = template.nodes.map((n) => instantiateNode(n, null));
     if (forceOuterGroup && (nextItems.length !== 1 || nextItems[0]?.kind !== "group")) {
@@ -748,6 +1108,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         point,
         !!candidate.compositionType,
         candidate.coordinateSystem,
+        candidate.chartType,
+        activeDataset.value?.id,
       );
     }
     finally { loadingDrop.value = false; }
@@ -765,9 +1127,19 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     try {
       const markup = await file.text();
       const name = file.name.replace(/\.svg$/i, "");
-      const coordinateSystem = candidates.find((candidate) => candidate.name === name)?.coordinateSystem ?? "None";
+      const matchingCandidate = candidates.find((candidate) => candidate.name === name);
+      const coordinateSystem = matchingCandidate?.coordinateSystem ?? "None";
       const t = parseSvgTemplate(markup);
-      createCanvasNodesFromTemplate(`file:${file.name}:${crypto.randomUUID()}`, name, t, point, false, coordinateSystem);
+      createCanvasNodesFromTemplate(
+        `file:${file.name}:${crypto.randomUUID()}`,
+        name,
+        t,
+        point,
+        false,
+        coordinateSystem,
+        matchingCandidate?.chartType,
+        activeDataset.value?.id,
+      );
     }
     finally { loadingDrop.value = false; }
   }
@@ -1173,6 +1545,25 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     window.addEventListener("keydown", onWindowKeyDown);
     window.addEventListener("click", closeContextMenu);
   });
+  watch(datasets, () => {
+    canvasNodes.value.forEach((node) => { renderLineNode(node); renderSemanticNode(node); });
+    if (!restoredCanvas && datasets.value.length > 0) {
+      restoredCanvas = true;
+      try {
+        const raw = localStorage.getItem("cv-author-canvas-v1");
+        if (raw) {
+          const saved = JSON.parse(raw) as { nodes?: CanvasNode[] };
+          if (Array.isArray(saved.nodes)) {
+            canvasNodes.value = saved.nodes.map((node) => cloneCanvasNode(node));
+            canvasNodes.value.forEach((node) => { renderLineNode(node); renderSemanticNode(node); });
+          }
+        }
+      } catch { /* ignore malformed saved projects */ }
+    }
+  }, { deep: true });
+  watch(canvasNodes, (nodes) => {
+    try { localStorage.setItem("cv-author-canvas-v1", JSON.stringify({ version: 1, nodes })); } catch { /* storage is optional */ }
+  }, { deep: true });
   onBeforeUnmount(() => {
     detachPointerListeners();
     window.removeEventListener("keydown", onWindowKeyDown);
@@ -1192,6 +1583,14 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     viewZoom,
     viewPan,
     selectedIds,
+    semanticSelection,
+    axisBindingTarget,
+    axisBindingNode,
+    axisBindingColumns,
+    axisBindingValue,
+    axisBindingSeriesCandidates,
+    axisBindingSeriesValue,
+    axisBindingRendererError,
     interaction,
     contextMenu,
     draggedCandidateId,
@@ -1224,10 +1623,17 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     onCanvasWheel,
     onCanvasContextMenu,
     onCanvasNodePointerDown,
+    onSemanticMarkPointerDown,
     onCanvasNodeContextMenu,
     onScaleHandlePointerDown,
     onRotateHandlePointerDown,
     onCoordinateOriginPointerDown,
+    onCoordinateAxisSelect,
+    bindAxisField,
+    clearAxisBinding,
+    confirmSeriesField,
+    clearSeriesBinding,
+    closeAxisBinding,
     setSelectionRotation,
     onCandidateDragStart,
     onCandidateDragEnd,
@@ -1242,6 +1648,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     selectedCoordinateSystems,
     toggleCoordinateSystem,
     createCompositionCandidate,
+    createSemanticLayer,
+    createNestedPie,
     groupSelectedItems,
     ungroupSelectedItems,
     dissolveSelectedGroups,

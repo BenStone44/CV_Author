@@ -1,8 +1,14 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { X } from "@lucide/vue";
 import { CanvasCoordinateGuideView, CanvasNodeView } from "./CanvasNodeView";
 import CsvDataPanel from "./CsvDataPanel.vue";
-import type { CompositionType, SvgCandidate } from "./types";
+import type {
+  CanvasNode,
+  CompositionType,
+  EncodingChannel,
+  SvgCandidate,
+} from "./types";
 import {
   useCanvasStore,
   coordinateOptions,
@@ -23,6 +29,14 @@ const {
   viewZoom,
   viewPan,
   selectedIds,
+  semanticSelection,
+  axisBindingTarget,
+  axisBindingNode,
+  axisBindingColumns,
+  axisBindingValue,
+  axisBindingSeriesCandidates,
+  axisBindingSeriesValue,
+  axisBindingRendererError,
   contextMenu,
   draggedCandidateId,
   loadingDrop,
@@ -53,10 +67,17 @@ const {
   onCanvasWheel,
   onCanvasContextMenu,
   onCanvasNodePointerDown,
+  onSemanticMarkPointerDown,
   onCanvasNodeContextMenu,
   onScaleHandlePointerDown,
   onRotateHandlePointerDown,
   onCoordinateOriginPointerDown,
+  onCoordinateAxisSelect,
+  bindAxisField,
+  clearAxisBinding,
+  confirmSeriesField,
+  clearSeriesBinding,
+  closeAxisBinding,
   setSelectionRotation,
   onCandidateDragStart,
   onCandidateDragEnd,
@@ -78,6 +99,7 @@ const {
 } = useCanvasStore(canvasRef);
 
 const activeCompositionType = ref<CompositionType | null>(null);
+const seriesDraftField = ref("");
 const activeCompositionOption = computed(() =>
   compositionOptions.find(
     (option) => option.value === activeCompositionType.value,
@@ -94,10 +116,27 @@ const selectedCanvasNodesWithCoordinateGuides = computed(() =>
     && !!node.coordinateGuide,
   ),
 );
+watch(
+  [axisBindingTarget, axisBindingSeriesValue, axisBindingSeriesCandidates],
+  ([target, confirmedField, candidates]) => {
+    if (!target) {
+      seriesDraftField.value = "";
+      return;
+    }
+    const available = candidates.some((candidate) => candidate.field === seriesDraftField.value);
+    if (confirmedField && candidates.some((candidate) => candidate.field === confirmedField)) {
+      seriesDraftField.value = confirmedField;
+    } else if (!available) {
+      seriesDraftField.value = candidates[0]?.field ?? "";
+    }
+  },
+  { immediate: true },
+);
 
 function openCompositionCandidates(type: CompositionType) {
+  closeAxisBinding();
   createCompositionCandidate(type);
-  activeCompositionType.value = type;
+  activeCompositionType.value = type === "nested" ? null : type;
 }
 
 function closeCompositionCandidates() {
@@ -111,7 +150,30 @@ async function selectCompositionCandidate(candidate: SvgCandidate) {
 }
 
 function onCompositionKeyDown(event: KeyboardEvent) {
-  if (event.key === "Escape") closeCompositionCandidates();
+  if (event.key === "Escape") {
+    closeCompositionCandidates();
+    closeAxisBinding();
+  }
+}
+
+function onAxisFieldChange(event: Event) {
+  const field = (event.target as HTMLSelectElement).value;
+  if (field) bindAxisField(field);
+  else if (axisBindingValue.value) clearAxisBinding();
+  else closeAxisBinding();
+}
+
+function onSeriesFieldChange(event: Event) {
+  seriesDraftField.value = (event.target as HTMLSelectElement).value;
+}
+
+function confirmSeriesDraft() {
+  if (seriesDraftField.value) confirmSeriesField(seriesDraftField.value);
+}
+
+function openAxisBinding(node: CanvasNode, channel: EncodingChannel) {
+  closeCompositionCandidates();
+  onCoordinateAxisSelect(node, channel);
 }
 
 onMounted(() => {
@@ -449,6 +511,100 @@ onBeforeUnmount(() => {
         </div>
 
         <aside
+          v-if="axisBindingTarget"
+          class="encoding-inspector"
+          role="dialog"
+          aria-modal="false"
+          :aria-label="`${axisBindingTarget.channel.toUpperCase()} axis encoding`"
+          @click.stop
+          @pointerdown.stop
+        >
+          <header class="encoding-inspector__header">
+            <div class="encoding-inspector__heading">
+              <strong>{{ axisBindingTarget.channel.toUpperCase() }} AXIS</strong>
+              <span>{{ axisBindingNode?.chartSpec?.chartType ?? axisBindingNode?.name }}</span>
+            </div>
+            <button
+              class="encoding-inspector__close"
+              type="button"
+              title="Close"
+              aria-label="Close axis binding"
+              @click="closeAxisBinding"
+            >
+              <X :size="16" :stroke-width="1.6" aria-hidden="true" />
+            </button>
+          </header>
+
+          <label v-if="axisBindingColumns.length" class="encoding-inspector__field">
+            <span>Column</span>
+            <select :value="axisBindingValue" @change="onAxisFieldChange">
+              <option value="">
+                {{ axisBindingValue ? "Clear binding" : "Select column" }}
+              </option>
+              <option
+                v-for="column in axisBindingColumns"
+                :key="column.name"
+                :value="column.name"
+              >
+                {{ column.name }} ({{ column.type }})
+              </option>
+            </select>
+          </label>
+          <p v-else class="encoding-inspector__empty">
+            Import a CSV to bind this axis.
+          </p>
+
+          <section
+            v-if="axisBindingNode?.chartSpec?.encodings.x && axisBindingNode?.chartSpec?.encodings.y"
+            class="encoding-inspector__series"
+          >
+            <div class="encoding-inspector__series-heading">
+              <span>Series</span>
+              <span v-if="axisBindingSeriesCandidates[0]" class="encoding-inspector__suggestion">
+                Suggested
+              </span>
+            </div>
+            <select
+              v-if="axisBindingSeriesCandidates.length"
+              :value="seriesDraftField"
+              @change="onSeriesFieldChange"
+            >
+              <option
+                v-for="candidate in axisBindingSeriesCandidates"
+                :key="candidate.field"
+                :value="candidate.field"
+              >
+                {{ candidate.field }} ({{ candidate.groupCount }} groups)
+              </option>
+            </select>
+            <p v-else class="encoding-inspector__empty">
+              No nominal series field is available.
+            </p>
+            <p v-if="axisBindingRendererError" class="encoding-inspector__error">
+              {{ axisBindingRendererError }}
+            </p>
+            <div v-if="axisBindingSeriesCandidates.length" class="encoding-inspector__actions">
+              <button
+                v-if="axisBindingSeriesValue"
+                class="encoding-inspector__secondary"
+                type="button"
+                @click="clearSeriesBinding"
+              >
+                Clear
+              </button>
+              <button
+                class="encoding-inspector__confirm"
+                type="button"
+                :disabled="!seriesDraftField"
+                @click="confirmSeriesDraft"
+              >
+                Confirm series
+              </button>
+            </div>
+          </section>
+        </aside>
+
+        <aside
           v-if="activeCompositionType"
           class="composition-popover"
           role="dialog"
@@ -508,6 +664,11 @@ onBeforeUnmount(() => {
               </span>
             </article>
           </div>
+        </aside>
+        <aside v-if="semanticSelection" class="semantic-inspector" data-testid="semantic-inspector">
+          <strong>Selected {{ semanticSelection.role }}</strong>
+          <span v-if="semanticSelection.person">{{ semanticSelection.person }}</span>
+          <span v-if="semanticSelection.time">{{ semanticSelection.time }}</span>
         </aside>
 
         <div
@@ -629,6 +790,7 @@ onBeforeUnmount(() => {
               :interactive="true"
               :on-node-pointer-down="onCanvasNodePointerDown"
               :on-node-context-menu="onCanvasNodeContextMenu"
+              :on-mark-pointer-down="onSemanticMarkPointerDown"
             />
             <g class="selection-overlay">
               <rect
@@ -685,6 +847,7 @@ onBeforeUnmount(() => {
               :view-zoom="viewZoom"
               :on-origin-pointer-down="onCoordinateOriginPointerDown"
               :on-axis-reverse="reverseCoordinateAxis"
+              :on-axis-select="openAxisBinding"
             />
           </g>
         </svg>
@@ -1109,6 +1272,179 @@ onBeforeUnmount(() => {
   box-shadow: 0 18px 40px rgba(45, 89, 126, 0.2);
   backdrop-filter: blur(12px);
 }
+.encoding-inspector {
+  position: absolute;
+  top: 16px;
+  right: 264px;
+  z-index: 5;
+  width: min(280px, calc(100% - 296px));
+  min-width: 220px;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid rgba(24, 33, 47, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 18px 40px rgba(45, 89, 126, 0.2);
+  backdrop-filter: blur(12px);
+}
+.semantic-inspector {
+  position: absolute;
+  left: 16px;
+  top: 16px;
+  z-index: 5;
+  display: grid;
+  gap: 4px;
+  min-width: 150px;
+  padding: 10px 12px;
+  border: 1px solid rgba(24, 33, 47, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.97);
+  color: #516176;
+  font-size: 11px;
+  box-shadow: 0 18px 40px rgba(45, 89, 126, 0.16);
+}
+.semantic-inspector strong { color: #18212f; font-size: 12px; }
+.encoding-inspector__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.encoding-inspector__heading {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.encoding-inspector__heading strong {
+  color: #18212f;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+}
+.encoding-inspector__heading span {
+  overflow: hidden;
+  color: #6b7889;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.encoding-inspector__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #5b6a80;
+  cursor: pointer;
+}
+.encoding-inspector__close:hover {
+  background: #edf5fc;
+  color: #1554b2;
+}
+.encoding-inspector__field {
+  display: grid;
+  gap: 5px;
+  margin-top: 12px;
+  color: #516176;
+  font-size: 11px;
+}
+.encoding-inspector__field select {
+  width: 100%;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid rgba(24, 33, 47, 0.14);
+  border-radius: 6px;
+  background: #fff;
+  color: #223041;
+  font: inherit;
+  cursor: pointer;
+}
+.encoding-inspector__field select:focus {
+  border-color: rgba(28, 126, 214, 0.7);
+  outline: 2px solid rgba(28, 126, 214, 0.12);
+}
+.encoding-inspector__series {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(24, 33, 47, 0.1);
+}
+.encoding-inspector__series-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #516176;
+  font-size: 11px;
+}
+.encoding-inspector__suggestion {
+  color: #1554b2;
+  font-weight: 700;
+}
+.encoding-inspector__series select {
+  width: 100%;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid rgba(24, 33, 47, 0.14);
+  border-radius: 6px;
+  background: #fff;
+  color: #223041;
+  font: inherit;
+}
+.encoding-inspector__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.encoding-inspector__actions button {
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.encoding-inspector__secondary {
+  border: 1px solid rgba(24, 33, 47, 0.14);
+  background: #fff;
+  color: #516176;
+}
+.encoding-inspector__confirm {
+  border: 1px solid #1554b2;
+  background: #1554b2;
+  color: #fff;
+  font-weight: 700;
+}
+.encoding-inspector__confirm:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.encoding-inspector__error {
+  margin: 0;
+  color: #b42318;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.canvas-scene :deep(.axis-domain[data-bound="true"]) {
+  stroke: #1c7ed6;
+  stroke-width: 2.2;
+}
+.canvas-scene :deep(.axis-label[data-bound="true"]) {
+  fill: #1554b2;
+  font-weight: 700;
+}
+.encoding-inspector__empty {
+  margin: 12px 0 0;
+  color: #6b7889;
+  font-size: 12px;
+  line-height: 1.45;
+}
 .composition-popover__header {
   display: flex;
   align-items: center;
@@ -1328,6 +1664,10 @@ onBeforeUnmount(() => {
 .canvas-object :deep(*) {
   pointer-events: none;
 }
+.canvas-object :deep(.semantic-rendered-content),
+.canvas-object :deep(.semantic-rendered-content *) {
+  pointer-events: all;
+}
 .canvas-object--selected {
   filter: drop-shadow(0 10px 18px rgba(28, 126, 214, 0.18));
 }
@@ -1351,6 +1691,28 @@ onBeforeUnmount(() => {
 }
 .coordinate-guide-layer :deep(.coordinate-axis-line--tail) {
   opacity: 0.72;
+}
+.coordinate-guide-layer :deep(.coordinate-axis-hit-target) {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 18;
+  pointer-events: stroke;
+  cursor: pointer;
+  touch-action: none;
+}
+.coordinate-guide-layer :deep(.coordinate-axis-line--bound) {
+  stroke: #1c7ed6;
+}
+.coordinate-guide-layer :deep(.coordinate-axis-binding-label) {
+  fill: #1554b2;
+  font-family: inherit;
+  font-weight: 700;
+  letter-spacing: 0;
+  pointer-events: none;
+  paint-order: stroke;
+  stroke: rgba(255, 255, 255, 0.94);
+  stroke-width: 3px;
+  stroke-linejoin: round;
 }
 .coordinate-guide-layer :deep(.coordinate-origin-handle) {
   fill: #111;
@@ -1516,6 +1878,12 @@ onBeforeUnmount(() => {
     width: min(360px, calc(100% - 24px));
     min-width: 0;
     max-height: calc(100% - 268px);
+  }
+  .encoding-inspector {
+    top: 256px;
+    right: 12px;
+    width: min(280px, calc(100% - 24px));
+    min-width: 0;
   }
 }
 @media (max-width: 760px) {

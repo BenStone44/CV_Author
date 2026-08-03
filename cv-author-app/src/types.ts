@@ -34,6 +34,116 @@ export type CompositionType = "layer" | "facet" | "concat" | "nested";
 export type CoordinateSystem = "Cartesian" | "Polar" | "Geographic" | "None";
 export type IconKind = "cartesian" | "polar" | "geographic" | "none";
 
+export type DataColumnType = "nominal" | "temporal" | "quantitative";
+
+export type DataColumn = {
+  name: string;
+  type: DataColumnType;
+};
+
+export type DataRow = Record<string, string>;
+
+export type Dataset = {
+  id: string;
+  name: string;
+  columns: DataColumn[];
+  rows: DataRow[];
+  primaryKey?: string[];
+};
+
+export type EncodingChannel = "x" | "y";
+
+export type ChartEncoding = {
+  field: string;
+  type: DataColumnType;
+};
+
+export type ChartPlotArea = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type ChartScaleSpec = {
+  type: "utc" | "linear";
+  domain: [string, string] | [number, number];
+  range: [number, number];
+  nice?: boolean;
+};
+
+export type ChartStyleTokens = {
+  palette: string[];
+  axisColor: string;
+  textColor: string;
+  fontFamily: string;
+  fontSize: number;
+  lineWidth: number;
+};
+
+export type ChartRendererReference = {
+  kind: "deterministic-line";
+  version: 1;
+  status: "ready" | "error";
+  error?: string;
+};
+
+export type ChartSpec = {
+  chartType: string;
+  datasetId: string;
+  encodings: Partial<Record<EncodingChannel, ChartEncoding>>;
+  series?: ChartEncoding;
+  scales?: Partial<Record<EncodingChannel, ChartScaleSpec>>;
+  plotArea?: ChartPlotArea;
+  styleTokens?: ChartStyleTokens;
+  renderer?: ChartRendererReference;
+};
+
+export type LayerChildSpec = {
+  nodeId: string;
+  chartSpec: ChartSpec;
+  role: "line" | "scatter";
+};
+
+export type LayerSpec = {
+  type: "layer";
+  datasetId: string;
+  x: ChartEncoding;
+  y: ChartEncoding;
+  children: LayerChildSpec[];
+};
+
+export type NestedSpec = {
+  type: "nested";
+  parentRowKey: string;
+  parentChartNodeId: string;
+  valueFields: string[];
+  innerChartType: "PieChart";
+};
+
+export type SemanticSelection = {
+  nodeId: string;
+  role: string;
+  rowKey?: string;
+  seriesKey?: string;
+  time?: string;
+  person?: string;
+};
+
+export type SeriesCandidate = {
+  field: string;
+  score: number;
+  groupCount: number;
+  averageGroupSize: number;
+  coverage: number;
+  xUniqueness: number;
+};
+
+export type AxisBindingTarget = {
+  nodeId: string;
+  channel: EncodingChannel;
+};
+
 export type CanvasBaseNode = {
   id: string;
   name: string;
@@ -45,6 +155,10 @@ export type CanvasBaseNode = {
   scaleY: number;
   rotation: number;
   coordinateGuide?: CoordinateGuide | null;
+  chartSpec?: ChartSpec | null;
+  renderedContent?: string | null;
+  layerSpec?: LayerSpec | null;
+  nestedSpec?: NestedSpec | null;
 };
 
 export type CanvasLeafNode = CanvasBaseNode & {
