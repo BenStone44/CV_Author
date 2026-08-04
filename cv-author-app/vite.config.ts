@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 
@@ -9,8 +9,12 @@ import { selectedChartNames } from './src/selectedCharts'
 
 const virtualChartAssetsId = 'virtual:chart-assets'
 const resolvedVirtualChartAssetsId = `\0${virtualChartAssetsId}`
-const visAnatomyDirectory = fileURLToPath(new URL('../VisAnatomy', import.meta.url))
-const coordinateSystemsPath = resolve(visAnatomyDirectory, 'charts_svg_separated', 'coordinate-systems.json')
+const candidateSvgsDirectory = fileURLToPath(new URL('../candidate_svgs', import.meta.url))
+const dataBindingDirectory = resolve(candidateSvgsDirectory, 'charts_svg_separated', 'data-binding')
+const coordinateSystemsPath = resolve(candidateSvgsDirectory, 'charts_svg_separated', 'coordinate-systems.json')
+const selectedDataBindingChartNames = selectedChartNames.filter((name) =>
+  existsSync(resolve(dataBindingDirectory, `${name}.svg`)),
+)
 
 function chartAssetsPlugin(): Plugin {
   return {
@@ -21,16 +25,17 @@ function chartAssetsPlugin(): Plugin {
     load(id) {
       if (id !== resolvedVirtualChartAssetsId) return null
 
-      const previewImports = selectedChartNames.map((name, index) => {
-        const path = normalizePath(resolve(visAnatomyDirectory, 'charts_png', `${name}.png`))
+      const previewImports = selectedDataBindingChartNames.map((name, index) => {
+        const previewName = name === 'ConnectedDotplot19' ? 'ConnectedDotPlot19' : name
+        const path = normalizePath(resolve(candidateSvgsDirectory, 'charts_png', `${previewName}.png`))
         return `import preview${index} from ${JSON.stringify(path)};`
       })
-      const previewEntries = selectedChartNames.map(
+      const previewEntries = selectedDataBindingChartNames.map(
         (name, index) => `[${JSON.stringify(name)}, preview${index}]`,
       )
-      const svgEntries = selectedChartNames.map((name) => {
-        const path = normalizePath(resolve(visAnatomyDirectory, 'charts_svg_separated', 'data-binding', `${name}.svg`))
-        const sourceId = `../../VisAnatomy/charts_svg_separated/data-binding/${name}.svg`
+      const svgEntries = selectedDataBindingChartNames.map((name) => {
+        const path = normalizePath(resolve(dataBindingDirectory, `${name}.svg`))
+        const sourceId = `../../candidate_svgs/charts_svg_separated/data-binding/${name}.svg`
         return `${JSON.stringify(name)}: { id: ${JSON.stringify(sourceId)}, loader: () => import(${JSON.stringify(`${path}?raw`)}).then((module) => module.default) }`
       })
       let coordinateAxesByName: Record<string, unknown> = {}
@@ -40,7 +45,7 @@ function chartAssetsPlugin(): Plugin {
       } catch {
         // Coordinate metadata is optional until the layer split command has run.
       }
-      const coordinateEntries = selectedChartNames.map((name) =>
+      const coordinateEntries = selectedDataBindingChartNames.map((name) =>
         `${JSON.stringify(name)}: ${JSON.stringify(coordinateAxesByName[name] ?? null)}`,
       )
 

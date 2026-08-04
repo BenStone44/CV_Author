@@ -120,7 +120,8 @@ const {
   error: llmError,
   provenance: llmProvenance,
 } = llmRenderer;
-const llmRendererPaused = false;
+// Keep the experimental renderer disabled while template rendering is the default.
+const llmRendererPaused = true;
 const encodingReviewApprovedKey = ref("");
 
 function isScatterChartType(chartType: string) {

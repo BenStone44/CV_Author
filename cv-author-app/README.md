@@ -67,6 +67,26 @@ npm install
 npm run dev
 ```
 
+### Run the API (Linux)
+
+Install the Python dependencies once, then start the FastAPI service:
+
+```sh
+python3 -m venv .venv
+./.venv/bin/python -m pip install -r server_python/requirements.txt
+npm run dev:api
+```
+
+The API listens on `http://127.0.0.1:8787`.
+
+### Run Frontend and API Together (Linux)
+
+```sh
+npm run dev:all
+```
+
+The frontend is available at `http://127.0.0.1:5173` and proxies `/api` requests to the API service.
+
 ### Type-Check, Compile and Minify for Production
 
 ```sh

@@ -692,6 +692,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       renderer: undefined,
     };
     node.renderedContent = null;
+    renderLineNode(node);
   }
   function clearOptionalEncoding(channel: OptionalEncodingChannel) {
     const node = axisBindingNode.value;
@@ -702,6 +703,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     delete encodings[channel];
     node.chartSpec = { ...node.chartSpec, encodings, renderer: undefined, scales: undefined, plotArea: undefined };
     node.renderedContent = null;
+    renderLineNode(node);
   }
   function closeContextMenu() { contextMenu.value = null; }
 
@@ -751,18 +753,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         ? { ...chartSpec.series, type: seriesColumn.type }
         : chartSpec.series,
     };
-    // Once x/y are configured, D3 renderer is the primary path. Keep the
-    // original SVG visible while the request is pending or if it fails.
-    if (node.llmRenderer?.status !== "ready") {
-      node.renderedContent = null;
-      node.chartSpec = {
-        ...syncedChartSpec,
-        scales: undefined,
-        plotArea: undefined,
-        renderer: undefined,
-      };
-      return;
-    }
+    node.llmRenderer = null;
     try {
       const result = renderLineChart({
         chartId: node.id,

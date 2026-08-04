@@ -29,7 +29,8 @@ class OpenAICompatibleProvider(LLMProvider):
         if not settings.api_key:
             raise ValueError("Server API key is not configured.")
         self.settings = settings
-        http_client = httpx.AsyncClient(proxy=settings.proxy_url) if settings.proxy_url else None
+        # Do not inherit environment proxy settings for direct LLM requests.
+        http_client = httpx.AsyncClient(trust_env=False)
         self.client = AsyncOpenAI(
             api_key=settings.api_key,
             base_url=settings.base_url,

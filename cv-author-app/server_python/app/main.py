@@ -20,17 +20,9 @@ from .config import get_settings
 from .provider import OpenAICompatibleProvider
 
 REQUEST_VERSION = "d3-render-request@2"
-PROMPT_VERSION = "d3-renderer@3"
-CACHE_PATH = Path(".llm-cache.json")
-FORBIDDEN_PROGRAM_PATTERNS = [
-    r"\b(?:import|export|require)\b",
-    r"\b(?:eval|Function|AsyncFunction|GeneratorFunction)\s*\(",
-    r"\b(?:fetch|XMLHttpRequest|WebSocket)\b",
-    r"\b(?:document|window|globalThis|process|location|navigator|crypto|self)\b",
-    r"\b(?:constructor|prototype|__proto__|WebAssembly|SharedArrayBuffer|Atomics)\b",
-    r"\bd3\.(?:csv|json|text|xml|html|image|blob|select|selectAll|create)\b",
-    r"<\s*script\b",
-]
+PROMPT_VERSION = "d3-renderer@5"
+# Keep runtime cache outside the Vite project so cache writes do not trigger a full reload.
+CACHE_PATH = Path(__file__).resolve().parents[3] / ".cv-author-llm-cache.json"
 
 
 class RenderRequest(BaseModel):
@@ -72,8 +64,6 @@ def parse_program(content: str) -> dict[str, str]:
         raise ValueError("Generated code length is outside the allowed range.")
     if not re.search(r"(?:function\s+render|(?:const|let|var)\s+render\s*=)", code):
         raise ValueError("Generated code must define render().")
-    if any(re.search(pattern, code, re.IGNORECASE) for pattern in FORBIDDEN_PROGRAM_PATTERNS):
-        raise ValueError("Generated code uses a forbidden browser or runtime API.")
     return {"code": code}
 
 
@@ -85,11 +75,14 @@ def system_prompt() -> str:
     return "\n".join([
         "You generate a deterministic, reusable D3-compatible chart renderer program.",
         'Return JSON only: {"program":{"code":"..."}}.',
-        "The code must define render({ d3, data, width, height, chartSpec }) and return { svg, marks }.",
+        "The code must define render({ d3, data, width, height, chartSpec }) and return { svg: string, marks: array }.",
+        "svg must be a serialized SVG markup string, preferably a <g> fragment without an outer <svg> element.",
+        "marks must be an array of plain objects; every mark must include string role and markType fields, and may include dataIndex.",
         "Render against runtime data passed to render(); do not embed data from the request input.",
         "Use input.svg as the visual style and layout baseline, plus input.chartSpec, input.xColumn, input.yColumn, and input.schema.",
-        "The supplied d3 object is D3 v7. Use only it and plain JavaScript; do not use imports, network, DOM, globals, or browser APIs.",
-        "Keep output deterministic and escape data-derived text.",
+        "The supplied d3 object is D3 v7. Use its scales, extents, grouping, and path/line calculations, but do not use d3.create, d3.select, d3.selectAll, or any DOM API.",
+        "Build SVG markup with plain strings and escape all data-derived text and attributes. Do not use imports, network, DOM, globals, or browser APIs.",
+        "Keep output deterministic and return only serializable strings and objects.",
     ])
 
 

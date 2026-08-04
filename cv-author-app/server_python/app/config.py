@@ -11,7 +11,6 @@ class Settings:
     model: str
     port: int
     timeout_seconds: float
-    proxy_url: str | None
     max_tokens: int
 
 
@@ -22,6 +21,5 @@ def get_settings() -> Settings:
         model=os.getenv("OPENAI_MODEL", "gpt-5.4"),
         port=int(os.getenv("LLM_API_PORT", "8787")),
         timeout_seconds=float(os.getenv("LLM_API_TIMEOUT_MS", "90000")) / 1000,
-        proxy_url=os.getenv("LLM_PROXY_URL"),
         max_tokens=int(os.getenv("LLM_MAX_TOKENS", "4096")),
     )

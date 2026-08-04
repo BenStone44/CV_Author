@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { FileSpreadsheet, Lock, Trash2, Unlock, Upload } from "@lucide/vue";
-import defaultCsv from "../../case1.csv?raw";
+import defaultCsv from "../../data/case1.csv?raw";
 import { useDatasetStore } from "./useDatasetStore";
 import type { DataColumnType } from "./types";
 

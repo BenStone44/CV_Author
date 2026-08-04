@@ -6,7 +6,7 @@ import { scoreSeriesCandidates } from "./seriesInference";
 import type { ChartSpec, DataColumn, DataRow, Dataset } from "./types";
 
 function loadCase1Dataset(): Dataset {
-  const source = readFileSync(resolve(import.meta.dirname, "../../case1.csv"), "utf8").trim();
+  const source = readFileSync(resolve(import.meta.dirname, "../../data/case1.csv"), "utf8").trim();
   const [headerLine, ...lines] = source.split(/\r?\n/);
   const headers = headerLine!.split(",");
   const rows: DataRow[] = lines.map((line) => Object.fromEntries(
