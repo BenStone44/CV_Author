@@ -89,4 +89,25 @@ describe("Case 1 deterministic line chart", () => {
       "2025-08-01T00:00:00.000Z",
     ]);
   });
+
+  it("renders a single line when no series field is configured", () => {
+    const result = renderLineChart({
+      chartId: "case1-single-line",
+      width: 800,
+      height: 400,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: {
+        type: "Cartesian",
+        origin: { x: 0, y: 400 },
+        xDirection: 1,
+        yDirection: -1,
+      },
+      chartSpec: createChartSpec(),
+      dataset: loadCase1Dataset(),
+    });
+
+    expect(result.content.match(/data-mark-role="series"/g)).toHaveLength(1);
+    expect(result.content).not.toContain("data-mark-role=\"legend\"><g");
+  });
 });

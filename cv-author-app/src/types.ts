@@ -52,6 +52,7 @@ export type Dataset = {
 };
 
 export type EncodingChannel = "x" | "y";
+export type OptionalEncodingChannel = "color" | "size" | "shape";
 
 export type ChartEncoding = {
   field: string;
@@ -82,16 +83,43 @@ export type ChartStyleTokens = {
 };
 
 export type ChartRendererReference = {
-  kind: "deterministic-line";
+  kind: "deterministic-line" | "llm";
   version: 1;
   status: "ready" | "error";
+  error?: string;
+};
+
+export type GeneratedMarkMetadata = {
+  role: string;
+  markType: string;
+  dataIndex?: number;
+  [key: string]: unknown;
+};
+
+export type LlmRendererProvenance = {
+  requestId: string;
+  cacheKey: string;
+  promptVersion: string;
+  requestVersion: string;
+  model: string;
+  generatedAt: string;
+  cacheHit: boolean;
+};
+
+export type LlmRendererState = {
+  kind: "llm";
+  version: 1;
+  status: "ready" | "error";
+  code: string;
+  marks: GeneratedMarkMetadata[];
+  provenance: LlmRendererProvenance;
   error?: string;
 };
 
 export type ChartSpec = {
   chartType: string;
   datasetId: string;
-  encodings: Partial<Record<EncodingChannel, ChartEncoding>>;
+  encodings: Partial<Record<EncodingChannel | OptionalEncodingChannel, ChartEncoding>>;
   series?: ChartEncoding;
   scales?: Partial<Record<EncodingChannel, ChartScaleSpec>>;
   plotArea?: ChartPlotArea;
@@ -157,6 +185,7 @@ export type CanvasBaseNode = {
   coordinateGuide?: CoordinateGuide | null;
   chartSpec?: ChartSpec | null;
   renderedContent?: string | null;
+  llmRenderer?: LlmRendererState | null;
   layerSpec?: LayerSpec | null;
   nestedSpec?: NestedSpec | null;
 };

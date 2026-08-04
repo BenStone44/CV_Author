@@ -137,8 +137,8 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
   if (!yEncoding || yEncoding.type !== "quantitative") {
     throw new Error("Line renderer requires a quantitative Y encoding.");
   }
-  if (!seriesEncoding || seriesEncoding.type !== "nominal") {
-    throw new Error("Line renderer requires a nominal series encoding.");
+  if (seriesEncoding && seriesEncoding.type !== "nominal") {
+    throw new Error("Line renderer series encoding must be nominal.");
   }
 
   const rows = dataset.rows
@@ -146,7 +146,7 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
       row,
       x: Date.parse(row[xEncoding.field] ?? ""),
       y: Number(row[yEncoding.field] ?? ""),
-      series: (row[seriesEncoding.field] ?? "").trim(),
+      series: seriesEncoding ? (row[seriesEncoding.field] ?? "").trim() : "__single__",
     }))
     .filter((datum) => Number.isFinite(datum.x) && Number.isFinite(datum.y) && datum.series !== "");
   if (rows.length === 0) throw new Error("No valid rows remain after applying the line encodings.");
@@ -223,12 +223,12 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
     return `<g data-chart-id="${escapeXml(chartId)}" data-mark-role="series" data-series-key="${escapeXml(seriesKey)}" data-point-count="${ordered.length}" data-row-keys="${escapeXml(keys.join(","))}"><path d="${path}" fill="none" stroke="${escapeXml(color)}" stroke-width="${tokens.lineWidth}" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></g>`;
   }).join("");
   const legendItemWidth = plotArea.width / Math.max(groupedRows.length, 1);
-  const legend = groupedRows.map(([seriesKey], index) => {
+  const legend = seriesEncoding ? groupedRows.map(([seriesKey], index) => {
     const color = tokens.palette[index % tokens.palette.length] ?? fallbackPalette[index % fallbackPalette.length]!;
     const x = plotArea.x + legendItemWidth * index;
     const y = minY + fontSize * 1.25;
     return `<g transform="translate(${x} ${y})"><line x1="0" y1="0" x2="${fontSize * 1.5}" y2="0" stroke="${escapeXml(color)}" stroke-width="${tokens.lineWidth}" vector-effect="non-scaling-stroke"/><text x="${fontSize * 1.8}" y="0" dominant-baseline="middle">${escapeXml(seriesKey)}</text></g>`;
-  }).join("");
+  }).join("") : "";
 
   const content = `<g data-chart-id="${escapeXml(chartId)}" data-chart-type="line" data-renderer="deterministic-line@1" font-family="${escapeXml(tokens.fontFamily)}" font-size="${fontSize}" fill="${escapeXml(tokens.textColor)}"><defs><clipPath id="${clipId}"><rect x="${plotArea.x}" y="${plotArea.y}" width="${plotArea.width}" height="${plotArea.height}"/></clipPath></defs><g data-mark-role="legend">${legend}</g><g data-mark-role="grid">${grid}</g><g data-mark-role="x-axis" data-bound="true"><line class="axis-domain" x1="${plotArea.x}" y1="${xAxisY}" x2="${plotRight}" y2="${xAxisY}" stroke="${escapeXml(tokens.axisColor)}" vector-effect="non-scaling-stroke"/>${xAxis}<text class="axis-label" data-bound="true" x="${plotArea.x + plotArea.width / 2}" y="${xLabelY}" text-anchor="middle">${escapeXml(xEncoding.field)}</text></g><g data-mark-role="y-axis" data-bound="true"><line class="axis-domain" x1="${yAxisX}" y1="${plotArea.y}" x2="${yAxisX}" y2="${plotBottom}" stroke="${escapeXml(tokens.axisColor)}" vector-effect="non-scaling-stroke"/>${yAxis}<text class="axis-label" data-bound="true" x="${yLabelX}" y="${plotArea.y + plotArea.height / 2}" text-anchor="middle" transform="rotate(-90 ${yLabelX} ${plotArea.y + plotArea.height / 2})">${escapeXml(yEncoding.field)}</text></g><g data-mark-role="plot" clip-path="url(#${clipId})">${seriesMarkup}</g></g>`;
   return {

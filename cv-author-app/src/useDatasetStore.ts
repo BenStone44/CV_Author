@@ -11,7 +11,9 @@ const datasets = ref<Dataset[]>((() => {
   try {
     const raw = localStorage.getItem("cv-author-datasets-v1");
     const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((dataset) => dataset?.id !== "dataset:llm-demo")
+      : [];
   } catch { return []; }
 })());
 const activeDatasetId = ref<string | null>(datasets.value[0]?.id ?? null);

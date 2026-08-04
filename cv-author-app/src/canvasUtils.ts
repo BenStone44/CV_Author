@@ -94,6 +94,9 @@ export function cloneChartSpec(chartSpec: ChartSpec | null | undefined) {
     encodings: {
       ...(chartSpec.encodings.x ? { x: { ...chartSpec.encodings.x } } : {}),
       ...(chartSpec.encodings.y ? { y: { ...chartSpec.encodings.y } } : {}),
+      ...(chartSpec.encodings.color ? { color: { ...chartSpec.encodings.color } } : {}),
+      ...(chartSpec.encodings.size ? { size: { ...chartSpec.encodings.size } } : {}),
+      ...(chartSpec.encodings.shape ? { shape: { ...chartSpec.encodings.shape } } : {}),
     },
     series: chartSpec.series ? { ...chartSpec.series } : undefined,
     scales: chartSpec.scales
@@ -119,15 +122,19 @@ export function cloneCanvasNode(node: CanvasNode): CanvasNode {
     ? { ...node.coordinateGuide, origin: { ...node.coordinateGuide.origin } }
     : node.coordinateGuide;
   const chartSpec = cloneChartSpec(node.chartSpec);
+  const llmRenderer = node.llmRenderer
+    ? { ...node.llmRenderer, marks: node.llmRenderer.marks.map((mark) => ({ ...mark })), provenance: { ...node.llmRenderer.provenance } }
+    : node.llmRenderer;
   const layerSpec = node.layerSpec
     ? { ...node.layerSpec, x: { ...node.layerSpec.x }, y: { ...node.layerSpec.y }, children: node.layerSpec.children.map((child) => ({ ...child, chartSpec: cloneChartSpec(child.chartSpec)! })) }
     : node.layerSpec;
   const nestedSpec = node.nestedSpec ? { ...node.nestedSpec, valueFields: [...node.nestedSpec.valueFields] } : node.nestedSpec;
-  if (node.kind === "leaf") return { ...node, coordinateGuide, chartSpec, layerSpec, nestedSpec };
+  if (node.kind === "leaf") return { ...node, coordinateGuide, chartSpec, layerSpec, nestedSpec, llmRenderer };
   return {
     ...node,
     coordinateGuide,
     chartSpec,
+    llmRenderer,
     layerSpec,
     nestedSpec,
     children: node.children.map((child) => cloneCanvasNode(child)),

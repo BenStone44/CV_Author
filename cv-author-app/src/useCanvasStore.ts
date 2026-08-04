@@ -37,6 +37,9 @@ import type {
   LayerSpec,
   NestedSpec,
   SemanticSelection,
+  GeneratedMarkMetadata,
+  LlmRendererProvenance,
+  OptionalEncodingChannel,
 } from "./types";
 import { useDatasetStore } from "./useDatasetStore";
 import { scoreSeriesCandidates } from "./seriesInference";
@@ -90,6 +93,11 @@ export const compositionOptions: Array<{
   { value: "concat", label: "Concat", description: "Arrange selected views together" },
   { value: "nested", label: "Nested", description: "Embed selected elements as parent and child" },
 ];
+
+function supportsOptionalEncodings(chartType: string) {
+  const normalized = chartType.replace(/[\s_-]/g, "").toLowerCase();
+  return normalized.includes("line") || normalized.includes("scatter");
+}
 
 export function getFilterIconSvg(icon: IconKind): string {
   switch (icon) {
@@ -242,6 +250,33 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     return scoreSeriesCandidates(dataset, node.chartSpec);
   });
   const axisBindingSeriesValue = computed(() => axisBindingNode.value?.chartSpec?.series?.field ?? "");
+  const axisBindingEncodingValues = computed(() => {
+    const encodings = axisBindingNode.value?.chartSpec?.encodings;
+    return {
+      color: encodings?.color?.field ?? "",
+      size: encodings?.size?.field ?? "",
+      shape: encodings?.shape?.field ?? "",
+    } satisfies Record<OptionalEncodingChannel, string>;
+  });
+  const axisBindingOptionalCandidates = computed(() => {
+    const node = axisBindingNode.value;
+    const dataset = axisBindingDataset.value;
+    if (!node?.chartSpec || !dataset || !supportsOptionalEncodings(node.chartSpec.chartType)) return [];
+    const excluded = new Set([
+      node.chartSpec.encodings.x?.field,
+      node.chartSpec.encodings.y?.field,
+    ].filter((field): field is string => !!field));
+    const candidates = (channel: OptionalEncodingChannel) => dataset.columns.filter((column) => {
+      if (excluded.has(column.name)) return false;
+      if (channel === "size") return column.type === "quantitative";
+      return channel === "shape" ? column.type === "nominal" : column.type === "nominal" || column.type === "temporal";
+    });
+    return [
+      { channel: "color" as const, label: "Color", candidates: candidates("color") },
+      { channel: "size" as const, label: "Size", candidates: candidates("size") },
+      { channel: "shape" as const, label: "Shape", candidates: candidates("shape") },
+    ];
+  });
   const axisBindingRendererError = computed(() => axisBindingNode.value?.chartSpec?.renderer?.error ?? "");
   const selectionBounds = computed<Bounds | null>(() =>
     computeBounds(canvasNodes.value, selectedIds.value),
@@ -430,6 +465,28 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     }
   }
 
+  function applyLlmRenderer(nodeId: string, result: { svg: string; marks: GeneratedMarkMetadata[]; code: string; provenance: LlmRendererProvenance }) {
+    const node = getRootNode(nodeId);
+    if (!node) return false;
+    pushCanvasHistory();
+    node.renderedContent = `<g data-chart-type="llm" data-renderer="llm@1" data-mark-count="${result.marks.length}">${result.svg}</g>`;
+    node.llmRenderer = {
+      kind: "llm",
+      version: 1,
+      status: "ready",
+      code: result.code,
+      marks: result.marks.map((mark) => ({ ...mark })),
+      provenance: { ...result.provenance },
+    };
+    if (node.chartSpec) {
+      node.chartSpec = {
+        ...node.chartSpec,
+        renderer: { kind: "llm", version: 1, status: "ready" },
+      };
+    }
+    return true;
+  }
+
   function onSemanticMarkPointerDown(node: CanvasNode, event: PointerEvent) {
     const target = event.target instanceof Element ? event.target.closest("[data-mark-role]") : null;
     if (!(target instanceof Element)) return;
@@ -518,6 +575,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const node = getRootNode(target.id);
     if (node?.coordinateGuide?.type !== "Cartesian") return;
     pushCanvasHistory();
+    node.llmRenderer = null;
     if (axis === "x") {
       node.coordinateGuide.xDirection = node.coordinateGuide.xDirection === 1 ? -1 : 1;
     } else {
@@ -544,6 +602,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (!column) return;
     const candidateId = node.kind === "leaf" ? node.candidateId : "";
     pushCanvasHistory();
+    node.llmRenderer = null;
     const encodings = {
       ...node.chartSpec?.encodings,
       [target.channel]: { field: column.name, type: column.type },
@@ -559,7 +618,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       series,
     };
     renderLineNode(node);
-    const keepInspectorOpen = isLineChartType(node.chartSpec.chartType)
+    const keepInspectorOpen = supportsOptionalEncodings(node.chartSpec.chartType)
       && !!node.chartSpec.encodings.x
       && !!node.chartSpec.encodings.y;
     if (!keepInspectorOpen) axisBindingTarget.value = null;
@@ -569,6 +628,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const node = axisBindingNode.value;
     if (!target || !node?.chartSpec?.encodings[target.channel]) return;
     pushCanvasHistory();
+    node.llmRenderer = null;
     const encodings = { ...node.chartSpec.encodings };
     delete encodings[target.channel];
     node.chartSpec = {
@@ -590,6 +650,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const boundFields = new Set(Object.values(node.chartSpec.encodings).map((encoding) => encoding?.field));
     if (boundFields.has(fieldName)) return;
     pushCanvasHistory();
+    node.llmRenderer = null;
     node.chartSpec = {
       ...node.chartSpec,
       series: { field: column.name, type: column.type },
@@ -601,6 +662,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const node = axisBindingNode.value;
     if (!node?.chartSpec?.series) return;
     pushCanvasHistory();
+    node.llmRenderer = null;
     node.chartSpec = {
       ...node.chartSpec,
       series: undefined,
@@ -610,13 +672,44 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     };
     node.renderedContent = null;
   }
+  function bindOptionalEncoding(channel: OptionalEncodingChannel, fieldName: string) {
+    const target = axisBindingTarget.value;
+    const node = axisBindingNode.value;
+    const dataset = axisBindingDataset.value;
+    if (!target || !node?.chartSpec || !dataset) return;
+    const column = dataset.columns.find((item) => item.name === fieldName);
+    if (!column) return;
+    pushCanvasHistory();
+    node.llmRenderer = null;
+    node.chartSpec = {
+      ...node.chartSpec,
+      encodings: {
+        ...node.chartSpec.encodings,
+        [channel]: { field: column.name, type: column.type },
+      },
+      scales: undefined,
+      plotArea: undefined,
+      renderer: undefined,
+    };
+    node.renderedContent = null;
+  }
+  function clearOptionalEncoding(channel: OptionalEncodingChannel) {
+    const node = axisBindingNode.value;
+    if (!node?.chartSpec?.encodings[channel]) return;
+    pushCanvasHistory();
+    node.llmRenderer = null;
+    const encodings = { ...node.chartSpec.encodings };
+    delete encodings[channel];
+    node.chartSpec = { ...node.chartSpec, encodings, renderer: undefined, scales: undefined, plotArea: undefined };
+    node.renderedContent = null;
+  }
   function closeContextMenu() { contextMenu.value = null; }
 
   function renderLineNode(node: CanvasNode) {
     const chartSpec = node.chartSpec;
     if (!chartSpec || !isLineChartType(chartSpec.chartType)) return;
-    const complete = chartSpec.encodings.x && chartSpec.encodings.y && chartSpec.series;
-    if (!complete || node.coordinateGuide?.type !== "Cartesian") {
+    const completeAxes = chartSpec.encodings.x && chartSpec.encodings.y;
+    if (!completeAxes || node.coordinateGuide?.type !== "Cartesian") {
       node.renderedContent = null;
       node.chartSpec = {
         ...chartSpec,
@@ -647,17 +740,29 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       const column = dataset.columns.find((item) => item.name === encoding.field);
       return column ? { ...encoding, type: column.type } : encoding;
     };
+    const syncedEncodings = Object.fromEntries(
+      (Object.entries(chartSpec.encodings) as Array<[string, typeof chartSpec.encodings.x]>).map(([channel, encoding]) => [channel, syncEncodingType(encoding)]),
+    ) as ChartSpec["encodings"];
     const seriesColumn = dataset.columns.find((item) => item.name === chartSpec.series?.field);
     const syncedChartSpec: ChartSpec = {
       ...chartSpec,
-      encodings: {
-        x: syncEncodingType(chartSpec.encodings.x),
-        y: syncEncodingType(chartSpec.encodings.y),
-      },
+      encodings: syncedEncodings,
       series: chartSpec.series && seriesColumn
         ? { ...chartSpec.series, type: seriesColumn.type }
         : chartSpec.series,
     };
+    // Once x/y are configured, D3 renderer is the primary path. Keep the
+    // original SVG visible while the request is pending or if it fails.
+    if (node.llmRenderer?.status !== "ready") {
+      node.renderedContent = null;
+      node.chartSpec = {
+        ...syncedChartSpec,
+        scales: undefined,
+        plotArea: undefined,
+        renderer: undefined,
+      };
+      return;
+    }
     try {
       const result = renderLineChart({
         chartId: node.id,
@@ -704,13 +809,17 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const chartSpec = cloneChartSpec(node.chartSpec);
     if (node.kind === "leaf") {
       const clone = { ...node, coordinateGuide, chartSpec, id: nextId, name: `${node.name} copy`, content: scopeSvgContent(node.content, nextId) };
-      renderLineNode(clone);
-      renderSemanticNode(clone);
+      if (clone.llmRenderer?.status !== "ready") {
+        renderLineNode(clone);
+        renderSemanticNode(clone);
+      }
       return clone;
     }
     const clone = { ...node, coordinateGuide, chartSpec, id: nextId, name: `${node.name} copy`, children: node.children.map((c) => cloneCanvasNodeForPaste(c)) };
-    renderLineNode(clone);
-    renderSemanticNode(clone);
+    if (clone.llmRenderer?.status !== "ready") {
+      renderLineNode(clone);
+      renderSemanticNode(clone);
+    }
     return clone;
   }
   function copySelectedNodes() {
@@ -1546,7 +1655,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     window.addEventListener("click", closeContextMenu);
   });
   watch(datasets, () => {
-    canvasNodes.value.forEach((node) => { renderLineNode(node); renderSemanticNode(node); });
+    canvasNodes.value.forEach((node) => {
+      if (node.llmRenderer?.status === "ready") return;
+      renderLineNode(node);
+      renderSemanticNode(node);
+    });
     if (!restoredCanvas && datasets.value.length > 0) {
       restoredCanvas = true;
       try {
@@ -1554,8 +1667,14 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         if (raw) {
           const saved = JSON.parse(raw) as { nodes?: CanvasNode[] };
           if (Array.isArray(saved.nodes)) {
-            canvasNodes.value = saved.nodes.map((node) => cloneCanvasNode(node));
-            canvasNodes.value.forEach((node) => { renderLineNode(node); renderSemanticNode(node); });
+            canvasNodes.value = saved.nodes
+              .filter((node) => node.id !== "llm-demo-node" && node.chartSpec?.datasetId !== "dataset:llm-demo")
+              .map((node) => cloneCanvasNode(node));
+            canvasNodes.value.forEach((node) => {
+              if (node.llmRenderer?.status === "ready") return;
+              renderLineNode(node);
+              renderSemanticNode(node);
+            });
           }
         }
       } catch { /* ignore malformed saved projects */ }
@@ -1590,6 +1709,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     axisBindingValue,
     axisBindingSeriesCandidates,
     axisBindingSeriesValue,
+    axisBindingEncodingValues,
+    axisBindingOptionalCandidates,
     axisBindingRendererError,
     interaction,
     contextMenu,
@@ -1624,6 +1745,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     onCanvasContextMenu,
     onCanvasNodePointerDown,
     onSemanticMarkPointerDown,
+    applyLlmRenderer,
     onCanvasNodeContextMenu,
     onScaleHandlePointerDown,
     onRotateHandlePointerDown,
@@ -1633,6 +1755,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     clearAxisBinding,
     confirmSeriesField,
     clearSeriesBinding,
+    bindOptionalEncoding,
+    clearOptionalEncoding,
     closeAxisBinding,
     setSelectionRotation,
     onCandidateDragStart,
