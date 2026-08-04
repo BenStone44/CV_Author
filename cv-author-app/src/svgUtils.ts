@@ -1,6 +1,5 @@
 import type {
   SvgCandidate,
-  CoordinateSystem,
   Bounds,
   Point,
   ParsedSvgLeafTemplateNode,
@@ -10,10 +9,10 @@ import type {
   FlattenedSvgLeaf,
   ElementOrientation,
 } from "./types";
-import { selectedChartNames } from "./selectedCharts";
 import {
   previewSrcByName,
   rawSvgSourceByName,
+  templateCatalog,
 } from "virtual:chart-assets";
 
 const rawSvgLoaders = Object.fromEntries(
@@ -116,37 +115,6 @@ export function toFileName(path: string) {
       .pop()
       ?.replace(/\.(?:png|svg|webp)$/i, "") ?? path
   );
-}
-
-function getPreviewSrc(name: string) {
-  const src = previewSrcByName.get(name);
-  if (!src) throw new Error(`Missing VisAnatomy PNG preview for ${name}`);
-  return src;
-}
-
-function toCategory(name: string) {
-  const category = name.replace(/\d+$/, "");
-  return category.length > 0 ? category : "Uncategorized";
-}
-
-const polarChartTypes = new Set([
-  "BarChartInRadialLayout",
-  "DonutChart",
-  "PieChart",
-  "PolarAreaChart",
-  "RadarChart",
-  "RadialBarChart",
-  "SpiralPlot",
-]);
-
-const geographicChartTypes = new Set(["GeoHeatmap"]);
-const noCoordinateChartTypes = new Set(["Calendar", "CirclePacking", "WordCloud"]);
-
-function resolveCoordinateSystem(chartType: string): CoordinateSystem {
-  if (geographicChartTypes.has(chartType)) return "Geographic";
-  if (noCoordinateChartTypes.has(chartType)) return "None";
-  if (polarChartTypes.has(chartType)) return "Polar";
-  return "Cartesian";
 }
 
 function parseDimension(value: string | null) {
@@ -780,17 +748,17 @@ export async function loadSvgTemplate(candidateId: string): Promise<ParsedSvgTem
   return promise;
 }
 
-export const candidates: SvgCandidate[] = selectedChartNames
-  .map((name) => {
+export const candidates: SvgCandidate[] = templateCatalog
+  .map(({ name, chartType, coordinateSystem }) => {
     const source = rawSvgSourceByName[name];
-    if (!source) throw new Error(`Missing VisAnatomy SVG source for ${name}`);
-    const chartType = toCategory(name);
+    const src = previewSrcByName.get(name);
+    if (!source || !src) throw new Error(`Missing rendered template asset for ${name}`);
     return {
       id: source.id,
       name,
       chartType,
-      coordinateSystem: resolveCoordinateSystem(chartType),
-      src: getPreviewSrc(name),
+      coordinateSystem,
+      src,
     };
   })
   .sort((left, right) => {

@@ -1,20 +1,29 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 
 import { defineConfig, normalizePath, type Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueDevTools from 'vite-plugin-vue-devtools'
-import { selectedChartNames } from './src/selectedCharts'
 
 const virtualChartAssetsId = 'virtual:chart-assets'
 const resolvedVirtualChartAssetsId = `\0${virtualChartAssetsId}`
-const candidateSvgsDirectory = fileURLToPath(new URL('../candidate_svgs', import.meta.url))
-const dataBindingDirectory = resolve(candidateSvgsDirectory, 'charts_svg_separated', 'data-binding')
-const coordinateSystemsPath = resolve(candidateSvgsDirectory, 'charts_svg_separated', 'coordinate-systems.json')
-const selectedDataBindingChartNames = selectedChartNames.filter((name) =>
-  existsSync(resolve(dataBindingDirectory, `${name}.svg`)),
-)
+const templateDirectory = fileURLToPath(new URL('./templates', import.meta.url))
+const templateDefinitions = readdirSync(templateDirectory, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => {
+    const directory = resolve(templateDirectory, entry.name)
+    const metadata = JSON.parse(readFileSync(resolve(directory, 'template.json'), 'utf8'))
+    return {
+      name: metadata.name,
+      chartType: metadata.chartType,
+      coordinateSystem: metadata.coordinateSystem,
+      renderedSvgPath: resolve(directory, metadata.renderedSvg),
+      previewPath: resolve(directory, metadata.preview),
+    }
+  })
+  .filter((template) => existsSync(template.renderedSvgPath) && existsSync(template.previewPath))
+  .sort((left, right) => left.name.localeCompare(right.name, 'en', { numeric: true }))
 
 function chartAssetsPlugin(): Plugin {
   return {
@@ -25,35 +34,26 @@ function chartAssetsPlugin(): Plugin {
     load(id) {
       if (id !== resolvedVirtualChartAssetsId) return null
 
-      const previewImports = selectedDataBindingChartNames.map((name, index) => {
-        const previewName = name === 'ConnectedDotplot19' ? 'ConnectedDotPlot19' : name
-        const path = normalizePath(resolve(candidateSvgsDirectory, 'charts_png', `${previewName}.png`))
+      const previewImports = templateDefinitions.map((template, index) => {
+        const path = normalizePath(template.previewPath)
         return `import preview${index} from ${JSON.stringify(path)};`
       })
-      const previewEntries = selectedDataBindingChartNames.map(
-        (name, index) => `[${JSON.stringify(name)}, preview${index}]`,
+      const previewEntries = templateDefinitions.map(
+        (template, index) => `[${JSON.stringify(template.name)}, preview${index}]`,
       )
-      const svgEntries = selectedDataBindingChartNames.map((name) => {
-        const path = normalizePath(resolve(dataBindingDirectory, `${name}.svg`))
-        const sourceId = `../../candidate_svgs/charts_svg_separated/data-binding/${name}.svg`
-        return `${JSON.stringify(name)}: { id: ${JSON.stringify(sourceId)}, loader: () => import(${JSON.stringify(`${path}?raw`)}).then((module) => module.default) }`
+      const svgEntries = templateDefinitions.map((template) => {
+        const path = normalizePath(template.renderedSvgPath)
+        const sourceId = `../../templates/${template.name}/rendered.svg`
+        return `${JSON.stringify(template.name)}: { id: ${JSON.stringify(sourceId)}, loader: () => import(${JSON.stringify(`${path}?raw`)}).then((module) => module.default) }`
       })
-      let coordinateAxesByName: Record<string, unknown> = {}
-      try {
-        const metadata = JSON.parse(readFileSync(coordinateSystemsPath, 'utf8'))
-        coordinateAxesByName = metadata?.charts ?? {}
-      } catch {
-        // Coordinate metadata is optional until the layer split command has run.
-      }
-      const coordinateEntries = selectedDataBindingChartNames.map((name) =>
-        `${JSON.stringify(name)}: ${JSON.stringify(coordinateAxesByName[name] ?? null)}`,
-      )
+      const catalog = templateDefinitions.map(({ name, chartType, coordinateSystem }) => ({ name, chartType, coordinateSystem }))
 
       return [
         ...previewImports,
+        `export const templateCatalog = ${JSON.stringify(catalog)};`,
         `export const previewSrcByName = new Map([${previewEntries.join(',')}]);`,
         `export const rawSvgSourceByName = {${svgEntries.join(',')}};`,
-        `export const coordinateAxesByName = {${coordinateEntries.join(',')}};`,
+        'export const coordinateAxesByName = {};',
       ].join('\n')
     },
   }

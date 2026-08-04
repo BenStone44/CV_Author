@@ -73,6 +73,35 @@ export function getLeafNodeTransform(node: CanvasLeafNode) {
   return `translate(${node.x + node.width * node.scaleX / 2} ${node.y + node.height * node.scaleY / 2}) rotate(${node.rotation}) scale(${node.scaleX} ${node.scaleY}) translate(${-cx} ${-cy})`;
 }
 
+export function getNodeVisualBounds(node: CanvasNode) {
+  const baseMinX = node.kind === "leaf" ? node.contentMinX : 0;
+  const baseMinY = node.kind === "leaf" ? node.contentMinY : 0;
+  const baseMaxX = baseMinX + node.width;
+  const baseMaxY = baseMinY + node.height;
+  const plotArea = node.coordinateGuide?.type === "Cartesian"
+    ? node.chartSpec?.plotArea
+    : undefined;
+  if (node.renderedContent && plotArea) {
+    return {
+      minX: plotArea.x - 48,
+      minY: plotArea.y - 32,
+      maxX: plotArea.x + plotArea.width + 16,
+      maxY: plotArea.y + plotArea.height + 48,
+    };
+  }
+  return {
+    minX: Math.min(baseMinX, plotArea?.x ?? baseMinX),
+    minY: Math.min(baseMinY, plotArea?.y ?? baseMinY),
+    maxX: Math.max(baseMaxX, (plotArea?.x ?? baseMinX) + (plotArea?.width ?? 0)),
+    maxY: Math.max(baseMaxY, (plotArea?.y ?? baseMinY) + (plotArea?.height ?? 0)),
+  };
+}
+
+export function getNodeVisualSize(node: CanvasNode) {
+  const bounds = getNodeVisualBounds(node);
+  return { width: bounds.maxX - bounds.minX, height: bounds.maxY - bounds.minY };
+}
+
 export function computeAbsoluteFrame(
   node: CanvasNode,
   parentX = 0,
@@ -152,7 +181,18 @@ export function collectNodeBounds(
   const y = parentY + node.y * parentScaleY;
   const scaleX = parentScaleX * node.scaleX;
   const scaleY = parentScaleY * node.scaleY;
-  let bounds = boundsFromNodeFrame(x, y, node.width, node.height, scaleX, scaleY, node.rotation);
+  const localMinX = node.kind === "leaf" ? node.contentMinX : 0;
+  const localMinY = node.kind === "leaf" ? node.contentMinY : 0;
+  const visualBounds = getNodeVisualBounds(node);
+  let bounds = boundsFromNodeFrame(
+    x + (visualBounds.minX - localMinX) * scaleX,
+    y + (visualBounds.minY - localMinY) * scaleY,
+    visualBounds.maxX - visualBounds.minX,
+    visualBounds.maxY - visualBounds.minY,
+    scaleX,
+    scaleY,
+    node.rotation,
+  );
   if (node.kind === "group") {
     let merged: Bounds | null = null;
     node.children.forEach((child) => {

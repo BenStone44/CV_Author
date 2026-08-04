@@ -1,6 +1,11 @@
 /// <reference types="vite/client" />
 
 declare module "virtual:chart-assets" {
+  export const templateCatalog: Array<{
+    name: string;
+    chartType: string;
+    coordinateSystem: "Cartesian" | "Polar" | "Geographic" | "None";
+  }>;
   export const previewSrcByName: Map<string, string>;
   export const rawSvgSourceByName: Record<
     string,

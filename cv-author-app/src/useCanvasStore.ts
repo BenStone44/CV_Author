@@ -21,12 +21,14 @@ import type {
   ScaleInteraction,
   RotateInteraction,
   CoordinateOriginInteraction,
+  CoordinateAxisScaleInteraction,
   ScaleHandle,
   SelectionUnit,
   Bounds,
   Point,
   ParsedSvgTemplate,
   ParsedSvgTemplateNode,
+  ParsedSvgLeafTemplateNode,
   ElementOrientation,
   SvgCandidate,
   CompositionType,
@@ -53,7 +55,6 @@ import {
   loadSvgTemplate,
   parseSvgTemplate,
   scopeSvgContent,
-  collator,
 } from "./svgUtils";
 import {
   clamp,
@@ -65,6 +66,8 @@ import {
   computeBounds,
   createCanvasNodesSvgMarkup,
   cloneChartSpec,
+  getNodeVisualSize,
+  getNodeVisualBounds,
 } from "./canvasUtils";
 import { renderLayerChart, renderNestedPie } from "./semanticRenderer";
 
@@ -118,7 +121,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const { datasets, activeDataset, getDataset } = useDatasetStore();
   // --- sidebar state ---
   const selectedCoordinateSystems = ref<Set<CoordinateSystem>>(new Set());
-  const selectedChartType = ref("All");
   const generatedCandidates = ref<SvgCandidate[]>([]);
 
   function toggleCoordinateSystem(value: CoordinateSystem) {
@@ -139,23 +141,10 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const compositionCandidates = computed(() =>
     generatedCandidates.value,
   );
-  const availableChartTypes = computed(() => {
-    const names = new Set(
-      candidates
-        .filter(isVisibleCandidate)
-        .filter((c) => coordinateSystemMatches(c.coordinateSystem))
-        .map((c) => c.chartType),
-    );
-    return ["All", ...Array.from(names).sort((a, b) => collator.compare(a, b))];
-  });
-  watch(availableChartTypes, (values) => {
-    if (!values.includes(selectedChartType.value)) selectedChartType.value = "All";
-  }, { immediate: true });
   const filteredCandidates = computed(() => {
     return candidates.filter((c) => {
       if (!isVisibleCandidate(c)) return false;
-      const chartTypeMatches = selectedChartType.value === "All" || c.chartType === selectedChartType.value;
-      return coordinateSystemMatches(c.coordinateSystem) && chartTypeMatches;
+      return coordinateSystemMatches(c.coordinateSystem);
     });
   });
 
@@ -285,11 +274,15 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const bounds = selectionBounds.value;
     const node = selectedIds.value.length === 1 ? getRootNode(selectedIds.value[0]!) : null;
     if (!bounds || !node) return bounds ? { x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height, rotation: 0 } : null;
+    const visualSize = getNodeVisualSize(node);
+    const visualBounds = getNodeVisualBounds(node);
+    const localMinX = node.kind === "leaf" ? node.contentMinX : 0;
+    const localMinY = node.kind === "leaf" ? node.contentMinY : 0;
     return {
-      x: node.x,
-      y: node.y,
-      width: node.width * node.scaleX,
-      height: node.height * node.scaleY,
+      x: node.x + (visualBounds.minX - localMinX) * node.scaleX,
+      y: node.y + (visualBounds.minY - localMinY) * node.scaleY,
+      width: visualSize.width * node.scaleX,
+      height: visualSize.height * node.scaleY,
       rotation: node.rotation,
     };
   });
@@ -317,7 +310,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const canGroup = computed(() => selectedNodes.value.length > 1);
   const canCompose = computed(() => selectedNodes.value.length > 1 || !!semanticSelection.value?.rowKey);
   const canFacet = computed(() => selectedNodes.value.length > 0);
-  const canUngroup = computed(() => selectedNodes.value.some((n) => n.kind === "group"));
+  const canUngroup = computed(() => selectedNodes.value.some(
+    (node) => node.kind === "group" || !!node.renderedContent,
+  ));
   const canMoveSelectionForward = computed(() => {
     const sel = new Set(selectedIds.value);
     return canvasNodes.value.some((n, i) => {
@@ -586,9 +581,13 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function onCoordinateAxisSelect(target: CanvasNode, channel: EncodingChannel) {
     const node = getRootNode(target.id);
     if (!node || node.coordinateGuide?.type !== "Cartesian") return;
-    setSelection([node.id]);
     axisBindingTarget.value = { nodeId: node.id, channel };
     contextMenu.value = null;
+  }
+  function setAxisBindingChannel(channel: EncodingChannel) {
+    const target = axisBindingTarget.value;
+    if (!target) return;
+    axisBindingTarget.value = { ...target, channel };
   }
   function closeAxisBinding() {
     axisBindingTarget.value = null;
@@ -618,10 +617,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       series,
     };
     renderLineNode(node);
-    const keepInspectorOpen = supportsOptionalEncodings(node.chartSpec.chartType)
-      && !!node.chartSpec.encodings.x
-      && !!node.chartSpec.encodings.y;
-    if (!keepInspectorOpen) axisBindingTarget.value = null;
   }
   function clearAxisBinding() {
     const target = axisBindingTarget.value;
@@ -639,7 +634,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       renderer: undefined,
     };
     node.renderedContent = null;
-    axisBindingTarget.value = null;
   }
   function confirmSeriesField(fieldName: string) {
     const node = axisBindingNode.value;
@@ -656,7 +650,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       series: { field: column.name, type: column.type },
     };
     renderLineNode(node);
-    if (node.chartSpec.renderer?.status !== "error") axisBindingTarget.value = null;
   }
   function clearSeriesBinding() {
     const node = axisBindingNode.value;
@@ -1193,6 +1186,10 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     pushCanvasHistory();
     canvasNodes.value.push(...nextItems);
     setSelection(nextItems[0] ? [nextItems[0].id] : []);
+    const editableNode = nextItems[0];
+    if (editableNode?.coordinateGuide?.type === "Cartesian" && editableNode.chartSpec) {
+      axisBindingTarget.value = { nodeId: editableNode.id, channel: "x" };
+    }
     setImportNotice(countTemplateNodes(template.nodes) > 1 ? `${name}: imported ${countTemplateNodes(template.nodes)} SVG tree nodes.` : `${name}: imported as a single SVG node.`);
   }
   async function createCanvasItem(candidate: SvgCandidate, point: Point) {
@@ -1341,6 +1338,19 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     };
     attachPointerListeners();
   }
+  function onCoordinateAxisScalePointerDown(node: CanvasNode, axis: "x" | "y", event: PointerEvent) {
+    const guide = node.coordinateGuide;
+    if (event.button !== 0 || guide?.type !== "Cartesian") return;
+    interaction.value = {
+      type: "coordinate-axis-scale",
+      nodeId: node.id,
+      axis,
+      startPoint: toCanvasPoint(event.clientX, event.clientY),
+      startScale: axis === "x" ? guide.xScale ?? 1 : guide.yScale ?? 1,
+      historyCommitted: false,
+    };
+    attachPointerListeners();
+  }
   function updateRotateInteraction(currentPoint: Point, ri: RotateInteraction) {
     const angle = Math.atan2(currentPoint.y - ri.center.y, currentPoint.x - ri.center.x) - ri.startAngle;
     const degrees = angle * 180 / Math.PI;
@@ -1400,6 +1410,22 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       y: clamp(localPoint.y, minY, minY + node.height),
     };
   }
+  function updateCoordinateAxisScaleInteraction(currentPoint: Point, ci: CoordinateAxisScaleInteraction) {
+    const node = getRootNode(ci.nodeId);
+    const guide = node?.coordinateGuide;
+    if (!node || guide?.type !== "Cartesian") return;
+    const localStart = toNodeLocalPoint(node, ci.startPoint);
+    const localCurrent = toNodeLocalPoint(node, currentPoint);
+    const span = ci.axis === "x" ? Math.max(node.width, 1) : Math.max(node.height, 1);
+    const direction = ci.axis === "x" ? guide.xDirection : guide.yDirection;
+    const delta = ci.axis === "x"
+      ? (localCurrent.x - localStart.x) * direction
+      : (localCurrent.y - localStart.y) * direction;
+    const nextScale = clamp(ci.startScale + delta / span, Math.max(1 / span, 0.001), 1.5);
+    if (ci.axis === "x") guide.xScale = nextScale;
+    else guide.yScale = nextScale;
+    renderLineNode(node);
+  }
   function finalizeMarqueeSelection(mi: MarqueeInteraction) {
     const bounds = normalizeBounds(mi.startPoint, mi.currentPoint);
     if (bounds.width < 3 && bounds.height < 3) { selectedIds.value = []; return; }
@@ -1441,6 +1467,14 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         ai.historyCommitted = true;
       }
       updateCoordinateOriginInteraction(point, ai);
+      return;
+    }
+    if (ai.type === "coordinate-axis-scale") {
+      if (!ai.historyCommitted && Math.hypot(point.x - ai.startPoint.x, point.y - ai.startPoint.y) > 0.1) {
+        pushCanvasHistory();
+        ai.historyCommitted = true;
+      }
+      updateCoordinateAxisScaleInteraction(point, ai);
       return;
     }
     if (!ai.historyCommitted && (Math.abs(point.x - ai.startPoint.x) > 0.1 || Math.abs(point.y - ai.startPoint.y) > 0.1)) { pushCanvasHistory(); ai.historyCommitted = true; }
@@ -1550,16 +1584,60 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     );
     setSelection([nextGroupId]);
   }
+  function generatedLeavesFromNode(node: CanvasNode): CanvasLeafNode[] {
+    if (!node.renderedContent) return [];
+    const baseMinX = node.kind === "leaf" ? node.contentMinX : 0;
+    const baseMinY = node.kind === "leaf" ? node.contentMinY : 0;
+    const markup = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${baseMinX} ${baseMinY} ${node.width} ${node.height}" width="${node.width}" height="${node.height}">${node.renderedContent}</svg>`;
+    try {
+      const template = parseSvgTemplate(markup);
+      const leaves: ParsedSvgLeafTemplateNode[] = [];
+      const visit = (entries: ParsedSvgTemplateNode[]) => entries.forEach((entry) => {
+        if (entry.kind === "leaf") leaves.push(entry);
+        else visit(entry.children);
+      });
+      visit(template.nodes);
+      return leaves.map((leaf, index) => {
+        const id = crypto.randomUUID();
+        return {
+          kind: "leaf",
+          id,
+          candidateId: `generated:${node.id}`,
+          name: `${node.name}-${index + 1}`,
+          content: scopeSvgContent(leaf.content, id),
+          viewBox: leaf.viewBox,
+          width: Math.max(leaf.bounds.width, 1),
+          height: Math.max(leaf.bounds.height, 1),
+          x: node.x + (leaf.bounds.minX - baseMinX) * node.scaleX,
+          y: node.y + (leaf.bounds.minY - baseMinY) * node.scaleY,
+          scaleX: node.scaleX,
+          scaleY: node.scaleY,
+          rotation: node.rotation,
+          contentMinX: leaf.contentMinX,
+          contentMinY: leaf.contentMinY,
+        } satisfies CanvasLeafNode;
+      });
+    } catch {
+      return [];
+    }
+  }
   function ungroupSelectedItems() {
-    const groupIds = new Set(
-      selectedNodes.value.filter((n): n is CanvasGroupNode => n.kind === "group").map((n) => n.id),
+    const nodeIds = new Set(
+      selectedNodes.value.filter((node) => node.kind === "group" || !!node.renderedContent).map((node) => node.id),
     );
-    if (groupIds.size === 0) return;
+    if (nodeIds.size === 0) return;
     pushCanvasHistory();
     const nextRoots: CanvasNode[] = [];
     const nextSel: string[] = [];
     canvasNodes.value.forEach((node) => {
-      if (node.kind !== "group" || !groupIds.has(node.id)) { nextRoots.push(node); return; }
+      if (!nodeIds.has(node.id)) { nextRoots.push(node); return; }
+      const generatedLeaves = generatedLeavesFromNode(node);
+      if (generatedLeaves.length > 0) {
+        nextRoots.push(...generatedLeaves);
+        nextSel.push(...generatedLeaves.map((leaf) => leaf.id));
+        return;
+      }
+      if (node.kind !== "group") { nextRoots.push(node); return; }
       node.children.forEach((child) => {
         const flat = { ...child, x: node.x + child.x * node.scaleX, y: node.y + child.y * node.scaleY, scaleX: child.scaleX * node.scaleX, scaleY: child.scaleY * node.scaleY } satisfies CanvasNode;
         nextRoots.push(flat);
@@ -1684,10 +1762,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
 
   return {
     candidates,
-    selectedChartType,
     previewableCandidates,
     compositionCandidates,
-    availableChartTypes,
     filteredCandidates,
     canvasNodes,
     viewZoom,
@@ -1741,7 +1817,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     onScaleHandlePointerDown,
     onRotateHandlePointerDown,
     onCoordinateOriginPointerDown,
+    onCoordinateAxisScalePointerDown,
     onCoordinateAxisSelect,
+    setAxisBindingChannel,
     bindAxisField,
     clearAxisBinding,
     confirmSeriesField,

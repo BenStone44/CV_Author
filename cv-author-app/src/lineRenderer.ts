@@ -1,8 +1,9 @@
 import { extent, group } from "d3-array";
-import { scaleLinear, scaleUtc } from "d3-scale";
+import { scaleLinear, scalePoint, scaleUtc } from "d3-scale";
 import { line } from "d3-shape";
 import type {
   CartesianCoordinateGuide,
+  ChartEncoding,
   ChartPlotArea,
   ChartScaleSpec,
   ChartSpec,
@@ -12,7 +13,22 @@ import type {
   ParsedSvgTemplateNode,
 } from "./types";
 
-const fallbackPalette = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0891b2"];
+const fallbackPalette = [
+  "rgba(0,143,251,0.9)",
+  "rgba(0,227,150,0.9)",
+  "rgba(254,176,25,0.9)",
+  "rgba(255,69,96,0.9)",
+  "rgba(119,93,208,0.9)",
+  "rgba(0,227,150,0.9)",
+];
+const linechartTemplateStyle: ChartStyleTokens = {
+  palette: fallbackPalette,
+  axisColor: "#373d3f",
+  textColor: "#373d3f",
+  fontFamily: "Helvetica, Arial, sans-serif",
+  fontSize: 12,
+  lineWidth: 5,
+};
 
 export type LineRenderResult = {
   content: string;
@@ -62,14 +78,7 @@ function isVisiblePaint(value: string) {
 }
 
 export function extractChartStyleTokens(template: ParsedSvgTemplate): ChartStyleTokens {
-  const fallback: ChartStyleTokens = {
-    palette: [...fallbackPalette],
-    axisColor: "#6b7280",
-    textColor: "#374151",
-    fontFamily: "Inter, system-ui, sans-serif",
-    fontSize: 11,
-    lineWidth: 2,
-  };
+  const fallback: ChartStyleTokens = { ...linechartTemplateStyle, palette: [...linechartTemplateStyle.palette] };
   if (typeof DOMParser === "undefined") return fallback;
 
   const document = new DOMParser().parseFromString(
@@ -126,17 +135,36 @@ function rowKey(dataset: Dataset, row: Record<string, string>) {
     : "";
 }
 
+type ParsedAxisValue = string | number | Date;
+
+function parseAxisValue(value: string, type: ChartEncoding["type"]): ParsedAxisValue | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (type === "nominal") return trimmed;
+  if (type === "quantitative") {
+    const number = Number(trimmed);
+    return Number.isFinite(number) ? number : null;
+  }
+  const timestamp = Date.parse(trimmed);
+  return Number.isFinite(timestamp) ? new Date(timestamp) : null;
+}
+
+function uniqueDomain(values: ParsedAxisValue[]) {
+  return Array.from(new Set(values.map((value) => String(value))));
+}
+
+function tickValues<T>(values: T[], maximum: number) {
+  if (values.length <= maximum) return values;
+  const stride = (values.length - 1) / (maximum - 1);
+  return Array.from({ length: maximum }, (_, index) => values[Math.round(index * stride)]!);
+}
+
 export function renderLineChart(input: LineRenderInput): LineRenderResult {
   const { chartId, width, height, minX, minY, coordinateGuide, chartSpec, dataset } = input;
   const xEncoding = chartSpec.encodings.x;
   const yEncoding = chartSpec.encodings.y;
   const seriesEncoding = chartSpec.series;
-  if (!xEncoding || xEncoding.type !== "temporal") {
-    throw new Error("Line renderer requires a temporal X encoding.");
-  }
-  if (!yEncoding || yEncoding.type !== "quantitative") {
-    throw new Error("Line renderer requires a quantitative Y encoding.");
-  }
+  if (!xEncoding || !yEncoding) throw new Error("Line renderer requires both X and Y encodings.");
   if (seriesEncoding && seriesEncoding.type !== "nominal") {
     throw new Error("Line renderer series encoding must be nominal.");
   }
@@ -144,31 +172,44 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
   const rows = dataset.rows
     .map((row) => ({
       row,
-      x: Date.parse(row[xEncoding.field] ?? ""),
-      y: Number(row[yEncoding.field] ?? ""),
+      x: parseAxisValue(row[xEncoding.field] ?? "", xEncoding.type),
+      y: parseAxisValue(row[yEncoding.field] ?? "", yEncoding.type),
       series: seriesEncoding ? (row[seriesEncoding.field] ?? "").trim() : "__single__",
     }))
-    .filter((datum) => Number.isFinite(datum.x) && Number.isFinite(datum.y) && datum.series !== "");
+    .filter((datum): datum is { row: Record<string, string>; x: ParsedAxisValue; y: ParsedAxisValue; series: string } =>
+      datum.x !== null && datum.y !== null && datum.series !== "",
+    );
   if (rows.length === 0) throw new Error("No valid rows remain after applying the line encodings.");
 
-  const xDomain = finiteExtent(rows.map((datum) => datum.x));
-  const yDomain = finiteExtent(rows.map((datum) => datum.y));
-  if (!xDomain || !yDomain) throw new Error("Unable to calculate line chart scale domains.");
-
-  const tokens = chartSpec.styleTokens ?? extractChartStyleTokens({
-    viewBox: "0 0 1 1", width: 1, height: 1, minX: 0, minY: 0, nodes: [],
-  });
+  // The Linechart template is the visual source of truth. Candidate SVGs may
+  // carry unrelated thin strokes, so do not let their extracted tokens win.
+  const tokens: ChartStyleTokens = {
+    ...chartSpec.styleTokens,
+    ...linechartTemplateStyle,
+    palette: [...linechartTemplateStyle.palette],
+  };
   const fontSize = Math.max(9, Math.min(tokens.fontSize, Math.min(width, height) * 0.045));
   const legendHeight = Math.min(fontSize * 2.4, height * 0.16);
   const leftMargin = Math.min(Math.max(fontSize * 4.6, width * 0.11), width * 0.28);
   const rightMargin = Math.min(Math.max(fontSize * 1.8, width * 0.04), width * 0.15);
   const topMargin = Math.min(Math.max(fontSize * 1.4 + legendHeight, height * 0.12), height * 0.3);
   const bottomMargin = Math.min(Math.max(fontSize * 3.6, height * 0.14), height * 0.3);
+  const basePlotX = minX + leftMargin;
+  const basePlotY = minY + topMargin;
+  const basePlotWidth = width - leftMargin - rightMargin;
+  const basePlotHeight = height - topMargin - bottomMargin;
+  const scaledPlotWidth = Math.max(1, basePlotWidth * (coordinateGuide.xScale ?? 1));
+  const scaledPlotHeight = Math.max(1, basePlotHeight * (coordinateGuide.yScale ?? 1));
   const plotArea: ChartPlotArea = {
-    x: minX + leftMargin,
-    y: minY + topMargin,
-    width: Math.max(1, width - leftMargin - rightMargin),
-    height: Math.max(1, height - topMargin - bottomMargin),
+    // Keep the coordinate origin fixed while the opposing endpoint is dragged.
+    x: coordinateGuide.xDirection === 1
+      ? basePlotX
+      : basePlotX + basePlotWidth - scaledPlotWidth,
+    y: coordinateGuide.yDirection === -1
+      ? basePlotY + basePlotHeight - scaledPlotHeight
+      : basePlotY,
+    width: scaledPlotWidth,
+    height: scaledPlotHeight,
   };
   const plotRight = plotArea.x + plotArea.width;
   const plotBottom = plotArea.y + plotArea.height;
@@ -178,13 +219,42 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
   const yRange: [number, number] = coordinateGuide.yDirection === -1
     ? [plotBottom, plotArea.y]
     : [plotArea.y, plotBottom];
-  const xScale = scaleUtc()
-    .domain(xDomain.map((value) => new Date(value)) as [Date, Date])
-    .range(xRange);
-  const yScale = scaleLinear().domain(yDomain).nice(5).range(yRange);
-  const resolvedYDomain = yScale.domain() as [number, number];
-  const xTicks = xScale.ticks(Math.max(2, Math.min(6, Math.floor(plotArea.width / 80))));
-  const yTicks = yScale.ticks(Math.max(2, Math.min(6, Math.floor(plotArea.height / 42))));
+  const makeScale = (encoding: ChartEncoding, values: ParsedAxisValue[], range: [number, number]) => {
+    if (encoding.type === "nominal") {
+      const domain = uniqueDomain(values);
+      const scale = scalePoint<string>().domain(domain).range(range).padding(0.5);
+      return {
+        position: (value: ParsedAxisValue) => scale(value as string) ?? 0,
+        domain,
+        ticks: tickValues(domain, 6) as ParsedAxisValue[],
+        type: "point" as const,
+      };
+    }
+    if (encoding.type === "temporal") {
+      const domain = finiteExtent(values.map((value) => (value as Date).getTime()));
+      if (!domain) throw new Error("Unable to calculate a temporal scale domain.");
+      const scale = scaleUtc().domain(domain.map((value) => new Date(value)) as [Date, Date]).range(range);
+      return {
+        position: (value: ParsedAxisValue) => scale(value as Date),
+        domain,
+        ticks: scale.ticks(6) as ParsedAxisValue[],
+        type: "utc" as const,
+      };
+    }
+    const domain = finiteExtent(values as number[]);
+    if (!domain) throw new Error("Unable to calculate a quantitative scale domain.");
+    const scale = scaleLinear().domain(domain).nice(5).range(range);
+    return {
+      position: (value: ParsedAxisValue) => scale(value as number),
+      domain: scale.domain() as [number, number],
+      ticks: scale.ticks(6) as ParsedAxisValue[],
+      type: "linear" as const,
+    };
+  };
+  const xAxisScale = makeScale(xEncoding, rows.map((datum) => datum.x), xRange);
+  const yAxisScale = makeScale(yEncoding, rows.map((datum) => datum.y), yRange);
+  const xTicks = tickValues(xAxisScale.ticks, Math.max(2, Math.min(6, Math.floor(plotArea.width / 80))));
+  const yTicks = tickValues(yAxisScale.ticks, Math.max(2, Math.min(6, Math.floor(plotArea.height / 42))));
   const xAxisY = coordinateGuide.yDirection === -1 ? plotBottom : plotArea.y;
   const yAxisX = coordinateGuide.xDirection === 1 ? plotArea.x : plotRight;
   const xLabelY = xAxisY + (coordinateGuide.yDirection === -1 ? fontSize * 2.6 : -fontSize * 2.1);
@@ -192,35 +262,44 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
   const clipId = `line-plot-${chartId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 
   const grid = yTicks.map((value) => {
-    const y = yScale(value);
+    const y = yAxisScale.position(value);
     return `<line x1="${plotArea.x}" y1="${y}" x2="${plotRight}" y2="${y}" stroke="${escapeXml(tokens.axisColor)}" stroke-opacity="0.16" vector-effect="non-scaling-stroke"/>`;
   }).join("");
   const xAxis = xTicks.map((value) => {
-    const x = xScale(value);
-    const label = value.toISOString().slice(0, 7);
+    const x = xAxisScale.position(value);
+    const label = xEncoding.type === "temporal"
+      ? (value as Date).toISOString().slice(0, 7)
+      : String(value);
     const tickEnd = xAxisY + (coordinateGuide.yDirection === -1 ? 5 : -5);
     const textY = xAxisY + (coordinateGuide.yDirection === -1 ? fontSize * 1.6 : -fontSize * 0.8);
-    return `<g class="tick"><line x1="${x}" y1="${xAxisY}" x2="${x}" y2="${tickEnd}" stroke="${escapeXml(tokens.axisColor)}" vector-effect="non-scaling-stroke"/><text x="${x}" y="${textY}" text-anchor="middle">${label}</text></g>`;
+    return `<g class="tick"><line x1="${x}" y1="${xAxisY}" x2="${x}" y2="${tickEnd}" stroke="${escapeXml(tokens.axisColor)}" vector-effect="non-scaling-stroke"/><text x="${x}" y="${textY}" text-anchor="middle">${escapeXml(label)}</text></g>`;
   }).join("");
   const yAxis = yTicks.map((value) => {
-    const y = yScale(value);
+    const y = yAxisScale.position(value);
     const tickEnd = yAxisX + (coordinateGuide.xDirection === 1 ? -5 : 5);
     const textX = yAxisX + (coordinateGuide.xDirection === 1 ? -fontSize * 0.8 : fontSize * 0.8);
-    return `<g class="tick"><line x1="${yAxisX}" y1="${y}" x2="${tickEnd}" y2="${y}" stroke="${escapeXml(tokens.axisColor)}" vector-effect="non-scaling-stroke"/><text x="${textX}" y="${y}" text-anchor="${coordinateGuide.xDirection === 1 ? "end" : "start"}" dominant-baseline="middle">${Number(value.toPrecision(4))}</text></g>`;
+    const label = yEncoding.type === "temporal"
+      ? (value as Date).toISOString().slice(0, 7)
+      : yEncoding.type === "quantitative"
+        ? Number(value).toPrecision(4)
+        : String(value);
+    return `<g class="tick"><line x1="${yAxisX}" y1="${y}" x2="${tickEnd}" y2="${y}" stroke="${escapeXml(tokens.axisColor)}" vector-effect="non-scaling-stroke"/><text x="${textX}" y="${y}" text-anchor="${coordinateGuide.xDirection === 1 ? "end" : "start"}" dominant-baseline="middle">${escapeXml(label)}</text></g>`;
   }).join("");
 
   const groupedRows = Array.from(group(rows, (datum) => datum.series).entries())
     .sort(([left], [right]) => left.localeCompare(right, "en", { numeric: true }));
   const pathGenerator = line<(typeof rows)[number]>()
-    .x((datum) => xScale(new Date(datum.x)))
-    .y((datum) => yScale(datum.y));
+    .x((datum) => xAxisScale.position(datum.x))
+    .y((datum) => yAxisScale.position(datum.y));
   const seriesMarkup = groupedRows.map(([seriesKey, values], index) => {
-    const ordered = [...values].sort((left, right) => left.x - right.x);
+    const ordered = xEncoding.type === "nominal"
+      ? [...values]
+      : [...values].sort((left, right) => Number(left.x) - Number(right.x));
     const path = pathGenerator(ordered);
     if (!path) return "";
     const color = tokens.palette[index % tokens.palette.length] ?? fallbackPalette[index % fallbackPalette.length]!;
     const keys = ordered.map((datum) => rowKey(dataset, datum.row)).filter(Boolean);
-    return `<g data-chart-id="${escapeXml(chartId)}" data-mark-role="series" data-series-key="${escapeXml(seriesKey)}" data-point-count="${ordered.length}" data-row-keys="${escapeXml(keys.join(","))}"><path d="${path}" fill="none" stroke="${escapeXml(color)}" stroke-width="${tokens.lineWidth}" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></g>`;
+    return `<g data-chart-id="${escapeXml(chartId)}" data-mark-role="series" data-series-key="${escapeXml(seriesKey)}" data-point-count="${ordered.length}" data-row-keys="${escapeXml(keys.join(","))}"><path d="${path}" fill="none" stroke="${escapeXml(color)}" stroke-width="${tokens.lineWidth}" stroke-linecap="butt" stroke-linejoin="round" vector-effect="non-scaling-stroke" style="stroke: ${escapeXml(color)}; stroke-width: ${tokens.lineWidth}px; stroke-linecap: butt; stroke-linejoin: round; fill: none;"/></g>`;
   }).join("");
   const legendItemWidth = plotArea.width / Math.max(groupedRows.length, 1);
   const legend = seriesEncoding ? groupedRows.map(([seriesKey], index) => {
@@ -236,15 +315,17 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
     plotArea,
     scales: {
       x: {
-        type: "utc",
-        domain: [new Date(xDomain[0]).toISOString(), new Date(xDomain[1]).toISOString()],
+        type: xAxisScale.type,
+        domain: xAxisScale.type === "utc"
+          ? (xAxisScale.domain as [number, number]).map((value) => new Date(value).toISOString()) as [string, string]
+          : xAxisScale.domain,
         range: xRange,
       },
       y: {
-        type: "linear",
-        domain: resolvedYDomain,
+        type: yAxisScale.type,
+        domain: yAxisScale.domain,
         range: yRange,
-        nice: true,
+        nice: yAxisScale.type === "linear" || undefined,
       },
     },
   };

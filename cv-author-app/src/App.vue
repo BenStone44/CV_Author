@@ -9,6 +9,7 @@ import {
 } from "vue";
 import { X } from "@lucide/vue";
 import { CanvasCoordinateGuideView, CanvasNodeView } from "./CanvasNodeView";
+import { CartesianCoordinateSystem } from "./CartesianCoordinateSystem";
 import CsvDataPanel from "./CsvDataPanel.vue";
 import type {
   CanvasNode,
@@ -32,8 +33,6 @@ const canvasRef = ref<HTMLElement | null>(null);
 const {
   selectedCoordinateSystems,
   toggleCoordinateSystem,
-  selectedChartType,
-  availableChartTypes,
   filteredCandidates,
   compositionCandidates,
   canvasNodes,
@@ -44,7 +43,6 @@ const {
   axisBindingTarget,
   axisBindingNode,
   axisBindingColumns,
-  axisBindingValue,
   axisBindingSeriesCandidates,
   axisBindingSeriesValue,
   axisBindingEncodingValues,
@@ -85,7 +83,9 @@ const {
   onScaleHandlePointerDown,
   onRotateHandlePointerDown,
   onCoordinateOriginPointerDown,
+  onCoordinateAxisScalePointerDown,
   onCoordinateAxisSelect,
+  setAxisBindingChannel,
   bindAxisField,
   clearAxisBinding,
   confirmSeriesField,
@@ -174,8 +174,9 @@ const llmDataset = computed(() => {
   return datasetId ? getDataset(datasetId) : activeDataset.value;
 });
 const selectedCanvasNodesWithCoordinateGuides = computed(() =>
-  canvasNodes.value.filter(
-    (node) => selectedIds.value.includes(node.id) && !!node.coordinateGuide,
+  canvasNodes.value.filter((node) =>
+    !!node.coordinateGuide &&
+    (selectedIds.value.includes(node.id) || axisBindingTarget.value?.nodeId === node.id),
   ),
 );
 
@@ -249,11 +250,11 @@ function onCompositionKeyDown(event: KeyboardEvent) {
   }
 }
 
-function onAxisFieldChange(event: Event) {
+function onAxisFieldChange(channel: EncodingChannel, event: Event) {
+  setAxisBindingChannel(channel);
   const field = (event.target as HTMLSelectElement).value;
   if (field) bindAxisField(field);
-  else if (axisBindingValue.value) clearAxisBinding();
-  else closeAxisBinding();
+  else clearAxisBinding();
 }
 
 function onSeriesFieldChange(event: Event) {
@@ -276,7 +277,6 @@ function confirmOptionalEncodings() {
     if (selected) bindOptionalEncoding(option.channel, selected);
     else clearOptionalEncoding(option.channel);
   });
-  closeAxisBinding();
   void nextTick(() => {
     encodingReviewApprovedKey.value = encodingReviewKey(node);
   });
@@ -287,7 +287,6 @@ function confirmEncodingInspector() {
   if (isLineChartType(axisBindingNode.value?.chartSpec?.chartType ?? "")) {
     if (seriesDraftField.value) confirmSeriesField(seriesDraftField.value);
     else clearSeriesBinding();
-    closeAxisBinding();
     void nextTick(() => {
       encodingReviewApprovedKey.value = encodingReviewKey(node);
     });
@@ -301,7 +300,6 @@ function skipOptionalEncodings() {
   axisBindingOptionalCandidates.value.forEach((option) =>
     clearOptionalEncoding(option.channel),
   );
-  closeAxisBinding();
   void nextTick(() => {
     encodingReviewApprovedKey.value = encodingReviewKey(node);
   });
@@ -423,51 +421,21 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="sidebar__browser">
-          <div class="filter-group filter-group--types">
-            <p class="filter-group__title">Chart Type</p>
-            <div class="filters filters--scroll">
-              <button
-                v-for="chartType in availableChartTypes"
-                :key="chartType"
-                class="filter-chip filter-chip--text"
-                :class="{
-                  'filter-chip--active': chartType === selectedChartType,
-                }"
-                type="button"
-                @click="selectedChartType = chartType"
-              >
-                {{ chartType }}
-              </button>
-            </div>
-          </div>
-
           <div class="candidate-list">
             <article
               v-for="candidate in filteredCandidates"
               :key="candidate.id"
-              class="candidate-card"
-              :class="{
-                'candidate-card--generated': candidate.compositionType,
-              }"
-              :title="candidate.name"
+              class="candidate-card candidate-card--template"
               draggable="true"
               @dragstart="onCandidateDragStart(candidate, $event)"
               @dragend="onCandidateDragEnd"
             >
-              <div class="candidate-card__preview">
-                <img
-                  :src="candidate.src"
-                  :alt="candidate.name"
-                  loading="lazy"
-                  draggable="false"
-                />
-                <span
-                  v-if="candidate.compositionType"
-                  class="candidate-card__badge"
-                >
-                  {{ candidate.compositionType }}
-                </span>
-              </div>
+              <img
+                class="candidate-card__preview"
+                :src="candidate.src"
+                alt=""
+                draggable="false"
+              />
             </article>
           </div>
         </div>
@@ -764,9 +732,7 @@ onBeforeUnmount(() => {
           >
             <header class="encoding-inspector__header">
               <div class="encoding-inspector__heading">
-                <strong
-                  >{{ axisBindingTarget.channel.toUpperCase() }} AXIS</strong
-                >
+                <strong>ENCODINGS</strong>
                 <span>{{
                   axisBindingNode?.chartSpec?.chartType ?? axisBindingNode?.name
                 }}</span>
@@ -782,24 +748,40 @@ onBeforeUnmount(() => {
               </button>
             </header>
 
-            <label
-              v-if="axisBindingColumns.length"
-              class="encoding-inspector__field"
-            >
-              <span>Column</span>
-              <select :value="axisBindingValue" @change="onAxisFieldChange">
-                <option value="">
-                  {{ axisBindingValue ? "Clear binding" : "Select column" }}
-                </option>
-                <option
-                  v-for="column in axisBindingColumns"
-                  :key="column.name"
-                  :value="column.name"
+            <div v-if="axisBindingColumns.length" class="encoding-inspector__axes">
+              <label class="encoding-inspector__field">
+                <span>X axis</span>
+                <select
+                  :value="axisBindingNode?.chartSpec?.encodings.x?.field ?? ''"
+                  @change="onAxisFieldChange('x', $event)"
                 >
-                  {{ column.name }} ({{ column.type }})
-                </option>
-              </select>
-            </label>
+                  <option value="">Not bound</option>
+                  <option
+                    v-for="column in axisBindingColumns"
+                    :key="column.name"
+                    :value="column.name"
+                  >
+                    {{ column.name }} ({{ column.type }})
+                  </option>
+                </select>
+              </label>
+              <label class="encoding-inspector__field">
+                <span>Y axis</span>
+                <select
+                  :value="axisBindingNode?.chartSpec?.encodings.y?.field ?? ''"
+                  @change="onAxisFieldChange('y', $event)"
+                >
+                  <option value="">Not bound</option>
+                  <option
+                    v-for="column in axisBindingColumns"
+                    :key="column.name"
+                    :value="column.name"
+                  >
+                    {{ column.name }} ({{ column.type }})
+                  </option>
+                </select>
+              </label>
+            </div>
             <p v-else class="encoding-inspector__empty">
               Import a CSV to bind this axis.
             </p>
@@ -1166,8 +1148,16 @@ onBeforeUnmount(() => {
                   />
                 </g>
               </g>
+              <CartesianCoordinateSystem
+                v-for="node in selectedCanvasNodesWithCoordinateGuides.filter((item) => item.coordinateGuide?.type === 'Cartesian')"
+                :key="`coordinate-guide-${node.id}`"
+                :node="node"
+                :view-zoom="viewZoom"
+                :on-axis-select="openAxisBinding"
+                :on-axis-scale-pointer-down="onCoordinateAxisScalePointerDown"
+              />
               <CanvasCoordinateGuideView
-                v-for="node in selectedCanvasNodesWithCoordinateGuides"
+                v-for="node in selectedCanvasNodesWithCoordinateGuides.filter((item) => item.coordinateGuide?.type !== 'Cartesian')"
                 :key="`coordinate-guide-${node.id}`"
                 :node="node"
                 :view-zoom="viewZoom"
@@ -1241,16 +1231,11 @@ onBeforeUnmount(() => {
   height: var(--browser-panel-height);
 }
 .sidebar__browser {
-  --candidate-card-width: 118px;
-  --candidate-card-height: 80px;
+  --candidate-card-width: 228px;
+  --candidate-card-height: 132px;
   --candidate-gap: 10px;
-  --candidate-preview-width: 104px;
-  --candidate-preview-height: 68px;
-  --candidate-image-width: 176px;
   grid-column: 2 / 4;
-  display: grid;
-  grid-template-columns: minmax(244px, 32%) minmax(0, 1fr);
-  gap: 16px;
+  display: block;
   align-items: stretch;
   height: var(--browser-panel-height);
   max-height: var(--browser-panel-height);
@@ -1272,15 +1257,7 @@ onBeforeUnmount(() => {
   gap: 8px;
   min-height: 0;
 }
-.filter-group--types {
-  min-width: 0;
-  height: var(--browser-panel-height);
-  max-height: var(--browser-panel-height);
-  min-height: 0;
-  overflow: hidden;
-}
-.filter-group--coordinate .filter-chip,
-.filter-group--types .filter-chip {
+.filter-group--coordinate .filter-chip {
   gap: 6px;
   min-height: 30px;
   padding: 5px 10px;
@@ -1345,24 +1322,6 @@ onBeforeUnmount(() => {
 .filter-chip--text {
   gap: 0;
 }
-.filters--scroll {
-  display: flex;
-  flex-wrap: wrap;
-  flex: 1 1 auto;
-  align-content: start;
-  width: 100%;
-  min-height: 0;
-  height: auto;
-  box-sizing: border-box;
-  overflow-x: hidden;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-.filter-group--types .filter-chip--text {
-  width: auto;
-  max-width: 100%;
-  justify-content: flex-start;
-}
 .candidate-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, var(--candidate-card-width));
@@ -1383,17 +1342,20 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   height: var(--candidate-card-height);
-  padding: 1px;
+  padding: 10px 12px;
   min-width: 0;
   min-height: 0;
   border: 1px solid rgba(24, 33, 47, 0.08);
-  border-radius: 14px;
+  border-radius: 6px;
   background: rgba(255, 255, 255, 0.9);
   cursor: grab;
   box-shadow: 0 6px 18px rgba(45, 89, 126, 0.07);
   transition:
     box-shadow 160ms ease,
     border-color 160ms ease;
+}
+.candidate-card--template {
+  padding: 6px;
 }
 .candidate-card:hover {
   border-color: rgba(28, 126, 214, 0.3);
@@ -1403,48 +1365,9 @@ onBeforeUnmount(() => {
   cursor: grabbing;
 }
 .candidate-card__preview {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--candidate-preview-width);
-  height: var(--candidate-preview-height);
-  min-height: 0;
-  overflow: hidden;
-  padding: 0;
-  border-radius: 10px;
-  background: linear-gradient(
-    135deg,
-    rgba(223, 237, 252, 0.9),
-    rgba(255, 255, 255, 0.92)
-  );
-}
-.candidate-card__preview img {
-  width: var(--candidate-image-width);
-  max-width: none;
-  height: auto;
-  flex: 0 0 auto;
-  pointer-events: none;
-}
-.candidate-card--generated .candidate-card__preview img {
-  width: 100%;
-  max-width: 100%;
-  height: 100%;
+  width: 212px;
+  height: 116px;
   object-fit: contain;
-}
-.candidate-card__badge {
-  position: absolute;
-  left: 4px;
-  bottom: 4px;
-  padding: 2px 5px;
-  border-radius: 4px;
-  background: rgba(21, 84, 178, 0.88);
-  color: #fff;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  line-height: 1.2;
-  text-transform: uppercase;
   pointer-events: none;
 }
 .workspace {
@@ -2142,6 +2065,48 @@ onBeforeUnmount(() => {
 .coordinate-guide-layer :deep(.coordinate-axis-reverse-control:hover) {
   opacity: 1;
 }
+.cartesian-coordinate-system {
+  overflow: visible;
+  pointer-events: none;
+}
+.cartesian-coordinate-system :deep(.cartesian-axis-line),
+.cartesian-coordinate-system :deep(.cartesian-axis-arrow) {
+  fill: none;
+  stroke: #111;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.cartesian-coordinate-system :deep(.cartesian-axis-endpoint) {
+  pointer-events: all;
+}
+.cartesian-coordinate-system :deep(.cartesian-axis-binding-target) {
+  fill: rgba(255, 255, 255, 0.96);
+  stroke: #1554b2;
+  stroke-width: 2;
+  cursor: pointer;
+  touch-action: none;
+}
+.cartesian-coordinate-system :deep(.cartesian-axis-handle-stem) {
+  stroke: #1554b2;
+  stroke-width: 1.4;
+  stroke-dasharray: 2 2;
+  pointer-events: none;
+}
+.cartesian-coordinate-system :deep(.cartesian-axis-scale-handle) {
+  fill: #1554b2;
+  stroke: #fff;
+  stroke-width: 1.5;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.cartesian-coordinate-system :deep(.cartesian-axis-endpoint--y .cartesian-axis-scale-handle) {
+  cursor: ns-resize;
+}
+.cartesian-coordinate-system :deep(.cartesian-axis-endpoint:hover .cartesian-axis-binding-target) {
+  stroke-width: 3;
+}
 .coordinate-guide-layer :deep(.polar-coordinate-ring) {
   fill: none;
   stroke: rgba(17, 17, 17, 0.62);
@@ -2227,7 +2192,7 @@ onBeforeUnmount(() => {
     grid-template-columns: 132px minmax(200px, 30%) minmax(0, 1fr);
   }
   .sidebar__browser {
-    grid-template-columns: minmax(190px, 32%) minmax(0, 1fr);
+    grid-column: 2 / 4;
   }
 }
 @media (max-width: 960px) {

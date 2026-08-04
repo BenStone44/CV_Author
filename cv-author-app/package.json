@@ -14,6 +14,7 @@
     "test:llm": "node --env-file=.env scripts/test-llm.mjs",
     "preview": "vite preview",
     "generate:snapshots": "node --no-warnings scripts/generate-chart-snapshots.mjs",
+    "generate:linegraph-template": "node scripts/build-linegraph-template.mjs",
     "split:charts": "node --no-warnings scripts/split-chart-layers.mjs",
     "build-only": "vite build",
     "type-check": "vue-tsc --build"

@@ -14,6 +14,8 @@ export type CartesianCoordinateGuide = {
   origin: Point;
   xDirection: 1 | -1;
   yDirection: 1 | -1;
+  xScale?: number;
+  yScale?: number;
 };
 
 export type PolarCoordinateGuide = {
@@ -67,8 +69,8 @@ export type ChartPlotArea = {
 };
 
 export type ChartScaleSpec = {
-  type: "utc" | "linear";
-  domain: [string, string] | [number, number];
+  type: "utc" | "linear" | "point";
+  domain: [string, string] | [number, number] | string[];
   range: [number, number];
   nice?: boolean;
 };
@@ -301,6 +303,15 @@ export type CoordinateOriginInteraction = {
   historyCommitted: boolean;
 };
 
+export type CoordinateAxisScaleInteraction = {
+  type: "coordinate-axis-scale";
+  nodeId: string;
+  axis: "x" | "y";
+  startPoint: Point;
+  startScale: number;
+  historyCommitted: boolean;
+};
+
 export type ScaleInteraction = {
   type: "scale";
   handle: ScaleHandle;
@@ -320,6 +331,7 @@ export type Interaction =
   | ScaleInteraction
   | RotateInteraction
   | CoordinateOriginInteraction
+  | CoordinateAxisScaleInteraction
   | PanInteraction;
 
 export type CanvasHistorySnapshot = {

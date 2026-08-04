@@ -1,0 +1,9 @@
+{
+  "name": "Linechart",
+  "chartType": "LineGraph",
+  "coordinateSystem": "Cartesian",
+  "template": "template.svg",
+  "sampleData": "sample-data.csv",
+  "renderedSvg": "rendered.svg",
+  "preview": "preview.png"
+}
