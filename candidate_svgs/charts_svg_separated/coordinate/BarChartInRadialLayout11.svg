@@ -1,0 +1,154 @@
+<svg class="radial-chart" viewBox="-500 -500 1000 1000" font-size="10px" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><g class="x-axis" text-anchor="middle"><g transform="
+        rotate(-86.47058823529412)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">CA</text></g><g transform="
+        rotate(-79.41176470588235)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">TX</text></g><g transform="
+        rotate(-72.35294117647058)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">NY</text></g><g transform="
+        rotate(-65.29411764705883)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">FL</text></g><g transform="
+        rotate(-58.23529411764706)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">IL</text></g><g transform="
+        rotate(-51.17647058823529)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">PA</text></g><g transform="
+        rotate(-44.11764705882352)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">OH</text></g><g transform="
+        rotate(-37.05882352941176)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">MI</text></g><g transform="
+        rotate(-30.000000000000007)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">GA</text></g><g transform="
+        rotate(-22.941176470588232)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">NC</text></g><g transform="
+        rotate(-15.882352941176464)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">NJ</text></g><g transform="
+        rotate(-8.823529411764696)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">VA</text></g><g transform="
+        rotate(-1.764705882352942)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">WA</text></g><g transform="
+        rotate(5.294117647058812)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">AZ</text></g><g transform="
+        rotate(12.352941176470594)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">MA</text></g><g transform="
+        rotate(19.411764705882348)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">IN</text></g><g transform="
+        rotate(26.470588235294116)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">TN</text></g><g transform="
+        rotate(33.52941176470587)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">MO</text></g><g transform="
+        rotate(40.588235294117624)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">MD</text></g><g transform="
+        rotate(47.64705882352939)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">WI</text></g><g transform="
+        rotate(54.70588235294116)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">MN</text></g><g transform="
+        rotate(61.76470588235293)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">CO</text></g><g transform="
+        rotate(68.8235294117647)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">AL</text></g><g transform="
+        rotate(75.88235294117646)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">SC</text></g><g transform="
+        rotate(82.94117647058823)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">LA</text></g><g transform="
+        rotate(90)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">KY</text></g><g transform="
+        rotate(97.05882352941174)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">OR</text></g><g transform="
+        rotate(104.11764705882351)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">OK</text></g><g transform="
+        rotate(111.17647058823528)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">CT</text></g><g transform="
+        rotate(118.23529411764704)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">IA</text></g><g transform="
+        rotate(125.29411764705878)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">MS</text></g><g transform="
+        rotate(132.35294117647058)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">AR</text></g><g transform="
+        rotate(139.41176470588235)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">KS</text></g><g transform="
+        rotate(146.47058823529412)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">UT</text></g><g transform="
+        rotate(153.52941176470586)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">NV</text></g><g transform="
+        rotate(160.58823529411765)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">NM</text></g><g transform="
+        rotate(167.6470588235294)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">WV</text></g><g transform="
+        rotate(174.70588235294116)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(-90) translate(0,-9)">NE</text></g><g transform="
+        rotate(181.76470588235293)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">ID</text></g><g transform="
+        rotate(188.8235294117647)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">ME</text></g><g transform="
+        rotate(195.88235294117646)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">NH</text></g><g transform="
+        rotate(202.94117647058823)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">HI</text></g><g transform="
+        rotate(209.99999999999994)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">RI</text></g><g transform="
+        rotate(217.05882352941177)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">MT</text></g><g transform="
+        rotate(224.11764705882348)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">DE</text></g><g transform="
+        rotate(231.1764705882353)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">SD</text></g><g transform="
+        rotate(238.23529411764707)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">AK</text></g><g transform="
+        rotate(245.29411764705884)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">ND</text></g><g transform="
+        rotate(252.35294117647055)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">VT</text></g><g transform="
+        rotate(259.4117647058823)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">DC</text></g><g transform="
+        rotate(266.47058823529414)
+        translate(180,0)
+      "><line x2="-5" stroke="#000"/><text transform="rotate(90) translate(0,16)">WY</text></g></g><g class="y-axis" text-anchor="end"><text x="-6" y="-392.30316158603824" dy="-1em">Population</text><g fill="none"><circle stroke="#000" stroke-opacity="0.5" r="223.06365862378556"/><text x="-6" y="-223.06365862378556" dy="0.35em" stroke="#fff" stroke-width="5" fill="#000">5000000</text><text x="-6" y="-223.06365862378556" dy="0.35em" stroke="none" stroke-width="5" fill="#000">5000000</text></g><g fill="none"><circle stroke="#000" stroke-opacity="0.5" r="259.06522653041935"/><text x="-6" y="-259.06522653041935" dy="0.35em" stroke="#fff" stroke-width="5" fill="#000">10000000</text><text x="-6" y="-259.06522653041935" dy="0.35em" stroke="none" stroke-width="5" fill="#000">10000000</text></g><g fill="none"><circle stroke="#000" stroke-opacity="0.5" r="290.64099400443536"/><text x="-6" y="-290.64099400443536" dy="0.35em" stroke="#fff" stroke-width="5" fill="#000">15000000</text><text x="-6" y="-290.64099400443536" dy="0.35em" stroke="none" stroke-width="5" fill="#000">15000000</text></g><g fill="none"><circle stroke="#000" stroke-opacity="0.5" r="319.1074790638963"/><text x="-6" y="-319.1074790638963" dy="0.35em" stroke="#fff" stroke-width="5" fill="#000">20000000</text><text x="-6" y="-319.1074790638963" dy="0.35em" stroke="none" stroke-width="5" fill="#000">20000000</text></g><g fill="none"><circle stroke="#000" stroke-opacity="0.5" r="345.23467235077027"/><text x="-6" y="-345.23467235077027" dy="0.35em" stroke="#fff" stroke-width="5" fill="#000">25000000</text><text x="-6" y="-345.23467235077027" dy="0.35em" stroke="none" stroke-width="5" fill="#000">25000000</text></g><g fill="none"><circle stroke="#000" stroke-opacity="0.5" r="369.51911289102827"/><text x="-6" y="-369.51911289102827" dy="0.35em" stroke="#fff" stroke-width="5" fill="#000">30000000</text><text x="-6" y="-369.51911289102827" dy="0.35em" stroke="none" stroke-width="5" fill="#000">30000000</text></g><g fill="none"><circle stroke="#000" stroke-opacity="0.5" r="392.30316158603824"/><text x="-6" y="-392.30316158603824" dy="0.35em" stroke="#fff" stroke-width="5" fill="#000">35000000</text><text x="-6" y="-392.30316158603824" dy="0.35em" stroke="none" stroke-width="5" fill="#000">35000000</text></g></g></svg>

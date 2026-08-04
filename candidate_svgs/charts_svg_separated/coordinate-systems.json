@@ -1,0 +1,3139 @@
+{
+  "version": 1,
+  "generatedAt": "2026-08-03T01:07:24.375Z",
+  "source": {
+    "annotationsDirectory": "F:\\projects\\CV_Author\\VisAnatomy\\annotations",
+    "dataBindingDirectory": "F:\\projects\\CV_Author\\VisAnatomy\\charts_svg_separated\\data-binding"
+  },
+  "charts": {
+    "AreaChart1": {
+      "origin": {
+        "x": 29.5,
+        "y": 210.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "AreaChart2": {
+      "origin": {
+        "x": 37.25,
+        "y": 483.25
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "AreaChart3": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "AreaChart5": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "AreaChart6": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "AreaChart7": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "AreaChart9": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "AreaChart10": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "AreaChart11": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "AreaChart12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "AreaChart14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "AreaChart18": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "AreaChart19": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "AreaChart20": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "AreaChart21": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "AreaChart27": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "AreaChart28": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BarChart2": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BarChart3": {
+      "origin": {
+        "x": 44.5,
+        "y": 210.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "BarChart5": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BarChart6": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BarChart7": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BarChart10": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BarChart12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BarChart13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BarChart14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BarChart19": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BarChart22": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BarChart27": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BarChartInRadialLayout1": {
+      "origin": {
+        "x": 590.4,
+        "y": 322.38
+      },
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BarChartInRadialLayout2": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BarChartInRadialLayout3": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BarChartInRadialLayout6": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BarChartInRadialLayout7": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BarChartInRadialLayout8": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BarChartInRadialLayout9": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BarChartInRadialLayout10": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BarChartInRadialLayout11": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BoxAndWhisker1": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BoxAndWhisker2": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BoxAndWhisker4": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BoxAndWhisker5": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BoxAndWhisker6": {
+      "origin": {
+        "x": 26,
+        "y": 274
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "BoxAndWhisker9": {
+      "origin": {
+        "x": 53.5,
+        "y": 205.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "BoxAndWhisker12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BoxAndWhisker14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BoxAndWhisker15": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BoxAndWhisker17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BoxAndWhisker22": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BubbleChart2": {
+      "origin": {
+        "x": 248,
+        "y": 352
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": 1
+      }
+    },
+    "BubbleChart8": {
+      "origin": {
+        "x": 39.5,
+        "y": 210.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "BubbleChart10": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BubbleChart13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BulletChart3": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BulletChart4": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BulletChart5": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BulletChart7": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BulletChart8": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BulletChart9": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BulletChart11": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BulletChart12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BulletChart16": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BulletChart17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BulletChart18": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BulletChart20": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BumpChart2": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BumpChart3": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BumpChart4": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BumpChart5": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BumpChart6": {
+      "origin": {
+        "x": 71.5,
+        "y": 65.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "BumpChart8": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BumpChart9": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BumpChart10": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BumpChart14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BumpChart15": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BumpChart17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BumpChart18": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BumpChart19": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BumpChart20": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "BumpChart21": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Calendar6": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Calendar8": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Calendar12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Calendar13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Calendar16": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Calendar17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Calendar20": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "CandlestickChart1": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "CandlestickChart3": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "CandlestickChart4": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "CandlestickChart5": {
+      "origin": {
+        "x": 214.353,
+        "y": 1341.4301
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "CandlestickChart6": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "CandlestickChart7": {
+      "origin": {
+        "x": 43.1008,
+        "y": 471.7972
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "CandlestickChart8": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "CandlestickChart11": {
+      "origin": {
+        "x": 47.25,
+        "y": 933.25
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "CandlestickChart13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "CandlestickChart14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "CandlestickChart16": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "CandlestickChart17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "CirclePacking1": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "CirclePacking5": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "CirclePacking7": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "CirclePacking12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "CirclePacking13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "CirclePacking17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ConnectedDotPlot1": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ConnectedDotPlot2": {
+      "origin": {
+        "x": 131.5,
+        "y": 718
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "ConnectedDotPlot4": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ConnectedDotPlot5": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ConnectedDotPlot6": {
+      "origin": {
+        "x": 127,
+        "y": 28
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "ConnectedDotPlot14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ConnectedDotPlot15": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ConnectedDotPlot19": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ConnectedScatterPlot1": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ConnectedScatterPlot3": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ConnectedScatterPlot4": {
+      "origin": {
+        "x": 41.5,
+        "y": 205.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "ConnectedScatterPlot13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ConnectedScatterPlot17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ConnectedScatterPlot18": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ConnectedScatterPlot19": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ConnectedScatterPlot21": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DensityPlot2": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DensityPlot5": {
+      "origin": {
+        "x": 41.5,
+        "y": 105.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "DensityPlot7": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DensityPlot9": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DivergingStackedBarChart1": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DivergingStackedBarChart3": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DivergingStackedBarChart5": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DivergingStackedBarChart6": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DivergingStackedBarChart9": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DivergingStackedBarChart10": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DivergingStackedBarChart12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DivergingStackedBarChart13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DivergingStackedBarChart15": {
+      "origin": {
+        "x": 55.4161,
+        "y": 362.9904
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "DivergingStackedBarChart17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DivergingStackedBarChart18": {
+      "origin": {
+        "x": 524.98,
+        "y": 2879.04
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "DivergingStackedBarChart21": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DonutChart3": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DonutChart4": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DonutChart9": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DonutChart11": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DonutChart12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DonutChart13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DonutChart14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DonutChart19": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DotPlot2": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DotPlot3": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DotPlot7": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DotPlot8": {
+      "origin": {
+        "x": 70,
+        "y": 448
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "DotPlot10": {
+      "origin": {
+        "x": 5.7617,
+        "y": 157.8398
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "DotPlot12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DotPlot14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DotPlot15": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "DotPlot18": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GanttChart1": {
+      "origin": {
+        "x": 35.5,
+        "y": 65.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "GanttChart2": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GanttChart3": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GanttChart5": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GanttChart6": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GanttChart7": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GanttChart8": {
+      "origin": {
+        "x": 68.5,
+        "y": 539.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "GanttChart9": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GanttChart10": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GanttChart11": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GanttChart12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GanttChart13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GanttChart14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GanttChart15": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GanttChart16": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GanttChart17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GanttChart18": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GanttChart19": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GanttChart20": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GanttChart22": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GeoHeatmap1": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GeoHeatmap2": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GeoHeatmap3": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GeoHeatmap4": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GeoHeatmap5": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GeoHeatmap6": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GeoHeatmap7": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GeoHeatmap8": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GeoHeatmap9": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GeoHeatmap10": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GeoHeatmap11": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GeoHeatmap12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GeoHeatmap14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GeoHeatmap15": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GeoHeatmap16": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GeoHeatmap17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GeoHeatmap18": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GeoHeatmap19": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GeoHeatmap20": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GroupedBarChart3": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GroupedBarChart5": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GroupedBarChart6": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GroupedBarChart7": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GroupedBarChart8": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GroupedBarChart9": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GroupedBarChart11": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GroupedBarChart12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GroupedBarChart13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GroupedBarChart14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GroupedBarChart15": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GroupedBarChart16": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GroupedBarChart17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GroupedBarChart18": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GroupedBarChart19": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GroupedBarChart20": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GroupedBarChart21": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GroupedBarChart22": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GroupedBarChart24": {
+      "origin": {
+        "x": 68.5,
+        "y": 308.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "GroupedBarChart25": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GroupedBarChart26": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "GroupedBarChart27": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Heatmap1": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Heatmap2": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Heatmap3": {
+      "origin": {
+        "x": 77.25,
+        "y": 695.2401
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "Heatmap4": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Heatmap5": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Heatmap6": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Heatmap7": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Heatmap8": {
+      "origin": {
+        "x": 37.25,
+        "y": 503.25
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "Heatmap9": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Heatmap10": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Heatmap11": {
+      "origin": {
+        "x": 46.8438,
+        "y": 338.348
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "Heatmap12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Heatmap13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Heatmap14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Heatmap15": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Heatmap16": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Heatmap17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Heatmap18": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Heatmap19": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Heatmap20": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Heatmap21": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Heatmap23": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Heatmap24": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Heatmap25": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "KagiChart1": {
+      "origin": {
+        "x": 47,
+        "y": 403
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "KagiChart6": {
+      "origin": {
+        "x": 47,
+        "y": 403
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "KagiChart7": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "KagiChart8": {
+      "origin": {
+        "x": 47,
+        "y": 403
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "KagiChart9": {
+      "origin": {
+        "x": 47,
+        "y": 403
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "KagiChart10": {
+      "origin": {
+        "x": 47,
+        "y": 403
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "KagiChart11": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "KagiChart12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "KagiChart16": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "LineGraph8": {
+      "origin": {
+        "x": 64.5,
+        "y": 342.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "LineGraph12": {
+      "origin": {
+        "x": 38.8438,
+        "y": 334.348
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "LineGraph13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "LineGraph15": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "LineGraph17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "LineGraph24": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "LineGraph27": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "LineGraph28": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "LineGraph34": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MarimekkoChart1": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MarimekkoChart2": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MarimekkoChart3": {
+      "origin": {
+        "x": 60.5,
+        "y": 358.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "MarimekkoChart4": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MarimekkoChart5": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MarimekkoChart7": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MarimekkoChart8": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MarimekkoChart9": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MarimekkoChart10": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MarimekkoChart11": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MarimekkoChart12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MarimekkoChart13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MarimekkoChart14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MarimekkoChart15": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MarimekkoChart16": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MarimekkoChart17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MarimekkoChart18": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MarimekkoChart19": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MarimekkoChart21": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MatrixDiagram4": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MatrixDiagram6": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MatrixDiagram7": {
+      "origin": {
+        "x": 110.5,
+        "y": 380.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "MatrixDiagram8": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MatrixDiagram9": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MatrixDiagram10": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MatrixDiagram12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MatrixDiagram17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MatrixDiagram18": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MatrixDiagram19": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "MatrixDiagram21": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ParallelCoordinatesPlot2": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ParallelCoordinatesPlot5": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ParallelCoordinatesPlot8": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ParallelCoordinatesPlot9": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ParallelCoordinatesPlot12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ParallelCoordinatesPlot15": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ParallelCoordinatesPlot17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ParallelCoordinatesPlot20": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "PieChart3": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "PieChart14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "PieChart21": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "PolarAreaChart1": {
+      "origin": {
+        "x": 488,
+        "y": 330.9876
+      },
+      "xAxisDirection": null,
+      "yAxisDirection": {
+        "x": 0.002,
+        "y": -1
+      }
+    },
+    "PolarAreaChart3": {
+      "origin": {
+        "x": 300,
+        "y": 247.5
+      },
+      "xAxisDirection": null,
+      "yAxisDirection": {
+        "x": 0.0028,
+        "y": -1
+      }
+    },
+    "PolarAreaChart4": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "PolarAreaChart7": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "PolarAreaChart10": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "PolarAreaChart11": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "PolarAreaChart13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "PolarAreaChart14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "PolarAreaChart17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "PolarAreaChart18": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "PolarAreaChart19": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadarChart4": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadarChart12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadarChart13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadarChart14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadarChart16": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadialBarChart1": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadialBarChart2": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadialBarChart3": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadialBarChart4": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadialBarChart5": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadialBarChart6": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadialBarChart7": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadialBarChart8": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadialBarChart9": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadialBarChart10": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadialBarChart11": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadialBarChart12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadialBarChart13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadialBarChart14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadialBarChart15": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadialBarChart16": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadialBarChart17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadialBarChart18": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadialBarChart19": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RadialBarChart20": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RangeChart1": {
+      "origin": {
+        "x": 94.5,
+        "y": 405
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "RangeChart2": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RangeChart3": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RangeChart4": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RangeChart5": {
+      "origin": {
+        "x": 25.5,
+        "y": 374.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "RangeChart6": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RangeChart7": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RangeChart8": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RangeChart9": {
+      "origin": {
+        "x": 98.5,
+        "y": 336.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "RangeChart10": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RangeChart11": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RangeChart12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RangeChart13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RangeChart15": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RangeChart16": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RangeChart17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RangeChart18": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "RangeChart19": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Scatterplot1": {
+      "origin": {
+        "x": 370,
+        "y": 485
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "Scatterplot2": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Scatterplot4": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Scatterplot5": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Scatterplot6": {
+      "origin": {
+        "x": 59.0391,
+        "y": 286.5586
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "Scatterplot7": {
+      "origin": {
+        "x": 89,
+        "y": 541
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "Scatterplot8": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Scatterplot9": {
+      "origin": {
+        "x": 39.2422,
+        "y": 301.2
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "Scatterplot11": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Scatterplot12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Scatterplot14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Scatterplot15": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Scatterplot17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Scatterplot18": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Scatterplot20": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Scatterplot22": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Scatterplot24": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Scatterplot30": {
+      "origin": {
+        "x": 39.5,
+        "y": 310.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "SpiralPlot1": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "SpiralPlot2": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "SpiralPlot3": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "SpiralPlot4": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "SpiralPlot6": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "SpiralPlot10": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "SpiralPlot11": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "SpiralPlot12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "SpiralPlot14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "SpiralPlot15": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "SpiralPlot18": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "SpiralPlot19": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "SpiralPlot20": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedAreaChart2": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedAreaChart4": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedAreaChart5": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedAreaChart8": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedAreaChart9": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedAreaChart10": {
+      "origin": {
+        "x": 29.5,
+        "y": 210.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "StackedAreaChart11": {
+      "origin": {
+        "x": 121.397,
+        "y": 684.186
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "StackedAreaChart12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedAreaChart13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedAreaChart15": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedAreaChart22": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedAreaChart23": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedBarChart1": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedBarChart2": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedBarChart3": {
+      "origin": {
+        "x": 52.353,
+        "y": 315.348
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "StackedBarChart4": {
+      "origin": {
+        "x": 44.5,
+        "y": 205.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "StackedBarChart5": {
+      "origin": {
+        "x": 53.5,
+        "y": 210.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "StackedBarChart6": {
+      "origin": {
+        "x": 105.5,
+        "y": 205.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "StackedBarChart7": {
+      "origin": {
+        "x": 44.5,
+        "y": 205.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "StackedBarChart8": {
+      "origin": {
+        "x": 39.5,
+        "y": 328.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "StackedBarChart10": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedBarChart11": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedBarChart12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedBarChart13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedBarChart15": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedBarChart16": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedBarChart17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedBarChart18": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedBarChart19": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedBarChart20": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedBarChart21": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedBarChart22": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedBarChart23": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedBarChart24": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StackedBarChart25": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StreamGraph1": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StreamGraph2": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StreamGraph3": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StreamGraph4": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StreamGraph5": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StreamGraph6": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StreamGraph7": {
+      "origin": {
+        "x": 47,
+        "y": 261
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "StreamGraph8": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StreamGraph9": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StreamGraph10": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StreamGraph11": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StreamGraph12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StreamGraph13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StreamGraph14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StreamGraph15": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StreamGraph16": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StreamGraph17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "StreamGraph21": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Treemap1": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Treemap3": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Treemap4": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Treemap5": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Treemap6": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Treemap7": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Treemap8": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Treemap9": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Treemap10": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Treemap12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Treemap13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Treemap14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Treemap15": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Treemap17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Treemap18": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Treemap19": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Treemap20": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "Treemap21": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ViolinPlot1": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ViolinPlot2": {
+      "origin": {
+        "x": 22,
+        "y": 28
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "ViolinPlot3": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ViolinPlot4": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ViolinPlot5": {
+      "origin": {
+        "x": 37.25,
+        "y": 373.25
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "ViolinPlot6": {
+      "origin": {
+        "x": 55.5,
+        "y": 220.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "ViolinPlot7": {
+      "origin": {
+        "x": 27.25,
+        "y": 508.25
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "ViolinPlot8": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ViolinPlot9": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ViolinPlot10": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ViolinPlot11": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ViolinPlot12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ViolinPlot13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ViolinPlot14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ViolinPlot15": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ViolinPlot16": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ViolinPlot18": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ViolinPlot19": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ViolinPlot20": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "ViolinPlot21": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaffleChart2": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaffleChart3": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaffleChart4": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaffleChart5": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaffleChart6": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaffleChart7": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaffleChart8": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaffleChart9": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaffleChart10": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaffleChart11": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaffleChart12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaffleChart13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaffleChart14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaffleChart15": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaffleChart16": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaffleChart18": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaffleChart19": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaffleChart20": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaffleChart21": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaffleChart22": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaterfallChart2": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaterfallChart5": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaterfallChart7": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaterfallChart8": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaterfallChart9": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaterfallChart10": {
+      "origin": {
+        "x": 53.5,
+        "y": 460.5
+      },
+      "xAxisDirection": {
+        "x": 1,
+        "y": 0
+      },
+      "yAxisDirection": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    "WaterfallChart11": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaterfallChart12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaterfallChart15": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaterfallChart16": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaterfallChart17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WaterfallChart18": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WordCloud1": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WordCloud2": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WordCloud3": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WordCloud6": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WordCloud8": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WordCloud9": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WordCloud10": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WordCloud11": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WordCloud12": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WordCloud13": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WordCloud14": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WordCloud16": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WordCloud17": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WordCloud18": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WordCloud19": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    },
+    "WordCloud20": {
+      "origin": null,
+      "xAxisDirection": null,
+      "yAxisDirection": null
+    }
+  }
+}

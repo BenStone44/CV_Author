@@ -1,0 +1,11 @@
+<svg class="plot-d6a7b5" fill="currentColor" font-family="system-ui, sans-serif" font-size="10" text-anchor="middle" width="900" height="325" viewBox="23.2 0.2667 873.6 315.4667" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><style>:where(.plot-d6a7b5) {
+  --plot-background: white;
+  display: block;
+  height: auto;
+  height: intrinsic;
+  max-width: 100%;
+}
+:where(.plot-d6a7b5 text),
+:where(.plot-d6a7b5 tspan) {
+  white-space: pre;
+}</style><g aria-label="bar"><rect x="40" width="144.4990548204159" y="28" height="48" rx="3" fill="#56B4e9"/><rect x="187.67485822306242" width="11.115311909262743" y="81" height="48" rx="3" fill="gold"/><rect x="330.58601134215496" width="338.2230623818526" y="134" height="48" rx="3" fill="#56B4e9"/><rect x="476.6729678638941" width="352.5141776937618" y="187" height="48" rx="3" fill="gold"/><rect x="648.1663516068053" width="231.83364839319472" y="240" height="48" rx="3" fill="tomato"/></g></svg>

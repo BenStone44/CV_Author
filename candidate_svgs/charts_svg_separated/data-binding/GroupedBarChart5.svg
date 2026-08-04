@@ -1,0 +1,64 @@
+<svg id="head" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" font-family="Helvetica, Arial" width="692" height="395" viewBox="61.68 118.363 484.64 276.637"><style id="styles" type="text/css">
+  .gridline {
+    stroke:       lightgrey;
+    stroke-width: 1;
+  }
+  .axisline-x {
+    stroke:         black;
+    stroke-width:   2;
+    stroke-linecap: round;
+  }
+  .axisline-y {
+    stroke:         black;
+    stroke-width:   2;
+    stroke-linecap: round;
+  }
+  .axisline-y2 {
+    stroke:         black;
+    stroke-width:   2;
+    stroke-linecap: round;
+  }
+  .axismark-main {
+    stroke:       black;
+    stroke-width: 1;
+  }
+  .axismark-second {
+    stroke:       black;
+    stroke-width: 1;
+  }
+  .axistitle-x {
+    font-size: 18px;
+  }
+  .axisnumber-x {
+    font-size: 15px;
+  }
+  .axistitle-y {
+    font-size: 18px;
+  }
+  .axisnumber-y {
+    font-size: 15px;
+  }
+</style><defs><pattern id="y-gridline" x="0" y="0" height="21.875" width="500" patternUnits="userSpaceOnUse"><line x1="0" y1="0" x2="500" y2="0" class="gridline"/></pattern></defs><defs><pattern id="y-axismark-main" y="0" width="6" height="21.875" patternUnits="userSpaceOnUse"><line x1="-1" y1="0" x2="6" y2="0" class="axismark-main"/></pattern></defs><style id="styles" type="text/css">
+  /*-- general style of areas --*/
+  .series-areas-general {
+    stroke-width: 0;
+  }
+  /*-- series 1 --*/
+  .series1 {
+    fill:   rgb(0, 0, 255);
+  }
+  /*-- series 2 --*/
+  .series2 {
+    fill:   rgb(0, 192, 0);
+  }
+</style><g id="graphs" transform="scale(1, -1) translate(54, -362)"><rect id="series2-1" class="series-areas-general series2" x="50" y="0" width="33" height="175"/><rect id="series2-2" class="series-areas-general series2" x="150" y="0" width="33" height="43.8"/><rect id="series2-3" class="series-areas-general series2" x="250" y="0" width="33" height="142.2"/><rect id="series2-4" class="series-areas-general series2" x="350" y="0" width="33" height="87.5"/><rect id="series2-5" class="series-areas-general series2" x="450" y="0" width="33" height="196.9"/><rect id="series1-1" class="series-areas-general series1" x="17" y="0" width="33" height="153.1"/><rect id="series1-2" class="series-areas-general series1" x="117" y="0" width="33" height="21.9"/><rect id="series1-3" class="series-areas-general series1" x="217" y="0" width="33" height="109.4"/><rect id="series1-4" class="series-areas-general series1" x="317" y="0" width="33" height="21.9"/><rect id="series1-5" class="series-areas-general series1" x="417" y="0" width="33" height="153.1"/></g><style id="styles" type="text/css">
+  .legendbox {
+    stroke:       black;
+    stroke-width: 1;
+    fill:         white;
+  }
+  .legendtext {
+    font-size:   15px;
+    text-anchor: start;
+  }
+</style></svg>
