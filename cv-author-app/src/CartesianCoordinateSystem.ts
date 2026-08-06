@@ -13,7 +13,7 @@ export const CartesianCoordinateSystem = defineComponent({
   props: {
     node: { type: Object as PropType<CanvasNode>, required: true },
     viewZoom: { type: Number, default: 1 },
-    onAxisSelect: { type: Function as PropType<(node: CanvasNode, channel: EncodingChannel) => void>, default: null },
+    onAxisSelect: { type: Function as PropType<(node: CanvasNode, channel: EncodingChannel, event: PointerEvent) => void>, default: null },
     onAxisScalePointerDown: { type: Function as PropType<(node: CanvasNode, axis: "x" | "y", event: PointerEvent) => void>, default: null },
   },
   setup(props) {
@@ -38,7 +38,6 @@ export const CartesianCoordinateSystem = defineComponent({
       const xEnd = { x: guide.xDirection === 1 ? right : left, y: origin.y };
       const yEnd = { x: origin.x, y: guide.yDirection === -1 ? top : bottom };
       const screenScale = Math.max(Math.abs(props.node.scaleX), Math.abs(props.node.scaleY), 0.0001) * Math.max(props.viewZoom, 0.0001);
-      const handleRadius = 7 / screenScale;
       const arrowSize = 11 / screenScale;
       const endpoint = (axis: EncodingChannel, point: Point, direction: Point) => {
         const scaleHandlePoint = {
@@ -46,17 +45,6 @@ export const CartesianCoordinateSystem = defineComponent({
           y: point.y + direction.y * 18 / screenScale,
         };
         return h("g", { class: `cartesian-axis-endpoint cartesian-axis-endpoint--${axis}` }, [
-        h("circle", {
-          class: "cartesian-axis-binding-target",
-          cx: point.x,
-          cy: point.y,
-          r: handleRadius * 1.7,
-          onPointerdown: (event: PointerEvent) => {
-            event.preventDefault();
-            event.stopPropagation();
-            props.onAxisSelect?.(props.node, axis);
-          },
-        }),
         h("line", {
           class: "cartesian-axis-handle-stem",
           x1: point.x,
@@ -65,17 +53,44 @@ export const CartesianCoordinateSystem = defineComponent({
           y2: scaleHandlePoint.y,
           "vector-effect": "non-scaling-stroke",
         }),
-        h("circle", {
+        h("rect", {
           class: "cartesian-axis-scale-handle",
-          cx: scaleHandlePoint.x,
-          cy: scaleHandlePoint.y,
-          r: handleRadius,
+          x: scaleHandlePoint.x - 5 / screenScale,
+          y: scaleHandlePoint.y - 5 / screenScale,
+          width: 10 / screenScale,
+          height: 10 / screenScale,
+          rx: 1.5 / screenScale,
           onPointerdown: (event: PointerEvent) => {
             event.preventDefault();
             event.stopPropagation();
             props.onAxisScalePointerDown?.(props.node, axis, event);
           },
         }),
+        ]);
+      };
+      const configControl = (axis: EncodingChannel, end: Point) => {
+        const midpoint = { x: (origin.x + end.x) / 2, y: (origin.y + end.y) / 2 };
+        const offset = axis === "x"
+          ? { x: 0, y: guide.yDirection * 18 / screenScale }
+          : { x: guide.xDirection * 18 / screenScale, y: 0 };
+        return h("g", {
+          class: ["cartesian-axis-config-control", `cartesian-axis-config-control--${axis}`],
+          transform: `translate(${midpoint.x + offset.x} ${midpoint.y + offset.y}) scale(${1 / screenScale})`,
+          role: "button",
+          "aria-label": `Configure ${axis.toUpperCase()} axis`,
+          onPointerdown: (event: PointerEvent) => {
+            event.preventDefault();
+            event.stopPropagation();
+            props.onAxisSelect?.(props.node, axis, event);
+          },
+        }, [
+          h("title", `Configure ${axis.toUpperCase()} axis`),
+          h("rect", { class: "cartesian-axis-config-button", x: -12, y: -12, width: 24, height: 24, rx: 4 }),
+          h("path", {
+            class: "cartesian-axis-config-icon",
+            d: "M -6 -5 H 6 M -6 0 H 6 M -6 5 H 6 M -2 -8 V -2 M 3 -3 V 3 M -3 2 V 8",
+            "vector-effect": "non-scaling-stroke",
+          }),
         ]);
       };
       const axes = props.node.renderedContent ? [] : [
@@ -89,6 +104,8 @@ export const CartesianCoordinateSystem = defineComponent({
         transform: props.node.kind === "leaf" ? getLeafNodeTransform(props.node) : getNodeTransform(props.node),
       }, [
         ...axes,
+        configControl("x", xEnd),
+        configControl("y", yEnd),
         endpoint("x", xEnd, { x: guide.xDirection, y: 0 }),
         endpoint("y", yEnd, { x: 0, y: guide.yDirection }),
       ]);

@@ -1,0 +1,535 @@
+import { group } from "d3-array";
+import {
+  chartTemplateContracts,
+  getChartTemplateContract,
+  normalizeChartTemplate,
+} from "./chartTemplates";
+import type {
+  ChartEncoding,
+  ChartEncodingChannel,
+  ChartSpec,
+  ChartTemplateKind,
+  CoordinateChannel,
+  DataColumn,
+  DataColumnType,
+  Dataset,
+  DimensionRecommendation,
+  MarkGroupSpec,
+  SeriesCandidate,
+} from "./types";
+
+export type ColumnDimensionProfile = {
+  field: string;
+  declaredType: DataColumnType;
+  rowCount: number;
+  validCount: number;
+  missingCount: number;
+  invalidCount: number;
+  distinctCount: number;
+  cardinalityRatio: number;
+  coverage: number;
+  isComparable: boolean;
+  canBeCategory: boolean;
+  categoryKind: "declared" | "low-cardinality-number" | "low-cardinality-time" | null;
+  categoryConfidence: number;
+  minimum?: number;
+  maximum?: number;
+};
+
+export type ChannelDimensionStatistics = {
+  channel: ChartEncodingChannel | "series";
+  role: "dimension" | "measure" | "series" | "style";
+  required: boolean;
+  eligibleFields: string[];
+  eligibleCount: number;
+};
+
+export type InferredEncodingAssignment = {
+  channel: ChartEncodingChannel | "series";
+  field: string;
+  dataType: DataColumnType;
+  semanticType: "comparable" | "category" | "measure";
+};
+
+export type TemplateEncodingCandidate = {
+  id: string;
+  mode: string;
+  dimensionality: number;
+  score: number;
+  assignments: InferredEncodingAssignment[];
+  reasons: string[];
+};
+
+export type TemplateEncodingStatistics = {
+  templateId: ChartTemplateKind;
+  rowCount: number;
+  columnCount: number;
+  columns: ColumnDimensionProfile[];
+  channels: ChannelDimensionStatistics[];
+  candidates: TemplateEncodingCandidate[];
+  supportedDimensionalities: number[];
+};
+
+function normalizedValue(value: string, type: DataColumnType) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (type === "quantitative") {
+    const number = Number(trimmed);
+    return Number.isFinite(number) ? number : null;
+  }
+  if (type === "temporal") {
+    const timestamp = Date.parse(trimmed);
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+  return trimmed;
+}
+
+function uniqueValues(dataset: Dataset, field: string) {
+  return Array.from(new Set(dataset.rows.map((row) => row[field] ?? "").filter(Boolean)));
+}
+
+export function profileDatasetDimensions(dataset: Dataset): ColumnDimensionProfile[] {
+  return dataset.columns.map((column) => {
+    const source = dataset.rows.map((row) => row[column.name] ?? "");
+    const nonEmpty = source.filter((value) => value.trim() !== "");
+    const normalized = nonEmpty
+      .map((value) => normalizedValue(value, column.type))
+      .filter((value): value is string | number => value !== null);
+    const distinctCount = new Set(normalized).size;
+    const validCount = normalized.length;
+    const cardinalityRatio = validCount === 0 ? 0 : distinctCount / validCount;
+    const repeated = validCount - distinctCount;
+    const numeric = normalized.filter((value): value is number => typeof value === "number");
+    const allIntegers = numeric.length > 0 && numeric.every(Number.isInteger);
+    const lowCardinalityLimit = Math.min(20, Math.max(6, Math.round(Math.sqrt(Math.max(validCount, 1)) * 1.5)));
+    const lowCardinality = distinctCount >= 2
+      && distinctCount <= lowCardinalityLimit
+      && repeated > 0
+      && (cardinalityRatio <= 0.35 || (allIntegers && distinctCount <= 12));
+    const declaredCategory = column.type === "nominal" && distinctCount >= 2;
+    const promotedCategory = column.type !== "nominal" && lowCardinality;
+    const categoryConfidence = declaredCategory
+      ? Math.max(0.45, 1 - Math.max(0, cardinalityRatio - 0.2))
+      : promotedCategory
+        ? Math.min(0.88, 0.48 + (1 - cardinalityRatio) * 0.4)
+        : 0;
+    return {
+      field: column.name,
+      declaredType: column.type,
+      rowCount: dataset.rows.length,
+      validCount,
+      missingCount: source.length - nonEmpty.length,
+      invalidCount: nonEmpty.length - validCount,
+      distinctCount,
+      cardinalityRatio,
+      coverage: source.length === 0 ? 0 : validCount / source.length,
+      isComparable: (column.type === "quantitative" || column.type === "temporal")
+        && distinctCount >= 2
+        && validCount >= 2,
+      canBeCategory: declaredCategory || promotedCategory,
+      categoryKind: declaredCategory
+        ? "declared"
+        : promotedCategory && column.type === "quantitative"
+          ? "low-cardinality-number"
+          : promotedCategory
+            ? "low-cardinality-time"
+            : null,
+      categoryConfidence,
+      minimum: numeric.length ? Math.min(...numeric) : undefined,
+      maximum: numeric.length ? Math.max(...numeric) : undefined,
+    };
+  });
+}
+
+function columnByField(dataset: Dataset) {
+  return new Map(dataset.columns.map((column) => [column.name, column]));
+}
+
+function linePairScore(x: ColumnDimensionProfile, y: ColumnDimensionProfile) {
+  const coverage = (x.coverage + y.coverage) / 2;
+  const conventionalOrder = x.declaredType === "temporal" && y.declaredType === "quantitative"
+    ? 0.14
+    : x.declaredType === "quantitative" && y.declaredType === "temporal"
+      ? -0.04
+      : 0.04;
+  return Math.max(0, Math.min(1, 0.54 + coverage * 0.3 + conventionalOrder));
+}
+
+function comparableRowValue(row: Record<string, string>, encoding: ChartEncoding) {
+  return normalizedValue(row[encoding.field] ?? "", encoding.type);
+}
+
+export function scoreSeriesFields(
+  dataset: Dataset,
+  xEncoding: ChartEncoding,
+  yEncoding?: ChartEncoding,
+  profiles = profileDatasetDimensions(dataset),
+): SeriesCandidate[] {
+  const excluded = new Set([xEncoding.field, yEncoding?.field].filter((field): field is string => !!field));
+  const completeRows = dataset.rows.filter((row) =>
+    comparableRowValue(row, xEncoding) !== null
+    && (!yEncoding || comparableRowValue(row, yEncoding) !== null),
+  );
+  const completeXDomain = new Set(completeRows.map((row) => comparableRowValue(row, xEncoding)));
+  if (completeXDomain.size < 2) return [];
+  return profiles
+    .filter((profile) => profile.canBeCategory && !excluded.has(profile.field))
+    .map((profile, columnIndex) => {
+      const groups = group(
+        completeRows.filter((row) => (row[profile.field] ?? "").trim() !== ""),
+        (row) => row[profile.field]!,
+      );
+      const groupedRows = Array.from(groups.values());
+      const groupCount = groupedRows.length;
+      if (groupCount < 2 || groupCount > 40) return null;
+      const metrics = groupedRows.map((rows) => {
+        const xValues = rows
+          .map((row) => comparableRowValue(row, xEncoding))
+          .filter((value): value is string | number => value !== null);
+        const uniqueX = new Set(xValues);
+        return {
+          size: rows.length,
+          coverage: uniqueX.size / completeXDomain.size,
+          uniqueness: rows.length === 0 ? 0 : uniqueX.size / rows.length,
+          hasMultiplePoints: uniqueX.size >= 2 ? 1 : 0,
+        };
+      });
+      const average = (items: number[]) => items.reduce((sum, value) => sum + value, 0) / Math.max(items.length, 1);
+      const coverage = average(metrics.map((metric) => metric.coverage));
+      const xUniqueness = average(metrics.map((metric) => metric.uniqueness));
+      const multiplePointRate = average(metrics.map((metric) => metric.hasMultiplePoints));
+      const averageGroupSize = average(metrics.map((metric) => metric.size));
+      const groupCountFit = groupCount <= 12 ? 1 : Math.max(0, 1 - (groupCount - 12) / 28);
+      const score = coverage * 0.3
+        + xUniqueness * 0.2
+        + multiplePointRate * 0.25
+        + groupCountFit * 0.1
+        + profile.categoryConfidence * 0.15;
+      return {
+        field: profile.field,
+        score,
+        groupCount,
+        averageGroupSize,
+        coverage,
+        xUniqueness,
+        columnIndex,
+      };
+    })
+    .filter((candidate): candidate is SeriesCandidate & { columnIndex: number } => candidate !== null)
+    .sort((left, right) => right.score - left.score || left.columnIndex - right.columnIndex)
+    .map(({ columnIndex: _columnIndex, ...candidate }) => candidate);
+}
+
+function assignment(channel: InferredEncodingAssignment["channel"], column: DataColumn, semanticType: InferredEncodingAssignment["semanticType"]): InferredEncodingAssignment {
+  return { channel, field: column.name, dataType: column.type, semanticType };
+}
+
+function inferLineCandidates(dataset: Dataset, profiles: ColumnDimensionProfile[]) {
+  const byColumn = columnByField(dataset);
+  const comparable = profiles.filter((profile) => profile.isComparable);
+  const candidates: TemplateEncodingCandidate[] = [];
+  comparable.forEach((x) => comparable.forEach((y) => {
+    if (x.field === y.field) return;
+    const xColumn = byColumn.get(x.field)!;
+    const yColumn = byColumn.get(y.field)!;
+    const pairScore = linePairScore(x, y);
+    candidates.push({
+      id: `line:single:${x.field}:${y.field}`,
+      mode: "single-line",
+      dimensionality: 2,
+      score: pairScore,
+      assignments: [assignment("x", xColumn, "comparable"), assignment("y", yColumn, "comparable")],
+      reasons: ["X and Y are comparable dimensions", "No category series is required"],
+    });
+    scoreSeriesFields(dataset, { field: x.field, type: x.declaredType }, { field: y.field, type: y.declaredType }, profiles)
+      .filter((series) => series.score >= 0.52)
+      .forEach((series) => {
+        const seriesColumn = byColumn.get(series.field)!;
+        candidates.push({
+          id: `line:multi:${x.field}:${y.field}:${series.field}`,
+          mode: "multi-line",
+          dimensionality: 3,
+          score: Math.min(1, pairScore * 0.52 + series.score * 0.48),
+          assignments: [
+            assignment("x", xColumn, "comparable"),
+            assignment("y", yColumn, "comparable"),
+            assignment("series", seriesColumn, "category"),
+            assignment("color", seriesColumn, "category"),
+          ],
+          reasons: [
+            "X and Y are comparable dimensions",
+            `${series.field} forms ${series.groupCount} repeated category groups`,
+            "Category is encoded as line color",
+          ],
+        });
+      });
+  }));
+  return candidates;
+}
+
+function inferScatterCandidates(dataset: Dataset, profiles: ColumnDimensionProfile[]) {
+  return inferLineCandidates(dataset, profiles).map((candidate) => ({
+    ...candidate,
+    id: candidate.id.replace(/^line:/, "scatter:"),
+    mode: candidate.dimensionality === 3 ? "categorized-scatter" : "scatter",
+  }));
+}
+
+function inferPieCandidates(dataset: Dataset, profiles: ColumnDimensionProfile[]) {
+  const quantitative = profiles.filter((profile) => profile.declaredType === "quantitative" && profile.validCount > 0);
+  if (quantitative.length === 0) return [];
+  const assignments = quantitative.map((profile) => assignment("angle", dataset.columns.find((column) => column.name === profile.field)!, "measure"));
+  return [{
+    id: `pie:wide:${quantitative.map((profile) => profile.field).join(":")}`,
+    mode: "wide-angle-components",
+    dimensionality: quantitative.length,
+    score: quantitative.reduce((sum, profile) => sum + profile.coverage, 0) / quantitative.length,
+    assignments,
+    reasons: ["Sibling quantitative fields become pie components", "Field names provide component categories"],
+  } satisfies TemplateEncodingCandidate];
+}
+
+function inferMatrixCandidates(dataset: Dataset, profiles: ColumnDimensionProfile[]) {
+  const categories = profiles.filter((profile) => profile.canBeCategory);
+  const measures = profiles.filter((profile) => profile.declaredType === "quantitative");
+  const candidates: TemplateEncodingCandidate[] = [];
+  categories.forEach((row) => categories.forEach((column) => {
+    if (row.field === column.field) return;
+    const assignments: InferredEncodingAssignment[] = [
+      assignment("row", dataset.columns.find((item) => item.name === row.field)!, "category"),
+      assignment("column", dataset.columns.find((item) => item.name === column.field)!, "category"),
+    ];
+    if (measures[0]) assignments.push(assignment("value", dataset.columns.find((item) => item.name === measures[0]!.field)!, "measure"));
+    candidates.push({
+      id: `matrix:${row.field}:${column.field}:${measures[0]?.field ?? "count"}`,
+      mode: measures[0] ? "value-matrix" : "count-matrix",
+      dimensionality: measures[0] ? 3 : 2,
+      score: (row.categoryConfidence + column.categoryConfidence + (measures[0]?.coverage ?? 1)) / 3,
+      assignments,
+      reasons: ["Row and column are categorical dimensions", measures[0] ? "Cell value is quantitative" : "Cells encode record counts"],
+    });
+  }));
+  return candidates;
+}
+
+function inferDonutCandidates(dataset: Dataset, profiles: ColumnDimensionProfile[]) {
+  const measures = profiles.filter((profile) => profile.declaredType === "quantitative");
+  const categories = profiles.filter((profile) => profile.canBeCategory);
+  return measures.flatMap((measure) => categories.map((category) => ({
+    id: `donut:${measure.field}:${category.field}`,
+    mode: "categorized-donut",
+    dimensionality: 2,
+    score: measure.coverage * 0.55 + category.categoryConfidence * 0.45,
+    assignments: [
+      assignment("angle", dataset.columns.find((item) => item.name === measure.field)!, "measure"),
+      assignment("color", dataset.columns.find((item) => item.name === category.field)!, "category"),
+    ],
+    reasons: ["Angle is quantitative", "Category identifies and colors arcs"],
+  } satisfies TemplateEncodingCandidate)));
+}
+
+function channelEligibility(templateId: ChartTemplateKind, profiles: ColumnDimensionProfile[]) {
+  return chartTemplateContracts[templateId].channels.map((mapping) => {
+    const eligible = profiles.filter((profile) => {
+      if ((templateId === "line" || templateId === "scatter") && (mapping.channel === "x" || mapping.channel === "y")) {
+        return profile.isComparable;
+      }
+      if (mapping.channel === "color" || mapping.channel === "shape" || mapping.role === "series") {
+        return profile.canBeCategory;
+      }
+      return mapping.accepts.includes(profile.declaredType);
+    });
+    return {
+      channel: mapping.channel,
+      role: mapping.role,
+      required: mapping.required,
+      eligibleFields: eligible.map((profile) => profile.field),
+      eligibleCount: eligible.length,
+    } satisfies ChannelDimensionStatistics;
+  });
+}
+
+export function inferTemplateEncodings(dataset: Dataset, chartType: string | ChartTemplateKind): TemplateEncodingStatistics | null {
+  const templateId = Object.prototype.hasOwnProperty.call(chartTemplateContracts, chartType)
+    ? chartType as ChartTemplateKind
+    : normalizeChartTemplate(chartType);
+  if (!templateId) return null;
+  const columns = profileDatasetDimensions(dataset);
+  const candidates = (templateId === "line"
+    ? inferLineCandidates(dataset, columns)
+    : templateId === "scatter"
+      ? inferScatterCandidates(dataset, columns)
+      : templateId === "pie"
+        ? inferPieCandidates(dataset, columns)
+        : templateId === "matrix"
+          ? inferMatrixCandidates(dataset, columns)
+          : inferDonutCandidates(dataset, columns))
+    .sort((left, right) => right.score - left.score || left.id.localeCompare(right.id))
+    .slice(0, 120);
+  return {
+    templateId,
+    rowCount: dataset.rows.length,
+    columnCount: dataset.columns.length,
+    columns,
+    channels: channelEligibility(templateId, columns),
+    candidates,
+    supportedDimensionalities: Array.from(new Set(candidates.map((candidate) => candidate.dimensionality))).sort((a, b) => a - b),
+  };
+}
+
+export function inferAllTemplateEncodings(dataset: Dataset): Record<ChartTemplateKind, TemplateEncodingStatistics> {
+  return Object.fromEntries(
+    (Object.keys(chartTemplateContracts) as ChartTemplateKind[]).map((templateId) => [
+      templateId,
+      inferTemplateEncodings(dataset, templateId)!,
+    ]),
+  ) as Record<ChartTemplateKind, TemplateEncodingStatistics>;
+}
+
+function markKeys(dataset: Dataset, spec: ChartSpec, role: string) {
+  if (role === "line") return spec.series ? uniqueValues(dataset, spec.series.field) : ["__single__"];
+  if (role === "arc" && spec.angleFields?.length) {
+    const flattenFields = spec.flattenFields ?? [];
+    if (flattenFields.length === 0) return spec.angleFields.map((encoding) => encoding.field);
+    const groupKeys = Array.from(new Set(dataset.rows.map((row) =>
+      flattenFields.map((field) => row[field] ?? "").join("|"),
+    )));
+    return groupKeys.flatMap((groupKey) =>
+      spec.angleFields!.map((encoding) => `${groupKey}|${encoding.field}`),
+    );
+  }
+  return dataset.rows.map((row, index) => {
+    const primary = (dataset.primaryKey ?? []).map((field) => row[field] ?? "").join("|");
+    return primary || String(index);
+  });
+}
+
+export function inferChartStructure(chartId: string, dataset: Dataset, input: ChartSpec): ChartSpec {
+  const templateId = normalizeChartTemplate(input.chartType);
+  if (!templateId) return input;
+  const contract = getChartTemplateContract(input.chartType)!;
+  const statistics = inferTemplateEncodings(dataset, templateId);
+  let series = input.series;
+  if (!series && (templateId === "line" || templateId === "scatter") && input.encodings.x && input.encodings.y) {
+    const candidate = statistics?.candidates.find((item) =>
+      item.dimensionality === 3
+      && item.assignments.some((assignment) => assignment.channel === "x" && assignment.field === input.encodings.x?.field)
+      && item.assignments.some((assignment) => assignment.channel === "y" && assignment.field === input.encodings.y?.field),
+    );
+    const seriesAssignment = candidate?.assignments.find((assignment) => assignment.channel === "series");
+    if (candidate && candidate.score >= 0.58 && seriesAssignment) {
+      series = { field: seriesAssignment.field, type: seriesAssignment.dataType };
+    }
+  }
+
+  const spec = { ...input, templateId, series };
+  const role = contract.markRole;
+  const existingGroup = input.markGroups?.find((item) => item.role === role);
+  const groupSpec: MarkGroupSpec = {
+    id: `mark-group:${chartId}:${role}`,
+    chartId,
+    role,
+    memberKeys: markKeys(dataset, spec, role),
+    seriesField: series?.field,
+    sharedConfig: existingGroup?.sharedConfig ?? (role === "line"
+      ? { strokeWidth: spec.styleTokens?.lineWidth ?? 2.5, opacity: 1 }
+      : { opacity: 1 }),
+    allowOverrides: existingGroup?.allowOverrides,
+  };
+  const used = new Set([
+    ...Object.values(spec.encodings).map((encoding) => encoding?.field),
+    ...(spec.angleFields?.map((encoding) => encoding.field) ?? []),
+    ...(spec.flattenFields ?? []),
+    ...Object.values(spec.componentRadiusFields ?? {}).map((encoding) => encoding.field),
+  ].filter((field): field is string => !!field));
+  if (series) used.add(series.field);
+  const profiles = statistics?.columns ?? profileDatasetDimensions(dataset);
+  const outerDimensions = profiles.filter((profile) =>
+    (profile.canBeCategory || profile.declaredType === "temporal")
+    && !used.has(profile.field),
+  );
+  const sharedChannels = contract.shareableChannels as CoordinateChannel[];
+  const seriesValueCount = series ? uniqueValues(dataset, series.field).length : 0;
+  const seriesRecommendations: DimensionRecommendation[] = templateId === "line"
+    && series
+    && seriesValueCount > 1
+    && !spec.dimensionDecisions?.[series.field]
+    ? [
+      { id: `${chartId}:${series.field}:series`, strategy: "series", field: series.field, valueCount: seriesValueCount, estimatedMarkCount: seriesValueCount, sharedChannels, label: `${seriesValueCount} lines in one view` },
+      { id: `${chartId}:${series.field}:facet`, strategy: "facet", field: series.field, valueCount: seriesValueCount, estimatedMarkCount: seriesValueCount, sharedChannels, label: `${seriesValueCount} views, one for each ${series.field}` },
+    ]
+    : [];
+  const gridDimensions = templateId === "pie"
+    ? outerDimensions.filter((profile) => profile.declaredType === "nominal" || profile.declaredType === "temporal")
+    : [];
+  const gridColumn = gridDimensions.find((profile) => profile.declaredType === "temporal") ?? gridDimensions[1];
+  const gridRow = gridDimensions.find((profile) => profile.field !== gridColumn?.field && profile.declaredType === "nominal")
+    ?? gridDimensions.find((profile) => profile.field !== gridColumn?.field);
+  const rowValues = gridRow ? uniqueValues(dataset, gridRow.field) : [];
+  const columnValues = gridColumn ? uniqueValues(dataset, gridColumn.field) : [];
+  const hasGridFacet = !!gridRow
+    && !!gridColumn
+    && rowValues.length > 0
+    && columnValues.length > 0
+    && !spec.dimensionDecisions?.[gridRow.field]
+    && !spec.dimensionDecisions?.[gridColumn.field];
+  const gridRecommendations: DimensionRecommendation[] = hasGridFacet
+    ? [{
+      id: `${chartId}:${gridRow!.field}:${gridColumn!.field}:facet-grid`,
+      strategy: "facet",
+      field: `${gridRow!.field} × ${gridColumn!.field}`,
+      valueCount: rowValues.length * columnValues.length,
+      estimatedMarkCount: rowValues.length * columnValues.length,
+      sharedChannels,
+      label: `${rowValues.length} × ${columnValues.length} grid by ${gridRow!.field} and ${gridColumn!.field}`,
+      facetGrid: {
+        rowField: gridRow!.field,
+        columnField: gridColumn!.field,
+        rowValues,
+        columnValues,
+      },
+    }]
+    : [];
+  const combinedFlattenRecommendations: DimensionRecommendation[] = hasGridFacet
+    ? [{
+      id: `${chartId}:${gridRow!.field}:${gridColumn!.field}:flatten`,
+      strategy: "flatten",
+      field: `[${gridRow!.field}, ${gridColumn!.field}]`,
+      valueCount: rowValues.length * columnValues.length,
+      estimatedMarkCount: rowValues.length * columnValues.length * Math.max(spec.angleFields?.length ?? 1, 1),
+      sharedChannels,
+      flattenFields: [gridRow!.field, gridColumn!.field],
+      label: `Flatten by [${gridRow!.field}, ${gridColumn!.field}] into one Pie`,
+    }]
+    : [];
+  const gridFields = new Set(hasGridFacet ? [gridRow!.field, gridColumn!.field] : []);
+  const outerRecommendations: DimensionRecommendation[] = outerDimensions.flatMap((profile) => {
+    if (profile.distinctCount < 2 || spec.dimensionDecisions?.[profile.field]) return [];
+    return contract.unusedDimensionStrategies
+      .filter((strategy) => strategy !== "facet" || !gridFields.has(profile.field))
+      .map((strategy) => ({
+      id: `${chartId}:${profile.field}:${strategy}`,
+      strategy,
+      field: profile.field,
+      valueCount: profile.distinctCount,
+      estimatedMarkCount: strategy === "facet" ? profile.distinctCount : groupSpec.memberKeys.length * profile.distinctCount,
+      sharedChannels,
+      flattenFields: strategy === "flatten" ? [profile.field] : undefined,
+      label: strategy === "flatten"
+        ? `Flatten by [${profile.field}] into the current chart`
+        : strategy === "facet"
+          ? `Facet into ${profile.distinctCount} charts by ${profile.field}`
+          : `Nest ${profile.field} as an outer composition`,
+      } satisfies DimensionRecommendation));
+  });
+  return {
+    ...spec,
+    markGroups: [groupSpec],
+    dimensionRecommendations: [
+      ...seriesRecommendations,
+      ...gridRecommendations,
+      ...combinedFlattenRecommendations,
+      ...outerRecommendations,
+    ],
+  };
+}

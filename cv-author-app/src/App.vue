@@ -7,7 +7,7 @@ import {
   ref,
   watch,
 } from "vue";
-import { X } from "@lucide/vue";
+import { SlidersHorizontal, X } from "@lucide/vue";
 import { CanvasCoordinateGuideView, CanvasNodeView } from "./CanvasNodeView";
 import { CartesianCoordinateSystem } from "./CartesianCoordinateSystem";
 import CsvDataPanel from "./CsvDataPanel.vue";
@@ -29,17 +29,24 @@ import { useLlmRenderer } from "./useLlmRenderer";
 import { isLineChartType } from "./lineRenderer";
 
 const canvasRef = ref<HTMLElement | null>(null);
+const encodingInspectorRef = ref<HTMLElement | null>(null);
+const encodingInspectorPosition = ref<{ left: number; top: number } | null>(null);
+const axisBindingAnchor = ref<{ x: number; y: number } | null>(null);
 
 const {
   selectedCoordinateSystems,
   toggleCoordinateSystem,
-  filteredCandidates,
+  implementedTemplateCandidates,
   compositionCandidates,
   canvasNodes,
   viewZoom,
   viewPan,
   selectedIds,
-  semanticSelection,
+  editingGroupPath,
+  nestedBindingTarget,
+  nestedBindingNode,
+  nestedBindingColumns,
+  nestedBindingSuggestedAngleFields,
   axisBindingTarget,
   axisBindingNode,
   axisBindingColumns,
@@ -48,13 +55,22 @@ const {
   axisBindingEncodingValues,
   axisBindingOptionalCandidates,
   axisBindingRendererError,
+  axisBindingAxis,
+  axisBindingRelatedCharts,
+  coordinateGuideNodes,
   contextMenu,
   draggedCandidateId,
+  activeDropZone,
+  interaction,
   loadingDrop,
   importNotice,
+  selectedNodes,
   selectionBounds,
   selectionFrame,
   selectionRotation,
+  editingGroupTransform,
+  selectionOverlayZoom,
+  rotationInputPosition,
   rotationInputVisible,
   marqueeBounds,
   selectionUnits,
@@ -74,11 +90,14 @@ const {
   rotateHandle,
   onCanvasPointerDown,
   onCanvasDragOver,
+  onCanvasDragLeave,
   onCanvasDrop,
   onCanvasWheel,
   onCanvasContextMenu,
   onCanvasNodePointerDown,
-  onSemanticMarkPointerDown,
+  onCanvasNodeDoubleClick,
+  onEditingGroupBackgroundPointerDown,
+  applyDimensionRecommendation,
   onCanvasNodeContextMenu,
   onScaleHandlePointerDown,
   onRotateHandlePointerDown,
@@ -92,6 +111,11 @@ const {
   clearSeriesBinding,
   bindOptionalEncoding,
   clearOptionalEncoding,
+  bindPolarRadiusField,
+  clearPolarRadiusField,
+  setPieAngleFields,
+  setPieRadiusMode,
+  setPieComponentRadiusField,
   closeAxisBinding,
   setSelectionRotation,
   onCandidateDragStart,
@@ -108,6 +132,8 @@ const {
   ungroupSelectedItems,
   dissolveSelectedGroups,
   createCompositionCandidate,
+  confirmNestedBinding,
+  closeNestedBinding,
   applyLlmRenderer,
   reorderSelectedNodes,
   alignSelection,
@@ -123,12 +149,115 @@ const {
 // Keep the experimental renderer disabled while template rendering is the default.
 const llmRendererPaused = true;
 const encodingReviewApprovedKey = ref("");
+const nestedBindingPopupRef = ref<HTMLElement | null>(null);
+const nestedBindingPopupPosition = ref<{ left: number; top: number } | null>(null);
+const nestedPointXField = ref("");
+const nestedPointYField = ref("");
+const nestedPieRadiusField = ref("");
+const nestedPieAngleFields = ref<string[]>([]);
+
+const canConfirmNestedBinding = computed(() =>
+  !!nestedPointXField.value
+  && !!nestedPointYField.value
+  && !!nestedPieRadiusField.value
+  && nestedPieAngleFields.value.length > 0,
+);
+
+function positionNestedBindingPopup() {
+  const board = canvasRef.value;
+  const popup = nestedBindingPopupRef.value;
+  const target = nestedBindingTarget.value;
+  if (!board || !popup || !target) return;
+  const boardRect = board.getBoundingClientRect();
+  const margin = 12;
+  const gap = 12;
+  const anchorX = target.clientX - boardRect.left;
+  const anchorY = target.clientY - boardRect.top;
+  const preferredLeft = anchorX + gap;
+  const left = preferredLeft + popup.offsetWidth <= boardRect.width - margin
+    ? preferredLeft
+    : anchorX - popup.offsetWidth - gap;
+  const preferredTop = anchorY + gap;
+  const top = preferredTop + popup.offsetHeight <= boardRect.height - margin
+    ? preferredTop
+    : anchorY - popup.offsetHeight - gap;
+  nestedBindingPopupPosition.value = {
+    left: Math.max(margin, Math.min(left, boardRect.width - popup.offsetWidth - margin)),
+    top: Math.max(margin, Math.min(top, boardRect.height - popup.offsetHeight - margin)),
+  };
+}
+
+function toggleNestedAngleField(field: string) {
+  nestedPieAngleFields.value = nestedPieAngleFields.value.includes(field)
+    ? nestedPieAngleFields.value.filter((item) => item !== field)
+    : [...nestedPieAngleFields.value, field];
+}
+
+function submitNestedBinding() {
+  if (!canConfirmNestedBinding.value) return;
+  confirmNestedBinding({
+    xField: nestedPointXField.value,
+    yField: nestedPointYField.value,
+    radiusField: nestedPieRadiusField.value,
+    angleFields: nestedPieAngleFields.value,
+  });
+}
+
+watch(nestedBindingTarget, (target) => {
+  nestedBindingPopupPosition.value = null;
+  if (!target) return;
+  nestedPointXField.value = nestedBindingNode.value?.chartSpec?.encodings.x?.field ?? "";
+  nestedPointYField.value = nestedBindingNode.value?.chartSpec?.encodings.y?.field ?? "";
+  nestedPieRadiusField.value = nestedBindingNode.value?.nestedSpec?.radiusField
+    ?? nestedPointYField.value;
+  nestedPieAngleFields.value = nestedBindingNode.value?.nestedSpec?.valueFields?.length
+    ? [...nestedBindingNode.value.nestedSpec.valueFields]
+    : [...nestedBindingSuggestedAngleFields.value];
+  void nextTick(positionNestedBindingPopup);
+});
 
 function isScatterChartType(chartType: string) {
   return chartType
     .replace(/[\s_-]/g, "")
     .toLowerCase()
     .includes("scatter");
+}
+
+function isPolarChartType(chartType: string) {
+  const type = chartType.replace(/[\s_-]/g, "").toLowerCase();
+  return type.includes("pie") || type.includes("donut");
+}
+
+function isPieChartType(chartType: string) {
+  const type = chartType.replace(/[\s_-]/g, "").toLowerCase();
+  return type.includes("pie") && !type.includes("donut");
+}
+
+function primaryEncodingLabel(node: CanvasNode | null, channel: EncodingChannel) {
+  const type = node?.chartSpec?.chartType.replace(/[\s_-]/g, "").toLowerCase() ?? "";
+  if (type.includes("pie") || type.includes("donut")) return channel === "x" ? "Category" : "Angle";
+  if (type.includes("matrix") || type.includes("heatmap")) return channel === "x" ? "Column" : "Row";
+  return `${channel.toUpperCase()} axis`;
+}
+
+function primaryEncodingField(node: CanvasNode | null, channel: EncodingChannel) {
+  const type = node?.chartSpec?.chartType.replace(/[\s_-]/g, "").toLowerCase() ?? "";
+  if (type.includes("pie") || type.includes("donut")) {
+    return channel === "x" ? node?.chartSpec?.encodings.color?.field : node?.chartSpec?.encodings.angle?.field;
+  }
+  if (type.includes("matrix") || type.includes("heatmap")) {
+    return channel === "x" ? node?.chartSpec?.encodings.column?.field : node?.chartSpec?.encodings.row?.field;
+  }
+  return node?.chartSpec?.encodings[channel]?.field;
+}
+
+function isPrimaryEncodingCompatible(node: CanvasNode | null, channel: EncodingChannel, type: string) {
+  const chartType = node?.chartSpec?.chartType.replace(/[\s_-]/g, "").toLowerCase() ?? "";
+  if (chartType.includes("pie") || chartType.includes("donut")) return channel === "x" ? type !== "quantitative" : type === "quantitative";
+  if (chartType.includes("matrix") || chartType.includes("heatmap")) return type !== "quantitative";
+  if (chartType === "linegraph" || chartType.includes("linechart")) return type === "quantitative" || type === "temporal";
+  if (channel === "y" && !chartType.includes("scatter")) return type === "quantitative";
+  return true;
 }
 
 function encodingReviewKey(node: CanvasNode | null) {
@@ -164,21 +293,63 @@ const activeCompositionCandidates = computed(() =>
 );
 const llmNode = computed(() => {
   if (selectedIds.value.length !== 1) return null;
-  return (
-    canvasNodes.value.find((node) => node.id === selectedIds.value[0]) ?? null
-  );
+  return selectedNodes.value[0] ?? null;
 });
 const llmDataset = computed(() => {
   const datasetId =
     llmNode.value?.layerSpec?.datasetId ?? llmNode.value?.chartSpec?.datasetId;
   return datasetId ? getDataset(datasetId) : activeDataset.value;
 });
-const selectedCanvasNodesWithCoordinateGuides = computed(() =>
-  canvasNodes.value.filter((node) =>
-    !!node.coordinateGuide &&
-    (selectedIds.value.includes(node.id) || axisBindingTarget.value?.nodeId === node.id),
-  ),
+const activeDimensionRecommendations = computed(() =>
+  (axisBindingNode.value ?? llmNode.value)?.chartSpec?.dimensionRecommendations ?? [],
 );
+const recommendationPopupOpen = ref(false);
+let lastRecommendationKey = "";
+let suppressRecommendationAutoOpen = false;
+
+watch(activeDimensionRecommendations, (recommendations) => {
+  const key = recommendations.map((recommendation) => recommendation.id).join("|");
+  if (!key) {
+    recommendationPopupOpen.value = false;
+    lastRecommendationKey = "";
+    return;
+  }
+  if (axisBindingTarget.value) {
+    recommendationPopupOpen.value = false;
+    lastRecommendationKey = key;
+    return;
+  }
+  if (key !== lastRecommendationKey) {
+    if (suppressRecommendationAutoOpen) suppressRecommendationAutoOpen = false;
+    else recommendationPopupOpen.value = true;
+  }
+  lastRecommendationKey = key;
+}, { immediate: true });
+
+function openRecommendationPopup() {
+  recommendationPopupOpen.value = activeDimensionRecommendations.value.length > 0;
+}
+
+function closeRecommendationPopup() {
+  recommendationPopupOpen.value = false;
+}
+
+function chooseDimensionRecommendation(recommendationId: string) {
+  suppressRecommendationAutoOpen = true;
+  applyDimensionRecommendation(recommendationId);
+  recommendationPopupOpen.value = false;
+}
+
+function recommendationStrategyLabel(strategy: string) {
+  return strategy === "series"
+    ? "One view"
+    : strategy === "flatten"
+      ? "Flatten"
+      : strategy === "facet"
+        ? "Multiple views"
+        : "Nested";
+}
+const selectedCanvasNodesWithCoordinateGuides = coordinateGuideNodes;
 
 watch(
   [
@@ -230,7 +401,7 @@ watch(
 function openCompositionCandidates(type: CompositionType) {
   closeAxisBinding();
   createCompositionCandidate(type);
-  activeCompositionType.value = type === "nested" ? null : type;
+  activeCompositionType.value = null;
 }
 
 function closeCompositionCandidates() {
@@ -247,6 +418,8 @@ function onCompositionKeyDown(event: KeyboardEvent) {
   if (event.key === "Escape") {
     closeCompositionCandidates();
     closeAxisBinding();
+    closeRecommendationPopup();
+    closeNestedBinding();
   }
 }
 
@@ -255,6 +428,27 @@ function onAxisFieldChange(channel: EncodingChannel, event: Event) {
   const field = (event.target as HTMLSelectElement).value;
   if (field) bindAxisField(field);
   else clearAxisBinding();
+}
+
+function onPolarRadiusFieldChange(event: Event) {
+  const field = (event.target as HTMLSelectElement).value;
+  if (field) bindPolarRadiusField(field);
+  else clearPolarRadiusField();
+}
+
+function togglePieAngleField(field: string) {
+  const selected = axisBindingNode.value?.chartSpec?.angleFields?.map((encoding) => encoding.field) ?? [];
+  setPieAngleFields(selected.includes(field)
+    ? selected.filter((item) => item !== field)
+    : [...selected, field]);
+}
+
+function onPieRadiusModeChange(mode: "shared" | "per-component") {
+  setPieRadiusMode(mode);
+}
+
+function onPieComponentRadiusFieldChange(componentField: string, event: Event) {
+  setPieComponentRadiusField(componentField, (event.target as HTMLSelectElement).value);
 }
 
 function onSeriesFieldChange(event: Event) {
@@ -293,6 +487,13 @@ function confirmEncodingInspector() {
     return;
   }
   confirmOptionalEncodings();
+}
+
+function confirmPolarEncodingInspector() {
+  closeAxisBinding();
+  if (activeDimensionRecommendations.value.length > 0) {
+    recommendationPopupOpen.value = true;
+  }
 }
 
 function skipOptionalEncodings() {
@@ -373,19 +574,66 @@ watch(
   { flush: "post" },
 );
 
-function openAxisBinding(node: CanvasNode, channel: EncodingChannel) {
+function positionEncodingInspector() {
+  const board = canvasRef.value;
+  const inspector = encodingInspectorRef.value;
+  const anchor = axisBindingAnchor.value;
+  if (!board || !inspector || !anchor) return;
+
+  const boardRect = board.getBoundingClientRect();
+  const width = inspector.offsetWidth;
+  const height = inspector.offsetHeight;
+  const margin = 12;
+  const gap = 10;
+  const anchorX = anchor.x - boardRect.left;
+  const anchorY = anchor.y - boardRect.top;
+
+  const preferredLeft = anchorX + gap;
+  const left = preferredLeft + width <= boardRect.width - margin
+    ? preferredLeft
+    : anchorX - width - gap;
+  const preferredTop = anchorY + gap;
+  const top = preferredTop + height <= boardRect.height - margin
+    ? preferredTop
+    : anchorY - height - gap;
+
+  encodingInspectorPosition.value = {
+    left: Math.max(margin, Math.min(left, boardRect.width - width - margin)),
+    top: Math.max(margin, Math.min(top, boardRect.height - height - margin)),
+  };
+}
+
+function openAxisBinding(node: CanvasNode, channel: EncodingChannel, event?: PointerEvent) {
   closeCompositionCandidates();
   encodingReviewApprovedKey.value = "";
+  axisBindingAnchor.value = event ? { x: event.clientX, y: event.clientY } : null;
+  encodingInspectorPosition.value = null;
   onCoordinateAxisSelect(node, channel);
+  if (event) void nextTick(positionEncodingInspector);
 }
+
+watch(axisBindingTarget, (target) => {
+  if (!target) {
+    axisBindingAnchor.value = null;
+    encodingInspectorPosition.value = null;
+  } else if (target.clientX !== undefined && target.clientY !== undefined) {
+    axisBindingAnchor.value = { x: target.clientX, y: target.clientY };
+    encodingInspectorPosition.value = null;
+    void nextTick(positionEncodingInspector);
+  }
+});
 
 onMounted(() => {
   window.addEventListener("keydown", onCompositionKeyDown);
   window.addEventListener("click", closeCompositionCandidates);
+  window.addEventListener("resize", positionEncodingInspector);
+  window.addEventListener("resize", positionNestedBindingPopup);
 });
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", onCompositionKeyDown);
   window.removeEventListener("click", closeCompositionCandidates);
+  window.removeEventListener("resize", positionEncodingInspector);
+  window.removeEventListener("resize", positionNestedBindingPopup);
 });
 </script>
 
@@ -421,23 +669,25 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="sidebar__browser">
-          <div class="candidate-list">
-            <article
-              v-for="candidate in filteredCandidates"
-              :key="candidate.id"
-              class="candidate-card candidate-card--template"
-              draggable="true"
-              @dragstart="onCandidateDragStart(candidate, $event)"
-              @dragend="onCandidateDragEnd"
-            >
-              <img
-                class="candidate-card__preview"
-                :src="candidate.src"
-                alt=""
-                draggable="false"
-              />
-            </article>
-          </div>
+          <section class="implemented-templates" aria-label="Implemented chart templates">
+            <p class="implemented-templates__title">Chart templates</p>
+            <div class="implemented-template-list">
+              <article
+                v-for="candidate in implementedTemplateCandidates"
+                :key="`implemented-${candidate.id}`"
+                class="implemented-template-card"
+                draggable="true"
+                :title="candidate.name"
+                @dragstart="onCandidateDragStart(candidate, $event)"
+                @dragend="onCandidateDragEnd"
+              >
+                <div class="implemented-template-card__preview">
+                  <img :src="candidate.src" alt="" draggable="false" />
+                </div>
+                <span>{{ candidate.name }}</span>
+              </article>
+            </div>
+          </section>
         </div>
       </div>
     </aside>
@@ -457,9 +707,20 @@ onBeforeUnmount(() => {
             'canvas-board--panning': isPanning,
           }"
           @dragover="onCanvasDragOver"
+          @dragleave="onCanvasDragLeave"
           @drop="onCanvasDrop"
           @contextmenu="onCanvasContextMenu"
         >
+          <button
+            class="dimension-options-control"
+            type="button"
+            title="Adjust dimension options"
+            aria-label="Adjust dimension options"
+            :disabled="!activeDimensionRecommendations.length"
+            @click.stop="openRecommendationPopup"
+          >
+            <SlidersHorizontal :size="17" :stroke-width="1.7" aria-hidden="true" />
+          </button>
           <div class="toolbar toolbar--floating">
             <div class="icon-tools" role="group" aria-label="History">
               <button
@@ -613,38 +874,6 @@ onBeforeUnmount(() => {
                 <span>{{ option.label }}</span>
               </button>
             </div>
-            <div class="llm-tools" role="group" aria-label="D3 renderer">
-              <div class="llm-tools__header">
-                <span>D3 renderer</span>
-                <span class="llm-tools__status">{{ llmStatus }}</span>
-              </div>
-              <div class="llm-tools__actions">
-                <button
-                  v-if="llmStatus !== 'loading'"
-                  class="ghost-button"
-                  type="button"
-                  disabled
-                  @click="generateLlmRenderer"
-                >
-                  D3 renderer paused
-                </button>
-                <button
-                  v-else
-                  class="ghost-button"
-                  type="button"
-                  @click="llmRenderer.cancel"
-                >
-                  Cancel
-                </button>
-              </div>
-              <p v-if="llmError" class="llm-tools__error">{{ llmError }}</p>
-              <p v-else-if="llmProvenance" class="llm-tools__meta">
-                {{
-                  llmProvenance.cacheHit ? "Restored from cache" : "Generated"
-                }}
-                · {{ llmProvenance.model }}
-              </p>
-            </div>
             <div class="alignment-tools" role="group" aria-label="Alignment">
               <button
                 class="icon-button"
@@ -723,10 +952,17 @@ onBeforeUnmount(() => {
 
           <aside
             v-if="axisBindingTarget"
+            ref="encodingInspectorRef"
             class="encoding-inspector"
             role="dialog"
             aria-modal="false"
             :aria-label="`${axisBindingTarget.channel.toUpperCase()} axis encoding`"
+            :style="encodingInspectorPosition ? {
+              left: `${encodingInspectorPosition.left}px`,
+              top: `${encodingInspectorPosition.top}px`,
+              right: 'auto',
+              maxHeight: `calc(100% - ${encodingInspectorPosition.top + 12}px)`,
+            } : undefined"
             @click.stop
             @pointerdown.stop
           >
@@ -748,11 +984,29 @@ onBeforeUnmount(() => {
               </button>
             </header>
 
+            <section class="encoding-inspector__context">
+              <div>
+                <span class="encoding-inspector__context-label">Chart</span>
+                <strong>{{ axisBindingNode?.name ?? "Current chart" }}</strong>
+              </div>
+              <div>
+                <span class="encoding-inspector__context-label">Axis</span>
+                <strong>{{ axisBindingAxis?.id ?? "Independent axis" }}</strong>
+              </div>
+              <div v-if="axisBindingRelatedCharts.length > 1" class="encoding-inspector__shared">
+                <span class="encoding-inspector__context-label">Shared by</span>
+                <span>{{ axisBindingRelatedCharts.map((chart) => chart.name).join(", ") }}</span>
+              </div>
+            </section>
+
             <div v-if="axisBindingColumns.length" class="encoding-inspector__axes">
-              <label class="encoding-inspector__field">
-                <span>X axis</span>
+              <label
+                v-if="!isPieChartType(axisBindingNode?.chartSpec?.chartType ?? '')"
+                class="encoding-inspector__field"
+              >
+                <span>{{ primaryEncodingLabel(axisBindingNode, 'x') }}</span>
                 <select
-                  :value="axisBindingNode?.chartSpec?.encodings.x?.field ?? ''"
+                  :value="primaryEncodingField(axisBindingNode, 'x') ?? ''"
                   @change="onAxisFieldChange('x', $event)"
                 >
                   <option value="">Not bound</option>
@@ -760,15 +1014,19 @@ onBeforeUnmount(() => {
                     v-for="column in axisBindingColumns"
                     :key="column.name"
                     :value="column.name"
+                    :disabled="!isPrimaryEncodingCompatible(axisBindingNode, 'x', column.type)"
                   >
                     {{ column.name }} ({{ column.type }})
                   </option>
                 </select>
               </label>
-              <label class="encoding-inspector__field">
-                <span>Y axis</span>
+              <label
+                v-if="!isPieChartType(axisBindingNode?.chartSpec?.chartType ?? '')"
+                class="encoding-inspector__field"
+              >
+                <span>{{ primaryEncodingLabel(axisBindingNode, 'y') }}</span>
                 <select
-                  :value="axisBindingNode?.chartSpec?.encodings.y?.field ?? ''"
+                  :value="primaryEncodingField(axisBindingNode, 'y') ?? ''"
                   @change="onAxisFieldChange('y', $event)"
                 >
                   <option value="">Not bound</option>
@@ -776,8 +1034,109 @@ onBeforeUnmount(() => {
                     v-for="column in axisBindingColumns"
                     :key="column.name"
                     :value="column.name"
+                    :disabled="!isPrimaryEncodingCompatible(axisBindingNode, 'y', column.type)"
                   >
                     {{ column.name }} ({{ column.type }})
+                  </option>
+                </select>
+              </label>
+              <div
+                v-if="isPieChartType(axisBindingNode?.chartSpec?.chartType ?? '')"
+                class="pie-angle-fields"
+              >
+                <span>Angle components</span>
+                <label
+                  v-for="column in axisBindingColumns.filter((item) => item.type === 'quantitative')"
+                  :key="`pie-angle-field-${column.name}`"
+                  class="nested-binding-popup__angle-option"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="axisBindingNode?.chartSpec?.angleFields?.some((encoding) => encoding.field === column.name)"
+                    @change="togglePieAngleField(column.name)"
+                  />
+                  <span>{{ column.name }}</span>
+                </label>
+              </div>
+              <div
+                v-if="isPieChartType(axisBindingNode?.chartSpec?.chartType ?? '')"
+                class="pie-radius-editor"
+              >
+                <span>Outer radius</span>
+                <div class="pie-radius-editor__modes" role="group" aria-label="Pie radius mode">
+                  <button
+                    type="button"
+                    :class="{ 'is-active': (axisBindingNode?.chartSpec?.radiusMode ?? 'shared') === 'shared' }"
+                    @click="onPieRadiusModeChange('shared')"
+                  >
+                    Same radius
+                  </button>
+                  <button
+                    type="button"
+                    :class="{ 'is-active': axisBindingNode?.chartSpec?.radiusMode === 'per-component' }"
+                    @click="onPieRadiusModeChange('per-component')"
+                  >
+                    Per component
+                  </button>
+                </div>
+                <label
+                  v-if="(axisBindingNode?.chartSpec?.radiusMode ?? 'shared') === 'shared'"
+                  class="encoding-inspector__field"
+                >
+                  <span>Shared value</span>
+                  <select
+                    :value="axisBindingNode?.chartSpec?.encodings.radius?.field ?? ''"
+                    @change="onPolarRadiusFieldChange"
+                  >
+                    <option value="">Fixed</option>
+                    <option
+                      v-for="column in axisBindingColumns.filter((item) => item.type === 'quantitative')"
+                      :key="`radius-${column.name}`"
+                      :value="column.name"
+                    >
+                      {{ column.name }}
+                    </option>
+                  </select>
+                </label>
+                <div v-else class="pie-radius-editor__components">
+                  <label
+                    v-for="component in axisBindingNode?.chartSpec?.angleFields ?? []"
+                    :key="`component-radius-${component.field}`"
+                    class="pie-radius-editor__component"
+                  >
+                    <span>{{ component.field }}</span>
+                    <select
+                      :value="axisBindingNode?.chartSpec?.componentRadiusFields?.[component.field]?.field ?? ''"
+                      @change="onPieComponentRadiusFieldChange(component.field, $event)"
+                    >
+                      <option value="">Fixed</option>
+                      <option
+                        v-for="column in axisBindingColumns.filter((item) => item.type === 'quantitative')"
+                        :key="`${component.field}-radius-${column.name}`"
+                        :value="column.name"
+                      >
+                        {{ column.name }}
+                      </option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+              <label
+                v-else-if="isPolarChartType(axisBindingNode?.chartSpec?.chartType ?? '')"
+                class="encoding-inspector__field"
+              >
+                <span>Radius</span>
+                <select
+                  :value="axisBindingNode?.chartSpec?.encodings.radius?.field ?? ''"
+                  @change="onPolarRadiusFieldChange"
+                >
+                  <option value="">Not bound</option>
+                  <option
+                    v-for="column in axisBindingColumns.filter((item) => item.type === 'quantitative')"
+                    :key="`radius-${column.name}`"
+                    :value="column.name"
+                  >
+                    {{ column.name }}
                   </option>
                 </select>
               </label>
@@ -898,6 +1257,137 @@ onBeforeUnmount(() => {
                 </button>
               </div>
             </section>
+            <div
+              v-if="isPolarChartType(axisBindingNode?.chartSpec?.chartType ?? '')"
+              class="encoding-inspector__actions encoding-inspector__actions--standalone"
+            >
+              <button
+                class="encoding-inspector__confirm"
+                type="button"
+                :disabled="isPieChartType(axisBindingNode?.chartSpec?.chartType ?? '')
+                  ? !axisBindingNode?.chartSpec?.angleFields?.length
+                  : !axisBindingNode?.chartSpec?.encodings.angle"
+                @click="confirmPolarEncodingInspector"
+              >
+                Confirm encodings
+              </button>
+            </div>
+            <button
+              v-if="activeDimensionRecommendations.length"
+              class="recommendation-popup-trigger"
+              type="button"
+              @click="openRecommendationPopup"
+            >
+              View {{ activeDimensionRecommendations.length }} dimension options
+            </button>
+          </aside>
+
+          <aside
+            v-if="nestedBindingTarget"
+            ref="nestedBindingPopupRef"
+            class="nested-binding-popup"
+            role="dialog"
+            aria-modal="false"
+            aria-label="Configure Point and Pie composition"
+            :style="nestedBindingPopupPosition ? {
+              left: `${nestedBindingPopupPosition.left}px`,
+              top: `${nestedBindingPopupPosition.top}px`,
+              maxHeight: `calc(100% - ${nestedBindingPopupPosition.top + 12}px)`,
+            } : undefined"
+            @click.stop
+            @pointerdown.stop
+          >
+            <header class="nested-binding-popup__header">
+              <div>
+                <strong>POINT + PIE</strong>
+                <span>{{ nestedBindingNode?.name }}</span>
+              </div>
+              <button
+                class="encoding-inspector__close"
+                type="button"
+                title="Close"
+                aria-label="Close composition editor"
+                @click="closeNestedBinding"
+              >
+                <X :size="16" :stroke-width="1.6" aria-hidden="true" />
+              </button>
+            </header>
+
+            <form class="nested-binding-popup__form" @submit.prevent="submitNestedBinding">
+              <fieldset>
+                <legend>Point position</legend>
+                <div class="nested-binding-popup__field-grid">
+                  <label class="encoding-inspector__field">
+                    <span>X</span>
+                    <select v-model="nestedPointXField">
+                      <option
+                        v-for="column in nestedBindingColumns"
+                        :key="`point-x-${column.name}`"
+                        :value="column.name"
+                      >
+                        {{ column.name }} ({{ column.type }})
+                      </option>
+                    </select>
+                  </label>
+                  <label class="encoding-inspector__field">
+                    <span>Y</span>
+                    <select v-model="nestedPointYField">
+                      <option
+                        v-for="column in nestedBindingColumns"
+                        :key="`point-y-${column.name}`"
+                        :value="column.name"
+                      >
+                        {{ column.name }} ({{ column.type }})
+                      </option>
+                    </select>
+                  </label>
+                </div>
+                <div class="nested-binding-popup__relation">
+                  <span>Attach to</span>
+                  <strong>{{ nestedBindingTarget.rowKey }}</strong>
+                </div>
+              </fieldset>
+
+              <fieldset>
+                <legend>Pie encodings</legend>
+                <label class="encoding-inspector__field">
+                  <span>Radius</span>
+                  <select v-model="nestedPieRadiusField">
+                    <option
+                      v-for="column in nestedBindingColumns.filter((item) => item.type === 'quantitative')"
+                      :key="`pie-radius-${column.name}`"
+                      :value="column.name"
+                    >
+                      {{ column.name }}
+                    </option>
+                  </select>
+                </label>
+                <div class="nested-binding-popup__angles">
+                  <span>Angle components</span>
+                  <label
+                    v-for="column in nestedBindingColumns.filter((item) => item.type === 'quantitative')"
+                    :key="`pie-angle-${column.name}`"
+                    class="nested-binding-popup__angle-option"
+                  >
+                    <input
+                      type="checkbox"
+                      :checked="nestedPieAngleFields.includes(column.name)"
+                      @change="toggleNestedAngleField(column.name)"
+                    />
+                    <span>{{ column.name }}</span>
+                  </label>
+                </div>
+              </fieldset>
+
+              <div class="nested-binding-popup__actions">
+                <button type="button" class="encoding-inspector__secondary" @click="closeNestedBinding">
+                  Cancel
+                </button>
+                <button type="submit" class="encoding-inspector__confirm" :disabled="!canConfirmNestedBinding">
+                  Create composition
+                </button>
+              </div>
+            </form>
           </aside>
 
           <aside
@@ -963,18 +1453,64 @@ onBeforeUnmount(() => {
               </article>
             </div>
           </aside>
+          <div
+            v-if="recommendationPopupOpen && activeDimensionRecommendations.length"
+            class="recommendation-popup-backdrop"
+            @pointerdown="closeRecommendationPopup"
+          ></div>
           <aside
-            v-if="semanticSelection"
-            class="semantic-inspector"
-            data-testid="semantic-inspector"
+            v-if="recommendationPopupOpen && activeDimensionRecommendations.length"
+            class="recommendation-popup"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Dimension recommendations"
+            @click.stop
+            @pointerdown.stop
           >
-            <strong>Selected {{ semanticSelection.role }}</strong>
-            <span v-if="semanticSelection.person">{{
-              semanticSelection.person
-            }}</span>
-            <span v-if="semanticSelection.time">{{
-              semanticSelection.time
-            }}</span>
+            <header class="recommendation-popup__header">
+              <div>
+                <strong>Dimension options</strong>
+                <span>Choose how to arrange this data dimension</span>
+              </div>
+              <button
+                class="recommendation-popup__close"
+                type="button"
+                title="Close"
+                aria-label="Close dimension options"
+                @click="closeRecommendationPopup"
+              >
+                <X :size="17" :stroke-width="1.7" aria-hidden="true" />
+              </button>
+            </header>
+            <div class="recommendation-popup__options">
+              <button
+                v-for="recommendation in activeDimensionRecommendations"
+                :key="recommendation.id"
+                class="recommendation-option-card"
+                type="button"
+                @click="chooseDimensionRecommendation(recommendation.id)"
+              >
+                <span class="recommendation-option-card__strategy">
+                  {{ recommendationStrategyLabel(recommendation.strategy) }}
+                </span>
+                <strong>{{ recommendation.field }}</strong>
+                <span>{{ recommendation.label }}</span>
+                <dl>
+                  <div>
+                    <dt>Values</dt>
+                    <dd>{{ recommendation.valueCount }}</dd>
+                  </div>
+                  <div>
+                    <dt>Marks</dt>
+                    <dd>{{ recommendation.estimatedMarkCount }}</dd>
+                  </div>
+                  <div>
+                    <dt>Shared</dt>
+                    <dd>{{ recommendation.sharedChannels.join(' + ') || 'Independent' }}</dd>
+                  </div>
+                </dl>
+              </button>
+            </div>
           </aside>
 
           <div
@@ -1074,7 +1610,7 @@ onBeforeUnmount(() => {
             v-if="canvasNodes.length === 0 && !loadingDrop"
             class="empty-state"
           >
-            Drag a library SVG or a local .svg file here.
+            Drag an SVG, PNG, JPEG, WebP, GIF, or AVIF here.
           </div>
           <div v-if="loadingDrop" class="loading-state">Loading SVG...</div>
           <div v-if="importNotice" class="import-notice">
@@ -1096,10 +1632,47 @@ onBeforeUnmount(() => {
                 :node="node"
                 :selected="selectedIds.includes(node.id)"
                 :interactive="true"
+                :editing-group-path="editingGroupPath"
+                :selected-ids="selectedIds"
                 :on-node-pointer-down="onCanvasNodePointerDown"
+                :on-node-double-click="onCanvasNodeDoubleClick"
                 :on-node-context-menu="onCanvasNodeContextMenu"
-                :on-mark-pointer-down="onSemanticMarkPointerDown"
+                :on-editing-background-pointer-down="onEditingGroupBackgroundPointerDown"
               />
+              <g v-if="activeDropZone" :transform="editingGroupTransform" class="composition-drop-zone-layer">
+                <rect
+                  class="composition-drop-zone"
+                  :class="{
+                    'composition-drop-zone--layer': activeDropZone.type === 'layer',
+                  'composition-drop-zone--concat': activeDropZone.type === 'concat',
+                    'composition-drop-zone--horizontal': activeDropZone.direction === 'horizontal',
+                    'composition-drop-zone--vertical': activeDropZone.direction === 'vertical',
+                    'composition-drop-zone--before': activeDropZone.concatPosition === 'before',
+                    'composition-drop-zone--after': activeDropZone.concatPosition === 'after',
+                    'composition-drop-zone--nested': activeDropZone.type === 'nested',
+                    'composition-drop-zone--invalid': !activeDropZone.compatible,
+                  }"
+                  :x="activeDropZone.bounds.minX"
+                  :y="activeDropZone.bounds.minY"
+                  :width="activeDropZone.bounds.width"
+                  :height="activeDropZone.bounds.height"
+                  vector-effect="non-scaling-stroke"
+                />
+              </g>
+              <g
+                v-if="interaction?.type === 'move' && interaction.layerDetach"
+                class="layer-detach-zone-layer"
+              >
+                <rect
+                  class="layer-detach-zone"
+                  :x="interaction.layerDetach.bounds.minX"
+                  :y="interaction.layerDetach.bounds.minY"
+                  :width="interaction.layerDetach.bounds.width"
+                  :height="interaction.layerDetach.bounds.height"
+                  vector-effect="non-scaling-stroke"
+                />
+              </g>
+              <g :transform="editingGroupTransform">
               <g class="selection-overlay">
                 <rect
                   v-if="marqueeBounds"
@@ -1126,7 +1699,7 @@ onBeforeUnmount(() => {
                     class="selection-handle"
                     :cx="handle.x"
                     :cy="handle.y"
-                    :r="6 / viewZoom"
+                    :r="6 / selectionOverlayZoom"
                     :vector-effect="'non-scaling-stroke'"
                     @pointerdown="onScaleHandlePointerDown(handle.key, $event)"
                   />
@@ -1141,7 +1714,7 @@ onBeforeUnmount(() => {
                     class="rotate-handle"
                     :cx="rotateHandle.x"
                     :cy="rotateHandle.y"
-                    :r="6 / viewZoom"
+                    :r="6 / selectionOverlayZoom"
                     :vector-effect="'non-scaling-stroke'"
                     title="Rotate"
                     @pointerdown="onRotateHandlePointerDown"
@@ -1152,7 +1725,7 @@ onBeforeUnmount(() => {
                 v-for="node in selectedCanvasNodesWithCoordinateGuides.filter((item) => item.coordinateGuide?.type === 'Cartesian')"
                 :key="`coordinate-guide-${node.id}`"
                 :node="node"
-                :view-zoom="viewZoom"
+                :view-zoom="selectionOverlayZoom"
                 :on-axis-select="openAxisBinding"
                 :on-axis-scale-pointer-down="onCoordinateAxisScalePointerDown"
               />
@@ -1160,20 +1733,22 @@ onBeforeUnmount(() => {
                 v-for="node in selectedCanvasNodesWithCoordinateGuides.filter((item) => item.coordinateGuide?.type !== 'Cartesian')"
                 :key="`coordinate-guide-${node.id}`"
                 :node="node"
-                :view-zoom="viewZoom"
+                :view-zoom="selectionOverlayZoom"
                 :on-origin-pointer-down="onCoordinateOriginPointerDown"
                 :on-axis-reverse="reverseCoordinateAxis"
                 :on-axis-select="openAxisBinding"
+                :on-axis-scale-pointer-down="onCoordinateAxisScalePointerDown"
               />
+              </g>
             </g>
           </svg>
           <label
             v-if="selectionBounds && rotationInputVisible && rotateHandle"
             class="rotation-input"
-            :style="{
-              left: `${viewPan.x + rotateHandle.x * viewZoom}px`,
-              top: `${viewPan.y + rotateHandle.y * viewZoom}px`,
-            }"
+            :style="rotationInputPosition ? {
+              left: `${rotationInputPosition.left}px`,
+              top: `${rotationInputPosition.top}px`,
+            } : undefined"
           >
             <span>Angle</span>
             <input
@@ -1231,16 +1806,74 @@ onBeforeUnmount(() => {
   height: var(--browser-panel-height);
 }
 .sidebar__browser {
-  --candidate-card-width: 228px;
-  --candidate-card-height: 132px;
-  --candidate-gap: 10px;
   grid-column: 2 / 4;
-  display: block;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: 18px minmax(0, 1fr);
   align-items: stretch;
   height: var(--browser-panel-height);
   max-height: var(--browser-panel-height);
   min-height: 0;
   overflow: hidden;
+}
+.implemented-templates {
+  grid-row: 1 / 3;
+  display: grid;
+  grid-template-rows: 18px minmax(0, 1fr);
+  min-width: 0;
+}
+.implemented-templates__title {
+  margin: 0;
+  color: #516176;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.implemented-template-list {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(82px, 1fr));
+  gap: 8px;
+  min-height: 0;
+}
+.implemented-template-card {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 24px;
+  min-width: 0;
+  min-height: 0;
+  padding: 6px;
+  border: 1px solid rgba(24, 33, 47, 0.1);
+  border-radius: 6px;
+  background: #fff;
+  color: #223041;
+  font-size: 11px;
+  text-align: center;
+  cursor: grab;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+.implemented-template-card:hover {
+  border-color: rgba(37, 99, 235, 0.48);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+.implemented-template-card:active {
+  cursor: grabbing;
+}
+.implemented-template-card__preview {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.implemented-template-card__preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.implemented-template-card > span {
+  align-self: end;
+  overflow: hidden;
+  line-height: 24px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .filters {
   display: flex;
@@ -1322,54 +1955,6 @@ onBeforeUnmount(() => {
 .filter-chip--text {
   gap: 0;
 }
-.candidate-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, var(--candidate-card-width));
-  grid-auto-rows: var(--candidate-card-height);
-  gap: var(--candidate-gap);
-  justify-content: start;
-  align-content: start;
-  box-sizing: border-box;
-  height: var(--browser-panel-height);
-  max-height: var(--browser-panel-height);
-  min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-.candidate-card {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: var(--candidate-card-height);
-  padding: 10px 12px;
-  min-width: 0;
-  min-height: 0;
-  border: 1px solid rgba(24, 33, 47, 0.08);
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.9);
-  cursor: grab;
-  box-shadow: 0 6px 18px rgba(45, 89, 126, 0.07);
-  transition:
-    box-shadow 160ms ease,
-    border-color 160ms ease;
-}
-.candidate-card--template {
-  padding: 6px;
-}
-.candidate-card:hover {
-  border-color: rgba(28, 126, 214, 0.3);
-  box-shadow: 0 0 0 3px rgba(28, 126, 214, 0.1);
-}
-.candidate-card:active {
-  cursor: grabbing;
-}
-.candidate-card__preview {
-  width: 212px;
-  height: 116px;
-  object-fit: contain;
-  pointer-events: none;
-}
 .workspace {
   display: flex;
   flex-direction: column;
@@ -1389,6 +1974,33 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+}
+.dimension-options-control {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid rgba(37, 99, 235, 0.24);
+  border-radius: 8px;
+  background: rgba(239, 246, 255, 0.94);
+  color: #1d4ed8;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(45, 89, 126, 0.12);
+  backdrop-filter: blur(8px);
+}
+.dimension-options-control:hover:not(:disabled) {
+  border-color: #2563eb;
+  background: #dbeafe;
+}
+.dimension-options-control:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
 }
 .icon-tools,
 .alignment-tools {
@@ -1571,9 +2183,11 @@ onBeforeUnmount(() => {
   top: 16px;
   right: 264px;
   z-index: 5;
-  width: min(360px, calc(100% - 296px));
+  width: min(280px, calc(100% - 24px));
+  max-height: calc(100% - 24px);
   min-width: 220px;
   box-sizing: border-box;
+  overflow-y: auto;
   padding: 12px;
   border: 1px solid rgba(24, 33, 47, 0.12);
   border-radius: 8px;
@@ -1581,25 +2195,279 @@ onBeforeUnmount(() => {
   box-shadow: 0 18px 40px rgba(45, 89, 126, 0.2);
   backdrop-filter: blur(12px);
 }
-.semantic-inspector {
+.nested-binding-popup {
   position: absolute;
-  left: 16px;
-  top: 16px;
-  z-index: 5;
-  display: grid;
-  gap: 4px;
-  min-width: 150px;
-  padding: 10px 12px;
-  border: 1px solid rgba(24, 33, 47, 0.12);
+  z-index: 7;
+  width: min(330px, calc(100% - 24px));
+  box-sizing: border-box;
+  overflow-y: auto;
+  padding: 12px;
+  border: 1px solid rgba(24, 33, 47, 0.14);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.97);
-  color: #516176;
-  font-size: 11px;
-  box-shadow: 0 18px 40px rgba(45, 89, 126, 0.16);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 40px rgba(45, 89, 126, 0.22);
+  backdrop-filter: blur(12px);
 }
-.semantic-inspector strong {
+.nested-binding-popup__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.nested-binding-popup__header > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+.nested-binding-popup__header strong {
   color: #18212f;
   font-size: 12px;
+  letter-spacing: 0.08em;
+}
+.nested-binding-popup__header span {
+  overflow: hidden;
+  color: #6b7889;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nested-binding-popup__form {
+  display: grid;
+  gap: 12px;
+  margin-top: 10px;
+}
+.nested-binding-popup fieldset {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid rgba(24, 33, 47, 0.1);
+  border-radius: 6px;
+}
+.nested-binding-popup legend {
+  padding: 0 5px;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 700;
+}
+.nested-binding-popup__field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.nested-binding-popup .encoding-inspector__field {
+  margin-top: 0;
+}
+.nested-binding-popup__relation {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  color: #6b7889;
+  font-size: 10px;
+}
+.nested-binding-popup__relation strong {
+  overflow: hidden;
+  color: #334155;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nested-binding-popup__angles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  color: #516176;
+  font-size: 11px;
+}
+.nested-binding-popup__angles > span {
+  grid-column: 1 / -1;
+}
+.nested-binding-popup__angle-option {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+  padding: 6px 7px;
+  border: 1px solid rgba(24, 33, 47, 0.1);
+  border-radius: 5px;
+  background: #f8fafc;
+  color: #334155;
+  cursor: pointer;
+}
+.nested-binding-popup__angle-option input {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  margin: 0;
+  accent-color: #1554b2;
+  cursor: pointer;
+}
+.nested-binding-popup__angle-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nested-binding-popup__actions {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 8px;
+}
+.nested-binding-popup__actions button {
+  min-height: 34px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.nested-binding-popup__actions button:disabled {
+  cursor: not-allowed;
+}
+.recommendation-popup-trigger {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(37, 99, 235, 0.24);
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font: inherit;
+  cursor: pointer;
+}
+.recommendation-popup-trigger:hover {
+  border-color: #2563eb;
+}
+.recommendation-popup-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  background: rgba(15, 23, 42, 0.2);
+  backdrop-filter: blur(2px);
+}
+.recommendation-popup {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 8;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 16px;
+  width: min(760px, calc(100% - 48px));
+  max-height: min(620px, calc(100% - 48px));
+  box-sizing: border-box;
+  padding: 18px;
+  border: 1px solid rgba(24, 33, 47, 0.14);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 28px 70px rgba(15, 23, 42, 0.24);
+  transform: translate(-50%, -50%);
+}
+.recommendation-popup__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.recommendation-popup__header > div {
+  display: grid;
+  gap: 3px;
+}
+.recommendation-popup__header strong {
+  color: #18212f;
+  font-size: 16px;
+}
+.recommendation-popup__header span {
+  color: #6b7889;
+  font-size: 12px;
+}
+.recommendation-popup__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  background: transparent;
+  color: #516176;
+  cursor: pointer;
+}
+.recommendation-popup__close:hover {
+  background: #f1f5f9;
+}
+.recommendation-popup__options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.recommendation-option-card {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(24, 33, 47, 0.12);
+  border-radius: 6px;
+  background: #fff;
+  color: #334155;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+}
+.recommendation-option-card:hover {
+  border-color: #2563eb;
+  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.12);
+  transform: translateY(-1px);
+}
+.recommendation-option-card__strategy {
+  width: fit-content;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: #e0f2fe;
+  color: #075985;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.recommendation-option-card > strong {
+  color: #18212f;
+  font-size: 14px;
+}
+.recommendation-option-card > span:not(.recommendation-option-card__strategy) {
+  min-height: 34px;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.recommendation-option-card dl {
+  display: grid;
+  gap: 5px;
+  margin: 4px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid rgba(24, 33, 47, 0.08);
+}
+.recommendation-option-card dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.recommendation-option-card dt,
+.recommendation-option-card dd {
+  margin: 0;
+  font-size: 10px;
+}
+.recommendation-option-card dt {
+  color: #94a3b8;
+}
+.recommendation-option-card dd {
+  overflow-wrap: anywhere;
+  color: #334155;
+  text-align: right;
 }
 .encoding-inspector__header {
   display: flex;
@@ -1624,6 +2492,37 @@ onBeforeUnmount(() => {
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.encoding-inspector__context {
+  display: grid;
+  gap: 7px;
+  margin: 10px 0;
+  padding: 9px;
+  border: 1px solid rgba(24, 33, 47, 0.1);
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 11px;
+}
+.encoding-inspector__context > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.encoding-inspector__context strong,
+.encoding-inspector__shared > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.encoding-inspector__context-label {
+  color: #6b7889;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.encoding-inspector__shared {
+  padding-top: 5px;
+  border-top: 1px solid rgba(24, 33, 47, 0.08);
 }
 .encoding-inspector__close {
   display: inline-flex;
@@ -1665,6 +2564,85 @@ onBeforeUnmount(() => {
   border-color: rgba(28, 126, 214, 0.7);
   outline: 2px solid rgba(28, 126, 214, 0.12);
 }
+.pie-angle-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 12px;
+  color: #516176;
+  font-size: 11px;
+}
+.pie-angle-fields > span {
+  grid-column: 1 / -1;
+}
+.pie-radius-editor {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(24, 33, 47, 0.1);
+  color: #516176;
+  font-size: 11px;
+}
+.pie-radius-editor__modes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 3px;
+  border-radius: 6px;
+  background: #edf1f5;
+}
+.pie-radius-editor__modes button {
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #5b6878;
+  font: inherit;
+  cursor: pointer;
+}
+.pie-radius-editor__modes button.is-active {
+  background: #fff;
+  color: #1554b2;
+  box-shadow: 0 1px 2px rgba(24, 33, 47, 0.14);
+  font-weight: 700;
+}
+.pie-radius-editor > .encoding-inspector__field {
+  margin-top: 0;
+}
+.pie-radius-editor__components {
+  display: grid;
+  gap: 6px;
+}
+.pie-radius-editor__component {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  align-items: center;
+  gap: 8px;
+}
+.pie-radius-editor__component span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pie-radius-editor__component select {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 6px;
+  border: 1px solid rgba(24, 33, 47, 0.14);
+  border-radius: 6px;
+  background: #fff;
+  color: #223041;
+  font: inherit;
+  cursor: pointer;
+}
+.pie-radius-editor__component select:focus {
+  border-color: rgba(28, 126, 214, 0.7);
+  outline: 2px solid rgba(28, 126, 214, 0.12);
+}
 .encoding-inspector__series {
   display: grid;
   gap: 8px;
@@ -1702,6 +2680,12 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+}
+.encoding-inspector__actions--standalone {
+  margin-top: 14px;
+}
+.encoding-inspector__actions--standalone .encoding-inspector__confirm {
+  width: 100%;
 }
 .encoding-inspector__actions button {
   min-height: 32px;
@@ -1920,6 +2904,44 @@ onBeforeUnmount(() => {
   outline: 2px dashed rgba(28, 126, 214, 0.48);
   outline-offset: -10px;
 }
+.composition-drop-zone-layer {
+  pointer-events: none;
+}
+.composition-drop-zone {
+  fill: rgba(37, 99, 235, 0.14);
+  stroke: #2563eb;
+  stroke-width: 2;
+  stroke-dasharray: 7 5;
+}
+.composition-drop-zone--concat {
+  fill: rgba(5, 150, 105, 0.18);
+  stroke: #059669;
+}
+.composition-drop-zone--nested {
+  fill: rgba(217, 119, 6, 0.16);
+  stroke: #d97706;
+}
+.composition-drop-zone--concat {
+  fill: rgba(5, 150, 105, 0.18);
+  stroke: #059669;
+}
+.composition-drop-zone--horizontal,
+.composition-drop-zone--vertical {
+  stroke-width: 3;
+}
+.layer-detach-zone-layer {
+  pointer-events: none;
+}
+.layer-detach-zone {
+  fill: rgba(37, 99, 235, 0.04);
+  stroke: rgba(37, 99, 235, 0.55);
+  stroke-width: 2;
+  stroke-dasharray: 8 6;
+}
+.composition-drop-zone--invalid {
+  fill: rgba(220, 38, 38, 0.14);
+  stroke: #dc2626;
+}
 .canvas-board--panning {
   cursor: grabbing;
 }
@@ -1963,8 +2985,17 @@ onBeforeUnmount(() => {
   user-select: none;
   touch-action: none;
 }
+.canvas-object--interactive {
+  pointer-events: bounding-box !important;
+}
 .canvas-object :deep(*) {
   pointer-events: none;
+}
+.canvas-object--interactive > :deep(.canvas-object-hit-target) {
+  pointer-events: all !important;
+}
+.canvas-object :deep(.canvas-group-edit-background) {
+  pointer-events: all !important;
 }
 .canvas-object :deep(.semantic-rendered-content),
 .canvas-object :deep(.semantic-rendered-content *) {
@@ -1972,6 +3003,16 @@ onBeforeUnmount(() => {
 }
 .canvas-object--selected {
   filter: drop-shadow(0 10px 18px rgba(28, 126, 214, 0.18));
+}
+.canvas-object--editing-group {
+  cursor: default;
+}
+.canvas-object :deep(.canvas-group-edit-outline) {
+  fill: rgba(21, 84, 178, 0.025);
+  stroke: #1554b2;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  pointer-events: none !important;
 }
 .coordinate-guide-layer {
   overflow: visible;
@@ -2081,12 +3122,27 @@ onBeforeUnmount(() => {
 .cartesian-coordinate-system :deep(.cartesian-axis-endpoint) {
   pointer-events: all;
 }
-.cartesian-coordinate-system :deep(.cartesian-axis-binding-target) {
-  fill: rgba(255, 255, 255, 0.96);
-  stroke: #1554b2;
-  stroke-width: 2;
+.cartesian-coordinate-system :deep(.cartesian-axis-config-control) {
+  pointer-events: all;
   cursor: pointer;
   touch-action: none;
+}
+.cartesian-coordinate-system :deep(.cartesian-axis-config-button) {
+  fill: rgba(255, 255, 255, 0.98);
+  stroke: rgba(21, 84, 178, 0.72);
+  stroke-width: 1.5;
+  cursor: pointer;
+}
+.cartesian-coordinate-system :deep(.cartesian-axis-config-icon) {
+  fill: none;
+  stroke: #1554b2;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+.cartesian-coordinate-system :deep(.cartesian-axis-config-control:hover .cartesian-axis-config-button) {
+  fill: #eff6ff;
+  stroke: #1554b2;
+  stroke-width: 2;
 }
 .cartesian-coordinate-system :deep(.cartesian-axis-handle-stem) {
   stroke: #1554b2;
@@ -2104,9 +3160,6 @@ onBeforeUnmount(() => {
 .cartesian-coordinate-system :deep(.cartesian-axis-endpoint--y .cartesian-axis-scale-handle) {
   cursor: ns-resize;
 }
-.cartesian-coordinate-system :deep(.cartesian-axis-endpoint:hover .cartesian-axis-binding-target) {
-  stroke-width: 3;
-}
 .coordinate-guide-layer :deep(.polar-coordinate-ring) {
   fill: none;
   stroke: rgba(17, 17, 17, 0.62);
@@ -2119,6 +3172,16 @@ onBeforeUnmount(() => {
 .coordinate-guide-layer :deep(.polar-coordinate-origin) {
   fill: #111;
   stroke: none;
+}
+.coordinate-guide-layer :deep(.polar-coordinate-scale-handle) {
+  fill: #fff;
+  stroke: #059669;
+  stroke-width: 2;
+  cursor: ew-resize;
+  vector-effect: non-scaling-stroke;
+}
+.coordinate-guide-layer :deep(.polar-coordinate-scale-handle--radius) {
+  cursor: ns-resize;
 }
 .selection-overlay {
   pointer-events: none;
@@ -2204,10 +3267,6 @@ onBeforeUnmount(() => {
   }
   .sidebar__browser {
     grid-column: auto;
-    grid-template-columns: 1fr;
-  }
-  .candidate-card {
-    min-height: 88px;
   }
   .canvas-board {
     min-height: 520px;
@@ -2216,6 +3275,10 @@ onBeforeUnmount(() => {
     right: 12px;
     top: 12px;
     width: min(220px, calc(100% - 24px));
+  }
+  .dimension-options-control {
+    top: 12px;
+    left: 12px;
   }
   .composition-popover {
     top: 256px;

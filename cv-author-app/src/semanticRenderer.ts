@@ -1,6 +1,9 @@
-import { scaleLinear, scaleUtc } from "d3-scale";
-import type { ChartSpec, Dataset, LayerSpec, NestedSpec, ChartPlotArea, ChartScaleSpec } from "./types";
+import { extent } from "d3-array";
+import { scaleLinear, scalePoint, scaleUtc } from "d3-scale";
+import { arc, pie } from "d3-shape";
+import type { CartesianCoordinateGuide, ChartEncoding, ChartSpec, Dataset, LayerSpec, NestedSpec, ChartPlotArea, ChartScaleSpec, CoordinateGuide } from "./types";
 import { renderLineChart, type LineRenderInput } from "./lineRenderer";
+import { normalizeChartTemplate } from "./chartTemplates";
 
 function esc(value: string) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
@@ -10,13 +13,254 @@ function key(dataset: Dataset, row: Record<string, string>) {
   return (dataset.primaryKey ?? []).map((field) => row[field] ?? "").join("|");
 }
 
+function numericFieldValues(rows: Dataset["rows"], field: string) {
+  return rows.flatMap((row) => {
+    const rawValue = row[field];
+    if (rawValue === undefined || rawValue.trim() === "") return [];
+    const value = Number(rawValue);
+    return Number.isFinite(value) ? [value] : [];
+  });
+}
+
 function scalesFromSpec(spec: ChartSpec) {
   const x = spec.scales?.x;
   const y = spec.scales?.y;
   if (!x || !y) return null;
-  const xScale = scaleUtc().domain((x.domain as [string, string]).map((value) => new Date(value)) as [Date, Date]).range(x.range);
-  const yScale = scaleLinear().domain(y.domain as [number, number]).range(y.range);
+  const xScale = chartScalePosition(x);
+  const yScale = chartScalePosition(y);
   return { xScale, yScale, plotArea: spec.plotArea as ChartPlotArea };
+}
+
+const palette = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#4d7c0f"];
+
+function groupConfig(spec: ChartSpec, role: string) {
+  return spec.markGroups?.find((group) => group.role === role)?.sharedConfig ?? {};
+}
+
+export function chartScalePosition(spec: ChartScaleSpec) {
+  if (spec.type === "utc") {
+    const scale = scaleUtc().domain((spec.domain as [string, string]).map((value) => new Date(value)) as [Date, Date]).range(spec.range);
+    return (value: string) => scale(new Date(value));
+  }
+  if (spec.type === "point") {
+    const scale = scalePoint<string>().domain(spec.domain as string[]).range(spec.range).padding(0.5);
+    return (value: string) => scale(value) ?? 0;
+  }
+  const scale = scaleLinear().domain(spec.domain as [number, number]).range(spec.range);
+  return (value: string) => scale(Number(value));
+}
+
+function replacePlot(content: string, marks: string) {
+  return content.replace(
+    /<g data-mark-role="plot"([^>]*)>[\s\S]*<\/g><\/g>\s*$/,
+    `<g data-mark-role="plot"$1>${marks}</g></g>`,
+  );
+}
+
+function renderScatterChart(input: LineRenderInput & { marksOnly?: boolean }) {
+  const base = renderLineChart(input);
+  const x = base.scales.x;
+  const y = base.scales.y;
+  const xEncoding = input.chartSpec.encodings.x!;
+  const yEncoding = input.chartSpec.encodings.y!;
+  const xPosition = chartScalePosition(x);
+  const yPosition = chartScalePosition(y);
+  const colorField = input.chartSpec.encodings.color?.field;
+  const sizeField = input.chartSpec.encodings.size?.field;
+  const colorValues = colorField ? Array.from(new Set(input.dataset.rows.map((row) => row[colorField] ?? ""))) : [];
+  const sizeValues = sizeField ? input.dataset.rows.map((row) => Number(row[sizeField] ?? "")).filter(Number.isFinite) : [];
+  const sizeDomain = extent(sizeValues) as [number | undefined, number | undefined];
+  const sizeScale = sizeDomain[0] === undefined || sizeDomain[1] === undefined
+    ? () => 4
+    : scaleLinear().domain(sizeDomain[0] === sizeDomain[1] ? [sizeDomain[0] - 1, sizeDomain[1] + 1] : sizeDomain as [number, number]).range([3, 9]);
+  const config = groupConfig(input.chartSpec, "point");
+  const marks = input.dataset.rows.map((row, index) => {
+    const xv = row[xEncoding.field] ?? "";
+    const yv = row[yEncoding.field] ?? "";
+    const cx = xPosition(xv);
+    const cy = yPosition(yv);
+    if (!Number.isFinite(cx) || !Number.isFinite(cy)) return "";
+    const rowKey = key(input.dataset, row) || String(index);
+    const colorIndex = colorField ? Math.max(0, colorValues.indexOf(row[colorField] ?? "")) : 0;
+    const radius = Number(config.size ?? (sizeField ? sizeScale(Number(row[sizeField] ?? "")) : 4));
+    const color = String(config.color ?? palette[colorIndex % palette.length]);
+    return `<circle data-chart-id="${esc(input.chartId)}" data-mark-role="point" data-mark-group-id="mark-group:${esc(input.chartId)}:point" data-row-key="${esc(rowKey)}" data-series-key="${esc(input.chartSpec.series ? row[input.chartSpec.series.field] ?? "" : "")}" cx="${cx}" cy="${cy}" r="${radius}" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 0.88)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
+  }).join("");
+  const content = input.marksOnly
+    ? `<g data-chart-id="${esc(input.chartId)}" data-chart-type="scatter" data-renderer="deterministic-scatter-marks@1">${marks}</g>`
+    : replacePlot(base.content.replace('data-chart-type="line"', 'data-chart-type="scatter"'), marks);
+  return { ...base, content };
+}
+
+function resolvedPolarEncodings(spec: ChartSpec) {
+  return {
+    value: spec.encodings.angle ?? spec.encodings.y,
+    category: spec.encodings.color ?? spec.encodings.x,
+    radius: spec.encodings.radius,
+    ring: spec.encodings.ring ?? spec.series,
+  };
+}
+
+function renderPolarChart(input: GenericRenderInput, donut: boolean) {
+  const { value, category, radius, ring } = resolvedPolarEncodings(input.chartSpec);
+  const angleFields = donut ? [] : input.chartSpec.angleFields ?? [];
+  if (!value && angleFields.length === 0) throw new Error(`${donut ? "Donut" : "Pie"} renderer requires an angle/value encoding.`);
+  const minX = input.minX;
+  const minY = input.minY;
+  const cx = input.coordinateGuide?.type === "Polar" ? input.coordinateGuide.origin.x : minX + input.width / 2;
+  const cy = input.coordinateGuide?.type === "Polar" ? input.coordinateGuide.origin.y : minY + input.height / 2;
+  const outerRadius = Math.max(8, Math.min(input.width, input.height) * 0.38 * (input.coordinateGuide?.type === "Polar" ? input.coordinateGuide.radiusScale ?? 1 : 1));
+  const config = groupConfig(input.chartSpec, "arc");
+  if (angleFields.length > 0) {
+    const flattenFields = (input.chartSpec.flattenFields ?? []).filter((field) =>
+      input.dataset.columns.some((column) => column.name === field),
+    );
+    const flattenedGroups = new Map<string, { values: string[]; rows: Dataset["rows"] }>();
+    if (flattenFields.length === 0) {
+      flattenedGroups.set("[]", { values: [], rows: input.dataset.rows });
+    } else {
+      input.dataset.rows.forEach((row) => {
+        const values = flattenFields.map((field) => row[field] ?? "");
+        const groupKey = JSON.stringify(values);
+        const current = flattenedGroups.get(groupKey);
+        if (current) current.rows.push(row);
+        else flattenedGroups.set(groupKey, { values, rows: [row] });
+      });
+    }
+    const components = Array.from(flattenedGroups.values()).flatMap((flattened) =>
+      angleFields.map((encoding) => ({
+        field: encoding.field,
+        flattenValues: flattened.values,
+        rows: flattened.rows,
+        value: flattened.rows.reduce((sum, row) => sum + Math.max(0, Number(row[encoding.field] ?? "0")), 0),
+      })),
+    );
+    const componentValues = components.map((component) => component.value);
+    const layout = pie<number>().sort(null).value((datum) => datum)(componentValues);
+    const radiusMode = input.chartSpec.radiusMode ?? "shared";
+    const sharedRadiusValues = radius ? numericFieldValues(input.dataset.rows, radius.field) : [];
+    const sharedRadiusValue = sharedRadiusValues.length > 0
+      ? sharedRadiusValues.reduce((sum, current) => sum + current, 0) / sharedRadiusValues.length
+      : Number.NaN;
+    const componentRadiusValues = components.map((component) => {
+      if (radiusMode === "shared") return sharedRadiusValue;
+      const radiusEncoding = input.chartSpec.componentRadiusFields?.[component.field];
+      if (!radiusEncoding) return Number.NaN;
+      const values = numericFieldValues(component.rows, radiusEncoding.field);
+      return values.length > 0
+        ? values.reduce((sum, current) => sum + Math.max(0, current), 0)
+        : Number.NaN;
+    });
+    const radiusDomainValues = radiusMode === "per-component"
+      ? componentRadiusValues.filter(Number.isFinite)
+      : sharedRadiusValues;
+    const radiusDomain = extent(radiusDomainValues) as [number | undefined, number | undefined];
+    const radiusScale = radiusDomain[0] === undefined || radiusDomain[1] === undefined || radiusDomain[0] === radiusDomain[1]
+      ? () => outerRadius
+      : scaleLinear().domain(radiusDomain as [number, number]).range([outerRadius * 0.42, outerRadius]);
+    const arcs = layout.map((datum, index) => {
+      const component = components[index];
+      const field = component?.field ?? String(index + 1);
+      const categoryKey = [...(component?.flattenValues ?? []), field].join(" / ");
+      const radiusEncoding = radiusMode === "per-component"
+        ? input.chartSpec.componentRadiusFields?.[field]
+        : radius;
+      const radiusValue = componentRadiusValues[index] ?? Number.NaN;
+      const componentOuterRadius = Number.isFinite(radiusValue) ? radiusScale(radiusValue) : outerRadius;
+      const path = arc<any>().innerRadius(0).outerRadius(componentOuterRadius);
+      const color = String(config.color ?? palette[index % palette.length]);
+      return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="arc" data-mark-group-id="mark-group:${esc(input.chartId)}:arc" data-category-key="${esc(categoryKey)}" data-angle-field="${esc(field)}" data-angle-value="${componentValues[index] ?? 0}" data-flatten-fields="${esc(flattenFields.join("|"))}" data-flatten-values="${esc((component?.flattenValues ?? []).join("|"))}" data-radius-mode="${radiusMode}" data-radius-field="${esc(radiusEncoding?.field ?? "")}" data-radius-value="${Number.isFinite(radiusValue) ? radiusValue : ""}" d="${path(datum) ?? ""}" transform="translate(${cx} ${cy})" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 1)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
+    }).join("");
+    return {
+      content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="pie" data-renderer="deterministic-chart@1" data-angle-fields="${esc(angleFields.map((encoding) => encoding.field).join("|"))}" data-flatten-fields="${esc(flattenFields.join("|"))}" data-radius-mode="${radiusMode}">${arcs}</g>`,
+      plotArea: { x: cx - outerRadius, y: cy - outerRadius, width: outerRadius * 2, height: outerRadius * 2 },
+      scales: undefined,
+    };
+  }
+  if (!value) throw new Error(`${donut ? "Donut" : "Pie"} renderer requires an angle/value encoding.`);
+  const ringValues = ring ? Array.from(new Set(input.dataset.rows.map((row) => row[ring.field] ?? ""))).filter(Boolean) : ["__single__"];
+  const ringWidth = outerRadius / Math.max(ringValues.length + (donut ? 1 : 0), 1) * (input.coordinateGuide?.type === "Polar" ? input.coordinateGuide.ringScale ?? 1 : 1);
+  const arcs = ringValues.map((ringKey, ringIndex) => {
+    const rows = ring ? input.dataset.rows.filter((row) => (row[ring.field] ?? "") === ringKey) : input.dataset.rows;
+    const values = rows.map((row) => Math.max(0, Number(row[value.field] ?? "0")));
+    const layout = pie<number>().sort(null).value((datum) => datum)(values);
+    const inner = donut || ring ? ringWidth * (ringIndex + (donut ? 1 : 0)) : 0;
+    const outer = ring ? inner + ringWidth * 0.92 : outerRadius;
+    const radiusValues = radius
+      ? rows.map((row) => Number(row[radius.field] ?? "")).filter(Number.isFinite)
+      : [];
+    const radiusDomain = extent(radiusValues) as [number | undefined, number | undefined];
+    const radiusScale = radiusDomain[0] === undefined || radiusDomain[1] === undefined || radiusDomain[0] === radiusDomain[1]
+      ? () => outer
+      : scaleLinear()
+        .domain(radiusDomain as [number, number])
+        .range([inner + (outer - inner) * 0.48, outer]);
+    return layout.map((datum, index) => {
+      const row = rows[index]!;
+      const categoryKey = category ? row[category.field] ?? "" : String(index + 1);
+      const color = String(config.color ?? palette[index % palette.length]);
+      const radiusValue = radius ? Number(row[radius.field] ?? "") : Number.NaN;
+      const rowOuterRadius = Number.isFinite(radiusValue) ? radiusScale(radiusValue) : outer;
+      const path = arc<any>().innerRadius(inner).outerRadius(rowOuterRadius);
+      return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="arc" data-mark-group-id="mark-group:${esc(input.chartId)}:arc" data-row-key="${esc(key(input.dataset, row) || String(index))}" data-series-key="${esc(ringKey)}" data-category-key="${esc(categoryKey)}" data-radius-field="${esc(radius?.field ?? "")}" data-radius-value="${Number.isFinite(radiusValue) ? radiusValue : ""}" d="${path(datum) ?? ""}" transform="translate(${cx} ${cy})" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 1)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
+    }).join("");
+  }).join("");
+  return {
+    content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="${donut ? "donut" : "pie"}" data-renderer="deterministic-chart@1">${arcs}</g>`,
+    plotArea: { x: cx - outerRadius, y: cy - outerRadius, width: outerRadius * 2, height: outerRadius * 2 },
+    scales: undefined,
+  };
+}
+
+function renderMatrixChart(input: GenericRenderInput) {
+  const rowEncoding = input.chartSpec.encodings.row ?? input.chartSpec.encodings.y;
+  const columnEncoding = input.chartSpec.encodings.column ?? input.chartSpec.encodings.x;
+  const valueEncoding = input.chartSpec.encodings.value ?? input.chartSpec.encodings.color;
+  if (!rowEncoding || !columnEncoding) throw new Error("Matrix renderer requires row and column encodings.");
+  const rowValues = Array.from(new Set(input.dataset.rows.map((row) => row[rowEncoding.field] ?? ""))).filter(Boolean);
+  const columnValues = Array.from(new Set(input.dataset.rows.map((row) => row[columnEncoding.field] ?? ""))).filter(Boolean);
+  const margin = Math.min(input.width, input.height) * 0.12;
+  const plotArea = { x: input.minX + margin, y: input.minY + margin, width: input.width - margin * 1.5, height: input.height - margin * 1.5 };
+  const cellWidth = plotArea.width / Math.max(columnValues.length, 1);
+  const cellHeight = plotArea.height / Math.max(rowValues.length, 1);
+  const numeric = valueEncoding ? input.dataset.rows.map((row) => Number(row[valueEncoding.field] ?? "")).filter(Number.isFinite) : [];
+  const domain = extent(numeric) as [number | undefined, number | undefined];
+  const opacity = domain[0] === undefined || domain[1] === undefined || domain[0] === domain[1]
+    ? () => 0.72
+    : scaleLinear().domain(domain as [number, number]).range([0.18, 0.95]);
+  const config = groupConfig(input.chartSpec, "cell");
+  const cells = input.dataset.rows.map((row, index) => {
+    const rowKey = row[rowEncoding.field] ?? "";
+    const columnKey = row[columnEncoding.field] ?? "";
+    const rowIndex = rowValues.indexOf(rowKey);
+    const columnIndex = columnValues.indexOf(columnKey);
+    if (rowIndex < 0 || columnIndex < 0) return "";
+    const alpha = valueEncoding ? opacity(Number(row[valueEncoding.field] ?? "")) : 0.72;
+    return `<rect data-chart-id="${esc(input.chartId)}" data-mark-role="cell" data-mark-group-id="mark-group:${esc(input.chartId)}:cell" data-row-key="${esc(key(input.dataset, row) || String(index))}" data-row-value="${esc(rowKey)}" data-column-value="${esc(columnKey)}" x="${plotArea.x + columnIndex * cellWidth}" y="${plotArea.y + rowIndex * cellHeight}" width="${Math.max(1, cellWidth - 1)}" height="${Math.max(1, cellHeight - 1)}" fill="${esc(String(config.color ?? "#2563eb"))}" fill-opacity="${Number(config.opacity ?? alpha)}"/>`;
+  }).join("");
+  return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="matrix" data-renderer="deterministic-chart@1">${cells}</g>`, plotArea, scales: undefined };
+}
+
+export type GenericRenderInput = {
+  chartId: string;
+  width: number;
+  height: number;
+  minX: number;
+  minY: number;
+  coordinateGuide: CoordinateGuide | null | undefined;
+  chartSpec: ChartSpec;
+  dataset: Dataset;
+  marksOnly?: boolean;
+};
+
+export function renderDeterministicChart(input: GenericRenderInput) {
+  const template = normalizeChartTemplate(input.chartSpec.chartType);
+  if (!template) throw new Error(`Unsupported chart template: ${input.chartSpec.chartType}`);
+  if (template === "pie" || template === "donut") return renderPolarChart(input, template === "donut");
+  if (template === "matrix") return renderMatrixChart(input);
+  if (input.coordinateGuide?.type !== "Cartesian") throw new Error(`${template} requires a Cartesian coordinate system.`);
+  const lineInput = { ...input, coordinateGuide: input.coordinateGuide as CartesianCoordinateGuide };
+  return template === "scatter" ? renderScatterChart(lineInput) : renderLineChart(lineInput);
 }
 
 export function renderLayerChart(input: LineRenderInput & { layerSpec: LayerSpec; childCharts?: ChartSpec[] }) {
@@ -26,14 +270,16 @@ export function renderLayerChart(input: LineRenderInput & { layerSpec: LayerSpec
     ?? childCharts.find((chart) => chart.chartType.replace(/[\s_-]/g, "").toLowerCase().includes("scatter"));
   const scales = scalesFromSpec({ ...input.chartSpec, scales: line.scales, plotArea: line.plotArea });
   if (!scales || !scatter) return { ...line, layerSpec: input.layerSpec };
-  const xField = input.layerSpec.x.field;
-  const yField = input.layerSpec.y.field;
+  const xField = input.layerSpec.x?.field ?? input.chartSpec.encodings.x?.field;
+  const yField = input.layerSpec.y?.field ?? input.chartSpec.encodings.y?.field;
+  if (!xField || !yField) return { ...line, layerSpec: input.layerSpec };
+  const pointConfig = groupConfig(scatter, "point");
   const points = input.dataset.rows.map((row) => {
-    const x = Date.parse(row[xField] ?? "");
-    const y = Number(row[yField] ?? "");
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return "";
+    const x = row[xField] ?? "";
+    const y = row[yField] ?? "";
+    if (x.trim() === "" || y.trim() === "" || !Number.isFinite(Date.parse(x)) || !Number.isFinite(Number(y))) return "";
     const rowKey = key(input.dataset, row);
-    return `<circle data-mark-role="point" data-row-key="${esc(rowKey)}" data-person="${esc(row.person ?? "")}" data-time="${esc(row.time ?? "")}" cx="${scales.xScale(new Date(x))}" cy="${scales.yScale(y)}" r="4" fill="#111827" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
+    return `<circle data-mark-role="point" data-mark-group-id="mark-group:${esc(input.chartId)}:point" data-row-key="${esc(rowKey)}" data-person="${esc(row.person ?? "")}" data-time="${esc(row.time ?? "")}" cx="${scales.xScale(x)}" cy="${scales.yScale(y)}" r="${Number(pointConfig.size ?? 4)}" fill="${esc(String(pointConfig.color ?? "#111827"))}" fill-opacity="${Number(pointConfig.opacity ?? 1)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
   }).join("");
   const markerGroup = `<g data-mark-role="points" data-point-count="${input.dataset.rows.length}">${points}</g>`;
   const content = line.content.replace(/<\/g><\/g>\s*$/, `${markerGroup}</g></g>`);
@@ -53,14 +299,35 @@ export function renderNestedPie(input: {
   const scales = scalesFromSpec(input.baseSpec);
   if (!scales) throw new Error("Nested Pie requires shared chart scales.");
   const fields = input.nestedSpec.valueFields;
+  const groupId = input.nestedSpec.groupId ?? `nested-pie-group:${input.nestedSpec.parentChartNodeId}`;
   const colors = ["#2563eb", "#dc2626", "#16a34a", "#d97706"];
-  const radius = Math.max(5, Math.min(input.width, input.height) * 0.018);
-  const pies = input.dataset.rows.map((row) => {
-    const x = Date.parse(row[input.baseSpec.encodings.x?.field ?? "time"] ?? "");
-    const y = Number(row[input.baseSpec.encodings.y?.field ?? "weight_kg"] ?? "");
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return "";
-    const cx = scales.xScale(new Date(x));
+  const baseRadius = Math.max(5, Math.min(input.width, input.height) * 0.018);
+  const radiusField = input.nestedSpec.radiusField;
+  const radiusValues = radiusField
+    ? input.dataset.rows.map((row) => Number(row[radiusField] ?? "")).filter(Number.isFinite)
+    : [];
+  const radiusDomain = extent(radiusValues) as [number | undefined, number | undefined];
+  const radiusScale = radiusDomain[0] === undefined || radiusDomain[1] === undefined
+    ? () => baseRadius
+    : scaleLinear()
+      .domain(radiusDomain[0] === radiusDomain[1] ? [radiusDomain[0] - 1, radiusDomain[1] + 1] : radiusDomain as [number, number])
+      .range([baseRadius * 0.72, baseRadius * 1.6]);
+  const selectedKeys = new Set(input.nestedSpec.parentRowKeys?.length
+    ? input.nestedSpec.parentRowKeys
+    : input.nestedSpec.parentRowKey === "*"
+      ? []
+      : [input.nestedSpec.parentRowKey]);
+  const rows = selectedKeys.size > 0
+    ? input.dataset.rows.filter((row) => selectedKeys.has(key(input.dataset, row)))
+    : input.dataset.rows;
+  const pies = rows.map((row) => {
+    const x = row[input.baseSpec.encodings.x?.field ?? "time"] ?? "";
+    const y = row[input.baseSpec.encodings.y?.field ?? "weight_kg"] ?? "";
+    const cx = scales.xScale(x);
     const cy = scales.yScale(y);
+    if (!Number.isFinite(cx) || !Number.isFinite(cy)) return "";
+    const radiusValue = radiusField ? Number(row[radiusField] ?? "") : Number.NaN;
+    const radius = Number.isFinite(radiusValue) ? radiusScale(radiusValue) : baseRadius;
     const values = fields.map((field) => Math.max(0, Number(row[field] ?? "0")));
     const total = values.reduce((sum, value) => sum + value, 0) || 1;
     let angle = -Math.PI / 2;
@@ -69,14 +336,17 @@ export function renderNestedPie(input: {
       const large = next - angle > Math.PI ? 1 : 0;
       const d = `M ${cx} ${cy} L ${cx + Math.cos(angle) * radius} ${cy + Math.sin(angle) * radius} A ${radius} ${radius} 0 ${large} 1 ${cx + Math.cos(next) * radius} ${cy + Math.sin(next) * radius} Z`;
       angle = next;
-      return `<path data-mark-role="pie-arc" data-pie-component="${esc(fields[index] ?? "")}" d="${d}" fill="${colors[index % colors.length]}"/>`;
+      return `<path data-mark-role="pie-arc" data-mark-group-id="${esc(groupId)}" data-row-key="${esc(key(input.dataset, row))}" data-pie-component="${esc(fields[index] ?? "")}" d="${d}" fill="${colors[index % colors.length]}"/>`;
     }).join("");
-    return `<g data-mark-role="nested-pie" data-row-key="${esc(key(input.dataset, row))}" data-person="${esc(row.person ?? "")}" data-time="${esc(row.time ?? "")}" data-arc-count="${fields.length}">${arcs}</g>`;
+    return `<g data-mark-role="nested-pie" data-mark-group-id="${esc(groupId)}" data-composition-group-id="${esc(groupId)}" data-row-key="${esc(key(input.dataset, row))}" data-person="${esc(row.person ?? "")}" data-time="${esc(row.time ?? "")}" data-radius-field="${esc(radiusField ?? "")}" data-radius-value="${Number.isFinite(radiusValue) ? radiusValue : ""}" data-arc-count="${fields.length}">${arcs}</g>`;
   }).join("");
-  const content = `<g data-chart-id="${esc(input.chartId)}" data-chart-type="nested-pie" data-mark-role="nested-pies">${pies}</g>`;
-  return { content, plotArea: scales.plotArea, pointCount: input.dataset.rows.length };
+  const content = `<g data-chart-id="${esc(input.chartId)}" data-chart-type="nested-pie" data-mark-role="nested-pies" data-composition-group-id="${esc(groupId)}" data-parent-mark-group-id="${esc(input.nestedSpec.parentMarkGroupId ?? "")}">${pies}</g>`;
+  return { content, plotArea: scales.plotArea, pointCount: rows.length };
 }
 
 export function restoreScaleSpec(spec: ChartSpec) {
-  return spec.scales ? { x: { ...spec.scales.x } as ChartScaleSpec, y: { ...spec.scales.y } as ChartScaleSpec } : undefined;
+  return spec.scales ? {
+    ...(spec.scales.x ? { x: { ...spec.scales.x } as ChartScaleSpec } : {}),
+    ...(spec.scales.y ? { y: { ...spec.scales.y } as ChartScaleSpec } : {}),
+  } : undefined;
 }

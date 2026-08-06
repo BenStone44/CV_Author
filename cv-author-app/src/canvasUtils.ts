@@ -102,6 +102,33 @@ export function getNodeVisualSize(node: CanvasNode) {
   return { width: bounds.maxX - bounds.minX, height: bounds.maxY - bounds.minY };
 }
 
+// Selection geometry intentionally excludes Cartesian axis decorations. Axis
+// labels and tick marks are rendered outside the chart plot area, but they are
+// not part of the Chart's resize/rotate frame.
+export function getNodeSelectionBounds(node: CanvasNode): Bounds {
+  const baseMinX = node.kind === "leaf" ? node.contentMinX : 0;
+  const baseMinY = node.kind === "leaf" ? node.contentMinY : 0;
+  const plotArea = node.chartSpec?.plotArea;
+  if (node.renderedContent && plotArea) {
+    return {
+      minX: plotArea.x,
+      minY: plotArea.y,
+      maxX: plotArea.x + plotArea.width,
+      maxY: plotArea.y + plotArea.height,
+      width: plotArea.width,
+      height: plotArea.height,
+    };
+  }
+  return {
+    minX: baseMinX,
+    minY: baseMinY,
+    maxX: baseMinX + node.width,
+    maxY: baseMinY + node.height,
+    width: node.width,
+    height: node.height,
+  };
+}
+
 export function computeAbsoluteFrame(
   node: CanvasNode,
   parentX = 0,
@@ -120,13 +147,17 @@ export function cloneChartSpec(chartSpec: ChartSpec | null | undefined) {
   if (!chartSpec) return chartSpec;
   return {
     ...chartSpec,
-    encodings: {
-      ...(chartSpec.encodings.x ? { x: { ...chartSpec.encodings.x } } : {}),
-      ...(chartSpec.encodings.y ? { y: { ...chartSpec.encodings.y } } : {}),
-      ...(chartSpec.encodings.color ? { color: { ...chartSpec.encodings.color } } : {}),
-      ...(chartSpec.encodings.size ? { size: { ...chartSpec.encodings.size } } : {}),
-      ...(chartSpec.encodings.shape ? { shape: { ...chartSpec.encodings.shape } } : {}),
-    },
+    encodings: Object.fromEntries(
+      Object.entries(chartSpec.encodings).map(([channel, encoding]) => [
+        channel,
+        encoding ? { ...encoding } : encoding,
+      ]),
+    ) as ChartSpec["encodings"],
+    angleFields: chartSpec.angleFields?.map((encoding) => ({ ...encoding })),
+    flattenFields: chartSpec.flattenFields ? [...chartSpec.flattenFields] : undefined,
+    componentRadiusFields: chartSpec.componentRadiusFields
+      ? Object.fromEntries(Object.entries(chartSpec.componentRadiusFields).map(([field, encoding]) => [field, { ...encoding }]))
+      : undefined,
     series: chartSpec.series ? { ...chartSpec.series } : undefined,
     scales: chartSpec.scales
       ? {
@@ -143,6 +174,21 @@ export function cloneChartSpec(chartSpec: ChartSpec | null | undefined) {
       ? { ...chartSpec.styleTokens, palette: [...chartSpec.styleTokens.palette] }
       : undefined,
     renderer: chartSpec.renderer ? { ...chartSpec.renderer } : undefined,
+    filters: chartSpec.filters ? { ...chartSpec.filters } : undefined,
+    markGroups: chartSpec.markGroups?.map((group) => ({
+      ...group,
+      memberKeys: [...group.memberKeys],
+      sharedConfig: { ...group.sharedConfig },
+    })),
+    dimensionRecommendations: chartSpec.dimensionRecommendations?.map((recommendation) => ({
+      ...recommendation,
+      sharedChannels: [...recommendation.sharedChannels],
+      flattenFields: recommendation.flattenFields ? [...recommendation.flattenFields] : undefined,
+      facetGrid: recommendation.facetGrid
+        ? { ...recommendation.facetGrid, rowValues: [...recommendation.facetGrid.rowValues], columnValues: [...recommendation.facetGrid.columnValues] }
+        : undefined,
+    })),
+    dimensionDecisions: chartSpec.dimensionDecisions ? { ...chartSpec.dimensionDecisions } : undefined,
   };
 }
 
@@ -151,21 +197,47 @@ export function cloneCanvasNode(node: CanvasNode): CanvasNode {
     ? { ...node.coordinateGuide, origin: { ...node.coordinateGuide.origin } }
     : node.coordinateGuide;
   const chartSpec = cloneChartSpec(node.chartSpec);
+  const coordinateSystem = node.coordinateSystem
+    ? {
+      ...node.coordinateSystem,
+      members: node.coordinateSystem.members.map((member) => ({ ...member, channels: [...member.channels] })),
+      sharedChannels: [...node.coordinateSystem.sharedChannels],
+    }
+    : node.coordinateSystem;
   const llmRenderer = node.llmRenderer
     ? { ...node.llmRenderer, marks: node.llmRenderer.marks.map((mark) => ({ ...mark })), provenance: { ...node.llmRenderer.provenance } }
     : node.llmRenderer;
   const layerSpec = node.layerSpec
-    ? { ...node.layerSpec, x: { ...node.layerSpec.x }, y: { ...node.layerSpec.y }, children: node.layerSpec.children.map((child) => ({ ...child, chartSpec: cloneChartSpec(child.chartSpec)! })) }
+    ? { ...node.layerSpec, x: node.layerSpec.x ? { ...node.layerSpec.x } : undefined, y: node.layerSpec.y ? { ...node.layerSpec.y } : undefined, children: node.layerSpec.children.map((child) => ({ ...child, chartSpec: cloneChartSpec(child.chartSpec)! })) }
     : node.layerSpec;
-  const nestedSpec = node.nestedSpec ? { ...node.nestedSpec, valueFields: [...node.nestedSpec.valueFields] } : node.nestedSpec;
-  if (node.kind === "leaf") return { ...node, coordinateGuide, chartSpec, layerSpec, nestedSpec, llmRenderer };
+  const nestedSpec = node.nestedSpec
+    ? {
+      ...node.nestedSpec,
+      parentRowKeys: node.nestedSpec.parentRowKeys ? [...node.nestedSpec.parentRowKeys] : undefined,
+      valueFields: [...node.nestedSpec.valueFields],
+    }
+    : node.nestedSpec;
+  const compositionSpec = node.compositionSpec
+    ? {
+      ...node.compositionSpec,
+      members: node.compositionSpec.members.map((member) => ({ ...member, sharedChannels: [...member.sharedChannels] })),
+      sharedChannels: [...node.compositionSpec.sharedChannels],
+      facetValues: node.compositionSpec.facetValues ? [...node.compositionSpec.facetValues] : undefined,
+      facetGrid: node.compositionSpec.facetGrid
+        ? { ...node.compositionSpec.facetGrid, rowValues: [...node.compositionSpec.facetGrid.rowValues], columnValues: [...node.compositionSpec.facetGrid.columnValues] }
+        : undefined,
+    }
+    : node.compositionSpec;
+  if (node.kind === "leaf") return { ...node, coordinateGuide, coordinateSystem, chartSpec, layerSpec, nestedSpec, compositionSpec, llmRenderer };
   return {
     ...node,
     coordinateGuide,
+    coordinateSystem,
     chartSpec,
     llmRenderer,
     layerSpec,
     nestedSpec,
+    compositionSpec,
     children: node.children.map((child) => cloneCanvasNode(child)),
   };
 }
@@ -203,6 +275,39 @@ export function collectNodeBounds(
   return bounds;
 }
 
+export function collectNodeSelectionBounds(
+  node: CanvasNode,
+  parentX = 0,
+  parentY = 0,
+  parentScaleX = 1,
+  parentScaleY = 1,
+): Bounds {
+  const x = parentX + node.x * parentScaleX;
+  const y = parentY + node.y * parentScaleY;
+  const scaleX = parentScaleX * node.scaleX;
+  const scaleY = parentScaleY * node.scaleY;
+  const localMinX = node.kind === "leaf" ? node.contentMinX : 0;
+  const localMinY = node.kind === "leaf" ? node.contentMinY : 0;
+  const selectionBounds = getNodeSelectionBounds(node);
+  let bounds = boundsFromNodeFrame(
+    x + (selectionBounds.minX - localMinX) * scaleX,
+    y + (selectionBounds.minY - localMinY) * scaleY,
+    selectionBounds.width,
+    selectionBounds.height,
+    scaleX,
+    scaleY,
+    node.rotation,
+  );
+  if (node.kind === "group") {
+    let merged: Bounds | null = null;
+    node.children.forEach((child) => {
+      merged = mergeBounds(merged, collectNodeSelectionBounds(child, x, y, scaleX, scaleY));
+    });
+    if (merged) bounds = merged;
+  }
+  return bounds;
+}
+
 export function computeBounds(nodes: CanvasNode[], ids: string[]): Bounds | null {
   if (ids.length === 0) return null;
   let merged: Bounds | null = null;
@@ -210,6 +315,17 @@ export function computeBounds(nodes: CanvasNode[], ids: string[]): Bounds | null
     const node = nodes.find((n) => n.id === id);
     if (!node) return;
     merged = mergeBounds(merged, collectNodeBounds(node));
+  });
+  return merged;
+}
+
+export function computeSelectionBounds(nodes: CanvasNode[], ids: string[]): Bounds | null {
+  if (ids.length === 0) return null;
+  let merged: Bounds | null = null;
+  ids.forEach((id) => {
+    const node = nodes.find((n) => n.id === id);
+    if (!node) return;
+    merged = mergeBounds(merged, collectNodeSelectionBounds(node));
   });
   return merged;
 }

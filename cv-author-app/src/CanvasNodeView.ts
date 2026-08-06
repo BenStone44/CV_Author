@@ -1,5 +1,5 @@
 import { defineComponent, h, type PropType } from "vue";
-import type { CanvasNode, EncodingChannel, Point } from "./types";
+import type { CanvasNode, CoordinateChannel, EncodingChannel, Point } from "./types";
 import { getNodeTransform, getLeafNodeTransform } from "./canvasUtils";
 
 function arrowHead(end: Point, direction: Point, size: number) {
@@ -21,7 +21,7 @@ function cartesianCoordinateOverlay(
   viewZoom: number,
   onOriginPointerDown?: (node: CanvasNode, event: PointerEvent) => void,
   onAxisReverse?: (node: CanvasNode, axis: "x" | "y") => void,
-  onAxisSelect?: (node: CanvasNode, channel: EncodingChannel) => void,
+  onAxisSelect?: (node: CanvasNode, channel: EncodingChannel, event: PointerEvent) => void,
 ) {
   const guide = node.coordinateGuide;
   if (guide?.type !== "Cartesian") return null;
@@ -108,7 +108,7 @@ function cartesianCoordinateOverlay(
       ? (event: PointerEvent) => {
         event.preventDefault();
         event.stopPropagation();
-        onAxisSelect(node, channel);
+        onAxisSelect(node, channel, event);
       }
       : undefined,
   });
@@ -178,7 +178,11 @@ function cartesianCoordinateOverlay(
   ]);
 }
 
-function polarCoordinateOverlay(node: CanvasNode, viewZoom: number) {
+function polarCoordinateOverlay(
+  node: CanvasNode,
+  viewZoom: number,
+  onAxisScalePointerDown?: (node: CanvasNode, axis: CoordinateChannel, event: PointerEvent) => void,
+) {
   const guide = node.coordinateGuide;
   if (guide?.type !== "Polar") return null;
   const minX = node.kind === "leaf" ? node.contentMinX : 0;
@@ -190,7 +194,7 @@ function polarCoordinateOverlay(node: CanvasNode, viewZoom: number) {
     minY + node.height - guide.origin.y,
   );
   const padding = Math.max(8, Math.min(Math.max(node.width, node.height) * 0.035, 42));
-  const radius = contentRadius + padding;
+  const radius = (contentRadius + padding) * (guide.radiusScale ?? 1);
   const renderedScale = Math.max(Math.abs(node.scaleX), Math.abs(node.scaleY), 0.0001) * Math.max(viewZoom, 0.0001);
   const spokes = [0, Math.PI / 4, Math.PI / 2, Math.PI * 3 / 4].map((angle) => {
     const dx = Math.cos(angle) * radius;
@@ -211,6 +215,20 @@ function polarCoordinateOverlay(node: CanvasNode, viewZoom: number) {
     r: radius * ratio,
     "vector-effect": "non-scaling-stroke",
   }));
+  const scaleHandle = (channel: "radius" | "ring", x: number, y: number) => h("circle", {
+    class: ["polar-coordinate-scale-handle", `polar-coordinate-scale-handle--${channel}`],
+    cx: x,
+    cy: y,
+    r: 7 / renderedScale,
+    "pointer-events": "all",
+    onPointerdown: onAxisScalePointerDown
+      ? (event: PointerEvent) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onAxisScalePointerDown(node, channel, event);
+      }
+      : undefined,
+  }, [h("title", `Scale ${channel}`)]);
   return h("g", { class: "coordinate-guide coordinate-guide--polar", "pointer-events": "none" }, [
     ...rings,
     ...spokes,
@@ -222,6 +240,8 @@ function polarCoordinateOverlay(node: CanvasNode, viewZoom: number) {
       height: 10 / renderedScale,
       "vector-effect": "non-scaling-stroke",
     }),
+    scaleHandle("radius", guide.origin.x, guide.origin.y + radius),
+    scaleHandle("ring", guide.origin.x + radius, guide.origin.y),
   ]);
 }
 
@@ -231,30 +251,47 @@ export const CanvasNodeView: any = defineComponent({
     node: { type: Object as PropType<CanvasNode>, required: true },
     interactive: { type: Boolean, default: false },
     selected: { type: Boolean, default: false },
+    editingGroupPath: { type: Array as PropType<string[]>, default: () => [] },
+    selectedIds: { type: Array as PropType<string[]>, default: () => [] },
     onNodePointerDown: { type: Function as PropType<(node: CanvasNode, event: PointerEvent) => void>, default: null },
+    onNodeDoubleClick: { type: Function as PropType<(node: CanvasNode, event: MouseEvent) => void>, default: null },
     onNodeContextMenu: { type: Function as PropType<(node: CanvasNode, event: MouseEvent) => void>, default: null },
     onMarkPointerDown: { type: Function as PropType<(node: CanvasNode, event: PointerEvent) => void>, default: null },
+    onEditingBackgroundPointerDown: { type: Function as PropType<(event: PointerEvent) => void>, default: null },
   },
   setup(props): () => any {
     return () => {
       const NodeView = CanvasNodeView;
       const markHandler = (props as any).onMarkPointerDown as ((node: CanvasNode, event: PointerEvent) => void) | null;
+      const editingPath = props.editingGroupPath;
+      const isEditingAncestor = props.node.kind === "group" && editingPath[0] === props.node.id;
+      const isActiveEditingGroup = isEditingAncestor && editingPath.length === 1;
+      const nodeInteractive = props.interactive && !isEditingAncestor;
       const sharedProps = {
-        class: ["canvas-object", props.selected ? "canvas-object--selected" : ""],
+        class: [
+          "canvas-object",
+          nodeInteractive ? "canvas-object--interactive" : "",
+          isActiveEditingGroup ? "canvas-object--editing-group" : "",
+          props.selected ? "canvas-object--selected" : "",
+        ],
         "data-node-id": props.node.id,
         transform: props.node.kind === "leaf"
           ? getLeafNodeTransform(props.node)
           : getNodeTransform(props.node),
-        "pointer-events": props.interactive ? "bounding-box" : undefined,
-        onPointerdown: props.interactive && props.onNodePointerDown
+        "pointer-events": nodeInteractive ? "bounding-box" : isEditingAncestor ? "none" : undefined,
+        onPointerdown: nodeInteractive && props.onNodePointerDown
           ? (event: PointerEvent) => props.onNodePointerDown!(props.node, event)
           : undefined,
-        onContextmenu: props.interactive && props.onNodeContextMenu
+        onDblclick: nodeInteractive && props.onNodeDoubleClick
+          ? (event: MouseEvent) => props.onNodeDoubleClick!(props.node, event)
+          : undefined,
+        onContextmenu: nodeInteractive && props.onNodeContextMenu
           ? (event: MouseEvent) => props.onNodeContextMenu!(props.node, event)
           : undefined,
       };
 
       if (props.node.kind === "leaf") {
+        const hasInteractiveMarks = !!props.node.renderedContent && !!markHandler;
         return h("g", { ...sharedProps }, [
           // Keep a stable hit area for thin strokes and hollow SVG shapes.
           h("rect", {
@@ -263,14 +300,15 @@ export const CanvasNodeView: any = defineComponent({
             width: Math.max(props.node.width, 1),
             height: Math.max(props.node.height, 1),
             fill: "transparent",
-            "pointer-events": markHandler ? "none" : "all",
-            style: { pointerEvents: markHandler ? "none" : "all" },
+            class: "canvas-object-hit-target",
+            "pointer-events": hasInteractiveMarks ? "none" : "all",
+            style: { pointerEvents: hasInteractiveMarks ? "none" : "all" },
           }),
           h("g", { class: props.node.renderedContent && markHandler ? "semantic-rendered-content" : undefined, innerHTML: props.node.renderedContent ?? props.node.content, style: { pointerEvents: props.node.renderedContent && markHandler ? "all" : "none" }, onPointerdown: props.node.renderedContent && markHandler ? (event: PointerEvent) => markHandler(props.node, event) : undefined }),
         ]);
       }
 
-      if (props.node.renderedContent) {
+      if (props.node.renderedContent && !isEditingAncestor) {
         return h("g", sharedProps, [
           h("rect", {
             x: 0,
@@ -288,8 +326,57 @@ export const CanvasNodeView: any = defineComponent({
         "g",
         sharedProps,
         [
+          ...(isActiveEditingGroup
+            ? [h("rect", {
+              class: "canvas-group-edit-background",
+              x: 0,
+              y: 0,
+              width: Math.max(props.node.width, 1),
+              height: Math.max(props.node.height, 1),
+              fill: "transparent",
+              "pointer-events": "all",
+              onPointerdown: props.onEditingBackgroundPointerDown
+                ? (event: PointerEvent) => props.onEditingBackgroundPointerDown!(event)
+                : undefined,
+            })]
+            : []),
+          ...(isActiveEditingGroup
+            ? [h("rect", {
+              class: "canvas-group-edit-outline",
+              x: 0,
+              y: 0,
+              width: Math.max(props.node.width, 1),
+              height: Math.max(props.node.height, 1),
+              "vector-effect": "non-scaling-stroke",
+            })]
+            : []),
+          ...(nodeInteractive
+            ? [h("rect", {
+              class: "canvas-object-hit-target",
+              x: 0,
+              y: 0,
+              width: Math.max(props.node.width, 1),
+              height: Math.max(props.node.height, 1),
+              fill: "transparent",
+              "pointer-events": "all",
+            })]
+            : []),
           ...props.node.children.map((child) =>
-          h(NodeView, { key: child.id, node: child, interactive: false, selected: false }),
+          h(NodeView, {
+            key: child.id,
+            node: child,
+            interactive: isActiveEditingGroup,
+            selected: props.selectedIds.includes(child.id),
+            editingGroupPath: isEditingAncestor && editingPath[1] === child.id
+              ? editingPath.slice(1)
+              : [],
+            selectedIds: props.selectedIds,
+            onNodePointerDown: props.onNodePointerDown,
+            onNodeDoubleClick: props.onNodeDoubleClick,
+            onNodeContextMenu: props.onNodeContextMenu,
+            onMarkPointerDown: props.onMarkPointerDown,
+            onEditingBackgroundPointerDown: props.onEditingBackgroundPointerDown,
+          }),
           ),
         ],
       );
@@ -311,7 +398,11 @@ export const CanvasCoordinateGuideView = defineComponent({
       default: null,
     },
     onAxisSelect: {
-      type: Function as PropType<(node: CanvasNode, channel: EncodingChannel) => void>,
+      type: Function as PropType<(node: CanvasNode, channel: EncodingChannel, event: PointerEvent) => void>,
+      default: null,
+    },
+    onAxisScalePointerDown: {
+      type: Function as PropType<(node: CanvasNode, axis: CoordinateChannel, event: PointerEvent) => void>,
       default: null,
     },
   },
@@ -325,7 +416,7 @@ export const CanvasCoordinateGuideView = defineComponent({
           props.onAxisReverse ?? undefined,
           props.onAxisSelect ?? undefined,
         )
-        : polarCoordinateOverlay(props.node, props.viewZoom);
+        : polarCoordinateOverlay(props.node, props.viewZoom, props.onAxisScalePointerDown ?? undefined);
       if (!overlay) return null;
       return h(
         "g",

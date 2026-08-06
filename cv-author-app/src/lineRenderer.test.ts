@@ -79,12 +79,12 @@ describe("Case 1 deterministic line chart", () => {
       dataset,
     });
 
-    expect(result.content.match(/data-mark-role="series"/g)).toHaveLength(5);
+    expect(result.content.match(/data-mark-role="line"/g)).toHaveLength(5);
     expect(result.content.match(/data-point-count="8"/g)).toHaveLength(5);
     expect(result.content).toContain('data-series-key="Person_A"');
     expect(result.content).toContain('data-series-key="Person_E"');
-    expect(result.content).toContain('stroke-width="5"');
-    expect(result.content).toContain('style="stroke: rgba(0,143,251,0.9); stroke-width: 5px;');
+    expect(result.content).toContain('stroke-width="2.5"');
+    expect(result.content).toContain('style="stroke: #2563eb; stroke-width: 2.5px;');
     expect(result.content).not.toContain("NaN");
     expect(result.scales.x.domain).toEqual([
       "2025-01-01T00:00:00.000Z",
@@ -109,7 +109,7 @@ describe("Case 1 deterministic line chart", () => {
       dataset: loadCase1Dataset(),
     });
 
-    expect(result.content.match(/data-mark-role="series"/g)).toHaveLength(1);
+    expect(result.content.match(/data-mark-role="line"/g)).toHaveLength(1);
     expect(result.content).not.toContain("data-mark-role=\"legend\"><g");
   });
 
@@ -175,8 +175,8 @@ describe("Case 1 deterministic line chart", () => {
       dataset: loadCase1Dataset(),
     });
 
-    expect(result.plotArea.width).toBeCloseTo((800 - 88 - 32) * 0.5);
-    expect(result.plotArea.height).toBeCloseTo((400 - 48 - 56) * 0.75);
-    expect(result.plotArea.y).toBeCloseTo(48 + 296 - 296 * 0.75);
+    expect(result.plotArea.width).toBeCloseTo((800 - 72 - 28) * 0.5);
+    expect(result.plotArea.height).toBeCloseTo((400 - 28 - 56) * 0.75);
+    expect(result.plotArea.y).toBeCloseTo(28 + 316 - 316 * 0.75);
   });
 });
