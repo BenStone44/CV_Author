@@ -9,12 +9,20 @@ import {
 } from "vue";
 import { SlidersHorizontal, X } from "@lucide/vue";
 import { CanvasCoordinateGuideView, CanvasNodeView } from "./CanvasNodeView";
-import { CartesianCoordinateSystem } from "./CartesianCoordinateSystem";
+import {
+  CanvasCoordinateSystemLayer,
+  CartesianCoordinateSystem,
+  getCartesianAxisChannels,
+} from "./CartesianCoordinateSystem";
 import CsvDataPanel from "./CsvDataPanel.vue";
+import VisualMappingEditor from "./VisualMappingEditor.vue";
 import type {
   CanvasNode,
   CompositionType,
   EncodingChannel,
+  LinearColorMapping,
+  LinearSizeMapping,
+  MarkGroupSharedConfig,
   OptionalEncodingChannel,
   SvgCandidate,
 } from "./types";
@@ -27,6 +35,12 @@ import {
 import { useDatasetStore } from "./useDatasetStore";
 import { useLlmRenderer } from "./useLlmRenderer";
 import { isLineChartType } from "./lineRenderer";
+import {
+  defaultColorMapping,
+  defaultSizeMapping,
+  isLinearColorMapping,
+  isLinearSizeMapping,
+} from "./visualMapping";
 
 const canvasRef = ref<HTMLElement | null>(null);
 const encodingInspectorRef = ref<HTMLElement | null>(null);
@@ -116,6 +130,7 @@ const {
   setPieAngleFields,
   setPieRadiusMode,
   setPieComponentRadiusField,
+  updateAxisBindingMarkGroupConfig,
   closeAxisBinding,
   setSelectionRotation,
   onCandidateDragStart,
@@ -281,6 +296,24 @@ const optionalEncodingDrafts = ref<Record<OptionalEncodingChannel, string>>({
   size: "",
   shape: "",
 });
+const axisBindingMarkGroupConfig = computed(() =>
+  axisBindingNode.value?.chartSpec?.markGroups?.[0]?.sharedConfig ?? {},
+);
+const activeColorDraftColumn = computed(() =>
+  axisBindingColumns.value.find((column) => column.name === optionalEncodingDrafts.value.color),
+);
+const showColorMapping = computed(() =>
+  !!activeColorDraftColumn.value && activeColorDraftColumn.value.type !== "nominal",
+);
+const showSizeMapping = computed(() => !!optionalEncodingDrafts.value.size);
+const activeColorMapping = computed(() => {
+  const mapping = axisBindingMarkGroupConfig.value.colorMapping;
+  return isLinearColorMapping(mapping) ? mapping : defaultColorMapping;
+});
+const activeSizeMapping = computed(() => {
+  const mapping = axisBindingMarkGroupConfig.value.sizeMapping;
+  return isLinearSizeMapping(mapping) ? mapping : defaultSizeMapping;
+});
 const activeCompositionOption = computed(() =>
   compositionOptions.find(
     (option) => option.value === activeCompositionType.value,
@@ -303,11 +336,16 @@ const llmDataset = computed(() => {
 const activeDimensionRecommendations = computed(() =>
   (axisBindingNode.value ?? llmNode.value)?.chartSpec?.dimensionRecommendations ?? [],
 );
+const dimensionOptionsEnabled = false;
 const recommendationPopupOpen = ref(false);
 let lastRecommendationKey = "";
 let suppressRecommendationAutoOpen = false;
 
 watch(activeDimensionRecommendations, (recommendations) => {
+  if (!dimensionOptionsEnabled) {
+    recommendationPopupOpen.value = false;
+    return;
+  }
   const key = recommendations.map((recommendation) => recommendation.id).join("|");
   if (!key) {
     recommendationPopupOpen.value = false;
@@ -327,6 +365,7 @@ watch(activeDimensionRecommendations, (recommendations) => {
 }, { immediate: true });
 
 function openRecommendationPopup() {
+  if (!dimensionOptionsEnabled) return;
   recommendationPopupOpen.value = activeDimensionRecommendations.value.length > 0;
 }
 
@@ -471,6 +510,14 @@ function confirmOptionalEncodings() {
     if (selected) bindOptionalEncoding(option.channel, selected);
     else clearOptionalEncoding(option.channel);
   });
+  const mappingPatch: MarkGroupSharedConfig = {};
+  if (showColorMapping.value && !isLinearColorMapping(axisBindingMarkGroupConfig.value.colorMapping)) {
+    mappingPatch.colorMapping = defaultColorMapping;
+  }
+  if (showSizeMapping.value && !isLinearSizeMapping(axisBindingMarkGroupConfig.value.sizeMapping)) {
+    mappingPatch.sizeMapping = defaultSizeMapping;
+  }
+  if (Object.keys(mappingPatch).length > 0) updateAxisBindingMarkGroupConfig(mappingPatch);
   void nextTick(() => {
     encodingReviewApprovedKey.value = encodingReviewKey(node);
   });
@@ -481,17 +528,24 @@ function confirmEncodingInspector() {
   if (isLineChartType(axisBindingNode.value?.chartSpec?.chartType ?? "")) {
     if (seriesDraftField.value) confirmSeriesField(seriesDraftField.value);
     else clearSeriesBinding();
-    void nextTick(() => {
-      encodingReviewApprovedKey.value = encodingReviewKey(node);
-    });
-    return;
   }
   confirmOptionalEncodings();
+  void nextTick(() => {
+    encodingReviewApprovedKey.value = encodingReviewKey(node);
+  });
+}
+
+function onColorMappingChange(mapping: LinearColorMapping) {
+  updateAxisBindingMarkGroupConfig({ colorMapping: mapping });
+}
+
+function onSizeMappingChange(mapping: LinearSizeMapping) {
+  updateAxisBindingMarkGroupConfig({ sizeMapping: mapping });
 }
 
 function confirmPolarEncodingInspector() {
   closeAxisBinding();
-  if (activeDimensionRecommendations.value.length > 0) {
+  if (dimensionOptionsEnabled && activeDimensionRecommendations.value.length > 0) {
     recommendationPopupOpen.value = true;
   }
 }
@@ -712,6 +766,7 @@ onBeforeUnmount(() => {
           @contextmenu="onCanvasContextMenu"
         >
           <button
+            v-if="dimensionOptionsEnabled"
             class="dimension-options-control"
             type="button"
             title="Adjust dimension options"
@@ -1196,11 +1251,7 @@ onBeforeUnmount(() => {
               >
                 No nominal series field is available.
               </p>
-              <template
-                v-if="
-                  !isLineChartType(axisBindingNode?.chartSpec?.chartType ?? '')
-                "
-              >
+              <template>
                 <div
                   v-for="option in axisBindingOptionalCandidates"
                   :key="option.channel"
@@ -1234,6 +1285,14 @@ onBeforeUnmount(() => {
                   No optional fields are available.
                 </p>
               </template>
+              <VisualMappingEditor
+                :show-color="showColorMapping"
+                :show-size="showSizeMapping"
+                :color-mapping="activeColorMapping"
+                :size-mapping="activeSizeMapping"
+                @color-change="onColorMappingChange"
+                @size-change="onSizeMappingChange"
+              />
               <p
                 v-if="axisBindingRendererError"
                 class="encoding-inspector__error"
@@ -1273,7 +1332,7 @@ onBeforeUnmount(() => {
               </button>
             </div>
             <button
-              v-if="activeDimensionRecommendations.length"
+              v-if="dimensionOptionsEnabled && activeDimensionRecommendations.length"
               class="recommendation-popup-trigger"
               type="button"
               @click="openRecommendationPopup"
@@ -1454,12 +1513,12 @@ onBeforeUnmount(() => {
             </div>
           </aside>
           <div
-            v-if="recommendationPopupOpen && activeDimensionRecommendations.length"
+            v-if="dimensionOptionsEnabled && recommendationPopupOpen && activeDimensionRecommendations.length"
             class="recommendation-popup-backdrop"
             @pointerdown="closeRecommendationPopup"
           ></div>
           <aside
-            v-if="recommendationPopupOpen && activeDimensionRecommendations.length"
+            v-if="dimensionOptionsEnabled && recommendationPopupOpen && activeDimensionRecommendations.length"
             class="recommendation-popup"
             role="dialog"
             aria-modal="true"
@@ -1639,6 +1698,11 @@ onBeforeUnmount(() => {
                 :on-node-context-menu="onCanvasNodeContextMenu"
                 :on-editing-background-pointer-down="onEditingGroupBackgroundPointerDown"
               />
+              <CanvasCoordinateSystemLayer
+                v-for="node in canvasNodes"
+                :key="`coordinate-system-${node.id}`"
+                :node="node"
+              />
               <g v-if="activeDropZone" :transform="editingGroupTransform" class="composition-drop-zone-layer">
                 <rect
                   class="composition-drop-zone"
@@ -1656,19 +1720,6 @@ onBeforeUnmount(() => {
                   :y="activeDropZone.bounds.minY"
                   :width="activeDropZone.bounds.width"
                   :height="activeDropZone.bounds.height"
-                  vector-effect="non-scaling-stroke"
-                />
-              </g>
-              <g
-                v-if="interaction?.type === 'move' && interaction.layerDetach"
-                class="layer-detach-zone-layer"
-              >
-                <rect
-                  class="layer-detach-zone"
-                  :x="interaction.layerDetach.bounds.minX"
-                  :y="interaction.layerDetach.bounds.minY"
-                  :width="interaction.layerDetach.bounds.width"
-                  :height="interaction.layerDetach.bounds.height"
                   vector-effect="non-scaling-stroke"
                 />
               </g>
@@ -1722,10 +1773,13 @@ onBeforeUnmount(() => {
                 </g>
               </g>
               <CartesianCoordinateSystem
-                v-for="node in selectedCanvasNodesWithCoordinateGuides.filter((item) => item.coordinateGuide?.type === 'Cartesian')"
+                v-for="node in selectedCanvasNodesWithCoordinateGuides.filter((item) => item.coordinateGuide?.type === 'Cartesian' && getCartesianAxisChannels(item, 'interactive').length > 0)"
                 :key="`coordinate-guide-${node.id}`"
                 :node="node"
                 :view-zoom="selectionOverlayZoom"
+                :channels="getCartesianAxisChannels(node, 'interactive')"
+                :show-axis="false"
+                :interactive="true"
                 :on-axis-select="openAxisBinding"
                 :on-axis-scale-pointer-down="onCoordinateAxisScalePointerDown"
               />
@@ -2717,14 +2771,6 @@ onBeforeUnmount(() => {
   font-size: 11px;
   line-height: 1.4;
 }
-.canvas-scene :deep(.axis-domain[data-bound="true"]) {
-  stroke: #1c7ed6;
-  stroke-width: 2.2;
-}
-.canvas-scene :deep(.axis-label[data-bound="true"]) {
-  fill: #1554b2;
-  font-weight: 700;
-}
 .encoding-inspector__empty {
   margin: 12px 0 0;
   color: #6b7889;
@@ -2929,15 +2975,6 @@ onBeforeUnmount(() => {
 .composition-drop-zone--vertical {
   stroke-width: 3;
 }
-.layer-detach-zone-layer {
-  pointer-events: none;
-}
-.layer-detach-zone {
-  fill: rgba(37, 99, 235, 0.04);
-  stroke: rgba(37, 99, 235, 0.55);
-  stroke-width: 2;
-  stroke-dasharray: 8 6;
-}
 .composition-drop-zone--invalid {
   fill: rgba(220, 38, 38, 0.14);
   stroke: #dc2626;
@@ -3109,6 +3146,36 @@ onBeforeUnmount(() => {
 .cartesian-coordinate-system {
   overflow: visible;
   pointer-events: none;
+}
+.canvas-scene :deep(.canvas-coordinate-system-node) {
+  overflow: visible;
+  pointer-events: none;
+}
+.canvas-scene :deep(.cartesian-coordinate-system--static) {
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.canvas-scene :deep(.cartesian-axis-grid) {
+  fill: none;
+  stroke-width: 1;
+  stroke-opacity: 0.22;
+}
+.canvas-scene :deep(.cartesian-axis-domain) {
+  fill: none;
+  stroke-width: 1.25;
+}
+.canvas-scene :deep(.cartesian-axis-tick) {
+  fill: none;
+  stroke-width: 1;
+}
+.canvas-scene :deep(.cartesian-axis-tick-label),
+.canvas-scene :deep(.cartesian-axis-title) {
+  fill: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  font-style: normal;
+  font-weight: 400;
+  letter-spacing: 0;
 }
 .cartesian-coordinate-system :deep(.cartesian-axis-line),
 .cartesian-coordinate-system :deep(.cartesian-axis-arrow) {

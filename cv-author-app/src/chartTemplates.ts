@@ -46,7 +46,7 @@ export const chartTemplateContracts: Record<ChartTemplateKind, ChartTemplateCont
     channels: [
       { channel: "x", role: "dimension", required: true, accepts: ["temporal", "quantitative", "nominal"] },
       { channel: "y", role: "measure", required: true, accepts: ["quantitative", "temporal", "nominal"] },
-      { channel: "color", role: "style", required: false, accepts: ["nominal", "temporal"] },
+      { channel: "color", role: "style", required: false, accepts: ["nominal", "temporal", "quantitative"] },
       { channel: "size", role: "style", required: false, accepts: ["quantitative"] },
       { channel: "shape", role: "style", required: false, accepts: ["nominal"] },
     ],

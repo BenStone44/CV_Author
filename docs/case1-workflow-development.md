@@ -2,7 +2,7 @@
 
 更新日期：2026-08-03
 
-实现状态（2026-08-03）：Case 1 的 Phase 5-8 主流程已完成。当前应用支持共享比例尺的语义 Layer、point/row 标记选择、全数据集 Nested Pie 实例化，以及 Dataset 与画布语义状态的 localStorage 持久化和 Undo/Redo 恢复。ChartSpec、LayerSpec、NestedSpec 是权威状态，SVG 仅作为可重建缓存。
+实现状态（2026-08-11）：Case 1 的 Phase 5-8 主流程已完成。当前应用支持基于通用 owner/member 协议的共享比例尺 Layer、point/row 标记选择、全数据集 Nested Pie 实例化，以及 Dataset 与画布语义状态的 localStorage 持久化和 Undo/Redo 恢复。ChartSpec、CompositionSpec、NestedSpec 是权威状态，SVG 仅作为可重建缓存。
 
 ## 1. 目标
 
@@ -151,7 +151,7 @@ type Encoding = {
 
 - X/Y scale 的类型、domain 和 range。
 - 图表内部 plot area 的位置和尺寸。
-- 坐标轴、网格线和 mark 使用的 scale ID。
+- 独立坐标轴组件与 mark 使用的 scale ID；网格、刻度及全部轴文字由坐标轴组件统一渲染。
 - Layer 中哪些通道共享 scale。
 
 没有这个模型，Scatterplot 无法与 Line Chart 精确共享坐标。

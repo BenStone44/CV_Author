@@ -45,4 +45,46 @@ describe("Chart relationship snapshots", () => {
       store.state.value.nestedRelationships.nested?.parameters,
     );
   });
+
+  it("creates a Layer from any charts with the same shareable coordinate system", () => {
+    const store = useChartRelationshipStore();
+    store.dispatch({ type: "clear" });
+    store.dispatch({
+      type: "register-chart",
+      chart: {
+        id: "pie",
+        nodeId: "pie",
+        chartType: "PieChart",
+        datasetId: "dataset",
+        instanceKind: "canvas",
+      },
+    });
+    store.dispatch({
+      type: "register-chart",
+      chart: {
+        id: "donut",
+        nodeId: "donut",
+        chartType: "DonutChart",
+        datasetId: "dataset",
+        instanceKind: "canvas",
+      },
+    });
+
+    store.dispatch({
+      type: "create-composition",
+      composition: {
+        id: "polar-layer",
+        type: "layer",
+        memberChartIds: ["pie", "donut"],
+        sharedChannels: ["angle", "radius"],
+      },
+    });
+
+    expect(store.state.value.compositions["polar-layer"]).toMatchObject({
+      type: "layer",
+      memberChartIds: ["pie", "donut"],
+      sharedChannels: ["angle", "radius"],
+    });
+    expect(store.relationshipIssues.value).toEqual([]);
+  });
 });

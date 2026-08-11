@@ -309,15 +309,17 @@ function createComposition(composition: Omit<RelationshipComposition, "sharedAxi
   memberChartIds.forEach(chartOrThrow);
   const sharedChannels = unique(composition.sharedChannels);
   if (composition.type === "layer") {
-    if (sharedChannels.length !== 2 || !sharedChannels.includes("x") || !sharedChannels.includes("y")) {
-      throw new Error("Layer must share both x and y axes.");
+    if (sharedChannels.length === 0) throw new Error("Layer must share at least one coordinate channel.");
+    const contracts = memberChartIds.map((chartId) =>
+      getChartTemplateContract(chartOrThrow(chartId).chartType),
+    );
+    const coordinateTypes = new Set(contracts.map((contract) => contract?.coordinateSystem));
+    if (coordinateTypes.size !== 1 || coordinateTypes.has(undefined) || coordinateTypes.has("None")) {
+      throw new Error("Layer members must use the same shareable coordinate system.");
     }
-    memberChartIds.forEach((chartId) => {
-      const chart = chartOrThrow(chartId);
-      if (getChartTemplateContract(chart.chartType)?.coordinateSystem !== "Cartesian") {
-        throw new Error("Layer members must use Cartesian x/y axes.");
-      }
-    });
+    if (sharedChannels.some((channel) => contracts.some((contract) => !contract?.shareableChannels.includes(channel)))) {
+      throw new Error("Layer contains a channel that is not shareable by every member.");
+    }
   }
   if (relationshipState.value.compositions[composition.id]) removeComposition(composition.id, true);
   const sharedAxisIds = sharedChannels.map((channel, index) =>
@@ -693,7 +695,7 @@ function reconcileCanvasNodes(nodes: CanvasNode[]) {
     seenCompositions.add(spec.id);
     const memberChartIds = spec.members.map((member) => member.nodeId).filter((id) => !!relationshipState.value.charts[id]);
     if (memberChartIds.length === 0) return;
-    if (spec.type === "layer" && (!spec.sharedChannels.includes("x") || !spec.sharedChannels.includes("y"))) return;
+    if (spec.type === "layer" && spec.sharedChannels.length === 0) return;
     createComposition({
       id: spec.id,
       type: spec.type,
@@ -752,8 +754,19 @@ function collectRelationshipIssues() {
       if (!relationshipState.value.axes[axisId]) issues.push(`Composition ${composition.id} references missing Axis ${axisId}.`);
     });
     if (composition.type === "layer") {
-      const channels = new Set(composition.sharedChannels);
-      if (channels.size !== 2 || !channels.has("x") || !channels.has("y")) issues.push(`Layer ${composition.id} must share exactly x and y.`);
+      const contracts = composition.memberChartIds.map((chartId) => {
+        const chart = relationshipState.value.charts[chartId];
+        return chart ? getChartTemplateContract(chart.chartType)?.coordinateSystem : undefined;
+      });
+      const coordinateTypes = new Set(contracts);
+      if (composition.sharedChannels.length === 0) issues.push(`Layer ${composition.id} does not share a coordinate channel.`);
+      if (coordinateTypes.size !== 1 || coordinateTypes.has(undefined) || coordinateTypes.has("None")) {
+        issues.push(`Layer ${composition.id} members do not use the same shareable coordinate system.`);
+      }
+      if (composition.sharedChannels.some((channel) => composition.memberChartIds.some((chartId) => {
+        const chart = relationshipState.value.charts[chartId];
+        return !chart || !getChartTemplateContract(chart.chartType)?.shareableChannels.includes(channel);
+      }))) issues.push(`Layer ${composition.id} contains a channel that is not shareable by every member.`);
     }
     composition.sharedChannels.forEach((channel, index) => {
       const axisId = composition.sharedAxisIds[index];

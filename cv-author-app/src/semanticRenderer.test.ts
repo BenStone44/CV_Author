@@ -20,7 +20,7 @@ const lineSpec: ChartSpec = {
 };
 
 describe("semantic Case 1 renderers", () => {
-  it("renders a selectable Point Group without duplicate axes", () => {
+  it("renders scatter marks without duplicate axes", () => {
     const result = renderDeterministicChart({
       chartId: "point-group",
       width: 800,
@@ -30,11 +30,60 @@ describe("semantic Case 1 renderers", () => {
       coordinateGuide: { type: "Cartesian", origin: { x: 0, y: 400 }, xDirection: 1, yDirection: -1 },
       chartSpec: { ...lineSpec, chartType: "Scatterplot" },
       dataset,
-      marksOnly: true,
     });
     expect(result.content.match(/data-mark-role="point"/g)).toHaveLength(40);
     expect(result.content).not.toContain('data-mark-role="x-axis"');
     expect(result.content).not.toContain('data-mark-role="y-axis"');
+  });
+
+  it("applies shared multi-stop color and pixel-size mappings", () => {
+    const mappingDataset: Dataset = {
+      id: "mapping",
+      name: "mapping.csv",
+      columns: [
+        { name: "x", type: "quantitative" },
+        { name: "y", type: "quantitative" },
+        { name: "color", type: "quantitative" },
+        { name: "size", type: "quantitative" },
+      ],
+      rows: [
+        { x: "0", y: "0", color: "0", size: "0" },
+        { x: "1", y: "1", color: "50", size: "50" },
+        { x: "2", y: "2", color: "100", size: "100" },
+      ],
+    };
+    const result = renderDeterministicChart({
+      chartId: "mapped-points",
+      width: 400,
+      height: 300,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Cartesian", origin: { x: 0, y: 300 }, xDirection: 1, yDirection: -1 },
+      chartSpec: {
+        chartType: "Scatterplot",
+        datasetId: mappingDataset.id,
+        encodings: {
+          x: { field: "x", type: "quantitative" },
+          y: { field: "y", type: "quantitative" },
+          color: { field: "color", type: "quantitative" },
+          size: { field: "size", type: "quantitative" },
+        },
+        markGroups: [{
+          id: "mark-group:mapped-points:point",
+          chartId: "mapped-points",
+          role: "point",
+          memberKeys: [],
+          sharedConfig: {
+            colorMapping: { type: "linear", stops: [{ offset: 0, color: "#000000" }, { offset: 0.5, color: "#ff0000" }, { offset: 1, color: "#ffffff" }] },
+            sizeMapping: { type: "linear", stops: [{ offset: 0, size: 2 }, { offset: 0.5, size: 6 }, { offset: 1, size: 10 }] },
+          },
+        }],
+      },
+      dataset: mappingDataset,
+    });
+    expect(result.content).toContain('r="2" fill="#000000"');
+    expect(result.content).toContain('r="6" fill="#ff0000"');
+    expect(result.content).toContain('r="10" fill="#ffffff"');
   });
 
   it("shares line scales and emits point row metadata", () => {

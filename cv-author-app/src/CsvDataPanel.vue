@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
-import { FileSpreadsheet, Lock, Trash2, Unlock, Upload } from "@lucide/vue";
+import {
+  ChevronsLeft,
+  ChevronsRight,
+  FileSpreadsheet,
+  Trash2,
+  Upload,
+} from "@lucide/vue";
 import defaultCsv from "../../data/case1.csv?raw";
 import { useDatasetStore } from "./useDatasetStore";
 import type { DataColumnType } from "./types";
@@ -13,7 +19,7 @@ const dataTableRef = ref<HTMLTableElement | null>(null);
 const isDragging = ref(false);
 const expandedWidth = ref(304);
 const canExpand = ref(false);
-const isLocked = ref(false);
+const isExpanded = ref(false);
 const {
   activeDataset,
   parseError,
@@ -47,6 +53,7 @@ function updateExpandedWidth() {
   const table = dataTableRef.value;
   if (!panel || !table || window.matchMedia("(max-width: 760px)").matches) {
     canExpand.value = false;
+    isExpanded.value = false;
     return;
   }
 
@@ -58,13 +65,14 @@ function updateExpandedWidth() {
   const contentWidth = table.scrollWidth + 2;
   expandedWidth.value = Math.min(maxWidth, Math.max(baseWidth, contentWidth));
   canExpand.value = expandedWidth.value > baseWidth + 1;
+  if (!canExpand.value) isExpanded.value = false;
 }
 
 function clearData() {
   clearActiveDataset();
   expandedWidth.value = 304;
   canExpand.value = false;
-  isLocked.value = false;
+  isExpanded.value = false;
   if (fileInputRef.value) fileInputRef.value.value = "";
 }
 
@@ -90,9 +98,9 @@ function onDrop(event: DragEvent) {
   if (file) importCsv(file);
 }
 
-function toggleLock() {
+function toggleExpanded() {
   if (!canExpand.value) return;
-  isLocked.value = !isLocked.value;
+  isExpanded.value = !isExpanded.value;
 }
 
 function onColumnTypeChange(columnName: string, event: Event) {
@@ -103,7 +111,11 @@ function onColumnTypeChange(columnName: string, event: Event) {
 
 onMounted(() => {
   window.addEventListener("resize", updateExpandedWidth);
-  if (!activeDataset.value) importCsv(new File([defaultCsv], "case1.csv", { type: "text/csv" }));
+  if (!activeDataset.value) {
+    importCsv(new File([defaultCsv], "case1.csv", { type: "text/csv" }));
+  } else {
+    void nextTick(updateExpandedWidth);
+  }
 });
 onBeforeUnmount(() =>
   window.removeEventListener("resize", updateExpandedWidth),
@@ -116,8 +128,7 @@ onBeforeUnmount(() =>
     class="data-panel"
     :class="{
       'data-panel--dragging': isDragging,
-      'data-panel--expandable': canExpand,
-      'data-panel--locked': canExpand && isLocked,
+      'data-panel--expanded': canExpand && isExpanded,
     }"
     :style="panelStyle"
     aria-label="CSV data"
@@ -133,16 +144,16 @@ onBeforeUnmount(() =>
       <div class="data-panel__actions">
         <button
           class="data-panel__icon-button"
-          :class="{ 'data-panel__icon-button--active': isLocked }"
+          :class="{ 'data-panel__icon-button--active': isExpanded }"
           type="button"
           :disabled="!canExpand"
-          :title="isLocked ? 'Unlock panel width' : 'Lock panel width'"
-          :aria-label="isLocked ? 'Unlock panel width' : 'Lock panel width'"
-          :aria-pressed="isLocked"
-          @click="toggleLock"
+          :title="isExpanded ? 'Collapse CSV data' : 'Expand CSV data'"
+          :aria-label="isExpanded ? 'Collapse CSV data' : 'Expand CSV data'"
+          :aria-expanded="isExpanded"
+          @click="toggleExpanded"
         >
-          <Unlock v-if="isLocked" :size="15" aria-hidden="true" />
-          <Lock v-else :size="15" aria-hidden="true" />
+          <ChevronsLeft v-if="isExpanded" :size="15" aria-hidden="true" />
+          <ChevronsRight v-else :size="15" aria-hidden="true" />
         </button>
         <button
           class="data-panel__import-button"
@@ -264,8 +275,7 @@ onBeforeUnmount(() =>
     box-shadow 140ms ease;
 }
 
-.data-panel--expandable:hover,
-.data-panel--locked {
+.data-panel--expanded {
   flex-basis: min(var(--data-panel-expanded-width), calc(100vw - 40px));
   width: min(var(--data-panel-expanded-width), calc(100vw - 40px));
 }
@@ -552,8 +562,7 @@ onBeforeUnmount(() =>
     margin: 10px 10px 0;
   }
 
-  .data-panel--expandable:hover,
-  .data-panel--locked {
+  .data-panel--expanded {
     flex-basis: auto;
     width: auto;
   }

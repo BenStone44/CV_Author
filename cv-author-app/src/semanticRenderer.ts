@@ -1,9 +1,17 @@
 import { extent } from "d3-array";
 import { scaleLinear, scalePoint, scaleUtc } from "d3-scale";
 import { arc, pie } from "d3-shape";
-import type { CartesianCoordinateGuide, ChartEncoding, ChartSpec, Dataset, LayerSpec, NestedSpec, ChartPlotArea, ChartScaleSpec, CoordinateGuide } from "./types";
+import type { CartesianCoordinateGuide, ChartEncoding, ChartSpec, Dataset, LayerSpec, NestedSpec, ChartPlotArea, ChartScaleSpec, CoordinateGuide, MarkGroupSharedConfig } from "./types";
 import { renderLineChart, type LineRenderInput } from "./lineRenderer";
 import { normalizeChartTemplate } from "./chartTemplates";
+import {
+  isLinearColorMapping,
+  isLinearSizeMapping,
+  mapColorValue,
+  mapSizeValue,
+  parseVisualValue,
+  visualDomain,
+} from "./visualMapping";
 
 function esc(value: string) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
@@ -37,6 +45,36 @@ function groupConfig(spec: ChartSpec, role: string) {
   return spec.markGroups?.find((group) => group.role === role)?.sharedConfig ?? {};
 }
 
+function visualColor(
+  row: Dataset["rows"][number],
+  encoding: ChartEncoding | undefined,
+  domain: [number, number] | null,
+  config: MarkGroupSharedConfig,
+  fallback: string,
+) {
+  const mapping = config.colorMapping;
+  if (encoding && domain && isLinearColorMapping(mapping)) {
+    const value = parseVisualValue(row[encoding.field] ?? "", encoding);
+    if (value !== null) return mapColorValue(value, domain, mapping);
+  }
+  return typeof config.color === "string" ? config.color : fallback;
+}
+
+function visualSize(
+  row: Dataset["rows"][number],
+  encoding: ChartEncoding | undefined,
+  domain: [number, number] | null,
+  config: MarkGroupSharedConfig,
+  fallback: number,
+) {
+  const mapping = config.sizeMapping;
+  if (encoding && domain && isLinearSizeMapping(mapping)) {
+    const value = parseVisualValue(row[encoding.field] ?? "", encoding);
+    if (value !== null) return mapSizeValue(value, domain, mapping);
+  }
+  return typeof config.size === "number" ? config.size : fallback;
+}
+
 export function chartScalePosition(spec: ChartScaleSpec) {
   if (spec.type === "utc") {
     const scale = scaleUtc().domain((spec.domain as [string, string]).map((value) => new Date(value)) as [Date, Date]).range(spec.range);
@@ -50,14 +88,7 @@ export function chartScalePosition(spec: ChartScaleSpec) {
   return (value: string) => scale(Number(value));
 }
 
-function replacePlot(content: string, marks: string) {
-  return content.replace(
-    /<g data-mark-role="plot"([^>]*)>[\s\S]*<\/g><\/g>\s*$/,
-    `<g data-mark-role="plot"$1>${marks}</g></g>`,
-  );
-}
-
-function renderScatterChart(input: LineRenderInput & { marksOnly?: boolean }) {
+function renderScatterChart(input: LineRenderInput) {
   const base = renderLineChart(input);
   const x = base.scales.x;
   const y = base.scales.y;
@@ -65,8 +96,10 @@ function renderScatterChart(input: LineRenderInput & { marksOnly?: boolean }) {
   const yEncoding = input.chartSpec.encodings.y!;
   const xPosition = chartScalePosition(x);
   const yPosition = chartScalePosition(y);
-  const colorField = input.chartSpec.encodings.color?.field;
-  const sizeField = input.chartSpec.encodings.size?.field;
+  const colorEncoding = input.chartSpec.encodings.color;
+  const sizeEncoding = input.chartSpec.encodings.size;
+  const colorField = colorEncoding?.field;
+  const sizeField = sizeEncoding?.field;
   const colorValues = colorField ? Array.from(new Set(input.dataset.rows.map((row) => row[colorField] ?? ""))) : [];
   const sizeValues = sizeField ? input.dataset.rows.map((row) => Number(row[sizeField] ?? "")).filter(Number.isFinite) : [];
   const sizeDomain = extent(sizeValues) as [number | undefined, number | undefined];
@@ -74,6 +107,8 @@ function renderScatterChart(input: LineRenderInput & { marksOnly?: boolean }) {
     ? () => 4
     : scaleLinear().domain(sizeDomain[0] === sizeDomain[1] ? [sizeDomain[0] - 1, sizeDomain[1] + 1] : sizeDomain as [number, number]).range([3, 9]);
   const config = groupConfig(input.chartSpec, "point");
+  const colorDomain = visualDomain(input.dataset.rows, colorEncoding);
+  const mappedSizeDomain = visualDomain(input.dataset.rows, sizeEncoding);
   const marks = input.dataset.rows.map((row, index) => {
     const xv = row[xEncoding.field] ?? "";
     const yv = row[yEncoding.field] ?? "";
@@ -82,13 +117,17 @@ function renderScatterChart(input: LineRenderInput & { marksOnly?: boolean }) {
     if (!Number.isFinite(cx) || !Number.isFinite(cy)) return "";
     const rowKey = key(input.dataset, row) || String(index);
     const colorIndex = colorField ? Math.max(0, colorValues.indexOf(row[colorField] ?? "")) : 0;
-    const radius = Number(config.size ?? (sizeField ? sizeScale(Number(row[sizeField] ?? "")) : 4));
-    const color = String(config.color ?? palette[colorIndex % palette.length]);
+    const radius = visualSize(
+      row,
+      sizeEncoding,
+      mappedSizeDomain,
+      config,
+      sizeField ? sizeScale(Number(row[sizeField] ?? "")) : 4,
+    );
+    const color = visualColor(row, colorEncoding, colorDomain, config, palette[colorIndex % palette.length]!);
     return `<circle data-chart-id="${esc(input.chartId)}" data-mark-role="point" data-mark-group-id="mark-group:${esc(input.chartId)}:point" data-row-key="${esc(rowKey)}" data-series-key="${esc(input.chartSpec.series ? row[input.chartSpec.series.field] ?? "" : "")}" cx="${cx}" cy="${cy}" r="${radius}" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 0.88)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
   }).join("");
-  const content = input.marksOnly
-    ? `<g data-chart-id="${esc(input.chartId)}" data-chart-type="scatter" data-renderer="deterministic-scatter-marks@1">${marks}</g>`
-    : replacePlot(base.content.replace('data-chart-type="line"', 'data-chart-type="scatter"'), marks);
+  const content = `<g data-chart-id="${esc(input.chartId)}" data-chart-type="scatter" data-renderer="deterministic-scatter-marks@1">${marks}</g>`;
   return { ...base, content };
 }
 
@@ -111,6 +150,7 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
   const cy = input.coordinateGuide?.type === "Polar" ? input.coordinateGuide.origin.y : minY + input.height / 2;
   const outerRadius = Math.max(8, Math.min(input.width, input.height) * 0.38 * (input.coordinateGuide?.type === "Polar" ? input.coordinateGuide.radiusScale ?? 1 : 1));
   const config = groupConfig(input.chartSpec, "arc");
+  const colorDomain = visualDomain(input.dataset.rows, category);
   if (angleFields.length > 0) {
     const flattenFields = (input.chartSpec.flattenFields ?? []).filter((field) =>
       input.dataset.columns.some((column) => column.name === field),
@@ -168,7 +208,8 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
       const radiusValue = componentRadiusValues[index] ?? Number.NaN;
       const componentOuterRadius = Number.isFinite(radiusValue) ? radiusScale(radiusValue) : outerRadius;
       const path = arc<any>().innerRadius(0).outerRadius(componentOuterRadius);
-      const color = String(config.color ?? palette[index % palette.length]);
+      const representativeRow = component?.rows[0] ?? input.dataset.rows[index] ?? {};
+      const color = visualColor(representativeRow, category, colorDomain, config, palette[index % palette.length]!);
       return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="arc" data-mark-group-id="mark-group:${esc(input.chartId)}:arc" data-category-key="${esc(categoryKey)}" data-angle-field="${esc(field)}" data-angle-value="${componentValues[index] ?? 0}" data-flatten-fields="${esc(flattenFields.join("|"))}" data-flatten-values="${esc((component?.flattenValues ?? []).join("|"))}" data-radius-mode="${radiusMode}" data-radius-field="${esc(radiusEncoding?.field ?? "")}" data-radius-value="${Number.isFinite(radiusValue) ? radiusValue : ""}" d="${path(datum) ?? ""}" transform="translate(${cx} ${cy})" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 1)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
     }).join("");
     return {
@@ -198,7 +239,7 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
     return layout.map((datum, index) => {
       const row = rows[index]!;
       const categoryKey = category ? row[category.field] ?? "" : String(index + 1);
-      const color = String(config.color ?? palette[index % palette.length]);
+      const color = visualColor(row, category, colorDomain, config, palette[index % palette.length]!);
       const radiusValue = radius ? Number(row[radius.field] ?? "") : Number.NaN;
       const rowOuterRadius = Number.isFinite(radiusValue) ? radiusScale(radiusValue) : outer;
       const path = arc<any>().innerRadius(inner).outerRadius(rowOuterRadius);
@@ -229,6 +270,7 @@ function renderMatrixChart(input: GenericRenderInput) {
     ? () => 0.72
     : scaleLinear().domain(domain as [number, number]).range([0.18, 0.95]);
   const config = groupConfig(input.chartSpec, "cell");
+  const colorDomain = visualDomain(input.dataset.rows, valueEncoding);
   const cells = input.dataset.rows.map((row, index) => {
     const rowKey = row[rowEncoding.field] ?? "";
     const columnKey = row[columnEncoding.field] ?? "";
@@ -236,7 +278,8 @@ function renderMatrixChart(input: GenericRenderInput) {
     const columnIndex = columnValues.indexOf(columnKey);
     if (rowIndex < 0 || columnIndex < 0) return "";
     const alpha = valueEncoding ? opacity(Number(row[valueEncoding.field] ?? "")) : 0.72;
-    return `<rect data-chart-id="${esc(input.chartId)}" data-mark-role="cell" data-mark-group-id="mark-group:${esc(input.chartId)}:cell" data-row-key="${esc(key(input.dataset, row) || String(index))}" data-row-value="${esc(rowKey)}" data-column-value="${esc(columnKey)}" x="${plotArea.x + columnIndex * cellWidth}" y="${plotArea.y + rowIndex * cellHeight}" width="${Math.max(1, cellWidth - 1)}" height="${Math.max(1, cellHeight - 1)}" fill="${esc(String(config.color ?? "#2563eb"))}" fill-opacity="${Number(config.opacity ?? alpha)}"/>`;
+    const color = visualColor(row, valueEncoding, colorDomain, config, "#2563eb");
+    return `<rect data-chart-id="${esc(input.chartId)}" data-mark-role="cell" data-mark-group-id="mark-group:${esc(input.chartId)}:cell" data-row-key="${esc(key(input.dataset, row) || String(index))}" data-row-value="${esc(rowKey)}" data-column-value="${esc(columnKey)}" x="${plotArea.x + columnIndex * cellWidth}" y="${plotArea.y + rowIndex * cellHeight}" width="${Math.max(1, cellWidth - 1)}" height="${Math.max(1, cellHeight - 1)}" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? alpha)}"/>`;
   }).join("");
   return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="matrix" data-renderer="deterministic-chart@1">${cells}</g>`, plotArea, scales: undefined };
 }
@@ -250,7 +293,8 @@ export type GenericRenderInput = {
   coordinateGuide: CoordinateGuide | null | undefined;
   chartSpec: ChartSpec;
   dataset: Dataset;
-  marksOnly?: boolean;
+  sharedPlotArea?: ChartPlotArea;
+  sharedScales?: { x: ChartScaleSpec; y: ChartScaleSpec };
 };
 
 export function renderDeterministicChart(input: GenericRenderInput) {
@@ -273,15 +317,20 @@ export function renderLayerChart(input: LineRenderInput & { layerSpec: LayerSpec
   const xField = input.layerSpec.x?.field ?? input.chartSpec.encodings.x?.field;
   const yField = input.layerSpec.y?.field ?? input.chartSpec.encodings.y?.field;
   if (!xField || !yField) return { ...line, layerSpec: input.layerSpec };
-  const pointConfig = groupConfig(scatter, "point");
-  const points = input.dataset.rows.map((row) => {
-    const x = row[xField] ?? "";
-    const y = row[yField] ?? "";
-    if (x.trim() === "" || y.trim() === "" || !Number.isFinite(Date.parse(x)) || !Number.isFinite(Number(y))) return "";
-    const rowKey = key(input.dataset, row);
-    return `<circle data-mark-role="point" data-mark-group-id="mark-group:${esc(input.chartId)}:point" data-row-key="${esc(rowKey)}" data-person="${esc(row.person ?? "")}" data-time="${esc(row.time ?? "")}" cx="${scales.xScale(x)}" cy="${scales.yScale(y)}" r="${Number(pointConfig.size ?? 4)}" fill="${esc(String(pointConfig.color ?? "#111827"))}" fill-opacity="${Number(pointConfig.opacity ?? 1)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
-  }).join("");
-  const markerGroup = `<g data-mark-role="points" data-point-count="${input.dataset.rows.length}">${points}</g>`;
+  const scatterResult = renderScatterChart({
+    ...input,
+    chartSpec: {
+      ...scatter,
+      encodings: {
+        ...scatter.encodings,
+        x: input.layerSpec.x ?? scatter.encodings.x,
+        y: input.layerSpec.y ?? scatter.encodings.y,
+      },
+    },
+    sharedPlotArea: line.plotArea,
+    sharedScales: line.scales,
+  });
+  const markerGroup = `<g data-mark-role="points" data-point-count="${input.dataset.rows.length}">${scatterResult.content}</g>`;
   const content = line.content.replace(/<\/g><\/g>\s*$/, `${markerGroup}</g></g>`);
   return { ...line, content, layerSpec: input.layerSpec };
 }

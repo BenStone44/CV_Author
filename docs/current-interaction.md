@@ -19,7 +19,7 @@
 - `Import CSV` 打开文件选择器，或可以把 CSV 文件拖到数据面板。
 - 导入后显示文件名、行数、列数和最多 250 行预览。
 - 每一列都可以通过下拉框改成 `nominal`、`temporal` 或 `quantitative`。
-- 数据面板宽度在桌面端可根据表格内容展开；鼠标移入可展开，锁定按钮可以保持展开宽度。
+- 数据面板宽度在桌面端可根据表格内容展开；点击展开按钮展开，再次点击同一按钮收起。
 - `Clear data` 清除当前数据和文件选择状态。
 - 导入过程中导入按钮禁用；解析错误和警告显示在表格上方。
 
@@ -75,23 +75,24 @@
 
 工具栏提供 `Layer`、`Facet`、`Concat`、`Nested` 四类组合入口。按钮是否可用由当前选择和图表类型决定。
 
-- Layer：将选中图表叠加到同一绘图区，共享可兼容坐标轴。
+- Layer：将坐标系、Dataset 和通道编码兼容的图表叠加到同一绘图区；通用 owner 提供共享 scale，独立坐标轴组件只为共享通道渲染一次，所有 Chart renderer 都只输出 marks。
+- Layer 成员不再单独配置 X/Y；创建及后续重渲染时，非 owner 成员始终直接继承 owner 的 X/Y encoding、plot area、scale 和 frame，只保留自身的 mark 类型与样式。
+- Layer 与其他编辑操作统一以 plot area 作为几何 bbox；刻度文字、轴标题、图例和模板留白不参与对齐、框选、缩放框或拆出区域计算。
 - Facet：根据选中图表的数据维度创建多个小图。
 - Concat：按投放边缘并列多个视图。拖入目标矩形的上/下边缘时共享 X，拖入左/右边缘时共享 Y；未共享通道仍保留各 Chart 自己的轴和 Encoding。
 - Nested：需要先选中 Scatterplot 的具体数据点；直接点击入口时，如果没有点选择，会显示提示。
 
 部分组合会先打开候选布局弹窗；候选项可以点击，也可以拖入画布。标记为 `Pending` 的候选项当前不可用。
 
-### 5.3 Layer 拖出拆分
+### 5.3 Layer 整体变换
 
-Layer 中的 Chart 可以单独拖动。拖动时会显示 Layer 的有效区域：
+Layer 的共享坐标系、唯一坐标轴和所有 marks 是一个变换单元：
 
-- Chart 在区域内松开：保持 Layer 和共享轴关系。
-- Chart 离开区域后松开：从 Layer 中拆出，解除其 Layer membership 和原共享轴绑定；剩余 Chart 保留原 Layer 关系。
-- 拆分后该 Chart 保留自己的 Encoding，并恢复独立坐标系。
-- 拆分作为一次画布历史操作，可以 Undo/Redo。
-
-如果 Layer 拆分后只剩一个成员，Layer 关系会结束。
+- 拖动任意成员都会同时移动所有成员与坐标轴。
+- 拖拽位移不再要求整个 Chart bbox 留在画布内部，不存在随对象缩放而移动的内部停止边界。
+- 缩放或旋转任意成员时，所有成员使用同一个 frame 同步变化。
+- 共享轴的方向或 scale 变化会重新渲染全部成员 marks。
+- 暂停通过拖出成员自动拆分 Layer；拖拽不会解除 Layer 或共享轴关系。
 
 ## 6. 坐标轴与编码检查
 
@@ -103,6 +104,8 @@ Layer 中的 Chart 可以单独拖动。拖动时会显示 Layer 的有效区域
 
 ### 6.2 Cartesian 图表
 
+- 网格、轴线、刻度、刻度文字和轴标题由同一个独立坐标轴组件渲染；它们共享 plot area、scale 与字体模型，不属于任何 Chart 的 `renderedContent`。
+- Cartesian 初始 plot area 使用居中的 4:3 区域；轴文字初始屏幕字号约为 8–9px，并补偿模板节点的初始 scale。
 - X、Y 下拉框可以绑定或解除数据列。
 - 每个 Chart 保存自己的 Encoding；共享 Axis 不会合并其他 Chart 的非共享 Encoding。
 - 创建 Chart 时会根据模板和数据列类型生成初始默认 Encoding；用户可以在 Card 中继续调整。
@@ -125,45 +128,11 @@ Scatterplot 还可以设置可选的 `Color`、`Size`、`Shape` 编码；可以�
 - Pie 图表可以选择多个 quantitative 列作为 `Angle components`。
 - Pie 半径支持 `Same radius` 和 `Per component` 两种模式。
 - `Per component` 模式下可以为每个角度分量单独选择半径字段。
-- 点击 `Confirm encodings` 后关闭编码面板，并进入 dimension options 流程（如果存在推荐项）。
+- 点击 `Confirm encodings` 后关闭编码面板。
 
-## 7. Dimension options 当前交互
+## 7. Dimension options
 
-### 7.1 推荐项何时出现
-
-当图表存在无法直接唯一决定的维度时，系统生成若干 dimension recommendations。推荐项属于当前选中的图表，或当前正在编辑的轴绑定图表；切换选择后推荐列表也会切换。
-
-推荐项卡片显示：
-
-- 策略：`One view`、`Flatten`、`Multiple views` 或 `Nested`。
-- 维度字段名和说明。
-- 预计值数量（Values）。
-- 预计 mark 数量（Marks）。
-- 共享通道（Shared），没有共享通道时显示 `Independent`。
-
-### 7.2 打开入口
-
-当前有两个入口，打开的是同一个弹窗：
-
-1. 编码检查面板底部的 `View N dimension options` 按钮。
-2. 画布左上角的滑杆图标按钮。没有可用推荐项时该按钮禁用。
-
-当新的推荐项生成时，弹窗默认自动打开；如果当前正在编辑轴绑定，则不会自动打开，需在编码流程结束后打开。
-
-### 7.3 关闭入口
-
-- 点击弹窗右上角关闭按钮。
-- 点击弹窗外的半透明遮罩。
-- 按 `Escape`。
-
-### 7.4 选择推荐项后的结果
-
-- `series`：把该字段作为 series，在一个视图中显示多组数据。
-- `flatten`：对 Pie 的多维值执行展开；其他图表场景下按 series 处理。
-- `facet`：创建多个小图；如果有二维 facet 网格，会显示行数 × 列数提示。
-- `nested`：创建嵌套关系；当前主要用于嵌套图表场景。
-
-选择后弹窗关闭，并通过画布提示显示应用结果。相关操作进入 Undo 历史。
+Dimension Options 当前暂时关闭：画布按钮、Encoding 面板入口、自动弹窗和推荐卡片均不显示。内部 recommendation 数据暂时保留，便于后续恢复时继续使用统一推断结果。
 
 ## 8. 嵌套 Point + Pie
 
@@ -200,11 +169,9 @@ Scatterplot 还可以设置可选的 `Color`、`Size`、`Shape` 编码；可以�
 
 以下是当前实现中的关键行为，后续调整时需要明确是否保留：
 
-- dimension options 是“推荐策略选择”，不是直接编辑字段的长期面板；应用策略后可能创建新的 Chart/Composition。
-- 左上角按钮位于画布容器左上角，不会跟随某个图表对象的几何左上角移动。
-- dimension options 依赖当前选择上下文；未选中有推荐项的图表时按钮会禁用。
+- Dimension Options 暂时关闭，当前交互中没有入口或自动弹窗。
 - 编码绑定、轴反向、轴缩放、组合创建、对象移动和删除都会进入同一套画布 Undo/Redo 历史。
 - `localStorage` 会自动保存画布和关系状态，但当前没有显式的保存/加载按钮。
 - LLM renderer 入口代码存在，但当前被暂停，默认仍使用确定性渲染器。
 
-后续讨论可以优先确认：按钮应绑定画布还是具体 Chart、dimension options 是一次性推荐还是可反复编辑、应用后是否保留推荐项、以及多选或组合图表下推荐项的作用范围。
+后续恢复 Dimension Options 时，再确认它是一次性推荐还是可反复编辑，以及多选或组合图表下推荐项的作用范围。

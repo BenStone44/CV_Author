@@ -95,6 +95,35 @@ export type ChartStyleTokens = {
   lineWidth: number;
 };
 
+export type LinearColorStop = {
+  offset: number;
+  color: string;
+};
+
+export type LinearSizeStop = {
+  offset: number;
+  size: number;
+};
+
+export type LinearColorMapping = {
+  type: "linear";
+  stops: LinearColorStop[];
+};
+
+export type LinearSizeMapping = {
+  type: "linear";
+  stops: LinearSizeStop[];
+};
+
+export type MarkGroupConfigValue =
+  | string
+  | number
+  | boolean
+  | LinearColorMapping
+  | LinearSizeMapping;
+
+export type MarkGroupSharedConfig = Record<string, MarkGroupConfigValue>;
+
 export type ChartRendererReference = {
   kind: "deterministic-chart" | "deterministic-line" | "llm";
   version: 1 | 2 | 3;
@@ -155,7 +184,7 @@ export type MarkGroupSpec = {
   role: string;
   memberKeys: string[];
   seriesField?: string;
-  sharedConfig: Record<string, string | number | boolean>;
+  sharedConfig: MarkGroupSharedConfig;
   allowOverrides?: boolean;
 };
 
@@ -284,7 +313,7 @@ export type RelationshipMarkGroup = {
   chartId: string;
   role: string;
   memberKeys: string[];
-  sharedConfig: Record<string, string | number | boolean>;
+  sharedConfig: MarkGroupSharedConfig;
   allowOverrides: boolean;
 };
 
@@ -406,7 +435,7 @@ export type ChartRelationshipCommand =
   | { type: "register-chart"; chart: Omit<ChartRelationshipRecord, "markGroupIds" | "axisBindingIds" | "compositionIds"> & Partial<Pick<ChartRelationshipRecord, "markGroupIds" | "axisBindingIds" | "compositionIds">>; coordinateGuide?: CoordinateGuide | null; channels?: CoordinateChannel[] }
   | { type: "unregister-chart"; chartId: string; keepAxes?: boolean }
   | { type: "sync-mark-groups"; chartId: string; groups: MarkGroupSpec[] }
-  | { type: "update-mark-group"; groupId: string; sharedConfig?: Record<string, string | number | boolean>; memberKeys?: string[]; allowOverrides?: boolean }
+  | { type: "update-mark-group"; groupId: string; sharedConfig?: MarkGroupSharedConfig; memberKeys?: string[]; allowOverrides?: boolean }
   | { type: "create-axis"; axis: AxisComponent }
   | { type: "update-axis"; axisId: string; changes: Partial<Omit<AxisComponent, "id" | "config">> & { config?: Partial<AxisComponentConfig> } }
   | { type: "delete-axis"; axisId: string; replacement?: "unbind" | "individual" }
@@ -556,15 +585,10 @@ export type RotateInteraction = {
 export type MoveInteraction = {
   type: "move";
   startPoint: Point;
-  startBounds: Bounds;
   itemIds: string[];
   snapshots: Record<string, Point>;
   scopeGroupId?: string;
   historyCommitted: boolean;
-  layerDetach?: {
-    compositionId: string;
-    bounds: Bounds;
-  };
 };
 
 export type MarqueeInteraction = {

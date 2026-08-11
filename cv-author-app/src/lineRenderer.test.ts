@@ -152,8 +152,9 @@ describe("Case 1 deterministic line chart", () => {
 
     expect(result.scales.x).toMatchObject({ type: "point", domain: ["Plan", "Build", "Ship"] });
     expect(result.scales.y).toMatchObject({ type: "point", domain: ["Low", "High", "Medium"] });
-    expect(result.content).toContain(">Plan</text>");
-    expect(result.content).toContain(">High</text>");
+    expect(result.content).not.toContain("<text");
+    expect(result.content).not.toContain('data-mark-role="x-axis"');
+    expect(result.content).not.toContain('data-mark-role="y-axis"');
   });
 
   it("applies independent Cartesian axis scale values to the plot area", () => {
@@ -175,8 +176,59 @@ describe("Case 1 deterministic line chart", () => {
       dataset: loadCase1Dataset(),
     });
 
-    expect(result.plotArea.width).toBeCloseTo((800 - 72 - 28) * 0.5);
-    expect(result.plotArea.height).toBeCloseTo((400 - 28 - 56) * 0.75);
+    const unscaledWidth = result.plotArea.width / 0.5;
+    const unscaledHeight = result.plotArea.height / 0.75;
+    expect(unscaledWidth / unscaledHeight).toBeCloseTo(4 / 3);
+    expect(result.plotArea.width).toBeCloseTo((316 * 4 / 3) * 0.5);
+    expect(result.plotArea.height).toBeCloseTo(316 * 0.75);
     expect(result.plotArea.y).toBeCloseTo(28 + 316 - 316 * 0.75);
+  });
+
+  it("renders line marks against a shared layer layout without another axis", () => {
+    const dataset = loadCase1Dataset();
+    const owner = renderLineChart({
+      chartId: "layer-owner",
+      width: 800,
+      height: 400,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: {
+        type: "Cartesian",
+        origin: { x: 0, y: 400 },
+        xDirection: 1,
+        yDirection: -1,
+      },
+      chartSpec: {
+        ...createChartSpec(),
+        series: { field: "person", type: "nominal" },
+      },
+      dataset,
+    });
+    const member = renderLineChart({
+      chartId: "layer-member",
+      width: 800,
+      height: 400,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: {
+        type: "Cartesian",
+        origin: { x: 0, y: 400 },
+        xDirection: 1,
+        yDirection: -1,
+      },
+      chartSpec: createChartSpec(),
+      dataset,
+      sharedPlotArea: owner.plotArea,
+      sharedScales: owner.scales,
+    });
+
+    expect(member.content).toContain('data-renderer="deterministic-line-marks@3"');
+    expect(owner.content).not.toContain("<text");
+    expect(owner.content).not.toContain('data-mark-role="x-axis"');
+    expect(owner.content).not.toContain('data-mark-role="y-axis"');
+    expect(member.content).not.toContain('data-mark-role="x-axis"');
+    expect(member.content).not.toContain('data-mark-role="y-axis"');
+    expect(member.plotArea).toEqual(owner.plotArea);
+    expect(member.scales).toEqual(owner.scales);
   });
 });

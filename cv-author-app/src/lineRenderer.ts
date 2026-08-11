@@ -12,6 +12,14 @@ import type {
   ParsedSvgTemplate,
   ParsedSvgTemplateNode,
 } from "./types";
+import {
+  isLinearColorMapping,
+  isLinearSizeMapping,
+  mapColorValue,
+  mapSizeValue,
+  parseVisualValue,
+  visualDomain,
+} from "./visualMapping";
 
 const fallbackPalette = [
   "#2563eb",
@@ -21,12 +29,13 @@ const fallbackPalette = [
   "#7c3aed",
   "#0891b2",
 ];
+const defaultCartesianAspectRatio = 4 / 3;
 const linechartTemplateStyle: ChartStyleTokens = {
   palette: fallbackPalette,
   axisColor: "#64748b",
   textColor: "#334155",
   fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
-  fontSize: 11,
+  fontSize: 9,
   lineWidth: 2.5,
 };
 
@@ -45,6 +54,8 @@ export type LineRenderInput = {
   coordinateGuide: CartesianCoordinateGuide;
   chartSpec: ChartSpec;
   dataset: Dataset;
+  sharedPlotArea?: ChartPlotArea;
+  sharedScales?: { x: ChartScaleSpec; y: ChartScaleSpec };
 };
 
 export function isLineChartType(chartType: string) {
@@ -153,22 +164,6 @@ function uniqueDomain(values: ParsedAxisValue[]) {
   return Array.from(new Set(values.map((value) => String(value))));
 }
 
-function tickValues<T>(values: T[], maximum: number) {
-  if (values.length <= maximum) return values;
-  const stride = (values.length - 1) / (maximum - 1);
-  return Array.from({ length: maximum }, (_, index) => values[Math.round(index * stride)]!);
-}
-
-function formatQuantitativeTick(value: ParsedAxisValue) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return String(value);
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(number);
-}
-
-function formatFieldLabel(field: string) {
-  return field.replaceAll("_", " ");
-}
-
 export function renderLineChart(input: LineRenderInput): LineRenderResult {
   const { chartId, width, height, minX, minY, coordinateGuide, chartSpec, dataset } = input;
   const xEncoding = chartSpec.encodings.x;
@@ -202,22 +197,21 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
   };
   const lineConfig = chartSpec.markGroups?.find((markGroup) => markGroup.role === "line")?.sharedConfig;
   if (lineConfig?.strokeWidth !== undefined) tokens.lineWidth = Number(lineConfig.strokeWidth);
-  if (lineConfig?.color) tokens.palette = [String(lineConfig.color)];
+  if (typeof lineConfig?.color === "string") tokens.palette = [lineConfig.color];
   const fontSize = Math.max(9, Math.min(tokens.fontSize, Math.min(width, height) * 0.045));
-  const hasLegend = !!seriesEncoding && groupedRows.length > 0;
   const leftMargin = Math.min(Math.max(fontSize * 4.8, width * 0.09), width * 0.28);
-  const rightMargin = hasLegend
-    ? Math.min(Math.max(fontSize * 7.8, width * 0.17), width * 0.3)
-    : Math.min(Math.max(fontSize * 1.8, width * 0.035), width * 0.14);
+  const rightMargin = Math.min(Math.max(fontSize * 1.8, width * 0.035), width * 0.14);
   const topMargin = Math.min(Math.max(fontSize * 2, height * 0.07), height * 0.22);
   const bottomMargin = Math.min(Math.max(fontSize * 3.6, height * 0.14), height * 0.3);
-  const basePlotX = minX + leftMargin;
-  const basePlotY = minY + topMargin;
-  const basePlotWidth = width - leftMargin - rightMargin;
-  const basePlotHeight = height - topMargin - bottomMargin;
+  const availablePlotWidth = Math.max(1, width - leftMargin - rightMargin);
+  const availablePlotHeight = Math.max(1, height - topMargin - bottomMargin);
+  const basePlotWidth = Math.min(availablePlotWidth, availablePlotHeight * defaultCartesianAspectRatio);
+  const basePlotHeight = Math.min(availablePlotHeight, basePlotWidth / defaultCartesianAspectRatio);
+  const basePlotX = minX + leftMargin + (availablePlotWidth - basePlotWidth) / 2;
+  const basePlotY = minY + topMargin + (availablePlotHeight - basePlotHeight) / 2;
   const scaledPlotWidth = Math.max(1, basePlotWidth * (coordinateGuide.xScale ?? 1));
   const scaledPlotHeight = Math.max(1, basePlotHeight * (coordinateGuide.yScale ?? 1));
-  const plotArea: ChartPlotArea = {
+  const plotArea: ChartPlotArea = input.sharedPlotArea ?? {
     // Keep the coordinate origin fixed while the opposing endpoint is dragged.
     x: coordinateGuide.xDirection === 1
       ? basePlotX
@@ -230,20 +224,53 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
   };
   const plotRight = plotArea.x + plotArea.width;
   const plotBottom = plotArea.y + plotArea.height;
-  const xRange: [number, number] = coordinateGuide.xDirection === 1
+  const xRange: [number, number] = input.sharedScales?.x.range ?? (coordinateGuide.xDirection === 1
     ? [plotArea.x, plotRight]
-    : [plotRight, plotArea.x];
-  const yRange: [number, number] = coordinateGuide.yDirection === -1
+    : [plotRight, plotArea.x]);
+  const yRange: [number, number] = input.sharedScales?.y.range ?? (coordinateGuide.yDirection === -1
     ? [plotBottom, plotArea.y]
-    : [plotArea.y, plotBottom];
-  const makeScale = (encoding: ChartEncoding, values: ParsedAxisValue[], range: [number, number]) => {
+    : [plotArea.y, plotBottom]);
+  const makeScale = (
+    encoding: ChartEncoding,
+    values: ParsedAxisValue[],
+    range: [number, number],
+    sharedScale?: ChartScaleSpec,
+  ) => {
+    if (sharedScale?.type === "point") {
+      const domain = sharedScale.domain as string[];
+      const scale = scalePoint<string>().domain(domain).range(sharedScale.range).padding(0.5);
+      return {
+        position: (value: ParsedAxisValue) => scale(String(value)) ?? 0,
+        domain,
+        type: "point" as const,
+      };
+    }
+    if (sharedScale?.type === "utc") {
+      const domain = sharedScale.domain as [string, string];
+      const scale = scaleUtc()
+        .domain(domain.map((value) => new Date(value)) as [Date, Date])
+        .range(sharedScale.range);
+      return {
+        position: (value: ParsedAxisValue) => scale(value as Date),
+        domain: domain.map((value) => Date.parse(value)) as [number, number],
+        type: "utc" as const,
+      };
+    }
+    if (sharedScale?.type === "linear") {
+      const domain = sharedScale.domain as [number, number];
+      const scale = scaleLinear().domain(domain).range(sharedScale.range);
+      return {
+        position: (value: ParsedAxisValue) => scale(Number(value)),
+        domain,
+        type: "linear" as const,
+      };
+    }
     if (encoding.type === "nominal") {
       const domain = uniqueDomain(values);
       const scale = scalePoint<string>().domain(domain).range(range).padding(0.5);
       return {
         position: (value: ParsedAxisValue) => scale(value as string) ?? 0,
         domain,
-        ticks: tickValues(domain, 6) as ParsedAxisValue[],
         type: "point" as const,
       };
     }
@@ -254,7 +281,6 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
       return {
         position: (value: ParsedAxisValue) => scale(value as Date),
         domain,
-        ticks: scale.ticks(6) as ParsedAxisValue[],
         type: "utc" as const,
       };
     }
@@ -266,69 +292,50 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
     return {
       position: (value: ParsedAxisValue) => scale(value as number),
       domain: scale.domain() as [number, number],
-      ticks: scale.ticks(6) as ParsedAxisValue[],
       type: "linear" as const,
     };
   };
-  const xAxisScale = makeScale(xEncoding, rows.map((datum) => datum.x), xRange);
-  const yAxisScale = makeScale(yEncoding, rows.map((datum) => datum.y), yRange);
-  const xTicks = tickValues(xAxisScale.ticks, Math.max(2, Math.min(6, Math.floor(plotArea.width / 80))));
-  const yTicks = tickValues(yAxisScale.ticks, Math.max(2, Math.min(6, Math.floor(plotArea.height / 42))));
-  const xAxisY = coordinateGuide.yDirection === -1 ? plotBottom : plotArea.y;
-  const yAxisX = coordinateGuide.xDirection === 1 ? plotArea.x : plotRight;
-  const xLabelY = xAxisY + (coordinateGuide.yDirection === -1 ? fontSize * 2.6 : -fontSize * 2.1);
-  const yLabelX = yAxisX + (coordinateGuide.xDirection === 1 ? -fontSize * 3.2 : fontSize * 3.2);
+  const xAxisScale = makeScale(xEncoding, rows.map((datum) => datum.x), xRange, input.sharedScales?.x);
+  const yAxisScale = makeScale(yEncoding, rows.map((datum) => datum.y), yRange, input.sharedScales?.y);
   const clipId = `line-plot-${chartId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-
-  const grid = yTicks.map((value) => {
-    const y = yAxisScale.position(value);
-    return `<line x1="${plotArea.x}" y1="${y}" x2="${plotRight}" y2="${y}" stroke="${escapeXml(tokens.axisColor)}" stroke-opacity="0.12" stroke-dasharray="2 4" vector-effect="non-scaling-stroke"/>`;
-  }).join("");
-  const xAxis = xTicks.map((value) => {
-    const x = xAxisScale.position(value);
-    const label = xEncoding.type === "temporal"
-      ? (value as Date).toISOString().slice(0, 7)
-      : String(value);
-    const tickEnd = xAxisY + (coordinateGuide.yDirection === -1 ? 5 : -5);
-    const textY = xAxisY + (coordinateGuide.yDirection === -1 ? fontSize * 1.6 : -fontSize * 0.8);
-    return `<g class="tick"><line x1="${x}" y1="${xAxisY}" x2="${x}" y2="${tickEnd}" stroke="${escapeXml(tokens.axisColor)}" stroke-opacity="0.45" vector-effect="non-scaling-stroke"/><text x="${x}" y="${textY}" text-anchor="middle" fill-opacity="0.76">${escapeXml(label)}</text></g>`;
-  }).join("");
-  const yAxis = yTicks.map((value) => {
-    const y = yAxisScale.position(value);
-    const tickEnd = yAxisX + (coordinateGuide.xDirection === 1 ? -5 : 5);
-    const textX = yAxisX + (coordinateGuide.xDirection === 1 ? -fontSize * 0.8 : fontSize * 0.8);
-    const label = yEncoding.type === "temporal"
-      ? (value as Date).toISOString().slice(0, 7)
-      : yEncoding.type === "quantitative"
-        ? formatQuantitativeTick(value)
-        : String(value);
-    return `<g class="tick"><line x1="${yAxisX}" y1="${y}" x2="${tickEnd}" y2="${y}" stroke="${escapeXml(tokens.axisColor)}" stroke-opacity="0.45" vector-effect="non-scaling-stroke"/><text x="${textX}" y="${y}" text-anchor="${coordinateGuide.xDirection === 1 ? "end" : "start"}" dominant-baseline="middle" fill-opacity="0.76">${escapeXml(label)}</text></g>`;
-  }).join("");
 
   const pathGenerator = line<(typeof rows)[number]>()
     .x((datum) => xAxisScale.position(datum.x))
     .y((datum) => yAxisScale.position(datum.y));
+  const colorEncoding = chartSpec.encodings.color;
+  const sizeEncoding = chartSpec.encodings.size;
+  const colorDomain = visualDomain(dataset.rows, colorEncoding);
+  const sizeDomain = visualDomain(dataset.rows, sizeEncoding);
+  const mappedAverage = (values: (typeof rows), encoding: ChartEncoding | undefined) => {
+    if (!encoding) return null;
+    const parsed = values.flatMap((datum) => {
+      const value = parseVisualValue(datum.row[encoding.field] ?? "", encoding);
+      return value === null ? [] : [value];
+    });
+    return parsed.length > 0 ? parsed.reduce((sum, value) => sum + value, 0) / parsed.length : null;
+  };
+  let maximumLineWidth = tokens.lineWidth;
   const seriesMarkup = groupedRows.map(([seriesKey, values], index) => {
     const ordered = xEncoding.type === "nominal"
       ? [...values]
       : [...values].sort((left, right) => Number(left.x) - Number(right.x));
     const path = pathGenerator(ordered);
     if (!path) return "";
-    const color = tokens.palette[index % tokens.palette.length] ?? fallbackPalette[index % fallbackPalette.length]!;
+    const fallbackColor = tokens.palette[index % tokens.palette.length] ?? fallbackPalette[index % fallbackPalette.length]!;
+    const averageColorValue = mappedAverage(values, colorEncoding);
+    const color = colorDomain && averageColorValue !== null && isLinearColorMapping(lineConfig?.colorMapping)
+      ? mapColorValue(averageColorValue, colorDomain, lineConfig.colorMapping)
+      : fallbackColor;
+    const averageSizeValue = mappedAverage(values, sizeEncoding);
+    const lineWidth = sizeDomain && averageSizeValue !== null && isLinearSizeMapping(lineConfig?.sizeMapping)
+      ? mapSizeValue(averageSizeValue, sizeDomain, lineConfig.sizeMapping)
+      : typeof lineConfig?.size === "number" ? lineConfig.size : tokens.lineWidth;
+    maximumLineWidth = Math.max(maximumLineWidth, lineWidth);
     const keys = ordered.map((datum) => rowKey(dataset, datum.row)).filter(Boolean);
-    return `<g data-chart-id="${escapeXml(chartId)}" data-mark-role="line" data-mark-group-id="mark-group:${escapeXml(chartId)}:line" data-series-key="${escapeXml(seriesKey)}" data-point-count="${ordered.length}" data-row-keys="${escapeXml(keys.join(","))}" opacity="${Number(lineConfig?.opacity ?? 1)}"><path d="${path}" fill="none" stroke="${escapeXml(color)}" stroke-width="${tokens.lineWidth}" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" style="stroke: ${escapeXml(color)}; stroke-width: ${tokens.lineWidth}px; stroke-linecap: round; stroke-linejoin: round; fill: none;"/></g>`;
+    return `<g data-chart-id="${escapeXml(chartId)}" data-mark-role="line" data-mark-group-id="mark-group:${escapeXml(chartId)}:line" data-series-key="${escapeXml(seriesKey)}" data-point-count="${ordered.length}" data-row-keys="${escapeXml(keys.join(","))}" opacity="${Number(lineConfig?.opacity ?? 1)}"><path d="${path}" fill="none" stroke="${escapeXml(color)}" stroke-width="${lineWidth}" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" style="stroke: ${escapeXml(color)}; stroke-width: ${lineWidth}px; stroke-linecap: round; stroke-linejoin: round; fill: none;"/></g>`;
   }).join("");
-  const legendGap = Math.max(fontSize * 1.4, Math.min(fontSize * 2.25, plotArea.height / Math.max(groupedRows.length, 1)));
-  const legendX = plotRight + fontSize * 1.8;
-  const legendStartY = plotArea.y + Math.max(fontSize * 0.7, (plotArea.height - legendGap * Math.max(groupedRows.length - 1, 0)) / 2);
-  const legend = seriesEncoding ? groupedRows.map(([seriesKey], index) => {
-    const color = tokens.palette[index % tokens.palette.length] ?? fallbackPalette[index % fallbackPalette.length]!;
-    const y = legendStartY + legendGap * index;
-    return `<g transform="translate(${legendX} ${y})" data-series-key="${escapeXml(seriesKey)}"><line x1="0" y1="0" x2="${fontSize * 1.5}" y2="0" stroke="${escapeXml(color)}" stroke-width="${tokens.lineWidth}" stroke-linecap="round" vector-effect="non-scaling-stroke"/><text x="${fontSize * 1.95}" y="0" dominant-baseline="middle" fill-opacity="0.84">${escapeXml(seriesKey)}</text></g>`;
-  }).join("") : "";
-
-  const clipPadding = Math.max(3, tokens.lineWidth * 2);
-  const content = `<g data-chart-id="${escapeXml(chartId)}" data-chart-type="line" data-renderer="deterministic-line@3" font-family="${escapeXml(tokens.fontFamily)}" font-size="${fontSize}" fill="${escapeXml(tokens.textColor)}"><defs><clipPath id="${clipId}"><rect x="${plotArea.x - clipPadding}" y="${plotArea.y - clipPadding}" width="${plotArea.width + clipPadding * 2}" height="${plotArea.height + clipPadding * 2}"/></clipPath></defs><g data-mark-role="legend">${legend}</g><g data-mark-role="grid">${grid}</g><g data-mark-role="x-axis" data-bound="true"><line class="axis-domain" x1="${plotArea.x}" y1="${xAxisY}" x2="${plotRight}" y2="${xAxisY}" stroke="${escapeXml(tokens.axisColor)}" stroke-opacity="0.55" vector-effect="non-scaling-stroke"/>${xAxis}<text class="axis-label" data-bound="true" x="${plotArea.x + plotArea.width / 2}" y="${xLabelY}" text-anchor="middle" font-weight="600" fill-opacity="0.9">${escapeXml(formatFieldLabel(xEncoding.field))}</text></g><g data-mark-role="y-axis" data-bound="true"><line class="axis-domain" x1="${yAxisX}" y1="${plotArea.y}" x2="${yAxisX}" y2="${plotBottom}" stroke="${escapeXml(tokens.axisColor)}" stroke-opacity="0.55" vector-effect="non-scaling-stroke"/>${yAxis}<text class="axis-label" data-bound="true" x="${yLabelX}" y="${plotArea.y + plotArea.height / 2}" text-anchor="middle" font-weight="600" fill-opacity="0.9" transform="rotate(-90 ${yLabelX} ${plotArea.y + plotArea.height / 2})">${escapeXml(formatFieldLabel(yEncoding.field))}</text></g><g data-mark-role="plot" clip-path="url(#${clipId})">${seriesMarkup}</g></g>`;
+  const clipPadding = Math.max(3, maximumLineWidth * 2);
+  const content = `<g data-chart-id="${escapeXml(chartId)}" data-chart-type="line" data-renderer="deterministic-line-marks@3"><defs><clipPath id="${clipId}"><rect x="${plotArea.x - clipPadding}" y="${plotArea.y - clipPadding}" width="${plotArea.width + clipPadding * 2}" height="${plotArea.height + clipPadding * 2}"/></clipPath></defs><g data-mark-role="plot" clip-path="url(#${clipId})">${seriesMarkup}</g></g>`;
   return {
     content,
     plotArea,

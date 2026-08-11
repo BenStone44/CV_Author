@@ -72,7 +72,7 @@ CoordinateSystem
 
 #### Layer 共享规则
 
-1. `Layer` 中 Line Chart 的 lines 和 Scatterplot 的 points 可以属于同一个共享坐标系。
+1. `Layer` 中所有坐标系与通道兼容的图表 marks 都可以属于同一个共享坐标系，不按图表类型建立特例。
 2. 当这些元素共享完整直角坐标系时，点击任一相关元素只显示一套共享坐标轴，不能为每个元素重复显示坐标轴。
 3. 对共享坐标轴执行 X/Y 编辑时，修改同时传播到该坐标系内所有使用对应通道的元素。
 4. 拖拽共享坐标轴的 scale 控件时，所有共享该通道的元素同步更新位置或尺度映射。
@@ -409,15 +409,15 @@ Chart 坐标轴边界
 
 1. **公共语义模型**：定义五类模板的维度映射表、稳定的 Template/Mark Group、坐标系 owner/member/sharedChannels，以及 Layer/Concat/Facet 的统一组合结构。
 2. **推断与基础渲染**：数据绑定统一读取模板契约；实现 Line、Scatterplot、Pie、Donut、Matrix 的确定性渲染、series 自动推断和外层维度方案推荐。
-3. **统一组合命令**：按钮和拖拽共同调用同一个命令；Line + Scatter Layer 保持同层 Line Group/Point Group，Facet/Concat 保持同层独立 View，必要的 Nested 结构才使用 Canvas Group。
+3. **统一组合命令**：按钮和拖拽共同调用同一个命令；Layer 成员保持同层并通过通用 owner/member 协议共享坐标系，Facet/Concat 保持同层独立 View，必要的 Nested 结构才使用 Canvas Group。
 4. **拖拽热区与反馈**：在已配置图表内部提供 Layer 热区，在坐标边界提供 Concat 热区；处理互斥高亮、不兼容反馈和普通投放回退。
 
 ### 实施决策
 
-- 坐标系仍由一个 Canvas 节点负责显示和定位，但通过 `coordinateSystem` 显式保存 owner、成员和共享通道；坐标轴不会进入 `children`。
+- 坐标轴是独立渲染组件，统一负责网格、轴线、刻度、刻度文字和轴标题；通过 `coordinateSystem` 显式读取 owner、成员和共享通道，但不会进入 Canvas `children`。
 - Canvas Group、Template/Mark Group、数据 series 使用不同 ID 和字段，彼此不混用。
 - 基础模板用 declarative dimension mapping 接入通用推断器；不在数据绑定 UI 中按图表类型堆叠分支。
-- Line + Scatter Layer 不使用外层 Canvas Group；Line Group 输出坐标轴和折线，Point Group 只输出散点 marks，两者以共享 `compositionSpec.id` 和 `coordinateSystem.id` 保持合成关系。
+- Layer 不使用外层 Canvas Group，也不区分特定图表配对；owner 提供共享 scale，独立坐标轴组件输出唯一共享轴，所有成员 renderer 只输出 marks 并复用共享 layout，成员以共享 `compositionSpec.id` 和 `coordinateSystem.id` 保持合成关系。
 - 第一阶段对未明确的 Matrix 采用 `row + column + value -> cell`；Polar 采用 `angle + radius/ring` 命名。
 - 所有实现完成后由用户执行检查、测试、构建与浏览器验收。
 
@@ -574,6 +574,12 @@ Chart 坐标轴边界
 | 2026-08-05 | 将 Facet/Concat 改为生成同层独立 View，不再自动创建外层 Canvas Group；普通点击一次只选中一个 View，同时保留组合 spec 与坐标共享，并在载入时展开旧的自动 Facet/Concat Group |
 | 2026-08-05 | 将 Nested Pie 投放从整个 Scatterplot 绘图区收紧为具体散点命中；每次只在被命中行的点位渲染四分量 Pie，并可通过重复拖放追加其他点 |
 | 2026-08-05 | 将 Line + Scatter Layer 从外层大 Group 改为同层 Line Group 与 Point Group；两组可单独点选，共享 X/Y 坐标系，Point Group 保持 Nested Pie 点位投放能力，并在载入时迁移旧语义 Layer Group |
+| 2026-08-11 | 移除 Line + Scatter 的 Layer 特例；所有兼容图表统一使用 owner/member 组合协议，owner 唯一渲染坐标轴，其他成员共享 layout 并只渲染 marks；Layer 对齐与编辑区域统一使用排除轴文字、图例和模板留白的 plot-area bbox |
+| 2026-08-11 | 将 Cartesian 网格、轴线、刻度及全部轴文字迁移到独立坐标轴组件；所有确定性 Chart renderer 固定为 marks-only，静态轴统一从 ChartSpec 的 plot area、scale 和字体模型渲染 |
+| 2026-08-11 | 收紧 Layer 坐标契约：owner 唯一持有静态轴，其他成员持续继承 owner 的 X/Y encoding、scale 与 frame；Layer 状态不再显示成员级 X/Y 配置控件，仅叠加各 renderer 的 marks |
+| 2026-08-11 | 暂时关闭 Dimension Options 的入口与自动弹窗；Layer 改为坐标系级变换单元，拖动、缩放或旋转任意成员都会同步变换所有 marks 与唯一坐标轴，并暂停拖出自动拆分 |
+| 2026-08-11 | Cartesian 初始 plot area 统一为居中 4:3；独立轴组件的初始屏幕字体缩小到约 8–9px，并按节点 scale 补偿内部字号 |
+| 2026-08-11 | 移除对象拖拽的 bbox clamp，消除随 Chart 尺寸与 scale 变化的画布内部停止边界；Layer 仍作为整体跟随指针移动 |
 
 ## 13. 验证记录
 
