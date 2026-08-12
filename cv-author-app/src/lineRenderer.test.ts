@@ -92,6 +92,45 @@ describe("Case 1 deterministic line chart", () => {
     ]);
   });
 
+  it("combines multiple chart-upgrade dimensions into multiline groups", () => {
+    const dataset: Dataset = {
+      id: "multi-dimension-line",
+      name: "multi-dimension-line.csv",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "region", type: "nominal" },
+        { name: "time", type: "temporal" },
+        { name: "weight_kg", type: "quantitative" },
+      ],
+      rows: ["A", "B"].flatMap((person) => ["East", "West"].flatMap((region) => [
+        { person, region, time: "2025-01-01", weight_kg: "80" },
+        { person, region, time: "2025-02-01", weight_kg: "85" },
+      ])),
+    };
+    const result = renderLineChart({
+      chartId: "multi-dimension-line",
+      width: 800,
+      height: 400,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Cartesian", origin: { x: 0, y: 400 }, xDirection: 1, yDirection: -1 },
+      chartSpec: {
+        ...createChartSpec(),
+        datasetId: dataset.id,
+        series: { field: "person", type: "nominal" },
+        seriesFields: [
+          { field: "person", type: "nominal" },
+          { field: "region", type: "nominal" },
+        ],
+      },
+      dataset,
+    });
+
+    expect(result.content.match(/data-mark-role="line"/g)).toHaveLength(4);
+    expect(result.content).toContain('data-series-key="A / East"');
+    expect(result.content).toContain('data-series-key="B / West"');
+  });
+
   it("renders a single line when no series field is configured", () => {
     const result = renderLineChart({
       chartId: "case1-single-line",
@@ -110,7 +149,53 @@ describe("Case 1 deterministic line chart", () => {
     });
 
     expect(result.content.match(/data-mark-role="line"/g)).toHaveLength(1);
+    expect(result.content).toContain('data-point-count="8"');
     expect(result.content).not.toContain("data-mark-role=\"legend\"><g");
+  });
+
+  it("aggregates repeated X values with the configured operation", () => {
+    const dataset: Dataset = {
+      id: "monthly-weight",
+      name: "monthly-weight.csv",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "time", type: "temporal" },
+        { name: "weight_kg", type: "quantitative" },
+      ],
+      rows: [
+        { person: "A", time: "2025-01-01", weight_kg: "80" },
+        { person: "B", time: "2025-01-01", weight_kg: "100" },
+        { person: "A", time: "2025-02-01", weight_kg: "90" },
+        { person: "B", time: "2025-02-01", weight_kg: "110" },
+      ],
+      primaryKey: ["person", "time"],
+    };
+    const render = (operation: "sum" | "avg") => renderLineChart({
+      chartId: `monthly-${operation}`,
+      width: 800,
+      height: 400,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: {
+        type: "Cartesian",
+        origin: { x: 0, y: 400 },
+        xDirection: 1,
+        yDirection: -1,
+      },
+      chartSpec: {
+        ...createChartSpec(),
+        datasetId: dataset.id,
+        aggregations: { y: operation },
+      },
+      dataset,
+    });
+
+    const average = render("avg");
+    const sum = render("sum");
+    expect(average.content).toContain('data-point-count="2"');
+    expect(average.scales.y.domain).toEqual([88, 102]);
+    expect(sum.content).toContain('data-point-count="2"');
+    expect(sum.scales.y.domain).toEqual([175, 205]);
   });
 
   it("renders nominal fields on both axes with point scales", () => {

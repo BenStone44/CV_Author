@@ -23,6 +23,7 @@ export type PolarCoordinateGuide = {
   origin: Point;
   radiusScale?: number;
   ringScale?: number;
+  angleSpan?: number;
 };
 
 export type CoordinateGuide = CartesianCoordinateGuide | PolarCoordinateGuide;
@@ -163,11 +164,14 @@ export type ChartSpec = {
   templateId?: ChartTemplateKind;
   datasetId: string;
   encodings: Partial<Record<ChartEncodingChannel, ChartEncoding>>;
+  aggregations?: Partial<Record<ChartEncodingChannel, "sum" | "avg">>;
+  dimensionAggregations?: Record<string, "sum" | "avg">;
   angleFields?: ChartEncoding[];
   flattenFields?: string[];
   radiusMode?: "shared" | "per-component";
   componentRadiusFields?: Record<string, ChartEncoding>;
   series?: ChartEncoding;
+  seriesFields?: ChartEncoding[];
   scales?: Partial<Record<EncodingChannel, ChartScaleSpec>>;
   plotArea?: ChartPlotArea;
   styleTokens?: ChartStyleTokens;
@@ -175,7 +179,7 @@ export type ChartSpec = {
   filters?: Record<string, string>;
   markGroups?: MarkGroupSpec[];
   dimensionRecommendations?: DimensionRecommendation[];
-  dimensionDecisions?: Record<string, "series" | "flatten" | "facet" | "nested">;
+  dimensionDecisions?: Record<string, "aggregate" | "series" | "flatten" | "facet" | "nested">;
 };
 
 export type MarkGroupSpec = {
@@ -265,6 +269,28 @@ export type ChartDropZone = {
   direction?: "horizontal" | "vertical";
   concatPosition?: "before" | "after";
 };
+
+export type DataBindingDropZone =
+  | {
+    type: "polar-angle";
+    targetNodeId: string;
+    channel: "angle";
+    center: Point;
+    radiusX: number;
+    radiusY: number;
+    rotation: number;
+    compatible: boolean;
+    fieldName?: string;
+  }
+  | {
+    type: "cartesian-axis";
+    targetNodeId: string;
+    channel: EncodingChannel;
+    start: Point;
+    end: Point;
+    compatible: boolean;
+    fieldName?: string;
+  };
 
 export type NestedBindingTarget = {
   nodeId: string;
@@ -623,6 +649,14 @@ export type CoordinateAxisScaleInteraction = {
   historyCommitted: boolean;
 };
 
+export type PolarAngleInteraction = {
+  type: "polar-angle";
+  nodeId: string;
+  startPoint: Point;
+  scopeGroupId?: string;
+  historyCommitted: boolean;
+};
+
 export type ScaleInteraction = {
   type: "scale";
   handle: ScaleHandle;
@@ -644,6 +678,7 @@ export type Interaction =
   | RotateInteraction
   | CoordinateOriginInteraction
   | CoordinateAxisScaleInteraction
+  | PolarAngleInteraction
   | PanInteraction;
 
 export type CanvasHistorySnapshot = {

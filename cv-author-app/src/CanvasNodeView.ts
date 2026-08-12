@@ -1,6 +1,7 @@
 import { defineComponent, h, type PropType } from "vue";
 import type { CanvasNode, CoordinateChannel, EncodingChannel, Point } from "./types";
-import { getNodeTransform, getLeafNodeTransform } from "./canvasUtils";
+import { getNodeSelectionBounds, getNodeTransform, getLeafNodeTransform } from "./canvasUtils";
+import { PolarCoordinateSystem } from "./PolarCoordinateSystem";
 
 function arrowHead(end: Point, direction: Point, size: number) {
   const perpendicular = { x: -direction.y, y: direction.x };
@@ -178,73 +179,6 @@ function cartesianCoordinateOverlay(
   ]);
 }
 
-function polarCoordinateOverlay(
-  node: CanvasNode,
-  viewZoom: number,
-  onAxisScalePointerDown?: (node: CanvasNode, axis: CoordinateChannel, event: PointerEvent) => void,
-) {
-  const guide = node.coordinateGuide;
-  if (guide?.type !== "Polar") return null;
-  const minX = node.kind === "leaf" ? node.contentMinX : 0;
-  const minY = node.kind === "leaf" ? node.contentMinY : 0;
-  const contentRadius = Math.max(
-    guide.origin.x - minX,
-    minX + node.width - guide.origin.x,
-    guide.origin.y - minY,
-    minY + node.height - guide.origin.y,
-  );
-  const padding = Math.max(8, Math.min(Math.max(node.width, node.height) * 0.035, 42));
-  const radius = (contentRadius + padding) * (guide.radiusScale ?? 1);
-  const renderedScale = Math.max(Math.abs(node.scaleX), Math.abs(node.scaleY), 0.0001) * Math.max(viewZoom, 0.0001);
-  const spokes = [0, Math.PI / 4, Math.PI / 2, Math.PI * 3 / 4].map((angle) => {
-    const dx = Math.cos(angle) * radius;
-    const dy = Math.sin(angle) * radius;
-    return h("line", {
-      class: "polar-coordinate-spoke",
-      x1: guide.origin.x - dx,
-      y1: guide.origin.y - dy,
-      x2: guide.origin.x + dx,
-      y2: guide.origin.y + dy,
-      "vector-effect": "non-scaling-stroke",
-    });
-  });
-  const rings = [1 / 3, 2 / 3, 1].map((ratio) => h("circle", {
-    class: "polar-coordinate-ring",
-    cx: guide.origin.x,
-    cy: guide.origin.y,
-    r: radius * ratio,
-    "vector-effect": "non-scaling-stroke",
-  }));
-  const scaleHandle = (channel: "radius" | "ring", x: number, y: number) => h("circle", {
-    class: ["polar-coordinate-scale-handle", `polar-coordinate-scale-handle--${channel}`],
-    cx: x,
-    cy: y,
-    r: 7 / renderedScale,
-    "pointer-events": "all",
-    onPointerdown: onAxisScalePointerDown
-      ? (event: PointerEvent) => {
-        event.preventDefault();
-        event.stopPropagation();
-        onAxisScalePointerDown(node, channel, event);
-      }
-      : undefined,
-  }, [h("title", `Scale ${channel}`)]);
-  return h("g", { class: "coordinate-guide coordinate-guide--polar", "pointer-events": "none" }, [
-    ...rings,
-    ...spokes,
-    h("rect", {
-      class: "polar-coordinate-origin",
-      x: guide.origin.x - 5 / renderedScale,
-      y: guide.origin.y - 5 / renderedScale,
-      width: 10 / renderedScale,
-      height: 10 / renderedScale,
-      "vector-effect": "non-scaling-stroke",
-    }),
-    scaleHandle("radius", guide.origin.x, guide.origin.y + radius),
-    scaleHandle("ring", guide.origin.x + radius, guide.origin.y),
-  ]);
-}
-
 export const CanvasNodeView: any = defineComponent({
   name: "CanvasNodeView",
   props: {
@@ -278,7 +212,7 @@ export const CanvasNodeView: any = defineComponent({
         transform: props.node.kind === "leaf"
           ? getLeafNodeTransform(props.node)
           : getNodeTransform(props.node),
-        "pointer-events": nodeInteractive ? "bounding-box" : isEditingAncestor ? "none" : undefined,
+        "pointer-events": nodeInteractive ? "auto" : isEditingAncestor ? "none" : undefined,
         onPointerdown: nodeInteractive && props.onNodePointerDown
           ? (event: PointerEvent) => props.onNodePointerDown!(props.node, event)
           : undefined,
@@ -292,29 +226,42 @@ export const CanvasNodeView: any = defineComponent({
 
       if (props.node.kind === "leaf") {
         const hasInteractiveMarks = !!props.node.renderedContent && !!markHandler;
+        const isChartPlaceholder = !!props.node.chartSpec && !props.node.renderedContent;
+        const hitBounds = getNodeSelectionBounds(props.node);
         return h("g", { ...sharedProps }, [
           // Keep a stable hit area for thin strokes and hollow SVG shapes.
           h("rect", {
-            x: props.node.contentMinX,
-            y: props.node.contentMinY,
-            width: Math.max(props.node.width, 1),
-            height: Math.max(props.node.height, 1),
+            x: hitBounds.minX,
+            y: hitBounds.minY,
+            width: hitBounds.width,
+            height: hitBounds.height,
             fill: "transparent",
             class: "canvas-object-hit-target",
             "pointer-events": hasInteractiveMarks ? "none" : "all",
             style: { pointerEvents: hasInteractiveMarks ? "none" : "all" },
           }),
+          ...(isChartPlaceholder ? [h("rect", {
+            class: "chart-placeholder-frame",
+            x: props.node.contentMinX,
+            y: props.node.contentMinY,
+            width: Math.max(props.node.width, 1),
+            height: Math.max(props.node.height, 1),
+            "vector-effect": "non-scaling-stroke",
+            "pointer-events": "none",
+          })] : []),
           h("g", { class: props.node.renderedContent && markHandler ? "semantic-rendered-content" : undefined, innerHTML: props.node.renderedContent ?? props.node.content, style: { pointerEvents: props.node.renderedContent && markHandler ? "all" : "none" }, onPointerdown: props.node.renderedContent && markHandler ? (event: PointerEvent) => markHandler(props.node, event) : undefined }),
         ]);
       }
 
       if (props.node.renderedContent && !isEditingAncestor) {
+        const hitBounds = getNodeSelectionBounds(props.node);
         return h("g", sharedProps, [
           h("rect", {
-            x: 0,
-            y: 0,
-            width: Math.max(props.node.width, 1),
-            height: Math.max(props.node.height, 1),
+            class: "canvas-object-hit-target",
+            x: hitBounds.minX,
+            y: hitBounds.minY,
+            width: hitBounds.width,
+            height: hitBounds.height,
             fill: "transparent",
             "pointer-events": markHandler ? "none" : "all",
           }),
@@ -351,14 +298,28 @@ export const CanvasNodeView: any = defineComponent({
             })]
             : []),
           ...(nodeInteractive
-            ? [h("rect", {
+            ? [h("rect", (() => {
+              const hitBounds = getNodeSelectionBounds(props.node);
+              return {
               class: "canvas-object-hit-target",
+              x: hitBounds.minX,
+              y: hitBounds.minY,
+              width: hitBounds.width,
+              height: hitBounds.height,
+              fill: "transparent",
+              "pointer-events": "all",
+              };
+            })())]
+            : []),
+          ...(!props.node.renderedContent && props.node.chartSpec
+            ? [h("rect", {
+              class: "chart-placeholder-frame",
               x: 0,
               y: 0,
               width: Math.max(props.node.width, 1),
               height: Math.max(props.node.height, 1),
-              fill: "transparent",
-              "pointer-events": "all",
+              "vector-effect": "non-scaling-stroke",
+              "pointer-events": "none",
             })]
             : []),
           ...props.node.children.map((child) =>
@@ -416,7 +377,11 @@ export const CanvasCoordinateGuideView = defineComponent({
           props.onAxisReverse ?? undefined,
           props.onAxisSelect ?? undefined,
         )
-        : polarCoordinateOverlay(props.node, props.viewZoom, props.onAxisScalePointerDown ?? undefined);
+        : h(PolarCoordinateSystem, {
+          node: props.node,
+          viewZoom: props.viewZoom,
+          applyTransform: false,
+        });
       if (!overlay) return null;
       return h(
         "g",

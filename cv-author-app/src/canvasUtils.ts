@@ -153,12 +153,15 @@ export function cloneChartSpec(chartSpec: ChartSpec | null | undefined) {
         encoding ? { ...encoding } : encoding,
       ]),
     ) as ChartSpec["encodings"],
+    aggregations: chartSpec.aggregations ? { ...chartSpec.aggregations } : undefined,
+    dimensionAggregations: chartSpec.dimensionAggregations ? { ...chartSpec.dimensionAggregations } : undefined,
     angleFields: chartSpec.angleFields?.map((encoding) => ({ ...encoding })),
     flattenFields: chartSpec.flattenFields ? [...chartSpec.flattenFields] : undefined,
     componentRadiusFields: chartSpec.componentRadiusFields
       ? Object.fromEntries(Object.entries(chartSpec.componentRadiusFields).map(([field, encoding]) => [field, { ...encoding }]))
       : undefined,
     series: chartSpec.series ? { ...chartSpec.series } : undefined,
+    seriesFields: chartSpec.seriesFields?.map((encoding) => ({ ...encoding })),
     scales: chartSpec.scales
       ? {
         ...(chartSpec.scales.x

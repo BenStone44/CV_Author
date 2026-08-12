@@ -92,7 +92,6 @@ describe("independent Cartesian axis component", () => {
       showAxis: true,
       interactive: false,
       applyTransform: false,
-      onAxisSelect: null,
       onAxisScalePointerDown: null,
     });
     const axisGroup = render();

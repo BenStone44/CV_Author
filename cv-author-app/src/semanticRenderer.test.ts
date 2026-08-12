@@ -20,6 +20,41 @@ const lineSpec: ChartSpec = {
 };
 
 describe("semantic Case 1 renderers", () => {
+  it("compresses polar marks into the configured angular span", () => {
+    const chartSpec: ChartSpec = {
+      chartType: "PieChart",
+      datasetId: dataset.id,
+      encodings: {
+        angle: { field: "weight_kg", type: "quantitative" },
+        color: { field: "person", type: "nominal" },
+      },
+    };
+    const full = renderDeterministicChart({
+      chartId: "full-pie",
+      width: 320,
+      height: 180,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Polar", origin: { x: 160, y: 90 }, angleSpan: 360 },
+      chartSpec,
+      dataset,
+    });
+    const partial = renderDeterministicChart({
+      chartId: "partial-pie",
+      width: 320,
+      height: 180,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Polar", origin: { x: 160, y: 90 }, angleSpan: 270 },
+      chartSpec,
+      dataset,
+    });
+
+    expect(full.content.match(/data-mark-role="arc"/g)).toHaveLength(40);
+    expect(partial.content.match(/data-mark-role="arc"/g)).toHaveLength(40);
+    expect(partial.content).not.toBe(full.content.replaceAll("full-pie", "partial-pie"));
+  });
+
   it("renders scatter marks without duplicate axes", () => {
     const result = renderDeterministicChart({
       chartId: "point-group",
@@ -84,6 +119,32 @@ describe("semantic Case 1 renderers", () => {
     expect(result.content).toContain('r="2" fill="#000000"');
     expect(result.content).toContain('r="6" fill="#ff0000"');
     expect(result.content).toContain('r="10" fill="#ffffff"');
+  });
+
+  it("uses static color and size when no visual fields are bound", () => {
+    const result = renderDeterministicChart({
+      chartId: "static-points",
+      width: 800,
+      height: 400,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Cartesian", origin: { x: 0, y: 400 }, xDirection: 1, yDirection: -1 },
+      chartSpec: {
+        ...lineSpec,
+        chartType: "Scatterplot",
+        encodings: { x: lineSpec.encodings.x, y: lineSpec.encodings.y },
+        markGroups: [{
+          id: "mark-group:static-points:point",
+          chartId: "static-points",
+          role: "point",
+          memberKeys: [],
+          sharedConfig: { color: "#123456", size: 7 },
+        }],
+      },
+      dataset,
+    });
+
+    expect(result.content).toContain('r="7" fill="#123456"');
   });
 
   it("shares line scales and emits point row metadata", () => {

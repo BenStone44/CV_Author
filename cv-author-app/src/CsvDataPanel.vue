@@ -1,17 +1,239 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   ChevronsLeft,
   ChevronsRight,
   FileSpreadsheet,
+  GripVertical,
   Trash2,
   Upload,
 } from "@lucide/vue";
 import defaultCsv from "../../data/case1.csv?raw";
+import {
+  beginCubeBindingDrag,
+  CUBE_BINDING_MIME,
+  cubeSelectionForChartFields,
+  endCubeBindingDrag,
+} from "./cubeBinding";
+import type { CubeSelectionState } from "./cubeBinding";
 import { useDatasetStore } from "./useDatasetStore";
 import type { DataColumnType } from "./types";
 
 const previewRowLimit = 250;
+
+const props = withDefaults(defineProps<{
+  selectedChartFields?: string[];
+  selectedChartId?: string;
+}>(), {
+  selectedChartFields: () => [],
+  selectedChartId: "",
+});
+
+const emit = defineEmits<{
+  cubeSelectionChange: [state: CubeSelectionState];
+}>();
+
+const cubeColumns = [
+  {
+    name: "person",
+    values: ["person1", "person2", "person3", "person4", "person5"],
+  },
+  {
+    name: "date",
+    values: [
+      "2025-01-01",
+      "2025-02-01",
+      "2025-03-01",
+      "2025-04-01",
+      "2025-05-01",
+      "2025-06-01",
+      "2025-07-01",
+      "2025-08-01",
+      "2025-09-01",
+      "2025-10-01",
+      "2025-11-01",
+      "2025-12-01",
+    ],
+  },
+  {
+    name: "weight",
+    values: [
+      "weight_kg",
+      "water_kg",
+      "fat_kg",
+      "muscle_kg",
+      "minerals_kg",
+    ],
+  },
+] as const;
+
+const cubeRows = Array.from(
+  { length: Math.max(...cubeColumns.map((column) => column.values.length)) },
+  (_, rowIndex) => cubeColumns.map((column) => column.values[rowIndex] ?? ""),
+);
+type CubeColumnName = (typeof cubeColumns)[number]["name"];
+type CubeAggregation = "sum" | "avg";
+
+const selectedCubeValues = ref<Record<CubeColumnName, Set<number>>>(
+  Object.fromEntries(
+    cubeColumns.map((column) => [
+      column.name,
+      new Set(column.values.map((_, index) => index)),
+    ]),
+  ) as Record<CubeColumnName, Set<number>>,
+);
+const cubeAggregations = ref<Record<CubeColumnName, CubeAggregation>>({
+  person: "sum",
+  date: "sum",
+  weight: "sum",
+});
+const cubeAggregationEnabled = ref<Record<CubeColumnName, boolean>>({
+  person: false,
+  date: false,
+  weight: false,
+});
+
+let projectedChartId = "";
+watch(
+  [() => props.selectedChartId, () => props.selectedChartFields] as const,
+  ([chartId, fields]) => {
+    const selection = cubeSelectionForChartFields(fields);
+    selectedCubeValues.value = Object.fromEntries(cubeColumns.map((column) => {
+      if (column.name === "weight") {
+        return [column.name, new Set(column.values.flatMap((value, index) =>
+          selection.weight.includes(value) ? [index] : [],
+        ))];
+      }
+      const bound = column.name === "person" && !!chartId && chartId === projectedChartId
+        ? selectedCubeValues.value.person.size > 0 || selection.person
+        : selection[column.name];
+      return [column.name, new Set(bound ? column.values.map((_, index) => index) : [])];
+    })) as Record<CubeColumnName, Set<number>>;
+    projectedChartId = chartId;
+  },
+  { immediate: true },
+);
+
+function emitCubeSelection() {
+  emit("cubeSelectionChange", {
+    selected: Object.fromEntries(cubeColumns.map((column) => [
+      column.name,
+      selectedCubeValues.value[column.name].size > 0,
+    ])) as CubeSelectionState["selected"],
+    aggregations: Object.fromEntries(cubeColumns.map((column) => [
+      column.name,
+      {
+        enabled: cubeAggregationEnabled.value[column.name],
+        operation: cubeAggregations.value[column.name],
+      },
+    ])) as CubeSelectionState["aggregations"],
+  });
+}
+
+function getCubeColumn(columnName: CubeColumnName) {
+  return cubeColumns.find((column) => column.name === columnName)!;
+}
+
+function isCubeValueSelected(columnName: CubeColumnName, valueIndex: number) {
+  return selectedCubeValues.value[columnName].has(valueIndex);
+}
+
+function isCubeColumnAllSelected(columnName: CubeColumnName) {
+  return selectedCubeValues.value[columnName].size
+    === getCubeColumn(columnName).values.length;
+}
+
+function isCubeColumnPartiallySelected(columnName: CubeColumnName) {
+  const selectedCount = selectedCubeValues.value[columnName].size;
+  return selectedCount > 0
+    && selectedCount < getCubeColumn(columnName).values.length;
+}
+
+function setCubeAggregation(columnName: CubeColumnName, event: Event) {
+  cubeAggregations.value = {
+    ...cubeAggregations.value,
+    [columnName]: (event.target as HTMLSelectElement).value as CubeAggregation,
+  };
+  emitCubeSelection();
+}
+
+function toggleCubeAggregation(columnName: CubeColumnName, event: Event) {
+  cubeAggregationEnabled.value = {
+    ...cubeAggregationEnabled.value,
+    [columnName]: (event.target as HTMLInputElement).checked,
+  };
+  emitCubeSelection();
+}
+
+function toggleCubeValue(
+  columnName: CubeColumnName,
+  valueIndex: number,
+  event: Event,
+) {
+  const nextSelection = new Set(selectedCubeValues.value[columnName]);
+  if ((event.target as HTMLInputElement).checked) {
+    nextSelection.add(valueIndex);
+  } else {
+    nextSelection.delete(valueIndex);
+  }
+  selectedCubeValues.value = {
+    ...selectedCubeValues.value,
+    [columnName]: nextSelection,
+  };
+  emitCubeSelection();
+}
+
+function toggleCubeColumn(columnName: CubeColumnName, event: Event) {
+  const column = getCubeColumn(columnName);
+  const nextSelection = (event.target as HTMLInputElement).checked
+    ? new Set(column.values.map((_, index) => index))
+    : new Set<number>();
+  selectedCubeValues.value = {
+    ...selectedCubeValues.value,
+    [columnName]: nextSelection,
+  };
+  emitCubeSelection();
+}
+
+function selectedCubeColumnValues(columnName: CubeColumnName) {
+  const selectedIndexes = selectedCubeValues.value[columnName];
+  return getCubeColumn(columnName).values.filter((_, index) =>
+    selectedIndexes.has(index),
+  );
+}
+
+function onCubeBindingDragStart(
+  columnName: CubeColumnName,
+  event: DragEvent,
+  valueIndex?: number,
+) {
+  if (!event.dataTransfer) {
+    event.preventDefault();
+    return;
+  }
+  if (valueIndex !== undefined && !isCubeValueSelected(columnName, valueIndex)) {
+    selectedCubeValues.value = {
+      ...selectedCubeValues.value,
+      [columnName]: new Set([valueIndex]),
+    };
+    emitCubeSelection();
+  }
+  let values = selectedCubeColumnValues(columnName);
+  if (values.length === 0) values = [...getCubeColumn(columnName).values];
+  const serialized = beginCubeBindingDrag({
+    dimension: columnName,
+    values,
+    aggregation: cubeAggregationEnabled.value[columnName]
+      ? cubeAggregations.value[columnName]
+      : undefined,
+  });
+  event.dataTransfer.setData(CUBE_BINDING_MIME, serialized);
+  event.dataTransfer.effectAllowed = "copy";
+}
+
+function onCubeBindingDragEnd() {
+  endCubeBindingDrag();
+}
 
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const panelRef = ref<HTMLElement | null>(null);
@@ -198,6 +420,109 @@ onBeforeUnmount(() =>
     <p v-else-if="parseWarning" class="data-panel__message">
       {{ parseWarning }}
     </p>
+
+    <section class="cube-result" aria-labelledby="cube-result-title">
+      <header class="data-panel__section-header">
+        <h3 id="cube-result-title">Cube result</h3>
+        <span>3 dimensions</span>
+      </header>
+      <div class="cube-table-wrap">
+        <table class="cube-table">
+          <thead>
+            <tr>
+              <th
+                v-for="column in cubeColumns"
+                :key="column.name"
+                scope="col"
+              >
+                <div class="cube-table__header-content">
+                  <label class="cube-table__checkbox-label">
+                    <input
+                      class="cube-table__checkbox"
+                      type="checkbox"
+                      :checked="isCubeColumnAllSelected(column.name)"
+                      :indeterminate="isCubeColumnPartiallySelected(column.name)"
+                      :aria-label="`Select all ${column.name} values`"
+                      @change="toggleCubeColumn(column.name, $event)"
+                    />
+                    <span>{{ column.name }}</span>
+                  </label>
+                  <span
+                    class="cube-table__drag-handle"
+                    draggable="true"
+                    role="button"
+                    :title="`Drag ${column.name} dimension`"
+                    :aria-label="`Drag ${column.name} dimension`"
+                    @dragstart.stop="onCubeBindingDragStart(column.name, $event)"
+                    @dragend="onCubeBindingDragEnd"
+                  >
+                    <GripVertical :size="13" aria-hidden="true" />
+                  </span>
+                </div>
+                <div class="cube-table__aggregation-row">
+                  <label class="cube-table__aggregate-toggle">
+                    <input
+                      class="cube-table__checkbox"
+                      type="checkbox"
+                      :checked="cubeAggregationEnabled[column.name]"
+                      :aria-label="`Aggregate ${column.name}`"
+                      @change="toggleCubeAggregation(column.name, $event)"
+                    />
+                  </label>
+                  <select
+                    class="cube-table__aggregation"
+                    :value="cubeAggregations[column.name]"
+                    :disabled="!cubeAggregationEnabled[column.name]"
+                    :aria-label="`${column.name} aggregation`"
+                    @click.stop
+                    @change="setCubeAggregation(column.name, $event)"
+                  >
+                    <option value="sum">Sum</option>
+                    <option value="avg">Avg</option>
+                  </select>
+                </div>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(row, rowIndex) in cubeRows" :key="rowIndex">
+              <td
+                v-for="(cell, columnIndex) in row"
+                :key="columnIndex"
+                :class="{
+                  'cube-table__cell--selected': cell
+                    && isCubeValueSelected(cubeColumns[columnIndex]!.name, rowIndex),
+                }"
+              >
+                <label v-if="cell" class="cube-table__checkbox-label">
+                  <input
+                    class="cube-table__checkbox"
+                    type="checkbox"
+                    :checked="isCubeValueSelected(cubeColumns[columnIndex]!.name, rowIndex)"
+                    :aria-label="`Select ${cell}`"
+                    @change="toggleCubeValue(cubeColumns[columnIndex]!.name, rowIndex, $event)"
+                  />
+                  <span
+                    :title="cell"
+                    :class="{
+                      'cube-table__draggable-value': true,
+                    }"
+                    draggable="true"
+                    @dragstart.stop="onCubeBindingDragStart(cubeColumns[columnIndex]!.name, $event, rowIndex)"
+                    @dragend="onCubeBindingDragEnd"
+                  >{{ cell }}</span>
+                </label>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <header class="data-panel__section-header data-panel__section-header--source">
+      <h3>Source CSV</h3>
+      <span>{{ tableStatus }}</span>
+    </header>
 
     <div v-if="hasData" class="data-table-wrap">
       <table ref="dataTableRef" class="data-table">
@@ -437,6 +762,217 @@ onBeforeUnmount(() =>
   color: #8c2929;
 }
 
+.cube-result {
+  flex: 0 0 min(38%, 330px);
+  min-height: 190px;
+  overflow: hidden;
+  border-top: 1px solid rgba(24, 33, 47, 0.08);
+  border-bottom: 1px solid rgba(24, 33, 47, 0.08);
+  background: #fff;
+}
+
+.data-panel__section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(24, 33, 47, 0.08);
+  background: #f4f7fa;
+}
+
+.data-panel__section-header h3 {
+  margin: 0;
+  color: #33465b;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.data-panel__section-header span {
+  color: #7a8797;
+  font-size: 10px;
+}
+
+.data-panel__section-header--source {
+  flex: 0 0 auto;
+  margin-top: 8px;
+  border-top: 1px solid rgba(24, 33, 47, 0.08);
+}
+
+.cube-table-wrap {
+  height: calc(100% - 34px);
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.cube-table {
+  width: 100%;
+  min-width: 300px;
+  border-collapse: separate;
+  border-spacing: 0;
+  color: #263548;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.cube-table th,
+.cube-table td {
+  width: 33.333%;
+  height: 30px;
+  padding: 6px 9px;
+  overflow: hidden;
+  border-right: 1px solid #e5eaf0;
+  border-bottom: 1px solid #e5eaf0;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cube-table__checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.cube-table__checkbox-label span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cube-table__header-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cube-table__header-content .cube-table__checkbox-label {
+  flex: 1 1 auto;
+}
+
+.cube-table__aggregation-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 6px;
+}
+
+.cube-table__aggregate-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  color: #536273;
+  font-size: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cube-table__aggregation {
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 22px;
+  padding: 2px 14px 2px 4px;
+  border: 1px solid #aeb8c3;
+  border-radius: 4px;
+  background: #fff;
+  color: #34475a;
+  font: inherit;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.cube-table__aggregate-toggle .cube-table__checkbox {
+  width: 12px;
+  height: 12px;
+  flex-basis: 12px;
+}
+
+.cube-table__aggregation:disabled {
+  border-color: #c8ced5;
+  background: #e2e5e9;
+  color: #929aa4;
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.cube-table__drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border-radius: 4px;
+  color: #58728c;
+  cursor: grab;
+}
+
+.cube-table__drag-handle:hover {
+  background: #d8e8f6;
+  color: #1554b2;
+}
+
+.cube-table__drag-handle:active,
+.cube-table__draggable-value:active {
+  cursor: grabbing;
+}
+
+.cube-table__drag-handle--disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.cube-table__draggable-value {
+  cursor: grab;
+}
+
+.cube-table__checkbox {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  margin: 0;
+  accent-color: #1c7ed6;
+  cursor: pointer;
+}
+
+.cube-table__cell--selected {
+  background: #eef6fd;
+}
+
+.cube-table th:last-child,
+.cube-table td:last-child {
+  border-right: 0;
+}
+
+.cube-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #e8f0f7;
+  color: #33465b;
+  font-weight: 700;
+}
+
+.cube-table thead th {
+  padding-right: 5px;
+  padding-left: 5px;
+}
+
+.cube-table tbody tr:nth-child(even) td {
+  background: #f8fafc;
+}
+
+.cube-table tbody tr:nth-child(even) .cube-table__cell--selected {
+  background: #e7f2fb;
+}
+
 .data-table-wrap {
   flex: 1 1 auto;
   min-height: 0;
@@ -565,6 +1101,10 @@ onBeforeUnmount(() =>
   .data-panel--expanded {
     flex-basis: auto;
     width: auto;
+  }
+
+  .cube-result {
+    flex-basis: 200px;
   }
 }
 </style>

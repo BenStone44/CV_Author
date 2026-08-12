@@ -27,14 +27,16 @@ const chartSpec: ChartSpec = {
 };
 
 describe("line chart dimension recommendations", () => {
-  it("offers one-view and multiple-view choices for an inferred series", () => {
+  it("keeps an unselected person dimension out of the line series and recommends a facet", () => {
     const result = inferChartStructure("line-1", dataset, chartSpec);
 
-    expect(result.series?.field).toBe("person");
-    expect(result.dimensionRecommendations).toMatchObject([
-      { strategy: "series", field: "person", valueCount: 5 },
-      { strategy: "facet", field: "person", valueCount: 5 },
-    ]);
+    expect(result.series).toBeUndefined();
+    expect(result.dimensionRecommendations).toContainEqual(expect.objectContaining({
+      strategy: "facet",
+      field: "person",
+      valueCount: 5,
+      label: "Facet into 5 charts by person",
+    }));
   });
 
   it("does not offer the same choice again after a decision is recorded", () => {

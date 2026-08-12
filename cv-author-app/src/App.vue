@@ -8,13 +8,15 @@ import {
   watch,
 } from "vue";
 import { SlidersHorizontal, X } from "@lucide/vue";
-import { CanvasCoordinateGuideView, CanvasNodeView } from "./CanvasNodeView";
+import { CanvasNodeView } from "./CanvasNodeView";
 import {
   CanvasCoordinateSystemLayer,
   CartesianCoordinateSystem,
   getCartesianAxisChannels,
 } from "./CartesianCoordinateSystem";
+import { PolarCoordinateSystem } from "./PolarCoordinateSystem";
 import CsvDataPanel from "./CsvDataPanel.vue";
+import type { CubeSelectionState } from "./cubeBinding";
 import VisualMappingEditor from "./VisualMappingEditor.vue";
 import type {
   CanvasNode,
@@ -43,9 +45,8 @@ import {
 } from "./visualMapping";
 
 const canvasRef = ref<HTMLElement | null>(null);
-const encodingInspectorRef = ref<HTMLElement | null>(null);
-const encodingInspectorPosition = ref<{ left: number; top: number } | null>(null);
-const axisBindingAnchor = ref<{ x: number; y: number } | null>(null);
+const encodingInspectorOpen = ref(true);
+const cubePersonSelectionByChart = ref<Record<string, boolean>>({});
 
 const {
   selectedCoordinateSystems,
@@ -69,12 +70,11 @@ const {
   axisBindingEncodingValues,
   axisBindingOptionalCandidates,
   axisBindingRendererError,
-  axisBindingAxis,
-  axisBindingRelatedCharts,
   coordinateGuideNodes,
   contextMenu,
   draggedCandidateId,
   activeDropZone,
+  activeDataBindingDropZone,
   interaction,
   loadingDrop,
   importNotice,
@@ -112,14 +112,17 @@ const {
   onCanvasNodeDoubleClick,
   onEditingGroupBackgroundPointerDown,
   applyDimensionRecommendation,
+  applyDimensionAggregation,
+  applyDimensionChartUpgrade,
   onCanvasNodeContextMenu,
   onScaleHandlePointerDown,
   onRotateHandlePointerDown,
   onCoordinateOriginPointerDown,
   onCoordinateAxisScalePointerDown,
-  onCoordinateAxisSelect,
+  onPolarAnglePointerDown,
   setAxisBindingChannel,
   bindAxisField,
+  setAxisBindingAggregation,
   clearAxisBinding,
   confirmSeriesField,
   clearSeriesBinding,
@@ -306,6 +309,16 @@ const showColorMapping = computed(() =>
   !!activeColorDraftColumn.value && activeColorDraftColumn.value.type !== "nominal",
 );
 const showSizeMapping = computed(() => !!optionalEncodingDrafts.value.size);
+const staticColor = computed(() =>
+  typeof axisBindingMarkGroupConfig.value.color === "string"
+    ? axisBindingMarkGroupConfig.value.color
+    : "#2563eb",
+);
+const staticSize = computed(() =>
+  typeof axisBindingMarkGroupConfig.value.size === "number"
+    ? axisBindingMarkGroupConfig.value.size
+    : 4,
+);
 const activeColorMapping = computed(() => {
   const mapping = axisBindingMarkGroupConfig.value.colorMapping;
   return isLinearColorMapping(mapping) ? mapping : defaultColorMapping;
@@ -333,62 +346,170 @@ const llmDataset = computed(() => {
     llmNode.value?.layerSpec?.datasetId ?? llmNode.value?.chartSpec?.datasetId;
   return datasetId ? getDataset(datasetId) : activeDataset.value;
 });
+const encodingTargetNode = computed(() =>
+  selectedNodes.value.find((node) => !!node.chartSpec)
+  ?? axisBindingNode.value,
+);
+const canToggleEncodingInspector = computed(() => !!encodingTargetNode.value);
+
+function defaultEncodingChannel(node: CanvasNode): EncodingChannel {
+  return isPolarChartType(node.chartSpec?.chartType ?? "") ? "y" : "x";
+}
+
+function selectEncodingTarget(node: CanvasNode) {
+  if (axisBindingTarget.value?.nodeId === node.id) return;
+  axisBindingTarget.value = {
+    nodeId: node.id,
+    channel: defaultEncodingChannel(node),
+  };
+}
+
+function toggleEncodingInspector() {
+  if (encodingInspectorOpen.value) {
+    encodingInspectorOpen.value = false;
+    return;
+  }
+  const node = encodingTargetNode.value;
+  if (!node) return;
+  closeCompositionCandidates();
+  selectEncodingTarget(node);
+  encodingInspectorOpen.value = true;
+}
+
+function closeEncodingInspector() {
+  encodingInspectorOpen.value = false;
+}
 const activeDimensionRecommendations = computed(() =>
   (axisBindingNode.value ?? llmNode.value)?.chartSpec?.dimensionRecommendations ?? [],
 );
-const dimensionOptionsEnabled = false;
+const selectedChartId = computed(() =>
+  selectedNodes.value.length === 1 && selectedNodes.value[0]?.chartSpec
+    ? selectedNodes.value[0].id
+    : "",
+);
+const cubePersonSelected = computed(() => {
+  const chartId = selectedChartId.value;
+  if (!chartId) return false;
+  const explicitSelection = cubePersonSelectionByChart.value[chartId];
+  if (explicitSelection !== undefined) return explicitSelection;
+  return selectedChartFields.value.includes("person");
+});
+const personSeriesCandidate = computed(() =>
+  axisBindingSeriesCandidates.value.find((candidate) =>
+    candidate.field.toLowerCase() === "person"
+    || candidate.field.toLowerCase().includes("person"),
+  ),
+);
+const pendingDimension = computed(() => {
+  const node = axisBindingNode.value ?? llmNode.value;
+  const dataset = llmDataset.value;
+  if (!node?.chartSpec || !dataset || node.chartSpec.renderer?.status !== "ready") return null;
+  const recommendation = activeDimensionRecommendations.value.find((item) =>
+    dataset.columns.some((column) => column.name === item.field)
+    && !node.chartSpec?.dimensionDecisions?.[item.field],
+  );
+  if (!recommendation) return null;
+  return {
+    field: recommendation.field,
+    valueCount: recommendation.valueCount,
+    facetRecommendation: activeDimensionRecommendations.value.find((item) =>
+      item.field === recommendation.field && item.strategy === "facet"),
+  };
+});
+const pendingAggregation = ref<"sum" | "avg">("avg");
 const recommendationPopupOpen = ref(false);
 let lastRecommendationKey = "";
-let suppressRecommendationAutoOpen = false;
 
-watch(activeDimensionRecommendations, (recommendations) => {
-  if (!dimensionOptionsEnabled) {
-    recommendationPopupOpen.value = false;
-    return;
-  }
-  const key = recommendations.map((recommendation) => recommendation.id).join("|");
+watch(pendingDimension, (dimension) => {
+  const key = dimension ? `${selectedChartId.value}:${dimension.field}` : "";
   if (!key) {
     recommendationPopupOpen.value = false;
     lastRecommendationKey = "";
     return;
   }
-  if (axisBindingTarget.value) {
-    recommendationPopupOpen.value = false;
-    lastRecommendationKey = key;
-    return;
-  }
   if (key !== lastRecommendationKey) {
-    if (suppressRecommendationAutoOpen) suppressRecommendationAutoOpen = false;
-    else recommendationPopupOpen.value = true;
+    pendingAggregation.value = "avg";
+    recommendationPopupOpen.value = true;
   }
   lastRecommendationKey = key;
 }, { immediate: true });
 
 function openRecommendationPopup() {
-  if (!dimensionOptionsEnabled) return;
-  recommendationPopupOpen.value = activeDimensionRecommendations.value.length > 0;
+  recommendationPopupOpen.value = !!pendingDimension.value;
 }
 
 function closeRecommendationPopup() {
   recommendationPopupOpen.value = false;
 }
 
-function chooseDimensionRecommendation(recommendationId: string) {
-  suppressRecommendationAutoOpen = true;
-  applyDimensionRecommendation(recommendationId);
+function finishDimensionChoice() {
   recommendationPopupOpen.value = false;
+  void nextTick(() => {
+    const dimension = pendingDimension.value;
+    const key = dimension ? `${selectedChartId.value}:${dimension.field}` : "";
+    if (key && key !== lastRecommendationKey) recommendationPopupOpen.value = true;
+  });
 }
 
-function recommendationStrategyLabel(strategy: string) {
-  return strategy === "series"
-    ? "One view"
-    : strategy === "flatten"
-      ? "Flatten"
-      : strategy === "facet"
-        ? "Multiple views"
-        : "Nested";
+function chooseDimensionAggregation() {
+  const field = pendingDimension.value?.field;
+  if (!field || !applyDimensionAggregation(field, pendingAggregation.value)) return;
+  finishDimensionChoice();
+}
+
+function chooseDimensionChartUpgrade() {
+  const field = pendingDimension.value?.field;
+  if (!field || !applyDimensionChartUpgrade(field)) return;
+  finishDimensionChoice();
+}
+
+function chooseDimensionFacet() {
+  const recommendation = pendingDimension.value?.facetRecommendation;
+  if (!recommendation) return;
+  applyDimensionRecommendation(recommendation.id);
+  finishDimensionChoice();
 }
 const selectedCanvasNodesWithCoordinateGuides = coordinateGuideNodes;
+const selectedChartFields = computed(() => {
+  if (selectedNodes.value.length !== 1) return [];
+  const node = selectedNodes.value[0];
+  const spec = node?.chartSpec;
+  if (!spec) return [];
+  return Array.from(new Set([
+    ...Object.values(spec.encodings).map((encoding) => encoding?.field),
+    ...(spec.angleFields ?? []).map((encoding) => encoding.field),
+    spec.series?.field,
+    ...(spec.seriesFields ?? []).map((encoding) => encoding.field),
+    cubePersonSelectionByChart.value[node.id] ? "person" : undefined,
+    ...Object.values(spec.componentRadiusFields ?? {}).map((encoding) => encoding.field),
+  ].filter((field): field is string => !!field)));
+});
+
+function onCubeSelectionChange(state: CubeSelectionState) {
+  const chartId = selectedChartId.value;
+  if (!chartId) return;
+  cubePersonSelectionByChart.value = {
+    ...cubePersonSelectionByChart.value,
+    [chartId]: state.selected.person,
+  };
+  const seriesField = axisBindingNode.value?.chartSpec?.series?.field.toLowerCase() ?? "";
+  if (!state.selected.person && (seriesField === "person" || seriesField.includes("person"))) {
+    clearSeriesBinding();
+  }
+  const aggregation = !state.selected.person && state.aggregations.person.enabled
+    ? state.aggregations.person.operation
+    : state.aggregations.weight.enabled
+      ? state.aggregations.weight.operation
+      : undefined;
+  setAxisBindingAggregation("y", aggregation);
+}
+
+function applyPersonMultiline() {
+  const field = personSeriesCandidate.value?.field;
+  if (!field) return;
+  seriesDraftField.value = field;
+  confirmSeriesField(field);
+}
 
 watch(
   [
@@ -397,6 +518,7 @@ watch(
     axisBindingSeriesCandidates,
     axisBindingEncodingValues,
     axisBindingOptionalCandidates,
+    cubePersonSelected,
   ],
   ([
     target,
@@ -404,6 +526,7 @@ watch(
     candidates,
     encodingValues,
     optionalCandidates,
+    personSelected,
   ]) => {
     if (!target) {
       seriesDraftField.value = "";
@@ -413,13 +536,15 @@ watch(
     const available = candidates.some(
       (candidate) => candidate.field === seriesDraftField.value,
     );
-    if (
+    if (!personSelected) {
+      seriesDraftField.value = "";
+    } else if (
       confirmedField &&
       candidates.some((candidate) => candidate.field === confirmedField)
     ) {
       seriesDraftField.value = confirmedField;
     } else if (!available) {
-      seriesDraftField.value = candidates[0]?.field ?? "";
+      seriesDraftField.value = personSeriesCandidate.value?.field ?? candidates[0]?.field ?? "";
     }
     const nextDrafts = { ...optionalEncodingDrafts.value };
     optionalCandidates.forEach((option) => {
@@ -490,10 +615,6 @@ function onPieComponentRadiusFieldChange(componentField: string, event: Event) {
   setPieComponentRadiusField(componentField, (event.target as HTMLSelectElement).value);
 }
 
-function onSeriesFieldChange(event: Event) {
-  seriesDraftField.value = (event.target as HTMLSelectElement).value;
-}
-
 function onOptionalEncodingChange(
   channel: OptionalEncodingChannel,
   event: Event,
@@ -525,10 +646,6 @@ function confirmOptionalEncodings() {
 
 function confirmEncodingInspector() {
   const node = axisBindingNode.value;
-  if (isLineChartType(axisBindingNode.value?.chartSpec?.chartType ?? "")) {
-    if (seriesDraftField.value) confirmSeriesField(seriesDraftField.value);
-    else clearSeriesBinding();
-  }
   confirmOptionalEncodings();
   void nextTick(() => {
     encodingReviewApprovedKey.value = encodingReviewKey(node);
@@ -543,21 +660,16 @@ function onSizeMappingChange(mapping: LinearSizeMapping) {
   updateAxisBindingMarkGroupConfig({ sizeMapping: mapping });
 }
 
-function confirmPolarEncodingInspector() {
-  closeAxisBinding();
-  if (dimensionOptionsEnabled && activeDimensionRecommendations.value.length > 0) {
-    recommendationPopupOpen.value = true;
-  }
+function onStaticColorChange(event: Event) {
+  updateAxisBindingMarkGroupConfig({ color: (event.target as HTMLInputElement).value });
 }
 
-function skipOptionalEncodings() {
-  const node = axisBindingNode.value;
-  axisBindingOptionalCandidates.value.forEach((option) =>
-    clearOptionalEncoding(option.channel),
-  );
-  void nextTick(() => {
-    encodingReviewApprovedKey.value = encodingReviewKey(node);
-  });
+function onStaticSizeChange(event: Event) {
+  updateAxisBindingMarkGroupConfig({ size: Number((event.target as HTMLInputElement).value) });
+}
+
+function confirmPolarEncodingInspector() {
+  closeAxisBinding();
 }
 
 async function generateLlmRenderer() {
@@ -628,65 +740,19 @@ watch(
   { flush: "post" },
 );
 
-function positionEncodingInspector() {
-  const board = canvasRef.value;
-  const inspector = encodingInspectorRef.value;
-  const anchor = axisBindingAnchor.value;
-  if (!board || !inspector || !anchor) return;
-
-  const boardRect = board.getBoundingClientRect();
-  const width = inspector.offsetWidth;
-  const height = inspector.offsetHeight;
-  const margin = 12;
-  const gap = 10;
-  const anchorX = anchor.x - boardRect.left;
-  const anchorY = anchor.y - boardRect.top;
-
-  const preferredLeft = anchorX + gap;
-  const left = preferredLeft + width <= boardRect.width - margin
-    ? preferredLeft
-    : anchorX - width - gap;
-  const preferredTop = anchorY + gap;
-  const top = preferredTop + height <= boardRect.height - margin
-    ? preferredTop
-    : anchorY - height - gap;
-
-  encodingInspectorPosition.value = {
-    left: Math.max(margin, Math.min(left, boardRect.width - width - margin)),
-    top: Math.max(margin, Math.min(top, boardRect.height - height - margin)),
-  };
-}
-
-function openAxisBinding(node: CanvasNode, channel: EncodingChannel, event?: PointerEvent) {
-  closeCompositionCandidates();
-  encodingReviewApprovedKey.value = "";
-  axisBindingAnchor.value = event ? { x: event.clientX, y: event.clientY } : null;
-  encodingInspectorPosition.value = null;
-  onCoordinateAxisSelect(node, channel);
-  if (event) void nextTick(positionEncodingInspector);
-}
-
-watch(axisBindingTarget, (target) => {
-  if (!target) {
-    axisBindingAnchor.value = null;
-    encodingInspectorPosition.value = null;
-  } else if (target.clientX !== undefined && target.clientY !== undefined) {
-    axisBindingAnchor.value = { x: target.clientX, y: target.clientY };
-    encodingInspectorPosition.value = null;
-    void nextTick(positionEncodingInspector);
-  }
-});
+watch(encodingTargetNode, (node) => {
+  if (!node) return;
+  selectEncodingTarget(node);
+}, { immediate: true });
 
 onMounted(() => {
   window.addEventListener("keydown", onCompositionKeyDown);
   window.addEventListener("click", closeCompositionCandidates);
-  window.addEventListener("resize", positionEncodingInspector);
   window.addEventListener("resize", positionNestedBindingPopup);
 });
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", onCompositionKeyDown);
   window.removeEventListener("click", closeCompositionCandidates);
-  window.removeEventListener("resize", positionEncodingInspector);
   window.removeEventListener("resize", positionNestedBindingPopup);
 });
 </script>
@@ -747,7 +813,11 @@ onBeforeUnmount(() => {
     </aside>
 
     <div class="workbench">
-      <CsvDataPanel />
+      <CsvDataPanel
+        :selected-chart-fields="selectedChartFields"
+        :selected-chart-id="selectedChartId"
+        @cube-selection-change="onCubeSelectionChange"
+      />
       <main class="workspace">
         <section
           ref="canvasRef"
@@ -766,15 +836,26 @@ onBeforeUnmount(() => {
           @contextmenu="onCanvasContextMenu"
         >
           <button
-            v-if="dimensionOptionsEnabled"
-            class="dimension-options-control"
+            v-if="pendingDimension && !recommendationPopupOpen"
+            class="dimension-decision-control"
             type="button"
-            title="Adjust dimension options"
-            aria-label="Adjust dimension options"
-            :disabled="!activeDimensionRecommendations.length"
             @click.stop="openRecommendationPopup"
           >
             <SlidersHorizontal :size="17" :stroke-width="1.7" aria-hidden="true" />
+            <span>Resolve {{ pendingDimension.field }}</span>
+          </button>
+          <button
+            class="encoding-control"
+            :class="{ 'encoding-control--active': encodingInspectorOpen }"
+            type="button"
+            :disabled="!canToggleEncodingInspector"
+            :aria-expanded="encodingInspectorOpen"
+            aria-controls="encoding-inspector"
+            title="Encoding"
+            @click.stop="toggleEncodingInspector"
+          >
+            <SlidersHorizontal :size="15" :stroke-width="1.7" aria-hidden="true" />
+            <span>Encoding</span>
           </button>
           <div class="toolbar toolbar--floating">
             <div class="icon-tools" role="group" aria-label="History">
@@ -1006,18 +1087,12 @@ onBeforeUnmount(() => {
           </div>
 
           <aside
-            v-if="axisBindingTarget"
-            ref="encodingInspectorRef"
+            v-if="encodingInspectorOpen && axisBindingTarget"
+            id="encoding-inspector"
             class="encoding-inspector"
             role="dialog"
             aria-modal="false"
             :aria-label="`${axisBindingTarget.channel.toUpperCase()} axis encoding`"
-            :style="encodingInspectorPosition ? {
-              left: `${encodingInspectorPosition.left}px`,
-              top: `${encodingInspectorPosition.top}px`,
-              right: 'auto',
-              maxHeight: `calc(100% - ${encodingInspectorPosition.top + 12}px)`,
-            } : undefined"
             @click.stop
             @pointerdown.stop
           >
@@ -1032,27 +1107,12 @@ onBeforeUnmount(() => {
                 class="encoding-inspector__close"
                 type="button"
                 title="Close"
-                aria-label="Close axis binding"
-                @click="closeAxisBinding"
+                aria-label="Close encoding panel"
+                @click="closeEncodingInspector"
               >
                 <X :size="16" :stroke-width="1.6" aria-hidden="true" />
               </button>
             </header>
-
-            <section class="encoding-inspector__context">
-              <div>
-                <span class="encoding-inspector__context-label">Chart</span>
-                <strong>{{ axisBindingNode?.name ?? "Current chart" }}</strong>
-              </div>
-              <div>
-                <span class="encoding-inspector__context-label">Axis</span>
-                <strong>{{ axisBindingAxis?.id ?? "Independent axis" }}</strong>
-              </div>
-              <div v-if="axisBindingRelatedCharts.length > 1" class="encoding-inspector__shared">
-                <span class="encoding-inspector__context-label">Shared by</span>
-                <span>{{ axisBindingRelatedCharts.map((chart) => chart.name).join(", ") }}</span>
-              </div>
-            </section>
 
             <div v-if="axisBindingColumns.length" class="encoding-inspector__axes">
               <label
@@ -1211,46 +1271,6 @@ onBeforeUnmount(() => {
               "
               class="encoding-inspector__series"
             >
-              <div
-                v-if="
-                  isLineChartType(axisBindingNode?.chartSpec?.chartType ?? '')
-                "
-                class="encoding-inspector__series-heading"
-              >
-                <span>Series</span>
-                <span
-                  v-if="axisBindingSeriesCandidates[0]"
-                  class="encoding-inspector__suggestion"
-                >
-                  Suggested
-                </span>
-              </div>
-              <select
-                v-if="
-                  isLineChartType(
-                    axisBindingNode?.chartSpec?.chartType ?? '',
-                  ) && axisBindingSeriesCandidates.length
-                "
-                :value="seriesDraftField"
-                @change="onSeriesFieldChange"
-              >
-                <option value="">Single line (no series field)</option>
-                <option
-                  v-for="candidate in axisBindingSeriesCandidates"
-                  :key="candidate.field"
-                  :value="candidate.field"
-                >
-                  {{ candidate.field }} ({{ candidate.groupCount }} groups)
-                </option>
-              </select>
-              <p
-                v-else-if="
-                  isLineChartType(axisBindingNode?.chartSpec?.chartType ?? '')
-                "
-                class="encoding-inspector__empty"
-              >
-                No nominal series field is available.
-              </p>
               <template>
                 <div
                   v-for="option in axisBindingOptionalCandidates"
@@ -1263,7 +1283,7 @@ onBeforeUnmount(() => {
                       :value="optionalEncodingDrafts[option.channel]"
                       @change="onOptionalEncodingChange(option.channel, $event)"
                     >
-                      <option value="">None</option>
+                      <option value="">Static</option>
                       <option
                         v-for="candidate in option.candidates"
                         :key="candidate.name"
@@ -1285,6 +1305,28 @@ onBeforeUnmount(() => {
                   No optional fields are available.
                 </p>
               </template>
+              <label
+                v-if="!optionalEncodingDrafts.color"
+                class="encoding-inspector__static-control"
+              >
+                <span>Color value</span>
+                <input type="color" :value="staticColor" @input="onStaticColorChange" />
+              </label>
+              <label
+                v-if="!optionalEncodingDrafts.size"
+                class="encoding-inspector__static-control"
+              >
+                <span>Size value</span>
+                <input
+                  type="range"
+                  min="1"
+                  max="48"
+                  step="0.5"
+                  :value="staticSize"
+                  @input="onStaticSizeChange"
+                />
+                <output>{{ staticSize }} px</output>
+              </label>
               <VisualMappingEditor
                 :show-color="showColorMapping"
                 :show-size="showSizeMapping"
@@ -1300,13 +1342,6 @@ onBeforeUnmount(() => {
                 {{ axisBindingRendererError }}
               </p>
               <div class="encoding-inspector__actions">
-                <button
-                  class="encoding-inspector__secondary"
-                  type="button"
-                  @click="skipOptionalEncodings"
-                >
-                  Continue without optional encodings
-                </button>
                 <button
                   class="encoding-inspector__confirm"
                   type="button"
@@ -1331,14 +1366,6 @@ onBeforeUnmount(() => {
                 Confirm encodings
               </button>
             </div>
-            <button
-              v-if="dimensionOptionsEnabled && activeDimensionRecommendations.length"
-              class="recommendation-popup-trigger"
-              type="button"
-              @click="openRecommendationPopup"
-            >
-              View {{ activeDimensionRecommendations.length }} dimension options
-            </button>
           </aside>
 
           <aside
@@ -1513,23 +1540,23 @@ onBeforeUnmount(() => {
             </div>
           </aside>
           <div
-            v-if="dimensionOptionsEnabled && recommendationPopupOpen && activeDimensionRecommendations.length"
+            v-if="recommendationPopupOpen && pendingDimension"
             class="recommendation-popup-backdrop"
             @pointerdown="closeRecommendationPopup"
           ></div>
           <aside
-            v-if="dimensionOptionsEnabled && recommendationPopupOpen && activeDimensionRecommendations.length"
+            v-if="recommendationPopupOpen && pendingDimension"
             class="recommendation-popup"
             role="dialog"
             aria-modal="true"
-            aria-label="Dimension recommendations"
+            :aria-label="`Resolve ${pendingDimension.field} dimension`"
             @click.stop
             @pointerdown.stop
           >
             <header class="recommendation-popup__header">
               <div>
-                <strong>Dimension options</strong>
-                <span>Choose how to arrange this data dimension</span>
+                <strong>Resolve {{ pendingDimension.field }}</strong>
+                <span>{{ pendingDimension.valueCount }} values do not fit the current chart structure</span>
               </div>
               <button
                 class="recommendation-popup__close"
@@ -1542,32 +1569,33 @@ onBeforeUnmount(() => {
               </button>
             </header>
             <div class="recommendation-popup__options">
+              <section class="recommendation-option-card">
+                <span class="recommendation-option-card__strategy">Data reduction</span>
+                <strong>Aggregate {{ pendingDimension.field }}</strong>
+                <select v-model="pendingAggregation" aria-label="Aggregation method">
+                  <option value="sum">Sum</option>
+                  <option value="avg">Avg</option>
+                </select>
+                <button type="button" @click="chooseDimensionAggregation">Apply</button>
+              </section>
               <button
-                v-for="recommendation in activeDimensionRecommendations"
-                :key="recommendation.id"
                 class="recommendation-option-card"
                 type="button"
-                @click="chooseDimensionRecommendation(recommendation.id)"
+                @click="chooseDimensionChartUpgrade"
               >
-                <span class="recommendation-option-card__strategy">
-                  {{ recommendationStrategyLabel(recommendation.strategy) }}
-                </span>
-                <strong>{{ recommendation.field }}</strong>
-                <span>{{ recommendation.label }}</span>
-                <dl>
-                  <div>
-                    <dt>Values</dt>
-                    <dd>{{ recommendation.valueCount }}</dd>
-                  </div>
-                  <div>
-                    <dt>Marks</dt>
-                    <dd>{{ recommendation.estimatedMarkCount }}</dd>
-                  </div>
-                  <div>
-                    <dt>Shared</dt>
-                    <dd>{{ recommendation.sharedChannels.join(' + ') || 'Independent' }}</dd>
-                  </div>
-                </dl>
+                <span class="recommendation-option-card__strategy">Chart upgrade</span>
+                <strong>Increase chart dimensionality</strong>
+                <span>Represent {{ pendingDimension.field }} inside the current chart.</span>
+              </button>
+              <button
+                class="recommendation-option-card"
+                type="button"
+                :disabled="!pendingDimension.facetRecommendation"
+                @click="chooseDimensionFacet"
+              >
+                <span class="recommendation-option-card__strategy">Facet</span>
+                <strong>Facet by {{ pendingDimension.field }}</strong>
+                <span>Create one chart and coordinate system for each value.</span>
               </button>
             </div>
           </aside>
@@ -1723,6 +1751,37 @@ onBeforeUnmount(() => {
                   vector-effect="non-scaling-stroke"
                 />
               </g>
+              <g
+                v-if="activeDataBindingDropZone"
+                :transform="editingGroupTransform"
+                class="data-binding-drop-zone-layer"
+              >
+                <ellipse
+                  v-if="activeDataBindingDropZone.type === 'polar-angle'"
+                  class="data-binding-drop-zone"
+                  :class="{
+                    'data-binding-drop-zone--invalid': !activeDataBindingDropZone.compatible,
+                  }"
+                  :cx="activeDataBindingDropZone.center.x"
+                  :cy="activeDataBindingDropZone.center.y"
+                  :rx="activeDataBindingDropZone.radiusX"
+                  :ry="activeDataBindingDropZone.radiusY"
+                  :transform="`rotate(${activeDataBindingDropZone.rotation} ${activeDataBindingDropZone.center.x} ${activeDataBindingDropZone.center.y})`"
+                  vector-effect="non-scaling-stroke"
+                />
+                <line
+                  v-else
+                  class="data-binding-axis-drop-zone"
+                  :class="{
+                    'data-binding-drop-zone--invalid': !activeDataBindingDropZone.compatible,
+                  }"
+                  :x1="activeDataBindingDropZone.start.x"
+                  :y1="activeDataBindingDropZone.start.y"
+                  :x2="activeDataBindingDropZone.end.x"
+                  :y2="activeDataBindingDropZone.end.y"
+                  vector-effect="non-scaling-stroke"
+                />
+              </g>
               <g :transform="editingGroupTransform">
               <g class="selection-overlay">
                 <rect
@@ -1780,18 +1839,14 @@ onBeforeUnmount(() => {
                 :channels="getCartesianAxisChannels(node, 'interactive')"
                 :show-axis="false"
                 :interactive="true"
-                :on-axis-select="openAxisBinding"
                 :on-axis-scale-pointer-down="onCoordinateAxisScalePointerDown"
               />
-              <CanvasCoordinateGuideView
+              <PolarCoordinateSystem
                 v-for="node in selectedCanvasNodesWithCoordinateGuides.filter((item) => item.coordinateGuide?.type !== 'Cartesian')"
                 :key="`coordinate-guide-${node.id}`"
                 :node="node"
                 :view-zoom="selectionOverlayZoom"
-                :on-origin-pointer-down="onCoordinateOriginPointerDown"
-                :on-axis-reverse="reverseCoordinateAxis"
-                :on-axis-select="openAxisBinding"
-                :on-axis-scale-pointer-down="onCoordinateAxisScalePointerDown"
+                :on-angle-pointer-down="onPolarAnglePointerDown"
               />
               </g>
             </g>
@@ -2029,7 +2084,7 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
-.dimension-options-control {
+.dimension-decision-control {
   position: absolute;
   top: 16px;
   left: 16px;
@@ -2037,9 +2092,9 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
-  padding: 0;
+  min-height: 34px;
+  gap: 7px;
+  padding: 0 10px;
   border: 1px solid rgba(37, 99, 235, 0.24);
   border-radius: 8px;
   background: rgba(239, 246, 255, 0.94);
@@ -2048,12 +2103,45 @@ onBeforeUnmount(() => {
   box-shadow: 0 8px 18px rgba(45, 89, 126, 0.12);
   backdrop-filter: blur(8px);
 }
-.dimension-options-control:hover:not(:disabled) {
+.dimension-decision-control:hover {
   border-color: #2563eb;
   background: #dbeafe;
 }
-.dimension-options-control:disabled {
-  opacity: 0.48;
+.dimension-decision-control span {
+  font-size: 11px;
+  font-weight: 650;
+}
+.encoding-control {
+  position: absolute;
+  top: 16px;
+  right: 264px;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 104px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(24, 33, 47, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #334155;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(45, 89, 126, 0.1);
+  backdrop-filter: blur(8px);
+}
+.encoding-control:hover:not(:disabled),
+.encoding-control--active {
+  border-color: rgba(28, 126, 214, 0.38);
+  background: #edf5fc;
+  color: #1554b2;
+}
+.encoding-control:disabled {
+  opacity: 0.42;
   cursor: not-allowed;
 }
 .icon-tools,
@@ -2234,7 +2322,7 @@ onBeforeUnmount(() => {
 }
 .encoding-inspector {
   position: absolute;
-  top: 16px;
+  top: 58px;
   right: 264px;
   z-index: 5;
   width: min(280px, calc(100% - 24px));
@@ -2478,6 +2566,30 @@ onBeforeUnmount(() => {
   box-shadow: 0 8px 24px rgba(37, 99, 235, 0.12);
   transform: translateY(-1px);
 }
+.recommendation-option-card:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+.recommendation-option-card select {
+  width: 100%;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid rgba(24, 33, 47, 0.16);
+  border-radius: 5px;
+  background: #fff;
+  color: #334155;
+  font: inherit;
+}
+.recommendation-option-card > button {
+  min-height: 34px;
+  border: 1px solid #2563eb;
+  border-radius: 5px;
+  background: #2563eb;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
 .recommendation-option-card__strategy {
   width: fit-content;
   padding: 3px 6px;
@@ -2546,37 +2658,6 @@ onBeforeUnmount(() => {
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.encoding-inspector__context {
-  display: grid;
-  gap: 7px;
-  margin: 10px 0;
-  padding: 9px;
-  border: 1px solid rgba(24, 33, 47, 0.1);
-  border-radius: 6px;
-  background: #f8fafc;
-  color: #334155;
-  font-size: 11px;
-}
-.encoding-inspector__context > div {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-.encoding-inspector__context strong,
-.encoding-inspector__shared > span:last-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.encoding-inspector__context-label {
-  color: #6b7889;
-  font-size: 10px;
-  text-transform: uppercase;
-}
-.encoding-inspector__shared {
-  padding-top: 5px;
-  border-top: 1px solid rgba(24, 33, 47, 0.08);
 }
 .encoding-inspector__close {
   display: inline-flex;
@@ -2728,6 +2809,32 @@ onBeforeUnmount(() => {
 }
 .encoding-inspector__optional {
   display: contents;
+}
+.encoding-inspector__static-control {
+  display: grid;
+  grid-template-columns: minmax(72px, 1fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  color: #516176;
+  font-size: 11px;
+}
+.encoding-inspector__static-control input[type="color"] {
+  width: 38px;
+  height: 28px;
+  padding: 2px;
+  border: 1px solid rgba(24, 33, 47, 0.14);
+  border-radius: 5px;
+  background: #fff;
+}
+.encoding-inspector__static-control input[type="range"] {
+  width: 100%;
+  accent-color: #1980bd;
+}
+.encoding-inspector__static-control output {
+  min-width: 40px;
+  color: #687585;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 .encoding-inspector__actions {
   display: flex;
@@ -2953,6 +3060,28 @@ onBeforeUnmount(() => {
 .composition-drop-zone-layer {
   pointer-events: none;
 }
+.data-binding-drop-zone-layer {
+  pointer-events: none;
+}
+.data-binding-drop-zone {
+  fill: rgba(28, 126, 214, 0.18);
+  stroke: #1c7ed6;
+  stroke-width: 3;
+  stroke-dasharray: 7 5;
+}
+.data-binding-drop-zone--invalid {
+  fill: rgba(220, 38, 38, 0.14);
+  stroke: #dc2626;
+}
+.data-binding-axis-drop-zone {
+  stroke: #1c7ed6;
+  stroke-width: 8;
+  stroke-linecap: round;
+  opacity: 0.72;
+}
+.data-binding-axis-drop-zone.data-binding-drop-zone--invalid {
+  stroke: #dc2626;
+}
 .composition-drop-zone {
   fill: rgba(37, 99, 235, 0.14);
   stroke: #2563eb;
@@ -3023,7 +3152,9 @@ onBeforeUnmount(() => {
   touch-action: none;
 }
 .canvas-object--interactive {
-  pointer-events: bounding-box !important;
+  /* Let the explicit frame-sized hit target below receive events. The default
+     SVG hit testing avoids expanding the group to overflowing chart content. */
+  pointer-events: auto !important;
 }
 .canvas-object :deep(*) {
   pointer-events: none;
@@ -3040,6 +3171,17 @@ onBeforeUnmount(() => {
 }
 .canvas-object--selected {
   filter: drop-shadow(0 10px 18px rgba(28, 126, 214, 0.18));
+}
+.canvas-object :deep(.chart-placeholder-frame) {
+  fill: rgba(255, 255, 255, 0.03);
+  stroke: #6f8194;
+  stroke-width: 1.5;
+  stroke-dasharray: 7 5;
+  pointer-events: none !important;
+}
+.canvas-object--selected :deep(.chart-placeholder-frame) {
+  stroke: #1c7ed6;
+  stroke-width: 2;
 }
 .canvas-object--editing-group {
   cursor: default;
@@ -3189,28 +3331,6 @@ onBeforeUnmount(() => {
 .cartesian-coordinate-system :deep(.cartesian-axis-endpoint) {
   pointer-events: all;
 }
-.cartesian-coordinate-system :deep(.cartesian-axis-config-control) {
-  pointer-events: all;
-  cursor: pointer;
-  touch-action: none;
-}
-.cartesian-coordinate-system :deep(.cartesian-axis-config-button) {
-  fill: rgba(255, 255, 255, 0.98);
-  stroke: rgba(21, 84, 178, 0.72);
-  stroke-width: 1.5;
-  cursor: pointer;
-}
-.cartesian-coordinate-system :deep(.cartesian-axis-config-icon) {
-  fill: none;
-  stroke: #1554b2;
-  stroke-width: 1.6;
-  stroke-linecap: round;
-}
-.cartesian-coordinate-system :deep(.cartesian-axis-config-control:hover .cartesian-axis-config-button) {
-  fill: #eff6ff;
-  stroke: #1554b2;
-  stroke-width: 2;
-}
 .cartesian-coordinate-system :deep(.cartesian-axis-handle-stem) {
   stroke: #1554b2;
   stroke-width: 1.4;
@@ -3227,28 +3347,40 @@ onBeforeUnmount(() => {
 .cartesian-coordinate-system :deep(.cartesian-axis-endpoint--y .cartesian-axis-scale-handle) {
   cursor: ns-resize;
 }
-.coordinate-guide-layer :deep(.polar-coordinate-ring) {
+.coordinate-guide-layer :deep(.polar-coordinate-radius-axis),
+.coordinate-guide-layer :deep(.polar-coordinate-angle-axis) {
   fill: none;
-  stroke: rgba(17, 17, 17, 0.62);
-  stroke-width: 1.4;
-}
-.coordinate-guide-layer :deep(.polar-coordinate-spoke) {
   stroke: rgba(17, 17, 17, 0.78);
   stroke-width: 1.5;
-}
-.coordinate-guide-layer :deep(.polar-coordinate-origin) {
-  fill: #111;
-  stroke: none;
-}
-.coordinate-guide-layer :deep(.polar-coordinate-scale-handle) {
-  fill: #fff;
-  stroke: #059669;
-  stroke-width: 2;
-  cursor: ew-resize;
+  stroke-linecap: round;
   vector-effect: non-scaling-stroke;
 }
-.coordinate-guide-layer :deep(.polar-coordinate-scale-handle--radius) {
-  cursor: ns-resize;
+.coordinate-guide-layer :deep(.polar-coordinate-radius-axis--upper),
+.coordinate-guide-layer :deep(.polar-coordinate-angle-axis--upper) {
+  stroke: #1554b2;
+}
+.coordinate-guide-layer :deep(.polar-coordinate-angle-control) {
+  cursor: grab;
+  touch-action: none;
+}
+.coordinate-guide-layer :deep(.polar-coordinate-angle-control:active) {
+  cursor: grabbing;
+}
+.coordinate-guide-layer :deep(.polar-coordinate-angle-hit-target) {
+  fill: transparent;
+  stroke: transparent;
+}
+.coordinate-guide-layer :deep(.polar-coordinate-angle-handle) {
+  fill: #fff;
+  stroke: #1554b2;
+  stroke-width: 2;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  vector-effect: non-scaling-stroke;
+}
+.coordinate-guide-layer :deep(.polar-coordinate-angle-control:hover .polar-coordinate-angle-handle),
+.coordinate-guide-layer :deep(.polar-coordinate-angle-control:active .polar-coordinate-angle-handle) {
+  opacity: 1;
 }
 .selection-overlay {
   pointer-events: none;
@@ -3343,9 +3475,13 @@ onBeforeUnmount(() => {
     top: 12px;
     width: min(220px, calc(100% - 24px));
   }
-  .dimension-options-control {
+  .dimension-decision-control {
     top: 12px;
     left: 12px;
+  }
+  .encoding-control {
+    top: 12px;
+    right: 244px;
   }
   .composition-popover {
     top: 256px;

@@ -151,6 +151,11 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
   const outerRadius = Math.max(8, Math.min(input.width, input.height) * 0.38 * (input.coordinateGuide?.type === "Polar" ? input.coordinateGuide.radiusScale ?? 1 : 1));
   const config = groupConfig(input.chartSpec, "arc");
   const colorDomain = visualDomain(input.dataset.rows, category);
+  const angleSpan = input.coordinateGuide?.type === "Polar"
+    ? Math.max(1, Math.min(input.coordinateGuide.angleSpan ?? 360, 360))
+    : 360;
+  const layoutStartAngle = -270 * Math.PI / 180;
+  const layoutEndAngle = layoutStartAngle + angleSpan * Math.PI / 180;
   if (angleFields.length > 0) {
     const flattenFields = (input.chartSpec.flattenFields ?? []).filter((field) =>
       input.dataset.columns.some((column) => column.name === field),
@@ -176,7 +181,11 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
       })),
     );
     const componentValues = components.map((component) => component.value);
-    const layout = pie<number>().sort(null).value((datum) => datum)(componentValues);
+    const layout = pie<number>()
+      .sort(null)
+      .value((datum) => datum)
+      .startAngle(layoutStartAngle)
+      .endAngle(layoutEndAngle)(componentValues);
     const radiusMode = input.chartSpec.radiusMode ?? "shared";
     const sharedRadiusValues = radius ? numericFieldValues(input.dataset.rows, radius.field) : [];
     const sharedRadiusValue = sharedRadiusValues.length > 0
@@ -224,7 +233,11 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
   const arcs = ringValues.map((ringKey, ringIndex) => {
     const rows = ring ? input.dataset.rows.filter((row) => (row[ring.field] ?? "") === ringKey) : input.dataset.rows;
     const values = rows.map((row) => Math.max(0, Number(row[value.field] ?? "0")));
-    const layout = pie<number>().sort(null).value((datum) => datum)(values);
+    const layout = pie<number>()
+      .sort(null)
+      .value((datum) => datum)
+      .startAngle(layoutStartAngle)
+      .endAngle(layoutEndAngle)(values);
     const inner = donut || ring ? ringWidth * (ringIndex + (donut ? 1 : 0)) : 0;
     const outer = ring ? inner + ringWidth * 0.92 : outerRadius;
     const radiusValues = radius

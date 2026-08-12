@@ -137,7 +137,6 @@ export const CartesianCoordinateSystem = defineComponent({
     showAxis: { type: Boolean, default: true },
     interactive: { type: Boolean, default: false },
     applyTransform: { type: Boolean, default: true },
-    onAxisSelect: { type: Function as PropType<(node: CanvasNode, channel: EncodingChannel, event: PointerEvent) => void>, default: null },
     onAxisScalePointerDown: { type: Function as PropType<(node: CanvasNode, axis: "x" | "y", event: PointerEvent) => void>, default: null },
   },
   setup(props) {
@@ -258,32 +257,11 @@ export const CartesianCoordinateSystem = defineComponent({
           }),
         ]);
       };
-      const configControl = (axis: EncodingChannel, end: Point) => {
-        const midpoint = { x: (origin.x + end.x) / 2, y: (origin.y + end.y) / 2 };
-        const offset = axis === "x"
-          ? { x: 0, y: guide.yDirection * 18 / screenScale }
-          : { x: guide.xDirection * 18 / screenScale, y: 0 };
-        return h("g", {
-          class: ["cartesian-axis-config-control", `cartesian-axis-config-control--${axis}`],
-          transform: `translate(${midpoint.x + offset.x} ${midpoint.y + offset.y}) scale(${1 / screenScale})`,
-          role: "button",
-          "aria-label": `Configure ${axis.toUpperCase()} axis`,
-          onPointerdown: (event: PointerEvent) => {
-            event.preventDefault();
-            event.stopPropagation();
-            props.onAxisSelect?.(props.node, axis, event);
-          },
-        }, [
-          h("title", `Configure ${axis.toUpperCase()} axis`),
-          h("rect", { class: "cartesian-axis-config-button", x: -12, y: -12, width: 24, height: 24, rx: 4 }),
-          h("path", { class: "cartesian-axis-config-icon", d: "M -6 -5 H 6 M -6 0 H 6 M -6 5 H 6 M -2 -8 V -2 M 3 -3 V 3 M -3 2 V 8", "vector-effect": "non-scaling-stroke" }),
-        ]);
-      };
       const controls = props.interactive
         ? props.channels.flatMap((channel) => {
           const end = channel === "x" ? xEnd : yEnd;
           const direction = channel === "x" ? { x: guide.xDirection, y: 0 } : { x: 0, y: guide.yDirection };
-          return [configControl(channel, end), endpoint(channel, end, direction)];
+          return [endpoint(channel, end, direction)];
         })
         : [];
       const transform = props.applyTransform

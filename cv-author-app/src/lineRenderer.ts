@@ -148,6 +148,14 @@ function rowKey(dataset: Dataset, row: Record<string, string>) {
 
 type ParsedAxisValue = string | number | Date;
 
+type LineDatum = {
+  row: Record<string, string>;
+  sourceRows: Record<string, string>[];
+  x: ParsedAxisValue;
+  y: ParsedAxisValue;
+  series: string;
+};
+
 function parseAxisValue(value: string, type: ChartEncoding["type"]): ParsedAxisValue | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -168,23 +176,63 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
   const { chartId, width, height, minX, minY, coordinateGuide, chartSpec, dataset } = input;
   const xEncoding = chartSpec.encodings.x;
   const yEncoding = chartSpec.encodings.y;
-  const seriesEncoding = chartSpec.series;
+  const seriesEncodings = chartSpec.seriesFields?.length
+    ? chartSpec.seriesFields
+    : chartSpec.series ? [chartSpec.series] : [];
   if (!xEncoding || !yEncoding) throw new Error("Line renderer requires both X and Y encodings.");
-  if (seriesEncoding && seriesEncoding.type !== "nominal") {
+  if (seriesEncodings.some((encoding) => encoding.type !== "nominal")) {
     throw new Error("Line renderer series encoding must be nominal.");
   }
 
-  const rows = dataset.rows
+  const sourceRows = dataset.rows
     .map((row) => ({
       row,
+      sourceRows: [row],
       x: parseAxisValue(row[xEncoding.field] ?? "", xEncoding.type),
       y: parseAxisValue(row[yEncoding.field] ?? "", yEncoding.type),
-      series: seriesEncoding ? (row[seriesEncoding.field] ?? "").trim() : "__single__",
+      series: seriesEncodings.length > 0
+        ? seriesEncodings.map((encoding) => (row[encoding.field] ?? "").trim()).join(" / ")
+        : "__single__",
     }))
-    .filter((datum): datum is { row: Record<string, string>; x: ParsedAxisValue; y: ParsedAxisValue; series: string } =>
+    .filter((datum): datum is LineDatum =>
       datum.x !== null && datum.y !== null && datum.series !== "",
     );
-  if (rows.length === 0) throw new Error("No valid rows remain after applying the line encodings.");
+  if (sourceRows.length === 0) throw new Error("No valid rows remain after applying the line encodings.");
+  const dimensionAggregations = Object.entries(chartSpec.dimensionAggregations ?? {});
+  const aggregateGroups = (groups: LineDatum[][], operation: "sum" | "avg") => groups.map((values): LineDatum => {
+    const first = values[0]!;
+    if (yEncoding.type !== "quantitative") {
+      return { ...first, sourceRows: values.flatMap((datum) => datum.sourceRows) };
+    }
+    const total = values.reduce((sum, datum) => sum + Number(datum.y), 0);
+    return {
+      ...first,
+      sourceRows: values.flatMap((datum) => datum.sourceRows),
+      y: operation === "sum" ? total : total / values.length,
+    };
+  });
+  let reducedRows = sourceRows;
+  dimensionAggregations.forEach(([field, operation], index) => {
+    const remainingFields = dimensionAggregations.slice(index + 1).map(([remainingField]) => remainingField);
+    const grouped = group(
+      reducedRows,
+      (datum) => datum.series,
+      (datum) => String(datum.x),
+      (datum) => remainingFields.map((remainingField) => datum.row[remainingField] ?? "").join("\u0000"),
+    );
+    reducedRows = aggregateGroups(
+      Array.from(grouped.values()).flatMap((xGroups) =>
+        Array.from(xGroups.values()).flatMap((remainingGroups) => Array.from(remainingGroups.values())),
+      ),
+      operation,
+    );
+  });
+  const yAggregation = chartSpec.aggregations?.y ?? "avg";
+  const rows = aggregateGroups(
+    Array.from(group(reducedRows, (datum) => datum.series, (datum) => String(datum.x)).values())
+      .flatMap((xGroups) => Array.from(xGroups.values())),
+    dimensionAggregations.length > 0 ? "avg" : yAggregation,
+  );
   const groupedRows = Array.from(group(rows, (datum) => datum.series).entries())
     .sort(([left], [right]) => left.localeCompare(right, "en", { numeric: true }));
 
@@ -299,19 +347,19 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
   const yAxisScale = makeScale(yEncoding, rows.map((datum) => datum.y), yRange, input.sharedScales?.y);
   const clipId = `line-plot-${chartId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 
-  const pathGenerator = line<(typeof rows)[number]>()
+  const pathGenerator = line<LineDatum>()
     .x((datum) => xAxisScale.position(datum.x))
     .y((datum) => yAxisScale.position(datum.y));
   const colorEncoding = chartSpec.encodings.color;
   const sizeEncoding = chartSpec.encodings.size;
   const colorDomain = visualDomain(dataset.rows, colorEncoding);
   const sizeDomain = visualDomain(dataset.rows, sizeEncoding);
-  const mappedAverage = (values: (typeof rows), encoding: ChartEncoding | undefined) => {
+  const mappedAverage = (values: LineDatum[], encoding: ChartEncoding | undefined) => {
     if (!encoding) return null;
-    const parsed = values.flatMap((datum) => {
-      const value = parseVisualValue(datum.row[encoding.field] ?? "", encoding);
+    const parsed = values.flatMap((datum) => datum.sourceRows.flatMap((row) => {
+      const value = parseVisualValue(row[encoding.field] ?? "", encoding);
       return value === null ? [] : [value];
-    });
+    }));
     return parsed.length > 0 ? parsed.reduce((sum, value) => sum + value, 0) / parsed.length : null;
   };
   let maximumLineWidth = tokens.lineWidth;
@@ -331,7 +379,7 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
       ? mapSizeValue(averageSizeValue, sizeDomain, lineConfig.sizeMapping)
       : typeof lineConfig?.size === "number" ? lineConfig.size : tokens.lineWidth;
     maximumLineWidth = Math.max(maximumLineWidth, lineWidth);
-    const keys = ordered.map((datum) => rowKey(dataset, datum.row)).filter(Boolean);
+    const keys = ordered.flatMap((datum) => datum.sourceRows.map((row) => rowKey(dataset, row))).filter(Boolean);
     return `<g data-chart-id="${escapeXml(chartId)}" data-mark-role="line" data-mark-group-id="mark-group:${escapeXml(chartId)}:line" data-series-key="${escapeXml(seriesKey)}" data-point-count="${ordered.length}" data-row-keys="${escapeXml(keys.join(","))}" opacity="${Number(lineConfig?.opacity ?? 1)}"><path d="${path}" fill="none" stroke="${escapeXml(color)}" stroke-width="${lineWidth}" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" style="stroke: ${escapeXml(color)}; stroke-width: ${lineWidth}px; stroke-linecap: round; stroke-linejoin: round; fill: none;"/></g>`;
   }).join("");
   const clipPadding = Math.max(3, maximumLineWidth * 2);

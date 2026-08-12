@@ -410,7 +410,7 @@ export function inferChartStructure(chartId: string, dataset: Dataset, input: Ch
   const contract = getChartTemplateContract(input.chartType)!;
   const statistics = inferTemplateEncodings(dataset, templateId);
   let series = input.series;
-  if (!series && (templateId === "line" || templateId === "scatter") && input.encodings.x && input.encodings.y) {
+  if (!series && templateId === "scatter" && input.encodings.x && input.encodings.y) {
     const candidate = statistics?.candidates.find((item) =>
       item.dimensionality === 3
       && item.assignments.some((assignment) => assignment.channel === "x" && assignment.field === input.encodings.x?.field)
@@ -421,8 +421,10 @@ export function inferChartStructure(chartId: string, dataset: Dataset, input: Ch
       series = { field: seriesAssignment.field, type: seriesAssignment.dataType };
     }
   }
-
-  const spec = { ...input, templateId, series };
+  const seriesFields = input.seriesFields?.length
+    ? input.seriesFields
+    : series ? [series] : [];
+  const spec = { ...input, templateId, series, seriesFields };
   const role = contract.markRole;
   const existingGroup = input.markGroups?.find((item) => item.role === role);
   const groupSpec: MarkGroupSpec = {
@@ -430,7 +432,7 @@ export function inferChartStructure(chartId: string, dataset: Dataset, input: Ch
     chartId,
     role,
     memberKeys: markKeys(dataset, spec, role),
-    seriesField: series?.field,
+    seriesField: seriesFields.map((encoding) => encoding.field).join("|") || undefined,
     sharedConfig: existingGroup?.sharedConfig ?? (role === "line"
       ? { strokeWidth: spec.styleTokens?.lineWidth ?? 2.5, opacity: 1 }
       : { opacity: 1 }),
@@ -442,7 +444,7 @@ export function inferChartStructure(chartId: string, dataset: Dataset, input: Ch
     ...(spec.flattenFields ?? []),
     ...Object.values(spec.componentRadiusFields ?? {}).map((encoding) => encoding.field),
   ].filter((field): field is string => !!field));
-  if (series) used.add(series.field);
+  seriesFields.forEach((encoding) => used.add(encoding.field));
   const profiles = statistics?.columns ?? profileDatasetDimensions(dataset);
   const outerDimensions = profiles.filter((profile) =>
     (profile.canBeCategory || profile.declaredType === "temporal")

@@ -29,7 +29,7 @@ export const chartTemplateContracts: Record<ChartTemplateKind, ChartTemplateCont
     coordinateSystem: "Cartesian",
     markRole: "line",
     channels: [
-      { channel: "x", role: "dimension", required: true, accepts: ["temporal", "quantitative"] },
+      { channel: "x", role: "dimension", required: true, accepts: ["temporal", "quantitative", "nominal"] },
       { channel: "y", role: "measure", required: true, accepts: ["temporal", "quantitative"] },
       { channel: "color", role: "series", required: false, accepts: ["nominal", "quantitative"] },
       { channel: "size", role: "style", required: false, accepts: ["quantitative"] },
