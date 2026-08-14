@@ -10,6 +10,8 @@ export type CubeBindingPayload = {
 
 export type CubeSelectionState = {
   selected: Record<CubeDimension, boolean>;
+  values: Record<CubeDimension, string[]>;
+  fields: Partial<Record<CubeDimension, string>>;
   aggregations: Record<CubeDimension, {
     enabled: boolean;
     operation: "sum" | "avg";

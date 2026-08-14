@@ -17,15 +17,12 @@ import {
 import { PolarCoordinateSystem } from "./PolarCoordinateSystem";
 import CsvDataPanel from "./CsvDataPanel.vue";
 import type { CubeSelectionState } from "./cubeBinding";
-import VisualMappingEditor from "./VisualMappingEditor.vue";
+import EncodingConfigPanel from "./EncodingConfigPanel.vue";
 import type {
   CanvasNode,
+  ChartEncodingChannel,
   CompositionType,
   EncodingChannel,
-  LinearColorMapping,
-  LinearSizeMapping,
-  MarkGroupSharedConfig,
-  OptionalEncodingChannel,
   SvgCandidate,
 } from "./types";
 import {
@@ -37,12 +34,6 @@ import {
 import { useDatasetStore } from "./useDatasetStore";
 import { useLlmRenderer } from "./useLlmRenderer";
 import { isLineChartType } from "./lineRenderer";
-import {
-  defaultColorMapping,
-  defaultSizeMapping,
-  isLinearColorMapping,
-  isLinearSizeMapping,
-} from "./visualMapping";
 
 const canvasRef = ref<HTMLElement | null>(null);
 const encodingInspectorOpen = ref(true);
@@ -65,10 +56,6 @@ const {
   axisBindingTarget,
   axisBindingNode,
   axisBindingColumns,
-  axisBindingSeriesCandidates,
-  axisBindingSeriesValue,
-  axisBindingEncodingValues,
-  axisBindingOptionalCandidates,
   axisBindingRendererError,
   coordinateGuideNodes,
   contextMenu,
@@ -120,16 +107,10 @@ const {
   onCoordinateOriginPointerDown,
   onCoordinateAxisScalePointerDown,
   onPolarAnglePointerDown,
-  setAxisBindingChannel,
-  bindAxisField,
   setAxisBindingAggregation,
-  clearAxisBinding,
-  confirmSeriesField,
+  setCubeValueFilters,
   clearSeriesBinding,
-  bindOptionalEncoding,
-  clearOptionalEncoding,
-  bindPolarRadiusField,
-  clearPolarRadiusField,
+  setChartEncoding,
   setPieAngleFields,
   setPieRadiusMode,
   setPieComponentRadiusField,
@@ -246,87 +227,23 @@ function isPolarChartType(chartType: string) {
   return type.includes("pie") || type.includes("donut");
 }
 
-function isPieChartType(chartType: string) {
-  const type = chartType.replace(/[\s_-]/g, "").toLowerCase();
-  return type.includes("pie") && !type.includes("donut");
-}
-
-function primaryEncodingLabel(node: CanvasNode | null, channel: EncodingChannel) {
-  const type = node?.chartSpec?.chartType.replace(/[\s_-]/g, "").toLowerCase() ?? "";
-  if (type.includes("pie") || type.includes("donut")) return channel === "x" ? "Category" : "Angle";
-  if (type.includes("matrix") || type.includes("heatmap")) return channel === "x" ? "Column" : "Row";
-  return `${channel.toUpperCase()} axis`;
-}
-
-function primaryEncodingField(node: CanvasNode | null, channel: EncodingChannel) {
-  const type = node?.chartSpec?.chartType.replace(/[\s_-]/g, "").toLowerCase() ?? "";
-  if (type.includes("pie") || type.includes("donut")) {
-    return channel === "x" ? node?.chartSpec?.encodings.color?.field : node?.chartSpec?.encodings.angle?.field;
-  }
-  if (type.includes("matrix") || type.includes("heatmap")) {
-    return channel === "x" ? node?.chartSpec?.encodings.column?.field : node?.chartSpec?.encodings.row?.field;
-  }
-  return node?.chartSpec?.encodings[channel]?.field;
-}
-
-function isPrimaryEncodingCompatible(node: CanvasNode | null, channel: EncodingChannel, type: string) {
-  const chartType = node?.chartSpec?.chartType.replace(/[\s_-]/g, "").toLowerCase() ?? "";
-  if (chartType.includes("pie") || chartType.includes("donut")) return channel === "x" ? type !== "quantitative" : type === "quantitative";
-  if (chartType.includes("matrix") || chartType.includes("heatmap")) return type !== "quantitative";
-  if (chartType === "linegraph" || chartType.includes("linechart")) return type === "quantitative" || type === "temporal";
-  if (channel === "y" && !chartType.includes("scatter")) return type === "quantitative";
-  return true;
-}
-
 function encodingReviewKey(node: CanvasNode | null) {
   if (!node?.chartSpec) return "";
-  const { encodings, series } = node.chartSpec;
+  const { encodings, series, angleFields, radiusMode, componentRadiusFields } = node.chartSpec;
   return [
     node.id,
-    encodings.x?.field ?? "",
-    encodings.y?.field ?? "",
+    ...Object.entries(encodings).sort(([left], [right]) => left.localeCompare(right)).map(([channel, encoding]) => `${channel}:${encoding?.field ?? ""}`),
     series?.field ?? "",
-    encodings.color?.field ?? "",
-    encodings.size?.field ?? "",
-    encodings.shape?.field ?? "",
+    ...(angleFields ?? []).map((encoding) => `angle:${encoding.field}`),
+    radiusMode ?? "shared",
+    ...Object.entries(componentRadiusFields ?? {}).sort(([left], [right]) => left.localeCompare(right)).map(([component, encoding]) => `${component}:${encoding.field}`),
   ].join("|");
 }
 
 const activeCompositionType = ref<CompositionType | null>(null);
-const seriesDraftField = ref("");
-const optionalEncodingDrafts = ref<Record<OptionalEncodingChannel, string>>({
-  color: "",
-  size: "",
-  shape: "",
-});
 const axisBindingMarkGroupConfig = computed(() =>
   axisBindingNode.value?.chartSpec?.markGroups?.[0]?.sharedConfig ?? {},
 );
-const activeColorDraftColumn = computed(() =>
-  axisBindingColumns.value.find((column) => column.name === optionalEncodingDrafts.value.color),
-);
-const showColorMapping = computed(() =>
-  !!activeColorDraftColumn.value && activeColorDraftColumn.value.type !== "nominal",
-);
-const showSizeMapping = computed(() => !!optionalEncodingDrafts.value.size);
-const staticColor = computed(() =>
-  typeof axisBindingMarkGroupConfig.value.color === "string"
-    ? axisBindingMarkGroupConfig.value.color
-    : "#2563eb",
-);
-const staticSize = computed(() =>
-  typeof axisBindingMarkGroupConfig.value.size === "number"
-    ? axisBindingMarkGroupConfig.value.size
-    : 4,
-);
-const activeColorMapping = computed(() => {
-  const mapping = axisBindingMarkGroupConfig.value.colorMapping;
-  return isLinearColorMapping(mapping) ? mapping : defaultColorMapping;
-});
-const activeSizeMapping = computed(() => {
-  const mapping = axisBindingMarkGroupConfig.value.sizeMapping;
-  return isLinearSizeMapping(mapping) ? mapping : defaultSizeMapping;
-});
 const activeCompositionOption = computed(() =>
   compositionOptions.find(
     (option) => option.value === activeCompositionType.value,
@@ -386,19 +303,6 @@ const selectedChartId = computed(() =>
   selectedNodes.value.length === 1 && selectedNodes.value[0]?.chartSpec
     ? selectedNodes.value[0].id
     : "",
-);
-const cubePersonSelected = computed(() => {
-  const chartId = selectedChartId.value;
-  if (!chartId) return false;
-  const explicitSelection = cubePersonSelectionByChart.value[chartId];
-  if (explicitSelection !== undefined) return explicitSelection;
-  return selectedChartFields.value.includes("person");
-});
-const personSeriesCandidate = computed(() =>
-  axisBindingSeriesCandidates.value.find((candidate) =>
-    candidate.field.toLowerCase() === "person"
-    || candidate.field.toLowerCase().includes("person"),
-  ),
 );
 const pendingDimension = computed(() => {
   const node = axisBindingNode.value ?? llmNode.value;
@@ -484,6 +388,11 @@ const selectedChartFields = computed(() => {
     ...Object.values(spec.componentRadiusFields ?? {}).map((encoding) => encoding.field),
   ].filter((field): field is string => !!field)));
 });
+const selectedChartValueFilters = computed(() =>
+  selectedNodes.value.length === 1
+    ? selectedNodes.value[0]?.chartSpec?.valueFilters ?? {}
+    : {},
+);
 
 function onCubeSelectionChange(state: CubeSelectionState) {
   const chartId = selectedChartId.value;
@@ -492,6 +401,10 @@ function onCubeSelectionChange(state: CubeSelectionState) {
     ...cubePersonSelectionByChart.value,
     [chartId]: state.selected.person,
   };
+  setCubeValueFilters(Object.fromEntries((["person", "date"] as const).flatMap((dimension) => {
+    const field = state.fields[dimension];
+    return field ? [[dimension, { field, values: state.values[dimension] }]] : [];
+  })));
   const seriesField = axisBindingNode.value?.chartSpec?.series?.field.toLowerCase() ?? "";
   if (!state.selected.person && (seriesField === "person" || seriesField.includes("person"))) {
     clearSeriesBinding();
@@ -503,64 +416,6 @@ function onCubeSelectionChange(state: CubeSelectionState) {
       : undefined;
   setAxisBindingAggregation("y", aggregation);
 }
-
-function applyPersonMultiline() {
-  const field = personSeriesCandidate.value?.field;
-  if (!field) return;
-  seriesDraftField.value = field;
-  confirmSeriesField(field);
-}
-
-watch(
-  [
-    axisBindingTarget,
-    axisBindingSeriesValue,
-    axisBindingSeriesCandidates,
-    axisBindingEncodingValues,
-    axisBindingOptionalCandidates,
-    cubePersonSelected,
-  ],
-  ([
-    target,
-    confirmedField,
-    candidates,
-    encodingValues,
-    optionalCandidates,
-    personSelected,
-  ]) => {
-    if (!target) {
-      seriesDraftField.value = "";
-      optionalEncodingDrafts.value = { color: "", size: "", shape: "" };
-      return;
-    }
-    const available = candidates.some(
-      (candidate) => candidate.field === seriesDraftField.value,
-    );
-    if (!personSelected) {
-      seriesDraftField.value = "";
-    } else if (
-      confirmedField &&
-      candidates.some((candidate) => candidate.field === confirmedField)
-    ) {
-      seriesDraftField.value = confirmedField;
-    } else if (!available) {
-      seriesDraftField.value = personSeriesCandidate.value?.field ?? candidates[0]?.field ?? "";
-    }
-    const nextDrafts = { ...optionalEncodingDrafts.value };
-    optionalCandidates.forEach((option) => {
-      const current = nextDrafts[option.channel];
-      const currentIsAvailable = option.candidates.some(
-        (candidate) => candidate.name === current,
-      );
-      nextDrafts[option.channel] =
-        encodingValues[option.channel] ||
-        (currentIsAvailable ? current : option.candidates[0]?.name) ||
-        "";
-    });
-    optionalEncodingDrafts.value = nextDrafts;
-  },
-  { immediate: true },
-);
 
 function openCompositionCandidates(type: CompositionType) {
   closeAxisBinding();
@@ -587,89 +442,15 @@ function onCompositionKeyDown(event: KeyboardEvent) {
   }
 }
 
-function onAxisFieldChange(channel: EncodingChannel, event: Event) {
-  setAxisBindingChannel(channel);
-  const field = (event.target as HTMLSelectElement).value;
-  if (field) bindAxisField(field);
-  else clearAxisBinding();
-}
-
-function onPolarRadiusFieldChange(event: Event) {
-  const field = (event.target as HTMLSelectElement).value;
-  if (field) bindPolarRadiusField(field);
-  else clearPolarRadiusField();
-}
-
-function togglePieAngleField(field: string) {
-  const selected = axisBindingNode.value?.chartSpec?.angleFields?.map((encoding) => encoding.field) ?? [];
-  setPieAngleFields(selected.includes(field)
-    ? selected.filter((item) => item !== field)
-    : [...selected, field]);
-}
-
-function onPieRadiusModeChange(mode: "shared" | "per-component") {
-  setPieRadiusMode(mode);
-}
-
-function onPieComponentRadiusFieldChange(componentField: string, event: Event) {
-  setPieComponentRadiusField(componentField, (event.target as HTMLSelectElement).value);
-}
-
-function onOptionalEncodingChange(
-  channel: OptionalEncodingChannel,
-  event: Event,
-) {
-  optionalEncodingDrafts.value[channel] = (
-    event.target as HTMLSelectElement
-  ).value;
-}
-
-function confirmOptionalEncodings() {
-  const node = axisBindingNode.value;
-  axisBindingOptionalCandidates.value.forEach((option) => {
-    const selected = optionalEncodingDrafts.value[option.channel];
-    if (selected) bindOptionalEncoding(option.channel, selected);
-    else clearOptionalEncoding(option.channel);
-  });
-  const mappingPatch: MarkGroupSharedConfig = {};
-  if (showColorMapping.value && !isLinearColorMapping(axisBindingMarkGroupConfig.value.colorMapping)) {
-    mappingPatch.colorMapping = defaultColorMapping;
-  }
-  if (showSizeMapping.value && !isLinearSizeMapping(axisBindingMarkGroupConfig.value.sizeMapping)) {
-    mappingPatch.sizeMapping = defaultSizeMapping;
-  }
-  if (Object.keys(mappingPatch).length > 0) updateAxisBindingMarkGroupConfig(mappingPatch);
-  void nextTick(() => {
-    encodingReviewApprovedKey.value = encodingReviewKey(node);
-  });
+function onEncodingChannelChange(channel: ChartEncodingChannel, field: string) {
+  setChartEncoding(channel, field);
 }
 
 function confirmEncodingInspector() {
   const node = axisBindingNode.value;
-  confirmOptionalEncodings();
   void nextTick(() => {
     encodingReviewApprovedKey.value = encodingReviewKey(node);
   });
-}
-
-function onColorMappingChange(mapping: LinearColorMapping) {
-  updateAxisBindingMarkGroupConfig({ colorMapping: mapping });
-}
-
-function onSizeMappingChange(mapping: LinearSizeMapping) {
-  updateAxisBindingMarkGroupConfig({ sizeMapping: mapping });
-}
-
-function onStaticColorChange(event: Event) {
-  updateAxisBindingMarkGroupConfig({ color: (event.target as HTMLInputElement).value });
-}
-
-function onStaticSizeChange(event: Event) {
-  updateAxisBindingMarkGroupConfig({ size: Number((event.target as HTMLInputElement).value) });
-}
-
-function confirmPolarEncodingInspector() {
-  closeAxisBinding();
 }
 
 async function generateLlmRenderer() {
@@ -816,6 +597,7 @@ onBeforeUnmount(() => {
       <CsvDataPanel
         :selected-chart-fields="selectedChartFields"
         :selected-chart-id="selectedChartId"
+        :selected-chart-value-filters="selectedChartValueFilters"
         @cube-selection-change="onCubeSelectionChange"
       />
       <main class="workspace">
@@ -1096,276 +878,21 @@ onBeforeUnmount(() => {
             @click.stop
             @pointerdown.stop
           >
-            <header class="encoding-inspector__header">
-              <div class="encoding-inspector__heading">
-                <strong>ENCODINGS</strong>
-                <span>{{
-                  axisBindingNode?.chartSpec?.chartType ?? axisBindingNode?.name
-                }}</span>
-              </div>
-              <button
-                class="encoding-inspector__close"
-                type="button"
-                title="Close"
-                aria-label="Close encoding panel"
-                @click="closeEncodingInspector"
-              >
-                <X :size="16" :stroke-width="1.6" aria-hidden="true" />
-              </button>
-            </header>
-
-            <div v-if="axisBindingColumns.length" class="encoding-inspector__axes">
-              <label
-                v-if="!isPieChartType(axisBindingNode?.chartSpec?.chartType ?? '')"
-                class="encoding-inspector__field"
-              >
-                <span>{{ primaryEncodingLabel(axisBindingNode, 'x') }}</span>
-                <select
-                  :value="primaryEncodingField(axisBindingNode, 'x') ?? ''"
-                  @change="onAxisFieldChange('x', $event)"
-                >
-                  <option value="">Not bound</option>
-                  <option
-                    v-for="column in axisBindingColumns"
-                    :key="column.name"
-                    :value="column.name"
-                    :disabled="!isPrimaryEncodingCompatible(axisBindingNode, 'x', column.type)"
-                  >
-                    {{ column.name }} ({{ column.type }})
-                  </option>
-                </select>
-              </label>
-              <label
-                v-if="!isPieChartType(axisBindingNode?.chartSpec?.chartType ?? '')"
-                class="encoding-inspector__field"
-              >
-                <span>{{ primaryEncodingLabel(axisBindingNode, 'y') }}</span>
-                <select
-                  :value="primaryEncodingField(axisBindingNode, 'y') ?? ''"
-                  @change="onAxisFieldChange('y', $event)"
-                >
-                  <option value="">Not bound</option>
-                  <option
-                    v-for="column in axisBindingColumns"
-                    :key="column.name"
-                    :value="column.name"
-                    :disabled="!isPrimaryEncodingCompatible(axisBindingNode, 'y', column.type)"
-                  >
-                    {{ column.name }} ({{ column.type }})
-                  </option>
-                </select>
-              </label>
-              <div
-                v-if="isPieChartType(axisBindingNode?.chartSpec?.chartType ?? '')"
-                class="pie-angle-fields"
-              >
-                <span>Angle components</span>
-                <label
-                  v-for="column in axisBindingColumns.filter((item) => item.type === 'quantitative')"
-                  :key="`pie-angle-field-${column.name}`"
-                  class="nested-binding-popup__angle-option"
-                >
-                  <input
-                    type="checkbox"
-                    :checked="axisBindingNode?.chartSpec?.angleFields?.some((encoding) => encoding.field === column.name)"
-                    @change="togglePieAngleField(column.name)"
-                  />
-                  <span>{{ column.name }}</span>
-                </label>
-              </div>
-              <div
-                v-if="isPieChartType(axisBindingNode?.chartSpec?.chartType ?? '')"
-                class="pie-radius-editor"
-              >
-                <span>Outer radius</span>
-                <div class="pie-radius-editor__modes" role="group" aria-label="Pie radius mode">
-                  <button
-                    type="button"
-                    :class="{ 'is-active': (axisBindingNode?.chartSpec?.radiusMode ?? 'shared') === 'shared' }"
-                    @click="onPieRadiusModeChange('shared')"
-                  >
-                    Same radius
-                  </button>
-                  <button
-                    type="button"
-                    :class="{ 'is-active': axisBindingNode?.chartSpec?.radiusMode === 'per-component' }"
-                    @click="onPieRadiusModeChange('per-component')"
-                  >
-                    Per component
-                  </button>
-                </div>
-                <label
-                  v-if="(axisBindingNode?.chartSpec?.radiusMode ?? 'shared') === 'shared'"
-                  class="encoding-inspector__field"
-                >
-                  <span>Shared value</span>
-                  <select
-                    :value="axisBindingNode?.chartSpec?.encodings.radius?.field ?? ''"
-                    @change="onPolarRadiusFieldChange"
-                  >
-                    <option value="">Fixed</option>
-                    <option
-                      v-for="column in axisBindingColumns.filter((item) => item.type === 'quantitative')"
-                      :key="`radius-${column.name}`"
-                      :value="column.name"
-                    >
-                      {{ column.name }}
-                    </option>
-                  </select>
-                </label>
-                <div v-else class="pie-radius-editor__components">
-                  <label
-                    v-for="component in axisBindingNode?.chartSpec?.angleFields ?? []"
-                    :key="`component-radius-${component.field}`"
-                    class="pie-radius-editor__component"
-                  >
-                    <span>{{ component.field }}</span>
-                    <select
-                      :value="axisBindingNode?.chartSpec?.componentRadiusFields?.[component.field]?.field ?? ''"
-                      @change="onPieComponentRadiusFieldChange(component.field, $event)"
-                    >
-                      <option value="">Fixed</option>
-                      <option
-                        v-for="column in axisBindingColumns.filter((item) => item.type === 'quantitative')"
-                        :key="`${component.field}-radius-${column.name}`"
-                        :value="column.name"
-                      >
-                        {{ column.name }}
-                      </option>
-                    </select>
-                  </label>
-                </div>
-              </div>
-              <label
-                v-else-if="isPolarChartType(axisBindingNode?.chartSpec?.chartType ?? '')"
-                class="encoding-inspector__field"
-              >
-                <span>Radius</span>
-                <select
-                  :value="axisBindingNode?.chartSpec?.encodings.radius?.field ?? ''"
-                  @change="onPolarRadiusFieldChange"
-                >
-                  <option value="">Not bound</option>
-                  <option
-                    v-for="column in axisBindingColumns.filter((item) => item.type === 'quantitative')"
-                    :key="`radius-${column.name}`"
-                    :value="column.name"
-                  >
-                    {{ column.name }}
-                  </option>
-                </select>
-              </label>
-            </div>
-            <p v-else class="encoding-inspector__empty">
-              Import a CSV to bind this axis.
-            </p>
-
-            <section
-              v-if="
-                axisBindingNode?.chartSpec?.encodings.x &&
-                axisBindingNode?.chartSpec?.encodings.y &&
-                (isLineChartType(axisBindingNode?.chartSpec?.chartType ?? '') ||
-                  isScatterChartType(
-                    axisBindingNode?.chartSpec?.chartType ?? '',
-                  ))
-              "
-              class="encoding-inspector__series"
-            >
-              <template>
-                <div
-                  v-for="option in axisBindingOptionalCandidates"
-                  :key="option.channel"
-                  class="encoding-inspector__optional"
-                >
-                  <label class="encoding-inspector__field">
-                    <span>{{ option.label }}</span>
-                    <select
-                      :value="optionalEncodingDrafts[option.channel]"
-                      @change="onOptionalEncodingChange(option.channel, $event)"
-                    >
-                      <option value="">Static</option>
-                      <option
-                        v-for="candidate in option.candidates"
-                        :key="candidate.name"
-                        :value="candidate.name"
-                      >
-                        {{ candidate.name }} ({{ candidate.type }})
-                      </option>
-                    </select>
-                  </label>
-                </div>
-                <p
-                  v-if="
-                    !axisBindingOptionalCandidates.some(
-                      (option) => option.candidates.length,
-                    )
-                  "
-                  class="encoding-inspector__empty"
-                >
-                  No optional fields are available.
-                </p>
-              </template>
-              <label
-                v-if="!optionalEncodingDrafts.color"
-                class="encoding-inspector__static-control"
-              >
-                <span>Color value</span>
-                <input type="color" :value="staticColor" @input="onStaticColorChange" />
-              </label>
-              <label
-                v-if="!optionalEncodingDrafts.size"
-                class="encoding-inspector__static-control"
-              >
-                <span>Size value</span>
-                <input
-                  type="range"
-                  min="1"
-                  max="48"
-                  step="0.5"
-                  :value="staticSize"
-                  @input="onStaticSizeChange"
-                />
-                <output>{{ staticSize }} px</output>
-              </label>
-              <VisualMappingEditor
-                :show-color="showColorMapping"
-                :show-size="showSizeMapping"
-                :color-mapping="activeColorMapping"
-                :size-mapping="activeSizeMapping"
-                @color-change="onColorMappingChange"
-                @size-change="onSizeMappingChange"
-              />
-              <p
-                v-if="axisBindingRendererError"
-                class="encoding-inspector__error"
-              >
-                {{ axisBindingRendererError }}
-              </p>
-              <div class="encoding-inspector__actions">
-                <button
-                  class="encoding-inspector__confirm"
-                  type="button"
-                  @click="confirmEncodingInspector"
-                >
-                  Confirm encodings
-                </button>
-              </div>
-            </section>
-            <div
-              v-if="isPolarChartType(axisBindingNode?.chartSpec?.chartType ?? '')"
-              class="encoding-inspector__actions encoding-inspector__actions--standalone"
-            >
-              <button
-                class="encoding-inspector__confirm"
-                type="button"
-                :disabled="isPieChartType(axisBindingNode?.chartSpec?.chartType ?? '')
-                  ? !axisBindingNode?.chartSpec?.angleFields?.length
-                  : !axisBindingNode?.chartSpec?.encodings.angle"
-                @click="confirmPolarEncodingInspector"
-              >
-                Confirm encodings
-              </button>
-            </div>
+            <EncodingConfigPanel
+              v-if="axisBindingNode?.chartSpec"
+              :chart-name="axisBindingNode.chartSpec.chartType ?? axisBindingNode.name"
+              :chart-spec="axisBindingNode.chartSpec"
+              :columns="axisBindingColumns"
+              :mark-config="axisBindingMarkGroupConfig"
+              :renderer-error="axisBindingRendererError"
+              @close="closeEncodingInspector"
+              @confirm="confirmEncodingInspector"
+              @channel-change="onEncodingChannelChange"
+              @angle-fields-change="setPieAngleFields"
+              @radius-mode-change="setPieRadiusMode"
+              @component-radius-field-change="setPieComponentRadiusField"
+              @mark-config-change="updateAxisBindingMarkGroupConfig"
+            />
           </aside>
 
           <aside
@@ -1941,15 +1468,21 @@ onBeforeUnmount(() => {
 }
 .implemented-template-list {
   display: grid;
-  grid-template-columns: repeat(5, minmax(82px, 1fr));
+  grid-auto-flow: column;
+  grid-auto-columns: 200px;
+  grid-template-rows: 150px;
   gap: 8px;
   min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 .implemented-template-card {
   display: grid;
   grid-template-rows: minmax(0, 1fr) 24px;
-  min-width: 0;
-  min-height: 0;
+  width: 200px;
+  height: 150px;
+  min-width: 200px;
+  min-height: 150px;
   padding: 6px;
   border: 1px solid rgba(24, 33, 47, 0.1);
   border-radius: 6px;
@@ -2635,30 +2168,6 @@ onBeforeUnmount(() => {
   color: #334155;
   text-align: right;
 }
-.encoding-inspector__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.encoding-inspector__heading {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-.encoding-inspector__heading strong {
-  color: #18212f;
-  font-size: 12px;
-  letter-spacing: 0.08em;
-}
-.encoding-inspector__heading span {
-  overflow: hidden;
-  color: #6b7889;
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .encoding-inspector__close {
   display: inline-flex;
   align-items: center;
@@ -2699,164 +2208,6 @@ onBeforeUnmount(() => {
   border-color: rgba(28, 126, 214, 0.7);
   outline: 2px solid rgba(28, 126, 214, 0.12);
 }
-.pie-angle-fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-  margin-top: 12px;
-  color: #516176;
-  font-size: 11px;
-}
-.pie-angle-fields > span {
-  grid-column: 1 / -1;
-}
-.pie-radius-editor {
-  display: grid;
-  gap: 8px;
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid rgba(24, 33, 47, 0.1);
-  color: #516176;
-  font-size: 11px;
-}
-.pie-radius-editor__modes {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
-  padding: 3px;
-  border-radius: 6px;
-  background: #edf1f5;
-}
-.pie-radius-editor__modes button {
-  min-width: 0;
-  min-height: 28px;
-  padding: 4px 6px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: #5b6878;
-  font: inherit;
-  cursor: pointer;
-}
-.pie-radius-editor__modes button.is-active {
-  background: #fff;
-  color: #1554b2;
-  box-shadow: 0 1px 2px rgba(24, 33, 47, 0.14);
-  font-weight: 700;
-}
-.pie-radius-editor > .encoding-inspector__field {
-  margin-top: 0;
-}
-.pie-radius-editor__components {
-  display: grid;
-  gap: 6px;
-}
-.pie-radius-editor__component {
-  display: grid;
-  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
-  align-items: center;
-  gap: 8px;
-}
-.pie-radius-editor__component span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pie-radius-editor__component select {
-  width: 100%;
-  min-width: 0;
-  height: 30px;
-  padding: 0 6px;
-  border: 1px solid rgba(24, 33, 47, 0.14);
-  border-radius: 6px;
-  background: #fff;
-  color: #223041;
-  font: inherit;
-  cursor: pointer;
-}
-.pie-radius-editor__component select:focus {
-  border-color: rgba(28, 126, 214, 0.7);
-  outline: 2px solid rgba(28, 126, 214, 0.12);
-}
-.encoding-inspector__series {
-  display: grid;
-  gap: 8px;
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid rgba(24, 33, 47, 0.1);
-}
-.encoding-inspector__series-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  color: #516176;
-  font-size: 11px;
-}
-.encoding-inspector__suggestion {
-  color: #1554b2;
-  font-weight: 700;
-}
-.encoding-inspector__series select {
-  width: 100%;
-  height: 34px;
-  padding: 0 8px;
-  border: 1px solid rgba(24, 33, 47, 0.14);
-  border-radius: 6px;
-  background: #fff;
-  color: #223041;
-  font: inherit;
-}
-.encoding-inspector__optional {
-  display: contents;
-}
-.encoding-inspector__static-control {
-  display: grid;
-  grid-template-columns: minmax(72px, 1fr) minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  color: #516176;
-  font-size: 11px;
-}
-.encoding-inspector__static-control input[type="color"] {
-  width: 38px;
-  height: 28px;
-  padding: 2px;
-  border: 1px solid rgba(24, 33, 47, 0.14);
-  border-radius: 5px;
-  background: #fff;
-}
-.encoding-inspector__static-control input[type="range"] {
-  width: 100%;
-  accent-color: #1980bd;
-}
-.encoding-inspector__static-control output {
-  min-width: 40px;
-  color: #687585;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-.encoding-inspector__actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-}
-.encoding-inspector__actions--standalone {
-  margin-top: 14px;
-}
-.encoding-inspector__actions--standalone .encoding-inspector__confirm {
-  width: 100%;
-}
-.encoding-inspector__actions button {
-  min-height: 32px;
-  padding: 0 10px;
-  white-space: normal;
-  border-radius: 6px;
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
-}
 .encoding-inspector__secondary {
   border: 1px solid rgba(24, 33, 47, 0.14);
   background: #fff;
@@ -2871,18 +2222,6 @@ onBeforeUnmount(() => {
 .encoding-inspector__confirm:disabled {
   cursor: default;
   opacity: 0.45;
-}
-.encoding-inspector__error {
-  margin: 0;
-  color: #b42318;
-  font-size: 11px;
-  line-height: 1.4;
-}
-.encoding-inspector__empty {
-  margin: 12px 0 0;
-  color: #6b7889;
-  font-size: 12px;
-  line-height: 1.45;
 }
 .composition-popover__header {
   display: flex;

@@ -92,6 +92,34 @@ describe("Case 1 deterministic line chart", () => {
     ]);
   });
 
+  it("uses a nominal color encoding as the line series field", () => {
+    const dataset = loadCase1Dataset();
+    const result = renderLineChart({
+      chartId: "color-series-line",
+      width: 800,
+      height: 400,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: {
+        type: "Cartesian",
+        origin: { x: 0, y: 400 },
+        xDirection: 1,
+        yDirection: -1,
+      },
+      chartSpec: {
+        ...createChartSpec(),
+        encodings: {
+          ...createChartSpec().encodings,
+          color: { field: "person", type: "nominal" },
+        },
+      },
+      dataset,
+    });
+
+    expect(result.content.match(/data-mark-role="line"/g)).toHaveLength(5);
+    expect(result.content).toContain('data-series-key="Person_A"');
+  });
+
   it("combines multiple chart-upgrade dimensions into multiline groups", () => {
     const dataset: Dataset = {
       id: "multi-dimension-line",

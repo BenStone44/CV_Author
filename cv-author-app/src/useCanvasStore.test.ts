@@ -167,6 +167,115 @@ function mouseEvent() {
   } as unknown as MouseEvent;
 }
 
+describe("implemented chart template cards", () => {
+  it("exposes one independent card for every Bar variant", () => {
+    const canvasRef = ref(null);
+    const store = useCanvasStore(canvasRef);
+    const barCards = store.implementedTemplateCandidates.value.filter((candidate) =>
+      candidate.id.startsWith("builtin-template:") && candidate.id.includes("bar"),
+    );
+
+    expect(barCards.map(({ id, name, chartType }) => ({ id, name, chartType }))).toEqual([
+      { id: "builtin-template:single-bar", name: "Single Bar", chartType: "SingleBarChart" },
+      { id: "builtin-template:grouped-bar", name: "Grouped Bar", chartType: "GroupedBarChart" },
+      { id: "builtin-template:stacked-bar", name: "Stacked Bar", chartType: "StackedBarChart" },
+      { id: "builtin-template:divergent-bar", name: "Divergent Bar", chartType: "DivergentBarChart" },
+      { id: "builtin-template:divergent-stacked-bar", name: "Divergent Stacked Bar", chartType: "DivergentStackedBarChart" },
+    ]);
+  });
+
+  it("binds Matrix value and Donut ring through the generic encoding API", () => {
+    const dataset: Dataset = {
+      id: "generic-encoding-data",
+      name: "generic-encoding.csv",
+      columns: [
+        { name: "row", type: "nominal" },
+        { name: "column", type: "nominal" },
+        { name: "category", type: "nominal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { row: "North", column: "Q1", category: "A", value: "12" },
+        { row: "South", column: "Q2", category: "B", value: "18" },
+      ],
+    };
+    const canvasRef = ref({
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 800 }),
+      querySelectorAll: () => [],
+    } as unknown as HTMLElement);
+    const store = useCanvasStore(canvasRef);
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+
+    const matrix = lineChart("generic-matrix", 120, false);
+    matrix.chartSpec = {
+      chartType: "MatrixDiagram",
+      datasetId: dataset.id,
+      encodings: {
+        row: { field: "row", type: "nominal" },
+        column: { field: "column", type: "nominal" },
+        x: { field: "column", type: "nominal" },
+        y: { field: "row", type: "nominal" },
+      },
+    };
+    store.canvasNodes.value = [matrix];
+    store.selectedIds.value = [matrix.id];
+    store.axisBindingTarget.value = { nodeId: matrix.id, channel: "x" };
+    store.setChartEncoding("value", "value");
+    expect(matrix.chartSpec.encodings.value?.field).toBe("value");
+    expect(matrix.renderedContent).toContain('data-chart-type="matrix"');
+
+    const donut = lineChart("generic-donut", 120, false);
+    donut.coordinateGuide = { type: "Polar", origin: { x: 400, y: 200 } };
+    donut.chartSpec = {
+      chartType: "DonutChart",
+      datasetId: dataset.id,
+      encodings: {
+        angle: { field: "value", type: "quantitative" },
+        color: { field: "category", type: "nominal" },
+      },
+    };
+    store.canvasNodes.value = [donut];
+    store.selectedIds.value = [donut.id];
+    store.axisBindingTarget.value = { nodeId: donut.id, channel: "y" };
+    store.setChartEncoding("ring", "row");
+    expect(donut.chartSpec.encodings.ring?.field).toBe("row");
+    expect(donut.renderedContent).toContain('data-chart-type="donut"');
+
+    store.setChartEncoding("ring", "value");
+    expect(donut.chartSpec.encodings.ring?.field).toBe("row");
+  });
+
+  it("keeps static encoding config before required channels are complete", () => {
+    const dataset: Dataset = {
+      id: "preconfigured-bar-data",
+      name: "preconfigured-bar.csv",
+      columns: [
+        { name: "category", type: "nominal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [{ category: "A", value: "12" }],
+    };
+    const chart = lineChart("preconfigured-bar", 120, false);
+    chart.chartSpec = { chartType: "SingleBarChart", datasetId: dataset.id, encodings: {} };
+    const canvasRef = ref(null);
+    const store = useCanvasStore(canvasRef);
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [chart];
+    store.selectedIds.value = [chart.id];
+    store.axisBindingTarget.value = { nodeId: chart.id, channel: "x" };
+
+    store.updateAxisBindingMarkGroupConfig({ color: "#123456", size: 18 });
+    expect(chart.chartSpec.markGroups?.[0]?.sharedConfig).toMatchObject({ color: "#123456", size: 18 });
+
+    store.setChartEncoding("x", "category");
+    store.setChartEncoding("y", "value");
+    expect(chart.renderedContent).toContain('fill="#123456"');
+    expect(chart.renderedContent).toContain('width="18"');
+  });
+});
+
 describe("group editing scope", () => {
   it("moves and deletes group children while a reactive Nested relationship is present", () => {
     listeners.clear();
@@ -429,6 +538,245 @@ describe("Cube to Pie binding", () => {
 });
 
 describe("Cube to Cartesian axis binding", () => {
+  it("upgrades Single and Divergent Bar charts with a category dimension", () => {
+    const dataset: Dataset = {
+      id: "bar-upgrade-dataset",
+      name: "bar-upgrade.csv",
+      columns: [
+        { name: "category", type: "nominal" },
+        { name: "group", type: "nominal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { category: "A", group: "One", value: "8" },
+        { category: "A", group: "Two", value: "-3" },
+        { category: "B", group: "One", value: "5" },
+        { category: "B", group: "Two", value: "-6" },
+      ],
+    };
+    const canvasRef = ref({
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 800 }),
+      querySelectorAll: () => [],
+    } as unknown as HTMLElement);
+    const cases = [
+      ["SingleBarChart", "GroupedBarChart", "grouped"],
+      ["DivergentBarChart", "DivergentStackedBarChart", "divergent-stacked"],
+    ] as const;
+
+    cases.forEach(([sourceType, targetType, variant], index) => {
+      const store = useCanvasStore(canvasRef);
+      store.relationshipStore.dispatch({ type: "clear" });
+      useDatasetStore().datasets.value = [dataset];
+      const chart = lineChart(`bar-upgrade-${index}`, 120, false);
+      chart.chartSpec = {
+        chartType: sourceType,
+        datasetId: dataset.id,
+        encodings: {
+          x: { field: "category", type: "nominal" },
+          y: { field: "value", type: "quantitative" },
+        },
+      };
+      store.canvasNodes.value = [chart];
+      store.selectedIds.value = [chart.id];
+      store.axisBindingTarget.value = { nodeId: chart.id, channel: "x" };
+
+      expect(store.applyDimensionChartUpgrade("group")).toBe(true);
+      expect(chart.chartSpec?.chartType).toBe(targetType);
+      expect(chart.chartSpec?.encodings.color?.field).toBe("group");
+      expect(chart.renderedContent).toContain(`data-bar-variant="${variant}"`);
+      expect(chart.renderedContent?.match(/data-mark-role="bar"/g)).toHaveLength(4);
+    });
+  });
+
+  it("clears an old person filter when Line Chart upgrades to the person dimension", () => {
+    const dataset: Dataset = {
+      id: "line-upgrade-dataset",
+      name: "line-upgrade.csv",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "time", type: "temporal" },
+        { name: "weight_kg", type: "quantitative" },
+      ],
+      rows: [
+        { person: "P1", time: "2025-01-01", weight_kg: "88" },
+        { person: "P2", time: "2025-01-01", weight_kg: "84" },
+        { person: "P3", time: "2025-01-01", weight_kg: "86" },
+      ],
+    };
+    const chart = lineChart("line-upgrade", 120, false);
+    chart.chartSpec = {
+      ...chart.chartSpec!,
+      datasetId: dataset.id,
+      valueFilters: { person: ["P1"] },
+    };
+    const canvasRef = ref({
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 800 }),
+      querySelectorAll: () => [],
+    } as unknown as HTMLElement);
+    const store = useCanvasStore(canvasRef);
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [chart];
+    store.selectedIds.value = [chart.id];
+    store.axisBindingTarget.value = { nodeId: chart.id, channel: "x" };
+
+    expect(store.applyDimensionChartUpgrade("person")).toBe(true);
+    expect(chart.chartSpec?.series?.field).toBe("person");
+    expect(chart.chartSpec?.seriesFields?.map((encoding) => encoding.field)).toContain("person");
+    expect(chart.chartSpec?.valueFilters?.person).toBeUndefined();
+  });
+
+  it("filters Line, Scatterplot, Bar, and Matrix by partial person/date selections", () => {
+    const dataset: Dataset = {
+      id: "cube-filter-dataset",
+      name: "cube-filter.csv",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "time", type: "temporal" },
+        { name: "weight_kg", type: "quantitative" },
+      ],
+      rows: Array.from({ length: 5 }, (_, personIndex) =>
+        Array.from({ length: 5 }, (_, dateIndex) => ({
+          person: `P${personIndex + 1}`,
+          time: `2025-${String(dateIndex + 1).padStart(2, "0")}-01`,
+          weight_kg: String(80 + personIndex + dateIndex),
+        })),
+      ).flat(),
+      primaryKey: ["person", "time"],
+    };
+    const canvasRef = ref({
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 800 }),
+      querySelectorAll: () => [],
+    } as unknown as HTMLElement);
+    const selectedPeople = ["P1", "P2", "P3"];
+    const selectedDates = ["2025-01-01", "2025-02-01", "2025-03-01"];
+    const cases = [
+      { chartType: "LineGraph", expectedRole: "line", expectedCount: 3 },
+      { chartType: "Scatterplot", expectedRole: "point", expectedCount: 9 },
+      { chartType: "GroupedBarChart", expectedRole: "bar", expectedCount: 9 },
+      { chartType: "MatrixDiagram", expectedRole: "cell", expectedCount: 9 },
+    ];
+
+    cases.forEach(({ chartType, expectedRole, expectedCount }, index) => {
+      const store = useCanvasStore(canvasRef);
+      store.relationshipStore.dispatch({ type: "clear" });
+      useDatasetStore().datasets.value = [dataset];
+      const chart = lineChart(`filtered-${index}`, 120, chartType === "LineGraph");
+      chart.chartSpec = {
+        chartType,
+        datasetId: dataset.id,
+        encodings: chartType === "MatrixDiagram"
+          ? {
+            x: { field: "time", type: "temporal" },
+            y: { field: "person", type: "nominal" },
+            column: { field: "time", type: "temporal" },
+            row: { field: "person", type: "nominal" },
+          }
+          : {
+            x: { field: "time", type: "temporal" },
+            y: { field: "weight_kg", type: "quantitative" },
+            ...(chartType === "GroupedBarChart"
+              ? { color: { field: "person", type: "nominal" as const } }
+              : {}),
+          },
+        series: chartType === "LineGraph" ? { field: "person", type: "nominal" } : undefined,
+      };
+      store.canvasNodes.value = [chart];
+      store.selectedIds.value = [chart.id];
+      store.axisBindingTarget.value = { nodeId: chart.id, channel: "x" };
+
+      store.setCubeValueFilters({
+        person: { field: "person", values: selectedPeople },
+        date: { field: "time", values: selectedDates },
+      });
+
+      expect(chart.chartSpec?.valueFilters).toEqual({
+        person: selectedPeople,
+        time: selectedDates,
+      });
+      expect(chart.renderedContent?.match(new RegExp(`data-mark-role="${expectedRole}"`, "g"))).toHaveLength(expectedCount);
+    });
+  });
+
+  it("binds Cube dimensions to Matrix X/Y through column/row encodings", async () => {
+    const dataset: Dataset = {
+      id: "cube-matrix-dataset",
+      name: "cube-matrix.csv",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "category", type: "nominal" },
+        { name: "weight_kg", type: "quantitative" },
+      ],
+      rows: [
+        { person: "P1", category: "A", weight_kg: "88" },
+        { person: "P2", category: "B", weight_kg: "84" },
+      ],
+    };
+    const chart = lineChart("cube-matrix", 120, false);
+    chart.y = 80;
+    chart.width = 320;
+    chart.height = 180;
+    chart.coordinateGuide = {
+      type: "Cartesian",
+      origin: { x: 0, y: 180 },
+      xDirection: 1,
+      yDirection: -1,
+    };
+    chart.chartSpec = {
+      chartType: "MatrixDiagram",
+      datasetId: dataset.id,
+      encodings: {},
+    };
+    chart.renderedContent = null;
+    const canvasRef = ref({
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 800 }),
+      querySelectorAll: () => [],
+    } as unknown as HTMLElement);
+    const store = useCanvasStore(canvasRef);
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [chart];
+
+    const dropField = async (dimension: "person" | "weight", values: string[], clientX: number, clientY: number) => {
+      const serialized = beginCubeBindingDrag({ dimension, values });
+      const dataTransfer = {
+        dropEffect: "none",
+        effectAllowed: "copy",
+        getData: (type: string) => type === CUBE_BINDING_MIME ? serialized : "",
+      } as unknown as DataTransfer;
+      const dragEvent = { clientX, clientY, dataTransfer, preventDefault() {} } as unknown as DragEvent;
+      store.onCanvasDragOver(dragEvent);
+      expect(store.activeDataBindingDropZone.value?.compatible).toBe(true);
+      await store.onCanvasDrop(dragEvent);
+    };
+
+    await dropField("person", ["P1", "P2"], chart.x + chart.width / 2, chart.y + chart.height);
+    expect(chart.chartSpec?.encodings.x?.field).toBe("person");
+    expect(chart.chartSpec?.encodings.column?.field).toBe("person");
+
+    await dropField("weight", ["category"], chart.x, chart.y + chart.height / 2);
+    expect(chart.chartSpec?.encodings.y?.field).toBe("category");
+    expect(chart.chartSpec?.encodings.row?.field).toBe("category");
+    expect(chart.renderedContent).toContain('data-chart-type="matrix"');
+    expect(chart.chartSpec?.scales?.x?.type).toBe("point");
+    expect(chart.chartSpec?.scales?.y?.type).toBe("point");
+
+    const initialPlotWidth = chart.chartSpec?.plotArea?.width ?? 0;
+    store.onCoordinateAxisScalePointerDown(
+      chart,
+      "x",
+      pointerEvent(chart.x + chart.width, chart.y + chart.height),
+    );
+    listeners.get("pointermove")?.(
+      pointerEvent(chart.x + chart.width + 48, chart.y + chart.height),
+    );
+    listeners.get("pointerup")?.(
+      pointerEvent(chart.x + chart.width + 48, chart.y + chart.height),
+    );
+    expect(chart.coordinateGuide?.type === "Cartesian" && chart.coordinateGuide.xScale).toBeGreaterThan(1);
+    expect(chart.chartSpec?.plotArea?.width).toBeGreaterThan(initialPlotWidth);
+  });
+
   it("selects an unselected chart on dragover and binds person to its X axis", async () => {
     const dataset: Dataset = {
       id: "cube-axis-dataset",

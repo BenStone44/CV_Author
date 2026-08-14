@@ -275,6 +275,37 @@ function inferScatterCandidates(dataset: Dataset, profiles: ColumnDimensionProfi
   }));
 }
 
+function inferBarCandidates(dataset: Dataset, profiles: ColumnDimensionProfile[]) {
+  const categories = profiles.filter((profile) => profile.canBeCategory || profile.declaredType === "temporal");
+  const measures = profiles.filter((profile) => profile.declaredType === "quantitative" && profile.validCount > 0);
+  const byColumn = columnByField(dataset);
+  return categories.flatMap((category) => measures.flatMap((measure) => {
+    const base: TemplateEncodingCandidate = {
+      id: `bar:single:${category.field}:${measure.field}`,
+      mode: "single-bar",
+      dimensionality: 2,
+      score: category.categoryConfidence * 0.45 + measure.coverage * 0.55,
+      assignments: [
+        assignment("x", byColumn.get(category.field)!, "category"),
+        assignment("y", byColumn.get(measure.field)!, "measure"),
+      ],
+      reasons: ["X is categorical", "Y is quantitative"],
+    };
+    const series = categories.filter((candidate) => candidate.field !== category.field).map((candidate) => ({
+      id: `bar:series:${category.field}:${measure.field}:${candidate.field}`,
+      mode: "categorized-bar",
+      dimensionality: 3,
+      score: (base.score + candidate.categoryConfidence) / 2,
+      assignments: [
+        ...base.assignments,
+        assignment("color", byColumn.get(candidate.field)!, "category"),
+      ],
+      reasons: [...base.reasons, `${candidate.field} groups or segments bars`],
+    } satisfies TemplateEncodingCandidate));
+    return [base, ...series];
+  }));
+}
+
 function inferPieCandidates(dataset: Dataset, profiles: ColumnDimensionProfile[]) {
   const quantitative = profiles.filter((profile) => profile.declaredType === "quantitative" && profile.validCount > 0);
   if (quantitative.length === 0) return [];
@@ -359,6 +390,8 @@ export function inferTemplateEncodings(dataset: Dataset, chartType: string | Cha
     ? inferLineCandidates(dataset, columns)
     : templateId === "scatter"
       ? inferScatterCandidates(dataset, columns)
+      : templateId === "bar"
+        ? inferBarCandidates(dataset, columns)
       : templateId === "pie"
         ? inferPieCandidates(dataset, columns)
         : templateId === "matrix"
@@ -388,6 +421,15 @@ export function inferAllTemplateEncodings(dataset: Dataset): Record<ChartTemplat
 
 function markKeys(dataset: Dataset, spec: ChartSpec, role: string) {
   if (role === "line") return spec.series ? uniqueValues(dataset, spec.series.field) : ["__single__"];
+  if (role === "bar") {
+    const category = spec.encodings.x;
+    const series = spec.encodings.color;
+    if (!category) return [];
+    return Array.from(new Set(dataset.rows.map((row) => [
+      row[category.field] ?? "",
+      series ? row[series.field] ?? "" : "__single__",
+    ].join("|"))));
+  }
   if (role === "arc" && spec.angleFields?.length) {
     const flattenFields = spec.flattenFields ?? [];
     if (flattenFields.length === 0) return spec.angleFields.map((encoding) => encoding.field);

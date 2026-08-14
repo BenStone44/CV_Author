@@ -127,6 +127,59 @@ describe("independent Cartesian axis component", () => {
     expect(node.renderedContent).not.toContain("<text");
   });
 
+  it("uses the shared Cartesian component for Matrix axes", () => {
+    const node = chartNode({
+      candidateId: "builtin-template:matrix",
+      chartSpec: {
+        chartType: "MatrixDiagram",
+        datasetId: "matrix-data",
+        encodings: {
+          x: { field: "month", type: "nominal" },
+          y: { field: "region", type: "nominal" },
+          column: { field: "month", type: "nominal" },
+          row: { field: "region", type: "nominal" },
+        },
+        plotArea: { x: 192, y: 73, width: 700, height: 316 },
+        scales: {
+          x: { type: "point", domain: ["Jan", "Feb"], range: [192, 892] },
+          y: { type: "point", domain: ["North", "South"], range: [389, 73] },
+        },
+      },
+    });
+
+    const model = createCartesianAxisModel(node)!;
+    expect(model.xTicks.map((tick) => tick.label)).toEqual(["Jan", "Feb"]);
+    expect(model.yTicks.map((tick) => tick.label)).toEqual(["North", "South"]);
+    expect(model.xTitle).toBe("month");
+    expect(model.yTitle).toBe("region");
+  });
+
+  it("uses the shared Cartesian component for Bar axes", () => {
+    const node = chartNode({
+      candidateId: "builtin-template:grouped-bar",
+      chartSpec: {
+        chartType: "GroupedBarChart",
+        datasetId: "bar-data",
+        encodings: {
+          x: { field: "quarter", type: "nominal" },
+          y: { field: "revenue", type: "quantitative" },
+          color: { field: "region", type: "nominal" },
+        },
+        plotArea: { x: 192, y: 73, width: 700, height: 316 },
+        scales: {
+          x: { type: "point", domain: ["Q1", "Q2", "Q3"], range: [192, 892] },
+          y: { type: "linear", domain: [0, 120], range: [389, 73] },
+        },
+      },
+    });
+
+    const model = createCartesianAxisModel(node)!;
+    expect(model.xTicks.map((tick) => tick.label)).toEqual(["Q1", "Q2", "Q3"]);
+    expect(model.yTicks.length).toBeGreaterThan(0);
+    expect(model.xTitle).toBe("quarter");
+    expect(model.yTitle).toBe("revenue");
+  });
+
   it("renders one static axis component and no Layer axis configuration controls", () => {
     const owner = chartNode();
     const member = chartNode({ id: "points", name: "Points" });

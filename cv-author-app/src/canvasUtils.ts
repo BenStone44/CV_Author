@@ -178,6 +178,9 @@ export function cloneChartSpec(chartSpec: ChartSpec | null | undefined) {
       : undefined,
     renderer: chartSpec.renderer ? { ...chartSpec.renderer } : undefined,
     filters: chartSpec.filters ? { ...chartSpec.filters } : undefined,
+    valueFilters: chartSpec.valueFilters
+      ? Object.fromEntries(Object.entries(chartSpec.valueFilters).map(([field, values]) => [field, [...values]]))
+      : undefined,
     markGroups: chartSpec.markGroups?.map((group) => ({
       ...group,
       memberKeys: [...group.memberKeys],

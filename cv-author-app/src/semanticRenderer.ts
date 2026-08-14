@@ -3,7 +3,7 @@ import { scaleLinear, scalePoint, scaleUtc } from "d3-scale";
 import { arc, pie } from "d3-shape";
 import type { CartesianCoordinateGuide, ChartEncoding, ChartSpec, Dataset, LayerSpec, NestedSpec, ChartPlotArea, ChartScaleSpec, CoordinateGuide, MarkGroupSharedConfig } from "./types";
 import { renderLineChart, type LineRenderInput } from "./lineRenderer";
-import { normalizeChartTemplate } from "./chartTemplates";
+import { normalizeBarChartVariant, normalizeChartTemplate } from "./chartTemplates";
 import {
   isLinearColorMapping,
   isLinearSizeMapping,
@@ -129,6 +129,153 @@ function renderScatterChart(input: LineRenderInput) {
   }).join("");
   const content = `<g data-chart-id="${esc(input.chartId)}" data-chart-type="scatter" data-renderer="deterministic-scatter-marks@1">${marks}</g>`;
   return { ...base, content };
+}
+
+type BarDatum = {
+  category: string;
+  series: string;
+  value: number;
+  rows: Dataset["rows"];
+};
+
+function renderBarChart(input: GenericRenderInput) {
+  const xEncoding = input.chartSpec.encodings.x;
+  const yEncoding = input.chartSpec.encodings.y;
+  if (!xEncoding || !yEncoding) throw new Error("Bar renderer requires both X and Y encodings.");
+  if (yEncoding.type !== "quantitative") throw new Error("Bar renderer Y encoding must be quantitative.");
+  const variant = normalizeBarChartVariant(input.chartSpec.chartType) ?? "single";
+  const seriesEncoding = input.chartSpec.encodings.color?.type === "nominal"
+    || input.chartSpec.encodings.color?.type === "temporal"
+    ? input.chartSpec.encodings.color
+    : input.chartSpec.series;
+  const categoryValues = Array.from(new Set(input.dataset.rows.map((row) => row[xEncoding.field] ?? "").filter(Boolean)));
+  const seriesValues = seriesEncoding
+    ? Array.from(new Set(input.dataset.rows.map((row) => row[seriesEncoding.field] ?? "").filter(Boolean)))
+    : ["__single__"];
+  const groups = new Map<string, BarDatum>();
+  input.dataset.rows.forEach((row) => {
+    const category = row[xEncoding.field] ?? "";
+    const series = seriesEncoding ? row[seriesEncoding.field] ?? "" : "__single__";
+    const value = Number(row[yEncoding.field] ?? "");
+    if (!category || !series || !Number.isFinite(value)) return;
+    const groupKey = `${category}\u0000${series}`;
+    const current = groups.get(groupKey);
+    if (current) {
+      current.value += value;
+      current.rows.push(row);
+    } else {
+      groups.set(groupKey, { category, series, value, rows: [row] });
+    }
+  });
+  const data = Array.from(groups.values());
+  const aggregation = input.chartSpec.aggregations?.y ?? "sum";
+  if (aggregation === "avg") data.forEach((datum) => { datum.value /= datum.rows.length; });
+
+  const fontSize = Math.max(9, Math.min(input.chartSpec.styleTokens?.fontSize ?? 11, Math.min(input.width, input.height) * 0.045));
+  const leftMargin = Math.min(Math.max(fontSize * 4.8, input.width * 0.09), input.width * 0.28);
+  const rightMargin = Math.min(Math.max(fontSize * 1.8, input.width * 0.035), input.width * 0.14);
+  const topMargin = Math.min(Math.max(fontSize * 2, input.height * 0.07), input.height * 0.22);
+  const bottomMargin = Math.min(Math.max(fontSize * 3.6, input.height * 0.14), input.height * 0.3);
+  const basePlotArea: ChartPlotArea = {
+    x: input.minX + leftMargin,
+    y: input.minY + topMargin,
+    width: Math.max(1, input.width - leftMargin - rightMargin),
+    height: Math.max(1, input.height - topMargin - bottomMargin),
+  };
+  const guide = input.coordinateGuide?.type === "Cartesian" ? input.coordinateGuide : null;
+  const scaledPlotWidth = Math.max(1, basePlotArea.width * (guide?.xScale ?? 1));
+  const scaledPlotHeight = Math.max(1, basePlotArea.height * (guide?.yScale ?? 1));
+  const plotArea: ChartPlotArea = input.sharedPlotArea ?? {
+    x: guide?.xDirection === -1 ? basePlotArea.x + basePlotArea.width - scaledPlotWidth : basePlotArea.x,
+    y: guide?.yDirection === 1 ? basePlotArea.y : basePlotArea.y + basePlotArea.height - scaledPlotHeight,
+    width: scaledPlotWidth,
+    height: scaledPlotHeight,
+  };
+  const xRange: [number, number] = input.sharedScales?.x.range
+    ?? (guide?.xDirection === -1
+      ? [plotArea.x + plotArea.width, plotArea.x]
+      : [plotArea.x, plotArea.x + plotArea.width]);
+  const yRange: [number, number] = input.sharedScales?.y.range
+    ?? (guide?.yDirection === 1
+      ? [plotArea.y, plotArea.y + plotArea.height]
+      : [plotArea.y + plotArea.height, plotArea.y]);
+  const isStacked = variant === "stacked" || variant === "divergent-stacked";
+  const stackedExtents = categoryValues.map((category) => {
+    const values = data.filter((datum) => datum.category === category).map((datum) => datum.value);
+    return {
+      positive: values.filter((value) => value > 0).reduce((sum, value) => sum + value, 0),
+      negative: values.filter((value) => value < 0).reduce((sum, value) => sum + value, 0),
+    };
+  });
+  const valuesForDomain = isStacked
+    ? stackedExtents.flatMap((item) => [item.negative, item.positive])
+    : data.map((datum) => datum.value);
+  const minimum = Math.min(0, ...valuesForDomain);
+  const maximum = Math.max(0, ...valuesForDomain);
+  const span = maximum - minimum || Math.max(Math.abs(maximum), 1);
+  const yDomain: [number, number] = input.sharedScales?.y.type === "linear"
+    ? input.sharedScales.y.domain as [number, number]
+    : minimum === 0 && maximum === 0
+      ? [0, 1]
+      : [minimum - (minimum < 0 ? span * 0.04 : 0), maximum + (maximum > 0 ? span * 0.04 : 0)];
+  const xScale: ChartScaleSpec = input.sharedScales?.x ?? { type: "point", domain: categoryValues, range: xRange };
+  const yScale: ChartScaleSpec = input.sharedScales?.y ?? { type: "linear", domain: yDomain, range: yRange, nice: true };
+  const xPosition = chartScalePosition(xScale);
+  const yPosition = chartScalePosition(yScale);
+  const zeroY = yPosition("0");
+  const categoryBand = plotArea.width / Math.max(categoryValues.length, 1);
+  const groupCount = variant === "grouped" ? Math.max(seriesValues.length, 1) : 1;
+  const groupBand = categoryBand * 0.78 / groupCount;
+  const defaultWidth = variant === "grouped" ? groupBand * 0.88 : categoryBand * 0.7;
+  const config = groupConfig(input.chartSpec, "bar");
+  const colorEncoding = input.chartSpec.encodings.color;
+  const sizeEncoding = input.chartSpec.encodings.size;
+  const colorDomain = visualDomain(input.dataset.rows, colorEncoding);
+  const sizeDomain = visualDomain(input.dataset.rows, sizeEncoding);
+  const stackOffsets = new Map<string, { positive: number; negative: number }>(
+    categoryValues.map((category) => [category, { positive: 0, negative: 0 }]),
+  );
+  const marks = data.map((datum, index) => {
+    const categoryCenter = xPosition(datum.category);
+    if (!Number.isFinite(categoryCenter)) return "";
+    const seriesIndex = Math.max(0, seriesValues.indexOf(datum.series));
+    const representative = datum.rows[0] ?? {};
+    const fallbackColor = palette[seriesIndex % palette.length]!;
+    const color = visualColor(representative, colorEncoding, colorDomain, config, fallbackColor);
+    const mappedWidth = visualSize(representative, sizeEncoding, sizeDomain, config, defaultWidth);
+    const barWidth = Math.max(1, Math.min(mappedWidth, variant === "grouped" ? groupBand * 0.92 : categoryBand * 0.9));
+    const centerX = variant === "grouped"
+      ? categoryCenter + (seriesIndex - (groupCount - 1) / 2) * groupBand
+      : categoryCenter;
+    let startValue = 0;
+    let endValue = datum.value;
+    if (isStacked) {
+      const offsets = stackOffsets.get(datum.category)!;
+      if (datum.value >= 0) {
+        startValue = offsets.positive;
+        offsets.positive += datum.value;
+        endValue = offsets.positive;
+      } else {
+        startValue = offsets.negative;
+        offsets.negative += datum.value;
+        endValue = offsets.negative;
+      }
+    }
+    const startY = yPosition(String(startValue));
+    const endY = yPosition(String(endValue));
+    const rectY = Math.min(startY, endY);
+    const height = Math.max(1, Math.abs(startY - endY));
+    const keys = datum.rows.map((row, rowIndex) => key(input.dataset, row) || String(rowIndex)).join(",");
+    return `<rect data-chart-id="${esc(input.chartId)}" data-mark-role="bar" data-mark-group-id="mark-group:${esc(input.chartId)}:bar" data-row-keys="${esc(keys)}" data-category-key="${esc(datum.category)}" data-series-key="${esc(datum.series)}" data-value="${datum.value}" x="${centerX - barWidth / 2}" y="${rectY}" width="${barWidth}" height="${height}" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 0.9)}"/>`;
+  }).join("");
+  const zeroLine = (variant === "divergent" || variant === "divergent-stacked") && Number.isFinite(zeroY)
+    ? `<line data-mark-role="zero-line" x1="${plotArea.x}" y1="${zeroY}" x2="${plotArea.x + plotArea.width}" y2="${zeroY}" stroke="${esc(input.chartSpec.styleTokens?.axisColor ?? "#64748b")}" stroke-width="1" vector-effect="non-scaling-stroke"/>`
+    : "";
+  return {
+    content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="bar" data-bar-variant="${variant}" data-renderer="deterministic-bar@1">${zeroLine}${marks}</g>`,
+    plotArea,
+    scales: { x: xScale, y: yScale },
+  };
 }
 
 function resolvedPolarEncodings(spec: ChartSpec) {
@@ -269,12 +416,57 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
 function renderMatrixChart(input: GenericRenderInput) {
   const rowEncoding = input.chartSpec.encodings.row ?? input.chartSpec.encodings.y;
   const columnEncoding = input.chartSpec.encodings.column ?? input.chartSpec.encodings.x;
-  const valueEncoding = input.chartSpec.encodings.value ?? input.chartSpec.encodings.color;
+  const valueEncoding = input.chartSpec.encodings.value;
+  const colorEncoding = input.chartSpec.encodings.color ?? valueEncoding;
   if (!rowEncoding || !columnEncoding) throw new Error("Matrix renderer requires row and column encodings.");
   const rowValues = Array.from(new Set(input.dataset.rows.map((row) => row[rowEncoding.field] ?? ""))).filter(Boolean);
   const columnValues = Array.from(new Set(input.dataset.rows.map((row) => row[columnEncoding.field] ?? ""))).filter(Boolean);
-  const margin = Math.min(input.width, input.height) * 0.12;
-  const plotArea = { x: input.minX + margin, y: input.minY + margin, width: input.width - margin * 1.5, height: input.height - margin * 1.5 };
+  // Matrix cells use the same bounded Cartesian plot area as line/scatter
+  // charts so the shared coordinate-system layer can render real axes.
+  const fontSize = Math.max(9, Math.min(input.chartSpec.styleTokens?.fontSize ?? 11, Math.min(input.width, input.height) * 0.045));
+  const leftMargin = Math.min(Math.max(fontSize * 4.8, input.width * 0.09), input.width * 0.28);
+  const rightMargin = Math.min(Math.max(fontSize * 1.8, input.width * 0.035), input.width * 0.14);
+  const topMargin = Math.min(Math.max(fontSize * 2, input.height * 0.07), input.height * 0.22);
+  const bottomMargin = Math.min(Math.max(fontSize * 3.6, input.height * 0.14), input.height * 0.3);
+  const basePlotArea: ChartPlotArea = {
+    x: input.minX + leftMargin,
+    y: input.minY + topMargin,
+    width: Math.max(1, input.width - leftMargin - rightMargin),
+    height: Math.max(1, input.height - topMargin - bottomMargin),
+  };
+  const guide = input.coordinateGuide?.type === "Cartesian" ? input.coordinateGuide : null;
+  const scaledPlotWidth = Math.max(1, basePlotArea.width * (guide?.xScale ?? 1));
+  const scaledPlotHeight = Math.max(1, basePlotArea.height * (guide?.yScale ?? 1));
+  const plotArea: ChartPlotArea = input.sharedPlotArea ?? {
+    x: guide?.xDirection === -1
+      ? basePlotArea.x + basePlotArea.width - scaledPlotWidth
+      : basePlotArea.x,
+    y: guide?.yDirection === 1
+      ? basePlotArea.y
+      : basePlotArea.y + basePlotArea.height - scaledPlotHeight,
+    width: scaledPlotWidth,
+    height: scaledPlotHeight,
+  };
+  const xRange: [number, number] = input.sharedScales?.x.range
+    ?? (guide?.xDirection === -1
+      ? [plotArea.x + plotArea.width, plotArea.x]
+      : [plotArea.x, plotArea.x + plotArea.width]);
+  const yRange: [number, number] = input.sharedScales?.y.range
+    ?? (guide?.yDirection === 1
+      ? [plotArea.y, plotArea.y + plotArea.height]
+      : [plotArea.y + plotArea.height, plotArea.y]);
+  const xScale = input.sharedScales?.x ?? {
+    type: "point" as const,
+    domain: columnValues,
+    range: xRange,
+  };
+  const yScale = input.sharedScales?.y ?? {
+    type: "point" as const,
+    domain: rowValues,
+    range: yRange,
+  };
+  const xPosition = chartScalePosition(xScale);
+  const yPosition = chartScalePosition(yScale);
   const cellWidth = plotArea.width / Math.max(columnValues.length, 1);
   const cellHeight = plotArea.height / Math.max(rowValues.length, 1);
   const numeric = valueEncoding ? input.dataset.rows.map((row) => Number(row[valueEncoding.field] ?? "")).filter(Number.isFinite) : [];
@@ -283,7 +475,10 @@ function renderMatrixChart(input: GenericRenderInput) {
     ? () => 0.72
     : scaleLinear().domain(domain as [number, number]).range([0.18, 0.95]);
   const config = groupConfig(input.chartSpec, "cell");
-  const colorDomain = visualDomain(input.dataset.rows, valueEncoding);
+  const colorDomain = visualDomain(input.dataset.rows, colorEncoding);
+  const colorValues = colorEncoding?.type === "nominal" || colorEncoding?.type === "temporal"
+    ? Array.from(new Set(input.dataset.rows.map((row) => row[colorEncoding.field] ?? "")))
+    : [];
   const cells = input.dataset.rows.map((row, index) => {
     const rowKey = row[rowEncoding.field] ?? "";
     const columnKey = row[columnEncoding.field] ?? "";
@@ -291,10 +486,18 @@ function renderMatrixChart(input: GenericRenderInput) {
     const columnIndex = columnValues.indexOf(columnKey);
     if (rowIndex < 0 || columnIndex < 0) return "";
     const alpha = valueEncoding ? opacity(Number(row[valueEncoding.field] ?? "")) : 0.72;
-    const color = visualColor(row, valueEncoding, colorDomain, config, "#2563eb");
-    return `<rect data-chart-id="${esc(input.chartId)}" data-mark-role="cell" data-mark-group-id="mark-group:${esc(input.chartId)}:cell" data-row-key="${esc(key(input.dataset, row) || String(index))}" data-row-value="${esc(rowKey)}" data-column-value="${esc(columnKey)}" x="${plotArea.x + columnIndex * cellWidth}" y="${plotArea.y + rowIndex * cellHeight}" width="${Math.max(1, cellWidth - 1)}" height="${Math.max(1, cellHeight - 1)}" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? alpha)}"/>`;
+    const colorIndex = colorEncoding ? Math.max(0, colorValues.indexOf(row[colorEncoding.field] ?? "")) : 0;
+    const color = visualColor(row, colorEncoding, colorDomain, config, palette[colorIndex % palette.length] ?? "#2563eb");
+    const centerX = xPosition(columnKey);
+    const centerY = yPosition(rowKey);
+    if (!Number.isFinite(centerX) || !Number.isFinite(centerY)) return "";
+    return `<rect data-chart-id="${esc(input.chartId)}" data-mark-role="cell" data-mark-group-id="mark-group:${esc(input.chartId)}:cell" data-row-key="${esc(key(input.dataset, row) || String(index))}" data-row-value="${esc(rowKey)}" data-column-value="${esc(columnKey)}" x="${centerX - cellWidth / 2 + 0.5}" y="${centerY - cellHeight / 2 + 0.5}" width="${Math.max(1, cellWidth - 1)}" height="${Math.max(1, cellHeight - 1)}" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? alpha)}"/>`;
   }).join("");
-  return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="matrix" data-renderer="deterministic-chart@1">${cells}</g>`, plotArea, scales: undefined };
+  return {
+    content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="matrix" data-renderer="deterministic-chart@1">${cells}</g>`,
+    plotArea,
+    scales: { x: xScale, y: yScale },
+  };
 }
 
 export type GenericRenderInput = {
@@ -315,6 +518,7 @@ export function renderDeterministicChart(input: GenericRenderInput) {
   if (!template) throw new Error(`Unsupported chart template: ${input.chartSpec.chartType}`);
   if (template === "pie" || template === "donut") return renderPolarChart(input, template === "donut");
   if (template === "matrix") return renderMatrixChart(input);
+  if (template === "bar") return renderBarChart(input);
   if (input.coordinateGuide?.type !== "Cartesian") throw new Error(`${template} requires a Cartesian coordinate system.`);
   const lineInput = { ...input, coordinateGuide: input.coordinateGuide as CartesianCoordinateGuide };
   return template === "scatter" ? renderScatterChart(lineInput) : renderLineChart(lineInput);

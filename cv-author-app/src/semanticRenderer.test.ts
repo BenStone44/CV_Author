@@ -20,6 +20,155 @@ const lineSpec: ChartSpec = {
 };
 
 describe("semantic Case 1 renderers", () => {
+  it("renders all Bar Chart variants through one Cartesian renderer", () => {
+    const barDataset: Dataset = {
+      id: "bars",
+      name: "bars.csv",
+      columns: [
+        { name: "category", type: "nominal" },
+        { name: "series", type: "nominal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { category: "A", series: "One", value: "8" },
+        { category: "A", series: "Two", value: "-3" },
+        { category: "B", series: "One", value: "5" },
+        { category: "B", series: "Two", value: "-6" },
+      ],
+      primaryKey: ["category", "series"],
+    };
+    const render = (chartType: string, color = true) => renderDeterministicChart({
+      chartId: chartType,
+      width: 500,
+      height: 300,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Cartesian", origin: { x: 0, y: 300 }, xDirection: 1, yDirection: -1 },
+      chartSpec: {
+        chartType,
+        datasetId: barDataset.id,
+        encodings: {
+          x: { field: "category", type: "nominal" },
+          y: { field: "value", type: "quantitative" },
+          ...(color ? { color: { field: "series", type: "nominal" as const } } : {}),
+        },
+      },
+      dataset: barDataset,
+    });
+
+    const single = render("SingleBarChart", false);
+    const grouped = render("GroupedBarChart");
+    const stacked = render("StackedBarChart");
+    const divergent = render("DivergentBarChart", false);
+    const divergentStacked = render("DivergentStackedBarChart");
+
+    expect(single.content).toContain('data-bar-variant="single"');
+    expect(single.content.match(/data-mark-role="bar"/g)).toHaveLength(2);
+    expect(grouped.content).toContain('data-bar-variant="grouped"');
+    expect(grouped.content.match(/data-mark-role="bar"/g)).toHaveLength(4);
+    expect(stacked.content).toContain('data-bar-variant="stacked"');
+    expect(stacked.content.match(/data-mark-role="bar"/g)).toHaveLength(4);
+    expect(divergent.content).toContain('data-bar-variant="divergent"');
+    expect(divergent.content).toContain('data-mark-role="zero-line"');
+    expect(divergentStacked.content).toContain('data-bar-variant="divergent-stacked"');
+    expect(divergentStacked.content).toContain('data-mark-role="zero-line"');
+    expect(divergentStacked.content.match(/data-mark-role="bar"/g)).toHaveLength(4);
+    expect(grouped.scales?.x.type).toBe("point");
+    expect(grouped.scales?.y.type).toBe("linear");
+    expect(grouped.scales?.y.domain).toEqual(expect.arrayContaining([expect.any(Number)]));
+  });
+
+  it("applies Bar Chart color and size column mappings", () => {
+    const barDataset: Dataset = {
+      id: "mapped-bars",
+      name: "mapped-bars.csv",
+      columns: [
+        { name: "category", type: "nominal" },
+        { name: "value", type: "quantitative" },
+        { name: "color", type: "quantitative" },
+        { name: "size", type: "quantitative" },
+      ],
+      rows: [
+        { category: "A", value: "4", color: "0", size: "0" },
+        { category: "B", value: "8", color: "100", size: "100" },
+      ],
+    };
+    const result = renderDeterministicChart({
+      chartId: "mapped-bars",
+      width: 500,
+      height: 300,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Cartesian", origin: { x: 0, y: 300 }, xDirection: 1, yDirection: -1 },
+      chartSpec: {
+        chartType: "SingleBarChart",
+        datasetId: barDataset.id,
+        encodings: {
+          x: { field: "category", type: "nominal" },
+          y: { field: "value", type: "quantitative" },
+          color: { field: "color", type: "quantitative" },
+          size: { field: "size", type: "quantitative" },
+        },
+        markGroups: [{
+          id: "mark-group:mapped-bars:bar",
+          chartId: "mapped-bars",
+          role: "bar",
+          memberKeys: [],
+          sharedConfig: {
+            colorMapping: { type: "linear", stops: [{ offset: 0, color: "#000000" }, { offset: 1, color: "#ffffff" }] },
+            sizeMapping: { type: "linear", stops: [{ offset: 0, size: 10 }, { offset: 1, size: 30 }] },
+          },
+        }],
+      },
+      dataset: barDataset,
+    });
+
+    expect(result.content).toContain('width="10"');
+    expect(result.content).toContain('fill="#000000"');
+    expect(result.content).toContain('width="30"');
+    expect(result.content).toContain('fill="#ffffff"');
+  });
+
+  it("uses Matrix value for intensity and Color for categorical cell color", () => {
+    const matrixDataset: Dataset = {
+      id: "matrix-color",
+      name: "matrix-color.csv",
+      columns: [
+        { name: "row", type: "nominal" },
+        { name: "column", type: "nominal" },
+        { name: "value", type: "quantitative" },
+        { name: "group", type: "nominal" },
+      ],
+      rows: [
+        { row: "R1", column: "C1", value: "10", group: "A" },
+        { row: "R1", column: "C2", value: "20", group: "B" },
+      ],
+    };
+    const result = renderDeterministicChart({
+      chartId: "matrix-color",
+      width: 320,
+      height: 180,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Cartesian", origin: { x: 0, y: 180 }, xDirection: 1, yDirection: -1 },
+      chartSpec: {
+        chartType: "MatrixDiagram",
+        datasetId: matrixDataset.id,
+        encodings: {
+          row: { field: "row", type: "nominal" },
+          column: { field: "column", type: "nominal" },
+          value: { field: "value", type: "quantitative" },
+          color: { field: "group", type: "nominal" },
+        },
+      },
+      dataset: matrixDataset,
+    });
+
+    expect(result.content).toContain('fill="#2563eb"');
+    expect(result.content).toContain('fill="#dc2626"');
+    expect(new Set(result.content.match(/fill-opacity="[^"]+"/g))).toHaveLength(2);
+  });
+
   it("compresses polar marks into the configured angular span", () => {
     const chartSpec: ChartSpec = {
       chartType: "PieChart",
@@ -69,6 +218,63 @@ describe("semantic Case 1 renderers", () => {
     expect(result.content.match(/data-mark-role="point"/g)).toHaveLength(40);
     expect(result.content).not.toContain('data-mark-role="x-axis"');
     expect(result.content).not.toContain('data-mark-role="y-axis"');
+  });
+
+  it("renders matrix cells with Cartesian scales after X/Y are configured", () => {
+    const result = renderDeterministicChart({
+      chartId: "matrix",
+      width: 400,
+      height: 300,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Cartesian", origin: { x: 0, y: 300 }, xDirection: 1, yDirection: -1 },
+      chartSpec: {
+        chartType: "MatrixDiagram",
+        datasetId: dataset.id,
+        encodings: {
+          x: { field: "time", type: "temporal" },
+          y: { field: "person", type: "nominal" },
+          column: { field: "time", type: "temporal" },
+          row: { field: "person", type: "nominal" },
+          value: { field: "weight_kg", type: "quantitative" },
+        },
+      },
+      dataset,
+    });
+    expect(result.content.match(/data-mark-role="cell"/g)).toHaveLength(40);
+    expect(result.plotArea.width).toBeGreaterThan(0);
+    expect(result.plotArea.height).toBeGreaterThan(0);
+    expect(result.scales?.x.type).toBe("point");
+    expect(result.scales?.y.type).toBe("point");
+    expect(result.scales?.x.domain).toEqual(expect.arrayContaining(["2025-01-01"]));
+    expect(result.scales?.y.domain).toEqual(expect.arrayContaining(["P0"]));
+
+    const scaled = renderDeterministicChart({
+      chartId: "scaled-matrix",
+      width: 400,
+      height: 300,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: {
+        type: "Cartesian",
+        origin: { x: 0, y: 300 },
+        xDirection: 1,
+        yDirection: -1,
+        xScale: 1.25,
+        yScale: 0.75,
+      },
+      chartSpec: {
+        chartType: "MatrixDiagram",
+        datasetId: dataset.id,
+        encodings: {
+          column: { field: "time", type: "temporal" },
+          row: { field: "person", type: "nominal" },
+        },
+      },
+      dataset,
+    });
+    expect(scaled.plotArea.width).toBeCloseTo(result.plotArea.width * 1.25);
+    expect(scaled.plotArea.height).toBeCloseTo(result.plotArea.height * 0.75);
   });
 
   it("applies shared multi-stop color and pixel-size mappings", () => {

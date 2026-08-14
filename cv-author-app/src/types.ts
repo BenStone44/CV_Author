@@ -66,7 +66,7 @@ export type ChartEncodingChannel =
   | MatrixEncodingChannel
   | OptionalEncodingChannel;
 export type CoordinateChannel = EncodingChannel | PolarEncodingChannel;
-export type ChartTemplateKind = "line" | "scatter" | "pie" | "donut" | "matrix";
+export type ChartTemplateKind = "line" | "scatter" | "bar" | "pie" | "donut" | "matrix";
 
 export type ChartEncoding = {
   field: string;
@@ -177,6 +177,7 @@ export type ChartSpec = {
   styleTokens?: ChartStyleTokens;
   renderer?: ChartRendererReference;
   filters?: Record<string, string>;
+  valueFilters?: Record<string, string[]>;
   markGroups?: MarkGroupSpec[];
   dimensionRecommendations?: DimensionRecommendation[];
   dimensionDecisions?: Record<string, "aggregate" | "series" | "flatten" | "facet" | "nested">;

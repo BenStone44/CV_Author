@@ -178,7 +178,11 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
   const yEncoding = chartSpec.encodings.y;
   const seriesEncodings = chartSpec.seriesFields?.length
     ? chartSpec.seriesFields
-    : chartSpec.series ? [chartSpec.series] : [];
+    : chartSpec.series
+      ? [chartSpec.series]
+      : chartSpec.encodings.color?.type === "nominal"
+        ? [chartSpec.encodings.color]
+        : [];
   if (!xEncoding || !yEncoding) throw new Error("Line renderer requires both X and Y encodings.");
   if (seriesEncodings.some((encoding) => encoding.type !== "nominal")) {
     throw new Error("Line renderer series encoding must be nominal.");

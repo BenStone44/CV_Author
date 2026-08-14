@@ -16,7 +16,7 @@ export type ChartTemplateContract = {
   id: ChartTemplateKind;
   label: string;
   coordinateSystem: "Cartesian" | "Polar" | "None";
-  markRole: "line" | "point" | "arc" | "cell";
+  markRole: "line" | "point" | "bar" | "arc" | "cell";
   channels: TemplateChannelMapping[];
   shareableChannels: CoordinateChannel[];
   unusedDimensionStrategies: Array<"flatten" | "facet" | "nested">;
@@ -53,6 +53,20 @@ export const chartTemplateContracts: Record<ChartTemplateKind, ChartTemplateCont
     shareableChannels: ["x", "y"],
     unusedDimensionStrategies: ["flatten", "facet", "nested"],
   },
+  bar: {
+    id: "bar",
+    label: "Bar Chart",
+    coordinateSystem: "Cartesian",
+    markRole: "bar",
+    channels: [
+      { channel: "x", role: "dimension", required: true, accepts: ["nominal", "temporal"] },
+      { channel: "y", role: "measure", required: true, accepts: ["quantitative"] },
+      { channel: "color", role: "series", required: false, accepts: ["nominal", "temporal", "quantitative"] },
+      { channel: "size", role: "style", required: false, accepts: ["quantitative"] },
+    ],
+    shareableChannels: ["x", "y"],
+    unusedDimensionStrategies: ["flatten", "facet", "nested"],
+  },
   pie: {
     id: "pie",
     label: "Pie Chart",
@@ -83,7 +97,7 @@ export const chartTemplateContracts: Record<ChartTemplateKind, ChartTemplateCont
   matrix: {
     id: "matrix",
     label: "Matrix",
-    coordinateSystem: "None",
+    coordinateSystem: "Cartesian",
     markRole: "cell",
     channels: [
       { channel: "row", role: "dimension", required: true, accepts: ["nominal", "temporal"] },
@@ -91,7 +105,10 @@ export const chartTemplateContracts: Record<ChartTemplateKind, ChartTemplateCont
       { channel: "value", role: "measure", required: false, accepts: ["quantitative"] },
       { channel: "color", role: "style", required: false, accepts: ["quantitative", "nominal"] },
     ],
-    shareableChannels: [],
+    // Matrix X/Y are the same Cartesian channels used by line and scatter.
+    // The renderer maps them to column/row encodings, while the shared
+    // coordinate-system and axis interaction continue to use x/y.
+    shareableChannels: ["x", "y"],
     unusedDimensionStrategies: ["flatten", "facet", "nested"],
   },
 };
@@ -99,11 +116,24 @@ export const chartTemplateContracts: Record<ChartTemplateKind, ChartTemplateCont
 export function normalizeChartTemplate(chartType: string): ChartTemplateKind | null {
   const value = chartType.replace(/[\s_-]/g, "").toLowerCase();
   if (value.includes("scatter")) return "scatter";
+  if (value.includes("barchart") || value === "bar") return "bar";
   if (value.includes("donut")) return "donut";
   if (value.includes("pie")) return "pie";
   if (value.includes("matrix") || value.includes("heatmap")) return "matrix";
   if (value === "linegraph" || value.includes("linechart")) return "line";
   return null;
+}
+
+export type BarChartVariant = "single" | "grouped" | "stacked" | "divergent" | "divergent-stacked";
+
+export function normalizeBarChartVariant(chartType: string): BarChartVariant | null {
+  if (normalizeChartTemplate(chartType) !== "bar") return null;
+  const value = chartType.replace(/[\s_-]/g, "").toLowerCase();
+  if ((value.includes("divergent") || value.includes("diverging")) && value.includes("stacked")) return "divergent-stacked";
+  if (value.includes("grouped")) return "grouped";
+  if (value.includes("stacked")) return "stacked";
+  if (value.includes("divergent") || value.includes("diverging")) return "divergent";
+  return "single";
 }
 
 export function getChartTemplateContract(chartType: string) {

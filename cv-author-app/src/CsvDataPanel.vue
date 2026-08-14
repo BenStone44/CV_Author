@@ -24,63 +24,57 @@ const previewRowLimit = 250;
 const props = withDefaults(defineProps<{
   selectedChartFields?: string[];
   selectedChartId?: string;
+  selectedChartValueFilters?: Record<string, string[]>;
 }>(), {
   selectedChartFields: () => [],
   selectedChartId: "",
+  selectedChartValueFilters: () => ({}),
 });
 
 const emit = defineEmits<{
   cubeSelectionChange: [state: CubeSelectionState];
 }>();
 
-const cubeColumns = [
-  {
-    name: "person",
-    values: ["person1", "person2", "person3", "person4", "person5"],
-  },
-  {
-    name: "date",
-    values: [
-      "2025-01-01",
-      "2025-02-01",
-      "2025-03-01",
-      "2025-04-01",
-      "2025-05-01",
-      "2025-06-01",
-      "2025-07-01",
-      "2025-08-01",
-      "2025-09-01",
-      "2025-10-01",
-      "2025-11-01",
-      "2025-12-01",
-    ],
-  },
-  {
-    name: "weight",
-    values: [
-      "weight_kg",
-      "water_kg",
-      "fat_kg",
-      "muscle_kg",
-      "minerals_kg",
-    ],
-  },
-] as const;
+const {
+  activeDataset,
+  parseError,
+  parseWarning,
+  isLoading,
+  importDataset,
+  clearActiveDataset,
+  setColumnType,
+} = useDatasetStore();
 
-const cubeRows = Array.from(
-  { length: Math.max(...cubeColumns.map((column) => column.values.length)) },
-  (_, rowIndex) => cubeColumns.map((column) => column.values[rowIndex] ?? ""),
-);
-type CubeColumnName = (typeof cubeColumns)[number]["name"];
+type CubeColumnName = "person" | "date" | "weight";
+type CubeColumn = { name: CubeColumnName; field?: string; values: string[] };
 type CubeAggregation = "sum" | "avg";
 
+const cubeColumns = computed<CubeColumn[]>(() => {
+  const dataset = activeDataset.value;
+  const personField = dataset?.columns.find((column) => column.name.toLowerCase() === "person")?.name
+    ?? dataset?.columns.find((column) => column.type === "nominal" && column.name.toLowerCase().includes("person"))?.name;
+  const dateField = dataset?.columns.find((column) => ["date", "time"].includes(column.name.toLowerCase()))?.name
+    ?? dataset?.columns.find((column) => column.type === "temporal")?.name;
+  const valuesFor = (field: string | undefined) => field
+    ? Array.from(new Set(dataset?.rows.map((row) => row[field] ?? "").filter(Boolean) ?? []))
+    : [];
+  const weightValues = dataset?.columns
+    .filter((column) => column.type === "quantitative")
+    .map((column) => column.name) ?? [];
+  return [
+    { name: "person", field: personField, values: valuesFor(personField) },
+    { name: "date", field: dateField, values: valuesFor(dateField) },
+    { name: "weight", values: weightValues },
+  ];
+});
+
+const cubeRows = computed(() => Array.from(
+  { length: Math.max(0, ...cubeColumns.value.map((column) => column.values.length)) },
+  (_, rowIndex) => cubeColumns.value.map((column) => column.values[rowIndex] ?? ""),
+));
+
 const selectedCubeValues = ref<Record<CubeColumnName, Set<number>>>(
-  Object.fromEntries(
-    cubeColumns.map((column) => [
-      column.name,
-      new Set(column.values.map((_, index) => index)),
-    ]),
-  ) as Record<CubeColumnName, Set<number>>,
+  { person: new Set(), date: new Set(), weight: new Set() },
 );
 const cubeAggregations = ref<Record<CubeColumnName, CubeAggregation>>({
   person: "sum",
@@ -93,34 +87,82 @@ const cubeAggregationEnabled = ref<Record<CubeColumnName, boolean>>({
   weight: false,
 });
 
+const selectionsByChart = new Map<string, {
+  datasetId: string;
+  values: Record<CubeColumnName, Set<string>>;
+}>();
 let projectedChartId = "";
+let projectedDatasetId = "";
+let projectedChartFields: string[] = [];
 watch(
-  [() => props.selectedChartId, () => props.selectedChartFields] as const,
-  ([chartId, fields]) => {
+  [
+    () => props.selectedChartId,
+    () => activeDataset.value?.id,
+    () => props.selectedChartFields,
+    () => props.selectedChartValueFilters,
+  ] as const,
+  ([chartId, datasetId, fields]) => {
+    const sameChart = chartId === projectedChartId && (datasetId ?? "") === projectedDatasetId;
+    const previousSelection = cubeSelectionForChartFields(projectedChartFields);
+    if (projectedChartId && projectedDatasetId === (datasetId ?? "")) {
+      selectionsByChart.set(projectedChartId, {
+        datasetId: projectedDatasetId,
+        values: Object.fromEntries(cubeColumns.value.map((column) => [
+          column.name,
+          new Set(selectedCubeColumnValues(column.name)),
+        ])) as Record<CubeColumnName, Set<string>>,
+      });
+    }
     const selection = cubeSelectionForChartFields(fields);
-    selectedCubeValues.value = Object.fromEntries(cubeColumns.map((column) => {
+    const cached = chartId ? selectionsByChart.get(chartId) : undefined;
+    const saved = cached?.datasetId === (datasetId ?? "") ? cached.values : undefined;
+    selectedCubeValues.value = Object.fromEntries(cubeColumns.value.map((column) => {
       if (column.name === "weight") {
         return [column.name, new Set(column.values.flatMap((value, index) =>
           selection.weight.includes(value) ? [index] : [],
         ))];
       }
-      const bound = column.name === "person" && !!chartId && chartId === projectedChartId
-        ? selectedCubeValues.value.person.size > 0 || selection.person
-        : selection[column.name];
+      const filteredValues = column.field ? props.selectedChartValueFilters[column.field] : undefined;
+      if (filteredValues) {
+        return [column.name, new Set(column.values.flatMap((value, index) =>
+          filteredValues.includes(value) ? [index] : [],
+        ))];
+      }
+      const newlyBound = sameChart
+        && selection[column.name]
+        && !previousSelection[column.name];
+      if (newlyBound) {
+        return [column.name, new Set(column.values.map((_, index) => index))];
+      }
+      if (saved) {
+        return [column.name, new Set(column.values.flatMap((value, index) =>
+          saved[column.name].has(value) ? [index] : [],
+        ))];
+      }
+      const bound = selection[column.name];
       return [column.name, new Set(bound ? column.values.map((_, index) => index) : [])];
     })) as Record<CubeColumnName, Set<number>>;
     projectedChartId = chartId;
+    projectedDatasetId = datasetId ?? "";
+    projectedChartFields = [...fields];
   },
   { immediate: true },
 );
 
 function emitCubeSelection() {
   emit("cubeSelectionChange", {
-    selected: Object.fromEntries(cubeColumns.map((column) => [
+    selected: Object.fromEntries(cubeColumns.value.map((column) => [
       column.name,
       selectedCubeValues.value[column.name].size > 0,
     ])) as CubeSelectionState["selected"],
-    aggregations: Object.fromEntries(cubeColumns.map((column) => [
+    values: Object.fromEntries(cubeColumns.value.map((column) => [
+      column.name,
+      selectedCubeColumnValues(column.name),
+    ])) as CubeSelectionState["values"],
+    fields: Object.fromEntries(cubeColumns.value.flatMap((column) =>
+      column.field ? [[column.name, column.field]] : [],
+    )),
+    aggregations: Object.fromEntries(cubeColumns.value.map((column) => [
       column.name,
       {
         enabled: cubeAggregationEnabled.value[column.name],
@@ -128,10 +170,19 @@ function emitCubeSelection() {
       },
     ])) as CubeSelectionState["aggregations"],
   });
+  if (props.selectedChartId) {
+    selectionsByChart.set(props.selectedChartId, {
+      datasetId: activeDataset.value?.id ?? "",
+      values: Object.fromEntries(cubeColumns.value.map((column) => [
+        column.name,
+        new Set(selectedCubeColumnValues(column.name)),
+      ])) as Record<CubeColumnName, Set<string>>,
+    });
+  }
 }
 
 function getCubeColumn(columnName: CubeColumnName) {
-  return cubeColumns.find((column) => column.name === columnName)!;
+  return cubeColumns.value.find((column) => column.name === columnName)!;
 }
 
 function isCubeValueSelected(columnName: CubeColumnName, valueIndex: number) {
@@ -242,16 +293,6 @@ const isDragging = ref(false);
 const expandedWidth = ref(304);
 const canExpand = ref(false);
 const isExpanded = ref(false);
-const {
-  activeDataset,
-  parseError,
-  parseWarning,
-  isLoading,
-  importDataset,
-  clearActiveDataset,
-  setColumnType,
-} = useDatasetStore();
-
 const fileName = computed(() => activeDataset.value?.name ?? "");
 const columns = computed(() => activeDataset.value?.columns ?? []);
 const headers = computed(() => columns.value.map((column) => column.name));

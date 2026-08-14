@@ -19,4 +19,13 @@ describe("new chart initialization", () => {
       encodings: {},
     });
   });
+
+  it("initializes Bar variants with the shared Bar template contract", () => {
+    expect(createUnboundChartSpec("DivergentStackedBarChart", "dataset:case1")).toEqual({
+      chartType: "DivergentStackedBarChart",
+      templateId: "bar",
+      datasetId: "dataset:case1",
+      encodings: {},
+    });
+  });
 });
