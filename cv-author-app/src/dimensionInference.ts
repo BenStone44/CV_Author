@@ -488,9 +488,13 @@ export function inferChartStructure(chartId: string, dataset: Dataset, input: Ch
   ].filter((field): field is string => !!field));
   seriesFields.forEach((encoding) => used.add(encoding.field));
   const profiles = statistics?.columns ?? profileDatasetDimensions(dataset);
+  const unresolvedCubeDimensions = spec.cubeBinding?.unresolvedDimensions
+    ? new Set(spec.cubeBinding.unresolvedDimensions.map((dimension) => dimension.dimensionId))
+    : null;
   const outerDimensions = profiles.filter((profile) =>
     (profile.canBeCategory || profile.declaredType === "temporal")
-    && !used.has(profile.field),
+    && !used.has(profile.field)
+    && (!unresolvedCubeDimensions || unresolvedCubeDimensions.has(profile.field)),
   );
   const sharedChannels = contract.shareableChannels as CoordinateChannel[];
   const seriesValueCount = series ? uniqueValues(dataset, series.field).length : 0;

@@ -7,8 +7,11 @@ import {
   GripVertical,
   Trash2,
   Upload,
+  X,
 } from "@lucide/vue";
 import defaultCsv from "../../data/case1.csv?raw";
+import EncodingChannelField from "./EncodingChannelField.vue";
+import VisualMappingEditor from "./VisualMappingEditor.vue";
 import {
   beginCubeBindingDrag,
   CUBE_BINDING_MIME,
@@ -16,8 +19,28 @@ import {
   endCubeBindingDrag,
 } from "./cubeBinding";
 import type { CubeSelectionState } from "./cubeBinding";
+import { cubeResultFromDataset } from "./cubeModel";
+import {
+  getEncodingChannelConfigsForSpec,
+  resolvedEncodingField,
+  resolvedPolarAxisRoles,
+  resolvedSeriesField,
+} from "./encodingConfig";
 import { useDatasetStore } from "./useDatasetStore";
-import type { DataColumnType } from "./types";
+import type {
+  ChartEncodingChannel,
+  ChartSpec,
+  DataColumnType,
+  LinearColorMapping,
+  MarkGroupSharedConfig,
+  SeriesStyleMapping,
+} from "./types";
+import {
+  defaultColorMapping,
+  isCategoricalColorMapping,
+  isLinearColorMapping,
+  isSeriesStyleMapping,
+} from "./visualMapping";
 
 const previewRowLimit = 250;
 
@@ -25,14 +48,21 @@ const props = withDefaults(defineProps<{
   selectedChartFields?: string[];
   selectedChartId?: string;
   selectedChartValueFilters?: Record<string, string[]>;
+  selectedChartSpec?: ChartSpec;
+  selectedChartMarkConfig?: MarkGroupSharedConfig;
 }>(), {
   selectedChartFields: () => [],
   selectedChartId: "",
   selectedChartValueFilters: () => ({}),
+  selectedChartSpec: undefined,
+  selectedChartMarkConfig: () => ({}),
 });
 
 const emit = defineEmits<{
   cubeSelectionChange: [state: CubeSelectionState];
+  encodingChannelChange: [channel: ChartEncodingChannel, field: string];
+  seriesFieldChange: [field: string];
+  markConfigChange: [patch: MarkGroupSharedConfig];
 }>();
 
 const {
@@ -45,26 +75,27 @@ const {
   setColumnType,
 } = useDatasetStore();
 
-type CubeColumnName = "person" | "date" | "weight";
-type CubeColumn = { name: CubeColumnName; field?: string; values: string[] };
+type CubeColumnName = string;
+type CubeColumn = { name: CubeColumnName; label: string; kind: "dimension" | "measure"; values: string[] };
 type CubeAggregation = "sum" | "avg";
 
 const cubeColumns = computed<CubeColumn[]>(() => {
   const dataset = activeDataset.value;
-  const personField = dataset?.columns.find((column) => column.name.toLowerCase() === "person")?.name
-    ?? dataset?.columns.find((column) => column.type === "nominal" && column.name.toLowerCase().includes("person"))?.name;
-  const dateField = dataset?.columns.find((column) => ["date", "time"].includes(column.name.toLowerCase()))?.name
-    ?? dataset?.columns.find((column) => column.type === "temporal")?.name;
-  const valuesFor = (field: string | undefined) => field
-    ? Array.from(new Set(dataset?.rows.map((row) => row[field] ?? "").filter(Boolean) ?? []))
-    : [];
-  const weightValues = dataset?.columns
-    .filter((column) => column.type === "quantitative")
-    .map((column) => column.name) ?? [];
+  if (!dataset) return [];
+  const cube = cubeResultFromDataset(dataset);
   return [
-    { name: "person", field: personField, values: valuesFor(personField) },
-    { name: "date", field: dateField, values: valuesFor(dateField) },
-    { name: "weight", values: weightValues },
+    ...cube.schema.dimensions.map((dimension) => ({
+      name: dimension.id,
+      label: dimension.label,
+      kind: "dimension" as const,
+      values: dimension.members.map((member) => member.id),
+    })),
+    {
+      name: "__measures__",
+      label: "Measures",
+      kind: "measure" as const,
+      values: cube.schema.measures.map((measure) => measure.id),
+    },
   ];
 });
 
@@ -73,19 +104,166 @@ const cubeRows = computed(() => Array.from(
   (_, rowIndex) => cubeColumns.value.map((column) => column.values[rowIndex] ?? ""),
 ));
 
-const selectedCubeValues = ref<Record<CubeColumnName, Set<number>>>(
-  { person: new Set(), date: new Set(), weight: new Set() },
+const selectedEncodingSpec = computed(() => {
+  const spec = props.selectedChartSpec;
+  return spec && spec.datasetId === activeDataset.value?.id ? spec : undefined;
+});
+const encodingConfigs = computed(() => selectedEncodingSpec.value
+  ? getEncodingChannelConfigsForSpec(selectedEncodingSpec.value)
+  : []);
+type CubeFieldRole = {
+  key: string;
+  label: string;
+  channel?: ChartEncodingChannel;
+  kind: "encoding" | "series" | "facet";
+};
+type ActiveEncodingRole = ChartEncodingChannel | "series";
+const activeEncodingChannel = ref<ActiveEncodingRole | null>(null);
+const encodingPopoverPosition = ref({ left: 0, top: 0 });
+const activeEncodingConfig = computed(() => {
+  if (activeEncodingChannel.value === "series") {
+    return {
+      channel: "color" as const,
+      label: "Series",
+      role: "series" as const,
+      required: false,
+      accepts: ["nominal", "temporal"] as DataColumnType[],
+      emptyLabel: "Not bound" as const,
+    };
+  }
+  return encodingConfigs.value.find((config) => config.channel === activeEncodingChannel.value);
+});
+const activeEncodingField = computed(() => {
+  const spec = selectedEncodingSpec.value;
+  const channel = activeEncodingChannel.value;
+  if (!spec || !channel) return "";
+  return channel === "series" ? resolvedSeriesField(spec) : resolvedEncodingField(spec, channel);
+});
+const activeEncodingColumn = computed(() => columns.value.find((column) =>
+  column.name === activeEncodingField.value,
+));
+const colorMapping = computed(() => isLinearColorMapping(props.selectedChartMarkConfig.colorMapping)
+  ? props.selectedChartMarkConfig.colorMapping
+  : defaultColorMapping);
+const colorScaleGradient = computed(() => `linear-gradient(90deg, ${colorMapping.value.stops
+  .map((stop) => `${stop.color} ${Math.round(stop.offset * 100)}%`)
+  .join(", ")})`);
+const showActiveColorScale = computed(() => activeEncodingChannel.value === "color"
+  && !!activeEncodingColumn.value
+  && activeEncodingColumn.value.type !== "nominal");
+
+const seriesField = computed(() => selectedEncodingSpec.value ? resolvedSeriesField(selectedEncodingSpec.value) : "");
+const seriesStyleMapping = computed<SeriesStyleMapping>(() => {
+  if (isSeriesStyleMapping(props.selectedChartMarkConfig.seriesStyleMapping)) {
+    return props.selectedChartMarkConfig.seriesStyleMapping;
+  }
+  const legacy = isCategoricalColorMapping(props.selectedChartMarkConfig.seriesColorMapping)
+    ? props.selectedChartMarkConfig.seriesColorMapping.values
+    : {};
+  return {
+    type: "series-style",
+    values: Object.fromEntries(Object.entries(legacy).map(([memberId, color]) => [memberId, { color }])),
+  };
+});
+const seriesPalette = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#4d7c0f"];
+
+function seriesMemberColor(memberId: string, index: number) {
+  return seriesStyleMapping.value.values[memberId]?.color
+    ?? seriesPalette[index % seriesPalette.length]!;
+}
+
+function updateSeriesMemberColor(memberId: string, color: string) {
+  emit("markConfigChange", {
+    seriesStyleMapping: {
+      type: "series-style",
+      values: {
+        ...seriesStyleMapping.value.values,
+        [memberId]: { ...seriesStyleMapping.value.values[memberId], color },
+      },
+    },
+  });
+}
+
+function cubeFieldRoles(field: string): CubeFieldRole[] {
+  const spec = selectedEncodingSpec.value;
+  if (!spec) return [];
+  const roles: CubeFieldRole[] = encodingConfigs.value
+    .filter((config) => resolvedEncodingField(spec, config.channel) === field)
+    .map((config) => ({
+      key: config.channel,
+      label: config.channel === "x"
+        ? "X"
+        : config.channel === "y"
+          ? "Y"
+          : config.channel === "angle"
+            ? "Theta"
+            : config.channel === "radius" ? "R" : config.label,
+      channel: config.channel,
+      kind: "encoding" as const,
+    }));
+  resolvedPolarAxisRoles(spec, field).forEach((axisRole) => {
+    if (roles.some((role) => role.channel === axisRole.channel)) return;
+    roles.push({
+      key: axisRole.channel,
+      label: axisRole.label,
+      channel: axisRole.channel,
+      kind: "encoding",
+    });
+  });
+  if (resolvedSeriesField(spec) === field) roles.push({ key: "series", label: "Series", kind: "series" });
+  if (spec.dimensionDecisions?.[field] === "facet") roles.push({ key: "facet", label: "Facet", kind: "facet" });
+  return roles;
+}
+
+function openEncodingPopover(channel: ActiveEncodingRole, event: MouseEvent) {
+  const target = event.currentTarget as HTMLElement;
+  const rect = target.getBoundingClientRect();
+  const width = Math.min(270, window.innerWidth - 24);
+  const estimatedHeight = channel === "color" ? 390 : 150;
+  const openOnRight = rect.right + 8 + width <= window.innerWidth - 12;
+  const left = openOnRight ? rect.right + 8 : rect.left - width - 8;
+  activeEncodingChannel.value = channel;
+  encodingPopoverPosition.value = {
+    left: Math.max(12, Math.min(left, window.innerWidth - width - 12)),
+    top: Math.max(12, Math.min(rect.top, window.innerHeight - estimatedHeight - 12)),
+  };
+}
+
+function closeEncodingPopover() {
+  activeEncodingChannel.value = null;
+}
+
+function updateEncodingField(channel: ActiveEncodingRole, field: string) {
+  if (channel === "series") {
+    emit("seriesFieldChange", field);
+    return;
+  }
+  emit("encodingChannelChange", channel, field);
+  const column = columns.value.find((item) => item.name === field);
+  if (channel === "color" && column && column.type !== "nominal"
+    && !isLinearColorMapping(props.selectedChartMarkConfig.colorMapping)) {
+    emit("markConfigChange", { colorMapping: defaultColorMapping });
+  }
+}
+
+function onDocumentPointerDown(event: PointerEvent) {
+  const target = event.target instanceof Element ? event.target : null;
+  if (target?.closest("[data-cube-encoding-popover], [data-cube-encoding-trigger]")) return;
+  closeEncodingPopover();
+}
+
+function onDocumentKeyDown(event: KeyboardEvent) {
+  if (event.key === "Escape") closeEncodingPopover();
+}
+
+watch(
+  [() => props.selectedChartId, () => activeDataset.value?.id],
+  () => closeEncodingPopover(),
 );
-const cubeAggregations = ref<Record<CubeColumnName, CubeAggregation>>({
-  person: "sum",
-  date: "sum",
-  weight: "sum",
-});
-const cubeAggregationEnabled = ref<Record<CubeColumnName, boolean>>({
-  person: false,
-  date: false,
-  weight: false,
-});
+
+const selectedCubeValues = ref<Record<CubeColumnName, Set<number>>>({});
+const cubeAggregations = ref<Record<CubeColumnName, CubeAggregation>>({});
+const cubeAggregationEnabled = ref<Record<CubeColumnName, boolean>>({});
 
 const selectionsByChart = new Map<string, {
   datasetId: string;
@@ -103,7 +281,8 @@ watch(
   ] as const,
   ([chartId, datasetId, fields]) => {
     const sameChart = chartId === projectedChartId && (datasetId ?? "") === projectedDatasetId;
-    const previousSelection = cubeSelectionForChartFields(projectedChartFields);
+    const cube = activeDataset.value ? cubeResultFromDataset(activeDataset.value) : undefined;
+    const previousSelection = cubeSelectionForChartFields(projectedChartFields, cube);
     if (projectedChartId && projectedDatasetId === (datasetId ?? "")) {
       selectionsByChart.set(projectedChartId, {
         datasetId: projectedDatasetId,
@@ -113,35 +292,52 @@ watch(
         ])) as Record<CubeColumnName, Set<string>>,
       });
     }
-    const selection = cubeSelectionForChartFields(fields);
+    const selection = cubeSelectionForChartFields(fields, activeDataset.value ? cubeResultFromDataset(activeDataset.value) : undefined);
     const cached = chartId ? selectionsByChart.get(chartId) : undefined;
     const saved = cached?.datasetId === (datasetId ?? "") ? cached.values : undefined;
     selectedCubeValues.value = Object.fromEntries(cubeColumns.value.map((column) => {
-      if (column.name === "weight") {
+      if (column.kind === "measure") {
+        // Keep local measure-set selections across the parent chart-spec update
+        // triggered by the same checkbox event.
+        const selectedMeasures = saved?.[column.name]
+          ?? new Set(selection.values[column.name] ?? []);
         return [column.name, new Set(column.values.flatMap((value, index) =>
-          selection.weight.includes(value) ? [index] : [],
+          selectedMeasures.has(value) ? [index] : [],
         ))];
       }
-      const filteredValues = column.field ? props.selectedChartValueFilters[column.field] : undefined;
+      const filteredValues = column.kind === "dimension" ? props.selectedChartValueFilters[column.name] : undefined;
       if (filteredValues) {
         return [column.name, new Set(column.values.flatMap((value, index) =>
           filteredValues.includes(value) ? [index] : [],
         ))];
       }
       const newlyBound = sameChart
-        && selection[column.name]
-        && !previousSelection[column.name];
-      if (newlyBound) {
+        && selection.selected[column.name]
+        && !previousSelection.selected[column.name];
+      if (newlyBound && column.kind === "dimension") {
+        return [column.name, new Set(column.values.map((_, index) => index))];
+      }
+      if (!saved && selection.selected[column.name]) {
         return [column.name, new Set(column.values.map((_, index) => index))];
       }
       if (saved) {
         return [column.name, new Set(column.values.flatMap((value, index) =>
-          saved[column.name].has(value) ? [index] : [],
+          saved[column.name]?.has(value) ? [index] : [],
         ))];
       }
-      const bound = selection[column.name];
-      return [column.name, new Set(bound ? column.values.map((_, index) => index) : [])];
+      const selectedValues = selection.values[column.name] ?? [];
+      return [column.name, new Set(column.values.flatMap((value, index) =>
+        selectedValues.includes(value) ? [index] : [],
+      ))];
     })) as Record<CubeColumnName, Set<number>>;
+    cubeAggregations.value = Object.fromEntries(cubeColumns.value.map((column) => [
+      column.name,
+      cubeAggregations.value[column.name] ?? "sum",
+    ]));
+    cubeAggregationEnabled.value = Object.fromEntries(cubeColumns.value.map((column) => [
+      column.name,
+      cubeAggregationEnabled.value[column.name] ?? false,
+    ]));
     projectedChartId = chartId;
     projectedDatasetId = datasetId ?? "";
     projectedChartFields = [...fields];
@@ -153,20 +349,20 @@ function emitCubeSelection() {
   emit("cubeSelectionChange", {
     selected: Object.fromEntries(cubeColumns.value.map((column) => [
       column.name,
-      selectedCubeValues.value[column.name].size > 0,
+      (selectedCubeValues.value[column.name]?.size ?? 0) > 0,
     ])) as CubeSelectionState["selected"],
     values: Object.fromEntries(cubeColumns.value.map((column) => [
       column.name,
       selectedCubeColumnValues(column.name),
     ])) as CubeSelectionState["values"],
     fields: Object.fromEntries(cubeColumns.value.flatMap((column) =>
-      column.field ? [[column.name, column.field]] : [],
+      column.kind === "dimension" ? [[column.name, column.name]] : [],
     )),
     aggregations: Object.fromEntries(cubeColumns.value.map((column) => [
       column.name,
       {
-        enabled: cubeAggregationEnabled.value[column.name],
-        operation: cubeAggregations.value[column.name],
+        enabled: cubeAggregationEnabled.value[column.name] ?? false,
+        operation: cubeAggregations.value[column.name] ?? "sum",
       },
     ])) as CubeSelectionState["aggregations"],
   });
@@ -186,16 +382,16 @@ function getCubeColumn(columnName: CubeColumnName) {
 }
 
 function isCubeValueSelected(columnName: CubeColumnName, valueIndex: number) {
-  return selectedCubeValues.value[columnName].has(valueIndex);
+  return selectedCubeValues.value[columnName]?.has(valueIndex) ?? false;
 }
 
 function isCubeColumnAllSelected(columnName: CubeColumnName) {
-  return selectedCubeValues.value[columnName].size
+  return (selectedCubeValues.value[columnName]?.size ?? 0)
     === getCubeColumn(columnName).values.length;
 }
 
 function isCubeColumnPartiallySelected(columnName: CubeColumnName) {
-  const selectedCount = selectedCubeValues.value[columnName].size;
+  const selectedCount = selectedCubeValues.value[columnName]?.size ?? 0;
   return selectedCount > 0
     && selectedCount < getCubeColumn(columnName).values.length;
 }
@@ -221,7 +417,7 @@ function toggleCubeValue(
   valueIndex: number,
   event: Event,
 ) {
-  const nextSelection = new Set(selectedCubeValues.value[columnName]);
+  const nextSelection = new Set(selectedCubeValues.value[columnName] ?? []);
   if ((event.target as HTMLInputElement).checked) {
     nextSelection.add(valueIndex);
   } else {
@@ -247,7 +443,7 @@ function toggleCubeColumn(columnName: CubeColumnName, event: Event) {
 }
 
 function selectedCubeColumnValues(columnName: CubeColumnName) {
-  const selectedIndexes = selectedCubeValues.value[columnName];
+  const selectedIndexes = selectedCubeValues.value[columnName] ?? new Set<number>();
   return getCubeColumn(columnName).values.filter((_, index) =>
     selectedIndexes.has(index),
   );
@@ -270,14 +466,14 @@ function onCubeBindingDragStart(
     emitCubeSelection();
   }
   let values = selectedCubeColumnValues(columnName);
-  if (values.length === 0) values = [...getCubeColumn(columnName).values];
-  const serialized = beginCubeBindingDrag({
-    dimension: columnName,
-    values,
-    aggregation: cubeAggregationEnabled.value[columnName]
-      ? cubeAggregations.value[columnName]
-      : undefined,
-  });
+  const column = getCubeColumn(columnName);
+  if (values.length === 0) values = [...column.values];
+  const aggregation = cubeAggregationEnabled.value[columnName]
+    ? cubeAggregations.value[columnName]
+    : undefined;
+  const serialized = beginCubeBindingDrag(column.kind === "dimension"
+    ? { kind: "dimension", dimensionId: column.name, memberIds: values, aggregation }
+    : { kind: "measure-set", measureIds: values, aggregation });
   event.dataTransfer.setData(CUBE_BINDING_MIME, serialized);
   event.dataTransfer.effectAllowed = "copy";
 }
@@ -374,15 +570,19 @@ function onColumnTypeChange(columnName: string, event: Event) {
 
 onMounted(() => {
   window.addEventListener("resize", updateExpandedWidth);
+  document.addEventListener("pointerdown", onDocumentPointerDown);
+  document.addEventListener("keydown", onDocumentKeyDown);
   if (!activeDataset.value) {
     importCsv(new File([defaultCsv], "case1.csv", { type: "text/csv" }));
   } else {
     void nextTick(updateExpandedWidth);
   }
 });
-onBeforeUnmount(() =>
-  window.removeEventListener("resize", updateExpandedWidth),
-);
+onBeforeUnmount(() => {
+  window.removeEventListener("resize", updateExpandedWidth);
+  document.removeEventListener("pointerdown", onDocumentPointerDown);
+  document.removeEventListener("keydown", onDocumentKeyDown);
+});
 </script>
 
 <template>
@@ -465,7 +665,7 @@ onBeforeUnmount(() =>
     <section class="cube-result" aria-labelledby="cube-result-title">
       <header class="data-panel__section-header">
         <h3 id="cube-result-title">Cube result</h3>
-        <span>3 dimensions</span>
+        <span>{{ cubeColumns.filter((column) => column.kind === 'dimension').length }} dimensions / {{ cubeColumns.find((column) => column.kind === 'measure')?.values.length ?? 0 }} measures</span>
       </header>
       <div class="cube-table-wrap">
         <table class="cube-table">
@@ -486,21 +686,43 @@ onBeforeUnmount(() =>
                       :aria-label="`Select all ${column.name} values`"
                       @change="toggleCubeColumn(column.name, $event)"
                     />
-                    <span>{{ column.name }}</span>
+                    <span>{{ column.label }}</span>
                   </label>
+                  <div v-if="cubeFieldRoles(column.name).length" class="cube-table__encoding-badges">
+                    <button
+                      v-for="role in cubeFieldRoles(column.name)"
+                      :key="role.key"
+                      type="button"
+                      class="cube-table__encoding-badge"
+                      :class="{ 'cube-table__encoding-badge--static': role.kind === 'facet' }"
+                      data-cube-encoding-trigger
+                      :title="role.kind === 'facet' ? `${column.label} is used as a facet` : `Edit ${role.label} encoding`"
+                      :aria-label="role.kind === 'facet' ? `${column.label} facet` : `Edit ${role.label} encoding for ${column.label}`"
+                      :disabled="role.kind === 'facet'"
+                      @click.stop="role.kind !== 'facet' && openEncodingPopover(role.kind === 'series' ? 'series' : role.channel!, $event)"
+                    >
+                      <span
+                        v-if="role.channel === 'color'"
+                        class="cube-table__color-swatch"
+                        :style="{ background: colorScaleGradient }"
+                        aria-hidden="true"
+                      ></span>
+                      {{ role.label }}
+                    </button>
+                  </div>
                   <span
                     class="cube-table__drag-handle"
                     draggable="true"
                     role="button"
-                    :title="`Drag ${column.name} dimension`"
-                    :aria-label="`Drag ${column.name} dimension`"
+                    :title="`Drag ${column.label} ${column.kind}`"
+                    :aria-label="`Drag ${column.label} ${column.kind}`"
                     @dragstart.stop="onCubeBindingDragStart(column.name, $event)"
                     @dragend="onCubeBindingDragEnd"
                   >
                     <GripVertical :size="13" aria-hidden="true" />
                   </span>
                 </div>
-                <div class="cube-table__aggregation-row">
+                <div v-if="column.kind === 'measure'" class="cube-table__aggregation-row">
                   <label class="cube-table__aggregate-toggle">
                     <input
                       class="cube-table__checkbox"
@@ -535,24 +757,57 @@ onBeforeUnmount(() =>
                     && isCubeValueSelected(cubeColumns[columnIndex]!.name, rowIndex),
                 }"
               >
-                <label v-if="cell" class="cube-table__checkbox-label">
+                <div v-if="cell" class="cube-table__cell-content">
+                  <label class="cube-table__checkbox-label">
+                    <input
+                      class="cube-table__checkbox"
+                      type="checkbox"
+                      :checked="isCubeValueSelected(cubeColumns[columnIndex]!.name, rowIndex)"
+                      :aria-label="`Select ${cell}`"
+                      @change="toggleCubeValue(cubeColumns[columnIndex]!.name, rowIndex, $event)"
+                    />
+                    <span
+                      :title="cell"
+                      class="cube-table__draggable-value"
+                      draggable="true"
+                      @dragstart.stop="onCubeBindingDragStart(cubeColumns[columnIndex]!.name, $event, rowIndex)"
+                      @dragend="onCubeBindingDragEnd"
+                    >{{ cell }}</span>
+                  </label>
                   <input
-                    class="cube-table__checkbox"
-                    type="checkbox"
-                    :checked="isCubeValueSelected(cubeColumns[columnIndex]!.name, rowIndex)"
-                    :aria-label="`Select ${cell}`"
-                    @change="toggleCubeValue(cubeColumns[columnIndex]!.name, rowIndex, $event)"
+                    v-if="cubeColumns[columnIndex]!.name === seriesField"
+                    class="cube-table__series-color"
+                    type="color"
+                    :value="seriesMemberColor(cell, rowIndex)"
+                    :title="`Set ${cell} series color`"
+                    :aria-label="`${cell} series color`"
+                    @input="updateSeriesMemberColor(cell, ($event.target as HTMLInputElement).value)"
                   />
-                  <span
-                    :title="cell"
-                    :class="{
-                      'cube-table__draggable-value': true,
-                    }"
-                    draggable="true"
-                    @dragstart.stop="onCubeBindingDragStart(cubeColumns[columnIndex]!.name, $event, rowIndex)"
-                    @dragend="onCubeBindingDragEnd"
-                  >{{ cell }}</span>
-                </label>
+                  <div
+                    v-if="cubeColumns[columnIndex]!.kind === 'measure' && cubeFieldRoles(cell).length"
+                    class="cube-table__encoding-badges"
+                    :class="{ 'cube-table__encoding-badges--inline': cubeFieldRoles(cell).length === 1 }"
+                  >
+                    <button
+                      v-for="role in cubeFieldRoles(cell)"
+                      :key="role.key"
+                      type="button"
+                      class="cube-table__encoding-badge"
+                      data-cube-encoding-trigger
+                      :title="`Edit ${role.label} encoding`"
+                      :aria-label="`Edit ${role.label} encoding for ${cell}`"
+                      @click.stop="openEncodingPopover(role.kind === 'series' ? 'series' : role.channel!, $event)"
+                    >
+                      <span
+                        v-if="role.channel === 'color'"
+                        class="cube-table__color-swatch"
+                        :style="{ background: colorScaleGradient }"
+                        aria-hidden="true"
+                      ></span>
+                      {{ role.label }}
+                    </button>
+                  </div>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -614,6 +869,45 @@ onBeforeUnmount(() =>
     <footer v-if="rows.length > previewRowLimit" class="data-panel__footer">
       Showing {{ previewRowLimit }} of {{ rows.length }} rows
     </footer>
+
+    <Teleport to="body">
+      <aside
+        v-if="activeEncodingConfig && selectedEncodingSpec"
+        class="cube-encoding-popover"
+        data-cube-encoding-popover
+        role="dialog"
+        aria-modal="false"
+        :aria-label="`${activeEncodingConfig.label} encoding`"
+        :style="{
+          left: `${encodingPopoverPosition.left}px`,
+          top: `${encodingPopoverPosition.top}px`,
+        }"
+        @click.stop
+        @pointerdown.stop
+      >
+        <header class="cube-encoding-popover__header">
+          <div>
+            <strong>ENCODING</strong>
+            <span>{{ activeEncodingConfig.label }}</span>
+          </div>
+          <button type="button" title="Close" aria-label="Close encoding editor" @click="closeEncodingPopover">
+            <X :size="15" :stroke-width="1.7" aria-hidden="true" />
+          </button>
+        </header>
+        <EncodingChannelField
+          :config="activeEncodingConfig"
+          :columns="columns"
+          :value="activeEncodingField"
+          @change="updateEncodingField(activeEncodingChannel!, $event)"
+        />
+        <VisualMappingEditor
+          v-if="showActiveColorScale"
+          show-color
+          :color-mapping="colorMapping"
+          @color-change="(mapping: LinearColorMapping) => emit('markConfigChange', { colorMapping: mapping })"
+        />
+      </aside>
+    </Teleport>
   </aside>
 </template>
 
@@ -851,6 +1145,7 @@ onBeforeUnmount(() =>
 .cube-table {
   width: 100%;
   min-width: 300px;
+  table-layout: fixed;
   border-collapse: separate;
   border-spacing: 0;
   color: #263548;
@@ -862,7 +1157,7 @@ onBeforeUnmount(() =>
 .cube-table td {
   width: 33.333%;
   height: 30px;
-  padding: 6px 9px;
+  padding: 6px 4px;
   overflow: hidden;
   border-right: 1px solid #e5eaf0;
   border-bottom: 1px solid #e5eaf0;
@@ -886,15 +1181,118 @@ onBeforeUnmount(() =>
 }
 
 .cube-table__header-content {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 13px;
   align-items: center;
-  justify-content: space-between;
-  gap: 3px;
+  gap: 2px;
   min-width: 0;
 }
 
 .cube-table__header-content .cube-table__checkbox-label {
-  flex: 1 1 auto;
+  grid-column: 1;
+  gap: 3px;
+}
+
+.cube-table__header-content > .cube-table__encoding-badges {
+  grid-column: 2;
+  grid-row: 1;
+  justify-content: flex-end;
+}
+
+.cube-table__header-content .cube-table__encoding-badge {
+  padding-right: 2px;
+  padding-left: 2px;
+}
+
+.cube-table__header-content > .cube-table__drag-handle {
+  grid-column: 3;
+  grid-row: 1;
+  width: 10px;
+  height: 18px;
+}
+
+.cube-table__cell-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cube-table__cell-content > .cube-table__checkbox-label {
+  min-width: 42px;
+}
+
+.cube-table__cell-content > .cube-table__encoding-badges {
+  grid-column: 1 / -1;
+  justify-content: flex-start;
+  padding-left: 20px;
+}
+
+.cube-table__cell-content > .cube-table__encoding-badges--inline {
+  grid-column: 2;
+  grid-row: 1;
+  justify-content: flex-end;
+  padding-left: 0;
+}
+
+.cube-table__encoding-badges {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cube-table__encoding-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 20px;
+  padding: 2px 4px;
+  border: 1px solid #a9c5dc;
+  border-radius: 4px;
+  background: #f5faff;
+  color: #155b8f;
+  font: inherit;
+  font-size: 7.5px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cube-table__encoding-badge--static,
+.cube-table__encoding-badge--static:disabled {
+  border-color: #c5b8df;
+  background: #f7f4fb;
+  color: #664f91;
+  cursor: default;
+  opacity: 1;
+}
+
+.cube-table__series-color {
+  width: 22px;
+  height: 20px;
+  padding: 2px;
+  border: 1px solid #b5c3cf;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.cube-table__encoding-badge:hover {
+  border-color: #5e9dcc;
+  background: #e5f2fc;
+  color: #104d79;
+}
+
+.cube-table__color-swatch {
+  width: 12px;
+  height: 8px;
+  flex: 0 0 12px;
+  border: 1px solid rgba(24, 33, 47, 0.16);
+  border-radius: 2px;
 }
 
 .cube-table__aggregation-row {
@@ -1002,8 +1400,8 @@ onBeforeUnmount(() =>
 }
 
 .cube-table thead th {
-  padding-right: 5px;
-  padding-left: 5px;
+  padding-right: 3px;
+  padding-left: 3px;
 }
 
 .cube-table tbody tr:nth-child(even) td {
@@ -1012,6 +1410,65 @@ onBeforeUnmount(() =>
 
 .cube-table tbody tr:nth-child(even) .cube-table__cell--selected {
   background: #e7f2fb;
+}
+
+:global(.cube-encoding-popover) {
+  position: fixed;
+  z-index: 1200;
+  display: grid;
+  width: min(270px, calc(100vw - 24px));
+  max-height: min(520px, calc(100vh - 24px));
+  gap: 12px;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid rgba(24, 33, 47, 0.15);
+  border-radius: 7px;
+  background: #fff;
+  box-shadow: 0 14px 34px rgba(35, 57, 78, 0.2);
+  color: #263548;
+  font-size: 11px;
+}
+
+:global(.cube-encoding-popover__header) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+:global(.cube-encoding-popover__header > div) {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+:global(.cube-encoding-popover__header strong) {
+  color: #18212f;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+:global(.cube-encoding-popover__header span) {
+  color: #687585;
+  font-size: 11px;
+}
+
+:global(.cube-encoding-popover__header button) {
+  display: inline-grid;
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #5b6a80;
+  cursor: pointer;
+}
+
+:global(.cube-encoding-popover__header button:hover) {
+  background: #edf5fc;
+  color: #1554b2;
 }
 
 .data-table-wrap {

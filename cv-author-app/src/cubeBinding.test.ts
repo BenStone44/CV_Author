@@ -1,46 +1,76 @@
 import { describe, expect, it } from "vitest";
+import type { Dataset } from "./types";
 import {
   beginCubeBindingDrag,
   cubeSelectionForChartFields,
   readCubeBinding,
 } from "./cubeBinding";
+import { cubeResultFromDataset } from "./cubeModel";
+
+const convertedDataset: Dataset = {
+  id: "converted-cube",
+  name: "converted-cube.csv",
+  columns: [
+    { name: "person", type: "nominal" },
+    { name: "date", type: "temporal" },
+    { name: "component", type: "nominal" },
+    { name: "weight", type: "quantitative" },
+  ],
+  rows: [
+    { person: "P1", date: "2026-01-01", component: "water", weight: "38" },
+    { person: "P1", date: "2026-01-01", component: "fat", weight: "18" },
+  ],
+};
 
 describe("Cube selection projection", () => {
-  it("maps the selected chart fields back to Cube checks", () => {
-    expect(cubeSelectionForChartFields([
-      "person",
-      "time",
-      "water_kg",
-      "fat_kg",
-    ])).toEqual({
-      person: true,
-      date: true,
-      weight: ["water_kg", "fat_kg"],
+  it("maps semantic binding ids back to dynamic Cube fields", () => {
+    const cube = cubeResultFromDataset(convertedDataset);
+    const projection = cubeSelectionForChartFields(["component", "water", "weight"], cube);
+
+    expect(projection.selected).toMatchObject({
+      component: true,
+      __measures__: true,
     });
+    expect(projection.values.component).toEqual(["water"]);
+    expect(projection.values.__measures__).toEqual(["weight"]);
+    expect(projection.fields).toMatchObject({ component: "component" });
   });
 
-  it("clears Cube checks when the chart has no matching fields", () => {
-    expect(cubeSelectionForChartFields(["category", "value"])).toEqual({
-      person: false,
-      date: false,
-      weight: [],
-    });
+  it("clears dynamic Cube checks when the chart has no matching ids", () => {
+    const projection = cubeSelectionForChartFields(["unknown"], cubeResultFromDataset(convertedDataset));
+
+    expect(Object.values(projection.selected).every((selected) => !selected)).toBe(true);
+    expect(Object.values(projection.values).every((values) => values.length === 0)).toBe(true);
   });
 
-  it("preserves the aggregation selected for an unselected Cube column", () => {
+  it("serializes a dimension member selection", () => {
     const serialized = beginCubeBindingDrag({
-      dimension: "date",
-      values: ["2025-01-01", "2025-02-01"],
+      kind: "dimension",
+      dimensionId: "component",
+      memberIds: ["water", "fat"],
       aggregation: "avg",
     });
-    const transfer = {
-      getData: () => serialized,
-    } as unknown as DataTransfer;
+    const transfer = { getData: () => serialized } as unknown as DataTransfer;
 
     expect(readCubeBinding(transfer)).toEqual({
-      dimension: "date",
-      values: ["2025-01-01", "2025-02-01"],
+      kind: "dimension",
+      dimensionId: "component",
+      memberIds: ["water", "fat"],
       aggregation: "avg",
+    });
+  });
+
+  it("normalizes the legacy weight payload to a measure set", () => {
+    const serialized = beginCubeBindingDrag({
+      dimension: "weight",
+      values: ["water", "fat"],
+    });
+    const transfer = { getData: () => serialized } as unknown as DataTransfer;
+
+    expect(readCubeBinding(transfer)).toEqual({
+      kind: "measure-set",
+      measureIds: ["water", "fat"],
+      aggregation: undefined,
     });
   });
 });

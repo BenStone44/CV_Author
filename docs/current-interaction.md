@@ -34,12 +34,9 @@
 - 顶部的已实现图表模板可以拖入画布。
 - 画布也接受 SVG、PNG、JPEG、WebP、GIF、AVIF 文件。
 - 新对象会放在拖放位置附近，并自动限制在画布范围内。
-- 新建图表会自动绑定当前数据集；有编码配置入口的图表会自动打开轴/编码检查面板。
-- 拖动模板经过已有图表时，画布会显示可用的组合投放区域：
-  - 图表内部：Layer（叠加）。
-  - 图表边缘：Concat（并列），共享对应坐标通道。
-  - Scatterplot 的数据点：Nested（嵌套），目前用于 Point + Pie。
-- 投放区域不兼容时显示无效状态，放下后不会创建组合，并显示提示。
+- 新建图表会自动绑定当前数据集，并作为独立 atomic Chart Unit 放置；有编码配置入口的图表会自动打开 Mark Encoding 面板。
+- 模板拖放只负责创建 atomic unit，不会直接创建 Layer、Concat 或 Nested。
+- 先分别完成每个 unit 的必需 Mark Encoding，再选中这些 unit 并使用工具栏创建 Composition。
 
 ## 4. 画布选择与移动
 
@@ -75,8 +72,8 @@
 
 工具栏提供 `Layer`、`Facet`、`Concat`、`Nested` 四类组合入口。按钮是否可用由当前选择和图表类型决定。
 
-- Layer：将坐标系、Dataset 和通道编码兼容的图表叠加到同一绘图区；通用 owner 提供共享 scale，独立坐标轴组件只为共享通道渲染一次，所有 Chart renderer 都只输出 marks。
-- Layer 成员不再单独配置 X/Y；创建及后续重渲染时，非 owner 成员始终直接继承 owner 的 X/Y encoding、plot area、scale 和 frame，只保留自身的 mark 类型与样式。
+- Layer：将坐标系、Dataset 和通道类型兼容的图表叠加到同一绘图区；每个成员保留自己的 X/Y Mark Encoding，兼容通道合并所有成员的 domain 后共享 scale。独立坐标轴组件只为共享通道渲染一次，所有 Chart renderer 都只输出 marks。
+- Layer 的 owner 只承担共享坐标系的渲染与 frame，不再向其他成员复制字段、聚合或视觉配置。
 - Layer 与其他编辑操作统一以 plot area 作为几何 bbox；刻度文字、轴标题、图例和模板留白不参与对齐、框选、缩放框或拆出区域计算。
 - Facet：根据选中图表的数据维度创建多个小图。
 - Concat：按投放边缘并列多个视图。拖入目标矩形的上/下边缘时共享 X，拖入左/右边缘时共享 Y；未共享通道仍保留各 Chart 自己的轴和 Encoding。
@@ -98,13 +95,13 @@ Layer 的共享坐标系、唯一坐标轴和所有 marks 是一个变换单元�
 
 ### 6.1 打开方式
 
-选中带坐标系的图表后，点击图表的 X/Y 轴命中区域会打开统一 Encoding Card。该 Card 同时显示当前 Chart 的 Encoding、当前 Axis Binding，以及该 Axis 关联的其他 Chart。面板通常定位在点击位置附近，空间不足时会自动换到另一侧。
+选中 atomic Chart Unit 后，点击画布上的 `Encoding` 按钮打开 Mark Encoding 面板。面板只编辑当前 Unit；共享坐标轴关系不会把字段配置传播到其他 Unit。
 
 面板关闭方式：点击右上角关闭按钮、按 `Escape`，或选择其他交互入口。
 
 ### 6.2 Cartesian 图表
 
-- 网格、轴线、刻度、刻度文字和轴标题由同一个独立坐标轴组件渲染；它们共享 plot area、scale 与字体模型，不属于任何 Chart 的 `renderedContent`。
+- 网格、轴线、刻度、刻度文字和轴标题由独立坐标轴组件渲染；它们共享 plot area、scale 与字体模型，不属于任何 Chart 的 `renderedContent`。共享通道不显示 owner 的字段标题，避免把单个 Mark 的语义错误地赋给整个轴。
 - Cartesian 初始 plot area 使用居中的 4:3 区域；轴文字初始屏幕字号约为 8–9px，并补偿模板节点的初始 scale。
 - X、Y 下拉框可以绑定或解除数据列。
 - 每个 Chart 保存自己的 Encoding；共享 Axis 不会合并其他 Chart 的非共享 Encoding。
@@ -117,8 +114,11 @@ Layer 的共享坐标系、唯一坐标轴和所有 marks 是一个变换单元�
 Line chart 还可以选择 `Series` 字段：
 
 - 选择一个 nominal 列后，在同一视图中绘制多条线。
+- Multi-Line 可以在 `Y measures` 中勾选多个 Cube measures；系统将 measure identity 自动绑定为 Series。
 - 选择 `Single line` 或点击继续按钮可清除 series。
-- `Confirm encodings` 提交当前选择。
+- `Confirm encodings` 提交当前选择，并且只在此时运行 Compatibility Engine。确认后再次修改 Channel 或 measure 选择会使检查结果失效。
+
+Stacked Area、Streamgraph 和 Horizon 使用相同的 `Y measures -> value-series` 绑定。渲染前系统把宽表 measures 转换为统一 value 与 measure identity，用户无需手动执行 fold。
 
 Scatterplot 还可以设置可选的 `Color`、`Size`、`Shape` 编码；可以确认，也可以选择 `Continue without optional encodings`。
 
@@ -130,13 +130,21 @@ Scatterplot 还可以设置可选的 `Color`、`Size`、`Shape` 编码；可以�
 - `Per component` 模式下可以为每个角度分量单独选择半径字段。
 - 点击 `Confirm encodings` 后关闭编码面板。
 
-## 7. Dimension options
+## 7. Atomic Chart Unit 与 Composition
+
+- Chart 模板拖入画布时只创建一个独立的 atomic unit，不会直接触发 Layer、Concat 或 Nested。
+- X、Y 及其他数据 Channel 写入该 Unit 的 Mark Encoding；坐标轴只保存方向、scale、可见性和共享关系。
+- 每个 Unit 必须先完成必需的 Mark Encoding，之后才能参与 Composition。
+- Layer 会保留每个成员自己的字段。例如 `weight_kg` 和 `water_kg` 都保持为各自 Mark 的 Y Encoding；两者同为 quantitative 时可以共享 Y scale。
+- Composition 只共享兼容的坐标通道，不会再把 owner 的 X/Y Encoding 覆盖到成员。
+
+## 8. Dimension options
 
 Dimension Options 当前暂时关闭：画布按钮、Encoding 面板入口、自动弹窗和推荐卡片均不显示。内部 recommendation 数据暂时保留，便于后续恢复时继续使用统一推断结果。
 
-## 8. 嵌套 Point + Pie
+## 9. 嵌套 Point + Pie
 
-把 Pie 模板拖到 Scatterplot 的具体点上后打开配置弹窗：
+先分别完成 Scatterplot 和 Pie atomic unit，再创建 Nested Composition：
 
 - 选择 Point 的 X、Y 字段。
 - 选择 Pie 半径字段。
@@ -145,7 +153,7 @@ Dimension Options 当前暂时关闭：画布按钮、Encoding 面板入口、�
 
 创建后，子 Pie 会跟随父 Scatterplot 数据点；父图表重新渲染或坐标变化时，关系会重新解析。
 
-## 9. 上下文菜单、快捷键与层级顺序
+## 10. 上下文菜单、快捷键与层级顺序
 
 右键菜单提供：
 
@@ -165,7 +173,7 @@ Dimension Options 当前暂时关闭：画布按钮、Encoding 面板入口、�
 
 输入框、下拉框获得焦点时，上述全局快捷键不会抢占输入操作。
 
-## 10. 当前状态与后续讨论边界
+## 11. 当前状态与后续讨论边界
 
 以下是当前实现中的关键行为，后续调整时需要明确是否保留：
 

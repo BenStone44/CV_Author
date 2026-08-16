@@ -69,7 +69,7 @@ describe("independent Polar coordinate system component", () => {
 
     expect(coordinateSystem.props.class).toContain("polar-coordinate-system");
     expect(coordinateSystem.props.transform).toBeUndefined();
-    expect(coordinateSystem.children).toHaveLength(5);
+    expect(coordinateSystem.children).toHaveLength(7);
 
     const radiusAxes = coordinateSystem.children.filter((child: any) =>
       classes(child).includes("polar-coordinate-radius-axis"),
@@ -93,6 +93,9 @@ describe("independent Polar coordinate system component", () => {
     );
     expect(angleAxes).toHaveLength(2);
     expect(angleAxes.every((axis: any) => axis.type === "path")).toBe(true);
+
+    const labels = coordinateSystem.children.filter((child: any) => child.type === "text");
+    expect(labels.map((label: any) => label.children)).toEqual(["R", "Theta"]);
 
     const control = coordinateSystem.children.find((child: any) =>
       classes(child).includes("polar-coordinate-angle-control"),

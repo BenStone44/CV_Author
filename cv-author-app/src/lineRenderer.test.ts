@@ -14,14 +14,14 @@ function loadCase1Dataset(): Dataset {
   ));
   const columns: DataColumn[] = headers.map((name) => ({
     name,
-    type: name === "time" ? "temporal" : name === "person" ? "nominal" : "quantitative",
+    type: name === "time" ? "temporal" : name === "id" || name === "person" ? "nominal" : "quantitative",
   }));
   return {
     id: "case1",
     name: "case1.csv",
     columns,
     rows,
-    primaryKey: ["person", "time"],
+    primaryKey: ["id"],
   };
 }
 
@@ -90,6 +90,77 @@ describe("Case 1 deterministic line chart", () => {
       "2025-01-01T00:00:00.000Z",
       "2025-08-01T00:00:00.000Z",
     ]);
+  });
+
+  it("applies configured colors to individual series members", () => {
+    const dataset = loadCase1Dataset();
+    const result = renderLineChart({
+      chartId: "member-color-line",
+      width: 800,
+      height: 400,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Cartesian", origin: { x: 0, y: 400 }, xDirection: 1, yDirection: -1 },
+      chartSpec: {
+        ...createChartSpec(),
+        series: { field: "person", type: "nominal" },
+        markGroups: [{
+          id: "mark-group:member-color-line:line",
+          chartId: "member-color-line",
+          role: "line",
+          memberKeys: [],
+          sharedConfig: {
+            seriesColorMapping: {
+              type: "categorical",
+              values: { Person_A: "#00aa66" },
+            },
+          },
+        }],
+      },
+      dataset,
+    });
+
+    const personA = result.content.match(/<g[^>]*data-series-key="Person_A"[\s\S]*?<\/g>/)?.[0] ?? "";
+    expect(personA).toContain('stroke="#00aa66"');
+    expect(result.content).toContain('data-series-key="Person_B"');
+    expect(result.content).toContain('stroke="#e11d48"');
+  });
+
+  it("applies color, width, and line style from the multi-line Series config", () => {
+    const dataset = loadCase1Dataset();
+    const result = renderLineChart({
+      chartId: "member-style-line",
+      width: 800,
+      height: 400,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Cartesian", origin: { x: 0, y: 400 }, xDirection: 1, yDirection: -1 },
+      chartSpec: {
+        ...createChartSpec(),
+        series: { field: "person", type: "nominal" },
+        markGroups: [{
+          id: "mark-group:member-style-line:line",
+          chartId: "member-style-line",
+          role: "line",
+          memberKeys: [],
+          sharedConfig: {
+            seriesStyleMapping: {
+              type: "series-style",
+              values: {
+                Person_A: { color: "#00aa66", strokeWidth: 5, shape: "dashed" },
+              },
+            },
+          },
+        }],
+      },
+      dataset,
+    });
+
+    const personA = result.content.match(/<g[^>]*data-series-key="Person_A"[\s\S]*?<\/g>/)?.[0] ?? "";
+    expect(personA).toContain('data-line-style="dashed"');
+    expect(personA).toContain('stroke="#00aa66"');
+    expect(personA).toContain('stroke-width="5"');
+    expect(personA).toContain('stroke-dasharray="15 10"');
   });
 
   it("uses a nominal color encoding as the line series field", () => {

@@ -9,7 +9,9 @@ import vueDevTools from 'vite-plugin-vue-devtools'
 const virtualChartAssetsId = 'virtual:chart-assets'
 const resolvedVirtualChartAssetsId = `\0${virtualChartAssetsId}`
 const templateDirectory = fileURLToPath(new URL('./templates', import.meta.url))
-const templateDefinitions = readdirSync(templateDirectory, { withFileTypes: true })
+const templateDefinitions = (existsSync(templateDirectory)
+  ? readdirSync(templateDirectory, { withFileTypes: true })
+  : [])
   .filter((entry) => entry.isDirectory())
   .map((entry) => {
     const directory = resolve(templateDirectory, entry.name)

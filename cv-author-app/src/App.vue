@@ -7,7 +7,7 @@ import {
   ref,
   watch,
 } from "vue";
-import { SlidersHorizontal, X } from "@lucide/vue";
+import { ChevronDown, SlidersHorizontal, Undo2, X } from "@lucide/vue";
 import { CanvasNodeView } from "./CanvasNodeView";
 import {
   CanvasCoordinateSystemLayer,
@@ -22,6 +22,7 @@ import type {
   CanvasNode,
   ChartEncodingChannel,
   CompositionType,
+  CoordinateChannel,
   EncodingChannel,
   SvgCandidate,
 } from "./types";
@@ -34,10 +35,22 @@ import {
 import { useDatasetStore } from "./useDatasetStore";
 import { useLlmRenderer } from "./useLlmRenderer";
 import { isLineChartType } from "./lineRenderer";
+import { cubeResultFromDataset } from "./cubeModel";
+import {
+  groupChartTemplateCandidates,
+  type ChartTemplateCategory,
+} from "./chartTemplateCategories";
+import {
+  applyCompatibilityResolutionAction,
+  compatibilityResolutionStateFromChartSpec,
+  planCompatibilityResolution,
+} from "./compatibilityResolution";
+import { getSingleChartTemplateRequirement } from "./chartCompatibility";
 
 const canvasRef = ref<HTMLElement | null>(null);
 const encodingInspectorOpen = ref(true);
-const cubePersonSelectionByChart = ref<Record<string, boolean>>({});
+const activeTemplateCategoryId = ref<string | null>(null);
+const templateCategoryMenuPosition = ref({ left: 0, top: 0, width: 560 });
 
 const {
   selectedCoordinateSystems,
@@ -110,10 +123,13 @@ const {
   setAxisBindingAggregation,
   setCubeValueFilters,
   clearSeriesBinding,
+  setChartSeries,
   setChartEncoding,
+  setCubeChannelSelection,
   setPieAngleFields,
-  setPieRadiusMode,
-  setPieComponentRadiusField,
+  setValueSeriesFields,
+  setParallelFields,
+  setCubeSeriesColor,
   updateAxisBindingMarkGroupConfig,
   closeAxisBinding,
   setSelectionRotation,
@@ -138,7 +154,55 @@ const {
   alignSelection,
   resetCanvasZoom,
 } = useCanvasStore(canvasRef);
+const implementedTemplateCategories = computed(() =>
+  groupChartTemplateCandidates(implementedTemplateCandidates.value.filter((candidate) =>
+    selectedCoordinateSystems.value.size === 0
+      || selectedCoordinateSystems.value.has(candidate.coordinateSystem),
+  )),
+);
+const activeTemplateCategory = computed(() =>
+  implementedTemplateCategories.value.find((category) => category.id === activeTemplateCategoryId.value) ?? null,
+);
+const templateCategoryMenuStyle = computed(() => ({
+  left: `${templateCategoryMenuPosition.value.left}px`,
+  top: `${templateCategoryMenuPosition.value.top}px`,
+  width: `${templateCategoryMenuPosition.value.width}px`,
+  maxHeight: `${Math.max(180, window.innerHeight - templateCategoryMenuPosition.value.top - 16)}px`,
+}));
+
+function closeTemplateCategoryMenu() {
+  activeTemplateCategoryId.value = null;
+}
+
+watch(selectedCoordinateSystems, closeTemplateCategoryMenu);
+
+function toggleTemplateCategory(category: ChartTemplateCategory, event: MouseEvent) {
+  if (activeTemplateCategoryId.value === category.id) {
+    closeTemplateCategoryMenu();
+    return;
+  }
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  const preferredWidth = category.candidates.length <= 2 ? 360 : category.candidates.length <= 4 ? 540 : 680;
+  const width = Math.min(preferredWidth, window.innerWidth - 32);
+  templateCategoryMenuPosition.value = {
+    left: Math.max(16, Math.min(rect.left, window.innerWidth - width - 16)),
+    top: rect.bottom + 6,
+    width,
+  };
+  activeTemplateCategoryId.value = category.id;
+}
+
+function onTemplateCandidateDragEnd() {
+  onCandidateDragEnd();
+  closeTemplateCategoryMenu();
+}
+
 const { activeDataset, getDataset } = useDatasetStore();
+const axisBindingCubeResult = computed(() => {
+  const datasetId = axisBindingNode.value?.chartSpec?.datasetId;
+  const dataset = datasetId ? getDataset(datasetId) : activeDataset.value;
+  return dataset ? cubeResultFromDataset(dataset) : undefined;
+});
 const llmRenderer = useLlmRenderer();
 const {
   status: llmStatus,
@@ -229,14 +293,16 @@ function isPolarChartType(chartType: string) {
 
 function encodingReviewKey(node: CanvasNode | null) {
   if (!node?.chartSpec) return "";
-  const { encodings, series, angleFields, radiusMode, componentRadiusFields } = node.chartSpec;
+  const { encodings, series, angleFields, parallelFields } = node.chartSpec;
   return [
     node.id,
+    node.chartSpec.chartType,
     ...Object.entries(encodings).sort(([left], [right]) => left.localeCompare(right)).map(([channel, encoding]) => `${channel}:${encoding?.field ?? ""}`),
     series?.field ?? "",
     ...(angleFields ?? []).map((encoding) => `angle:${encoding.field}`),
-    radiusMode ?? "shared",
-    ...Object.entries(componentRadiusFields ?? {}).sort(([left], [right]) => left.localeCompare(right)).map(([component, encoding]) => `${component}:${encoding.field}`),
+    ...(parallelFields ?? []).map((encoding) => `dimension:${encoding.field}`),
+    JSON.stringify(node.chartSpec.cubeBinding?.slots ?? {}),
+    JSON.stringify(node.chartSpec.aggregations ?? {}),
   ].join("|");
 }
 
@@ -269,8 +335,8 @@ const encodingTargetNode = computed(() =>
 );
 const canToggleEncodingInspector = computed(() => !!encodingTargetNode.value);
 
-function defaultEncodingChannel(node: CanvasNode): EncodingChannel {
-  return isPolarChartType(node.chartSpec?.chartType ?? "") ? "y" : "x";
+function defaultEncodingChannel(node: CanvasNode): CoordinateChannel {
+  return isPolarChartType(node.chartSpec?.chartType ?? "") ? "angle" : "x";
 }
 
 function selectEncodingTarget(node: CanvasNode) {
@@ -299,15 +365,48 @@ function closeEncodingInspector() {
 const activeDimensionRecommendations = computed(() =>
   (axisBindingNode.value ?? llmNode.value)?.chartSpec?.dimensionRecommendations ?? [],
 );
+const compatibilitySelectionsByChart = ref<Record<string, string[]>>({});
+const activeCompatibilityPlan = computed(() => {
+  const node = axisBindingNode.value ?? llmNode.value;
+  const dataset = node?.chartSpec ? getDataset(node.chartSpec.datasetId) : null;
+  if (!node?.chartSpec || !dataset || !getSingleChartTemplateRequirement(node.chartSpec.chartType)) return null;
+  if (encodingReviewApprovedKey.value !== encodingReviewKey(node)) return null;
+  const state = compatibilityResolutionStateFromChartSpec(node.chartSpec);
+  const checkedFields = compatibilitySelectionsByChart.value[node.id];
+  if (checkedFields) {
+    state.selectedFieldIds = Array.from(new Set([
+      ...Object.values(state.assignment).flatMap((fields) => fields ?? []),
+      ...checkedFields,
+    ]));
+  }
+  return planCompatibilityResolution(
+    state,
+    cubeResultFromDataset(dataset),
+    { maxDepth: 4, maxStates: 160, alternativeLimit: 4 },
+  );
+});
+const activeCompatibilityMessage = computed(() => {
+  const result = activeCompatibilityPlan.value?.compatibility;
+  if (!result || result.status === "compatible") return "";
+  return result.issues[0]?.message
+    ?? "The confirmed channel bindings do not satisfy this template's structural requirements.";
+});
 const selectedChartId = computed(() =>
   selectedNodes.value.length === 1 && selectedNodes.value[0]?.chartSpec
     ? selectedNodes.value[0].id
     : "",
 );
+const selectedChartSpec = computed(() =>
+  selectedNodes.value.length === 1 ? selectedNodes.value[0]?.chartSpec ?? undefined : undefined,
+);
+const selectedChartMarkConfig = computed(() =>
+  selectedChartSpec.value?.markGroups?.[0]?.sharedConfig ?? {},
+);
 const pendingDimension = computed(() => {
   const node = axisBindingNode.value ?? llmNode.value;
   const dataset = llmDataset.value;
-  if (!node?.chartSpec || !dataset || node.chartSpec.renderer?.status !== "ready") return null;
+  if (!node?.chartSpec || !dataset) return null;
+  if (encodingReviewApprovedKey.value !== encodingReviewKey(node)) return null;
   const recommendation = activeDimensionRecommendations.value.find((item) =>
     dataset.columns.some((column) => column.name === item.field)
     && !node.chartSpec?.dimensionDecisions?.[item.field],
@@ -323,6 +422,48 @@ const pendingDimension = computed(() => {
 const pendingAggregation = ref<"sum" | "avg">("avg");
 const recommendationPopupOpen = ref(false);
 let lastRecommendationKey = "";
+const resolutionHistoryDepth = ref(0);
+const resolutionHistoryChartId = ref("");
+const constrainedResolutionPlan = computed(() =>
+  activeCompatibilityPlan.value?.compatibility.status === "compatible"
+    ? null
+    : activeCompatibilityPlan.value,
+);
+const canChooseDimensionAggregation = computed(() => {
+  const field = pendingDimension.value?.field;
+  const plan = constrainedResolutionPlan.value;
+  if (!field || !plan) return !!field;
+  return plan.actions.some((action) => action.strategy === "aggregate"
+    && action.fieldId === field
+    && action.aggregation === pendingAggregation.value);
+});
+const canChooseDimensionFacet = computed(() => {
+  const field = pendingDimension.value?.field;
+  const plan = constrainedResolutionPlan.value;
+  if (!field || !plan) return !!pendingDimension.value?.facetRecommendation;
+  return plan.actions.some((action) => action.strategy === "facet" && action.fieldId === field);
+});
+const canChooseDimensionUpgrade = computed(() => {
+  const field = pendingDimension.value?.field;
+  const plan = constrainedResolutionPlan.value;
+  if (!field || !plan) return !!field;
+  if (plan.actions.some((action) => action.strategy === "bind-channel" && action.fieldId === field)) return true;
+  const node = axisBindingNode.value ?? llmNode.value;
+  const dataset = node?.chartSpec ? getDataset(node.chartSpec.datasetId) : null;
+  if (!dataset) return false;
+  const cube = cubeResultFromDataset(dataset);
+  return plan.actions.some((action) => {
+    if (action.strategy !== "change-template") return false;
+    const nextState = applyCompatibilityResolutionAction(plan.state, action, cube);
+    const nextPlan = planCompatibilityResolution(nextState, cube, {
+      maxDepth: 3,
+      maxStates: 80,
+      alternativeLimit: 0,
+    });
+    return nextPlan.actions.some((nextAction) =>
+      nextAction.strategy === "bind-channel" && nextAction.fieldId === field);
+  });
+});
 
 watch(pendingDimension, (dimension) => {
   const key = dimension ? `${selectedChartId.value}:${dimension.field}` : "";
@@ -338,6 +479,13 @@ watch(pendingDimension, (dimension) => {
   lastRecommendationKey = key;
 }, { immediate: true });
 
+watch(selectedChartId, (chartId) => {
+  if (chartId !== resolutionHistoryChartId.value) {
+    resolutionHistoryChartId.value = chartId;
+    resolutionHistoryDepth.value = 0;
+  }
+});
+
 function openRecommendationPopup() {
   recommendationPopupOpen.value = !!pendingDimension.value;
 }
@@ -348,6 +496,8 @@ function closeRecommendationPopup() {
 
 function finishDimensionChoice() {
   recommendationPopupOpen.value = false;
+  resolutionHistoryChartId.value = selectedChartId.value;
+  resolutionHistoryDepth.value += 1;
   void nextTick(() => {
     const dimension = pendingDimension.value;
     const key = dimension ? `${selectedChartId.value}:${dimension.field}` : "";
@@ -355,21 +505,30 @@ function finishDimensionChoice() {
   });
 }
 
+function backDimensionResolution() {
+  if (resolutionHistoryDepth.value <= 0) return;
+  undoCanvasChange();
+  resolutionHistoryDepth.value -= 1;
+  void nextTick(() => {
+    recommendationPopupOpen.value = !!pendingDimension.value;
+  });
+}
+
 function chooseDimensionAggregation() {
   const field = pendingDimension.value?.field;
-  if (!field || !applyDimensionAggregation(field, pendingAggregation.value)) return;
+  if (!field || !canChooseDimensionAggregation.value || !applyDimensionAggregation(field, pendingAggregation.value)) return;
   finishDimensionChoice();
 }
 
 function chooseDimensionChartUpgrade() {
   const field = pendingDimension.value?.field;
-  if (!field || !applyDimensionChartUpgrade(field)) return;
+  if (!field || !canChooseDimensionUpgrade.value || !applyDimensionChartUpgrade(field)) return;
   finishDimensionChoice();
 }
 
 function chooseDimensionFacet() {
   const recommendation = pendingDimension.value?.facetRecommendation;
-  if (!recommendation) return;
+  if (!recommendation || !canChooseDimensionFacet.value) return;
   applyDimensionRecommendation(recommendation.id);
   finishDimensionChoice();
 }
@@ -382,38 +541,47 @@ const selectedChartFields = computed(() => {
   return Array.from(new Set([
     ...Object.values(spec.encodings).map((encoding) => encoding?.field),
     ...(spec.angleFields ?? []).map((encoding) => encoding.field),
+    ...Object.values(spec.cubeBinding?.slots ?? {}).flatMap((source) => {
+      if (!source) return [];
+      if (source.kind === "dimension") return [source.dimensionId, ...(source.memberIds ?? [])];
+      if (source.kind === "measure") return [source.measureId];
+      if (source.kind === "measure-set") return source.measureIds;
+      return [];
+    }),
     spec.series?.field,
     ...(spec.seriesFields ?? []).map((encoding) => encoding.field),
-    cubePersonSelectionByChart.value[node.id] ? "person" : undefined,
-    ...Object.values(spec.componentRadiusFields ?? {}).map((encoding) => encoding.field),
+    ...Object.keys(spec.dimensionDecisions ?? {}),
   ].filter((field): field is string => !!field)));
 });
-const selectedChartValueFilters = computed(() =>
-  selectedNodes.value.length === 1
-    ? selectedNodes.value[0]?.chartSpec?.valueFilters ?? {}
-    : {},
-);
+const selectedChartValueFilters = computed(() => {
+  if (selectedNodes.value.length !== 1) return {};
+  const spec = selectedNodes.value[0]?.chartSpec;
+  return {
+    ...Object.fromEntries(Object.entries(spec?.filters ?? {}).map(([field, value]) => [field, [value]])),
+    ...spec?.valueFilters,
+  };
+});
 
 function onCubeSelectionChange(state: CubeSelectionState) {
   const chartId = selectedChartId.value;
   if (!chartId) return;
-  cubePersonSelectionByChart.value = {
-    ...cubePersonSelectionByChart.value,
-    [chartId]: state.selected.person,
+  compatibilitySelectionsByChart.value = {
+    ...compatibilitySelectionsByChart.value,
+    [chartId]: Array.from(new Set([
+      ...Object.entries(state.selected).flatMap(([fieldId, selected]) =>
+        selected && fieldId !== "__measures__" ? [fieldId] : []),
+      ...(state.selected.__measures__ ? state.values.__measures__ ?? [] : []),
+    ])),
   };
-  setCubeValueFilters(Object.fromEntries((["person", "date"] as const).flatMap((dimension) => {
-    const field = state.fields[dimension];
-    return field ? [[dimension, { field, values: state.values[dimension] }]] : [];
+  setCubeValueFilters(Object.fromEntries(Object.entries(state.fields).map(([dimension, field]) => {
+    return [dimension, { field, values: state.values[dimension] ?? [] }];
   })));
   const seriesField = axisBindingNode.value?.chartSpec?.series?.field.toLowerCase() ?? "";
-  if (!state.selected.person && (seriesField === "person" || seriesField.includes("person"))) {
+  if (seriesField && state.selected[seriesField] === false) {
     clearSeriesBinding();
   }
-  const aggregation = !state.selected.person && state.aggregations.person.enabled
-    ? state.aggregations.person.operation
-    : state.aggregations.weight.enabled
-      ? state.aggregations.weight.operation
-      : undefined;
+  const measureAggregation = state.aggregations.__measures__;
+  const aggregation = measureAggregation?.enabled ? measureAggregation.operation : undefined;
   setAxisBindingAggregation("y", aggregation);
 }
 
@@ -435,6 +603,7 @@ async function selectCompositionCandidate(candidate: SvgCandidate) {
 
 function onCompositionKeyDown(event: KeyboardEvent) {
   if (event.key === "Escape") {
+    closeTemplateCategoryMenu();
     closeCompositionCandidates();
     closeAxisBinding();
     closeRecommendationPopup();
@@ -444,6 +613,18 @@ function onCompositionKeyDown(event: KeyboardEvent) {
 
 function onEncodingChannelChange(channel: ChartEncodingChannel, field: string) {
   setChartEncoding(channel, field);
+}
+
+function onSeriesFieldChange(field: string) {
+  setChartSeries(field);
+}
+
+function onCubeSourceMembersChange(
+  target: ChartEncodingChannel | "series",
+  sourceId: string,
+  memberIds: string[],
+) {
+  setCubeChannelSelection(target, sourceId, memberIds);
 }
 
 function confirmEncodingInspector() {
@@ -529,12 +710,16 @@ watch(encodingTargetNode, (node) => {
 onMounted(() => {
   window.addEventListener("keydown", onCompositionKeyDown);
   window.addEventListener("click", closeCompositionCandidates);
+  window.addEventListener("click", closeTemplateCategoryMenu);
   window.addEventListener("resize", positionNestedBindingPopup);
+  window.addEventListener("resize", closeTemplateCategoryMenu);
 });
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", onCompositionKeyDown);
   window.removeEventListener("click", closeCompositionCandidates);
+  window.removeEventListener("click", closeTemplateCategoryMenu);
   window.removeEventListener("resize", positionNestedBindingPopup);
+  window.removeEventListener("resize", closeTemplateCategoryMenu);
 });
 </script>
 
@@ -572,42 +757,97 @@ onBeforeUnmount(() => {
         <div class="sidebar__browser">
           <section class="implemented-templates" aria-label="Implemented chart templates">
             <p class="implemented-templates__title">Chart templates</p>
-            <div class="implemented-template-list">
-              <article
-                v-for="candidate in implementedTemplateCandidates"
-                :key="`implemented-${candidate.id}`"
-                class="implemented-template-card"
-                draggable="true"
-                :title="candidate.name"
-                @dragstart="onCandidateDragStart(candidate, $event)"
-                @dragend="onCandidateDragEnd"
+            <div class="implemented-template-category-list">
+              <button
+                v-for="category in implementedTemplateCategories"
+                :key="category.id"
+                class="implemented-template-category"
+                :class="{ 'implemented-template-category--active': activeTemplateCategoryId === category.id }"
+                type="button"
+                :title="`${category.label}: ${category.candidates.map((candidate) => candidate.name).join(', ')}`"
+                :aria-label="`${category.label}, ${category.candidates.length} templates`"
+                aria-haspopup="menu"
+                :aria-expanded="activeTemplateCategoryId === category.id"
+                @click.stop="toggleTemplateCategory(category, $event)"
               >
-                <div class="implemented-template-card__preview">
-                  <img :src="candidate.src" alt="" draggable="false" />
+                <div
+                  class="implemented-template-category__preview"
+                  :class="`implemented-template-category__preview--${Math.min(4, category.candidates.length)}`"
+                >
+                  <span
+                    v-for="candidate in category.candidates.slice(0, 4)"
+                    :key="candidate.id"
+                    class="implemented-template-category__tile"
+                  >
+                    <img :src="candidate.src" alt="" draggable="false" />
+                  </span>
                 </div>
-                <span>{{ candidate.name }}</span>
-              </article>
+                <span class="implemented-template-category__footer">
+                  <span>{{ category.label }}</span>
+                  <span class="implemented-template-category__count">{{ category.candidates.length }}</span>
+                  <ChevronDown :size="14" :stroke-width="1.7" aria-hidden="true" />
+                </span>
+              </button>
             </div>
           </section>
         </div>
       </div>
     </aside>
 
+    <Teleport to="body">
+      <div
+        v-if="activeTemplateCategory"
+        class="template-category-menu"
+        :style="templateCategoryMenuStyle"
+        role="menu"
+        :aria-label="`${activeTemplateCategory.label} chart templates`"
+        @click.stop
+      >
+        <header class="template-category-menu__header">
+          <div>
+            <strong>{{ activeTemplateCategory.label }}</strong>
+            <span>{{ activeTemplateCategory.candidates.length }} templates</span>
+          </div>
+          <button type="button" title="Close" aria-label="Close template menu" @click="closeTemplateCategoryMenu">
+            <X :size="15" :stroke-width="1.7" aria-hidden="true" />
+          </button>
+        </header>
+        <div class="template-category-menu__grid">
+          <article
+            v-for="candidate in activeTemplateCategory.candidates"
+            :key="candidate.id"
+            class="template-category-menu__item"
+            draggable="true"
+            role="menuitem"
+            :title="candidate.name"
+            @dragstart="onCandidateDragStart(candidate, $event)"
+            @dragend="onTemplateCandidateDragEnd"
+          >
+            <div class="template-category-menu__preview">
+              <img :src="candidate.src" alt="" draggable="false" />
+            </div>
+            <span>{{ candidate.name }}</span>
+          </article>
+        </div>
+      </div>
+    </Teleport>
+
     <div class="workbench">
       <CsvDataPanel
         :selected-chart-fields="selectedChartFields"
         :selected-chart-id="selectedChartId"
         :selected-chart-value-filters="selectedChartValueFilters"
+        :selected-chart-spec="selectedChartSpec"
+        :selected-chart-mark-config="selectedChartMarkConfig"
         @cube-selection-change="onCubeSelectionChange"
+        @encoding-channel-change="onEncodingChannelChange"
+        @series-field-change="onSeriesFieldChange"
+        @mark-config-change="updateAxisBindingMarkGroupConfig"
       />
       <main class="workspace">
         <section
           ref="canvasRef"
           class="canvas-board"
-          :style="{
-            backgroundPosition: `${viewPan.x}px ${viewPan.y}px, ${viewPan.x}px ${viewPan.y}px, 0 0`,
-            backgroundSize: `${24 * viewZoom}px ${24 * viewZoom}px, ${24 * viewZoom}px ${24 * viewZoom}px, 100% 100%`,
-          }"
           :class="{
             'canvas-board--dragging': draggedCandidateId,
             'canvas-board--panning': isPanning,
@@ -874,7 +1114,7 @@ onBeforeUnmount(() => {
             class="encoding-inspector"
             role="dialog"
             aria-modal="false"
-            :aria-label="`${axisBindingTarget.channel.toUpperCase()} axis encoding`"
+            :aria-label="`${axisBindingNode?.chartSpec?.chartType ?? 'Chart'} mark encodings`"
             @click.stop
             @pointerdown.stop
           >
@@ -883,14 +1123,19 @@ onBeforeUnmount(() => {
               :chart-name="axisBindingNode.chartSpec.chartType ?? axisBindingNode.name"
               :chart-spec="axisBindingNode.chartSpec"
               :columns="axisBindingColumns"
+              :cube-result="axisBindingCubeResult"
               :mark-config="axisBindingMarkGroupConfig"
               :renderer-error="axisBindingRendererError"
+              :compatibility-message="activeCompatibilityMessage"
               @close="closeEncodingInspector"
               @confirm="confirmEncodingInspector"
               @channel-change="onEncodingChannelChange"
+              @series-field-change="onSeriesFieldChange"
+              @value-series-fields-change="setValueSeriesFields"
+              @cube-source-members-change="onCubeSourceMembersChange"
               @angle-fields-change="setPieAngleFields"
-              @radius-mode-change="setPieRadiusMode"
-              @component-radius-field-change="setPieComponentRadiusField"
+              @parallel-fields-change="setParallelFields"
+              @cube-member-color-change="setCubeSeriesColor"
               @mark-config-change="updateAxisBindingMarkGroupConfig"
             />
           </aside>
@@ -1085,15 +1330,27 @@ onBeforeUnmount(() => {
                 <strong>Resolve {{ pendingDimension.field }}</strong>
                 <span>{{ pendingDimension.valueCount }} values do not fit the current chart structure</span>
               </div>
-              <button
-                class="recommendation-popup__close"
-                type="button"
-                title="Close"
-                aria-label="Close dimension options"
-                @click="closeRecommendationPopup"
-              >
-                <X :size="17" :stroke-width="1.7" aria-hidden="true" />
-              </button>
+              <div class="recommendation-popup__header-actions">
+                <button
+                  class="recommendation-popup__close"
+                  type="button"
+                  title="Back"
+                  aria-label="Back one resolution step"
+                  :disabled="resolutionHistoryDepth <= 0"
+                  @click="backDimensionResolution"
+                >
+                  <Undo2 :size="17" :stroke-width="1.7" aria-hidden="true" />
+                </button>
+                <button
+                  class="recommendation-popup__close"
+                  type="button"
+                  title="Close"
+                  aria-label="Close dimension options"
+                  @click="closeRecommendationPopup"
+                >
+                  <X :size="17" :stroke-width="1.7" aria-hidden="true" />
+                </button>
+              </div>
             </header>
             <div class="recommendation-popup__options">
               <section class="recommendation-option-card">
@@ -1103,11 +1360,12 @@ onBeforeUnmount(() => {
                   <option value="sum">Sum</option>
                   <option value="avg">Avg</option>
                 </select>
-                <button type="button" @click="chooseDimensionAggregation">Apply</button>
+                <button type="button" :disabled="!canChooseDimensionAggregation" @click="chooseDimensionAggregation">Apply</button>
               </section>
               <button
                 class="recommendation-option-card"
                 type="button"
+                :disabled="!canChooseDimensionUpgrade"
                 @click="chooseDimensionChartUpgrade"
               >
                 <span class="recommendation-option-card__strategy">Chart upgrade</span>
@@ -1117,7 +1375,7 @@ onBeforeUnmount(() => {
               <button
                 class="recommendation-option-card"
                 type="button"
-                :disabled="!pendingDimension.facetRecommendation"
+                :disabled="!pendingDimension.facetRecommendation || !canChooseDimensionFacet"
                 @click="chooseDimensionFacet"
               >
                 <span class="recommendation-option-card__strategy">Facet</span>
@@ -1283,8 +1541,24 @@ onBeforeUnmount(() => {
                 :transform="editingGroupTransform"
                 class="data-binding-drop-zone-layer"
               >
+                <path
+                  v-if="activeDataBindingDropZone.type === 'polar-axis'"
+                  class="data-binding-drop-zone"
+                  :class="{
+                    'data-binding-drop-zone--invalid': !activeDataBindingDropZone.compatible,
+                  }"
+                  :d="activeDataBindingDropZone.path"
+                  vector-effect="non-scaling-stroke"
+                />
+                <text
+                  v-if="activeDataBindingDropZone.type === 'polar-axis'"
+                  class="data-binding-drop-zone__label"
+                  :x="activeDataBindingDropZone.labelPosition.x"
+                  :y="activeDataBindingDropZone.labelPosition.y"
+                  text-anchor="middle"
+                >{{ activeDataBindingDropZone.channel === 'angle' ? 'Theta' : 'R' }}</text>
                 <ellipse
-                  v-if="activeDataBindingDropZone.type === 'polar-angle'"
+                  v-else-if="activeDataBindingDropZone.type === 'polar-slice'"
                   class="data-binding-drop-zone"
                   :class="{
                     'data-binding-drop-zone--invalid': !activeDataBindingDropZone.compatible,
@@ -1466,7 +1740,7 @@ onBeforeUnmount(() => {
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
-.implemented-template-list {
+.implemented-template-category-list {
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: 200px;
@@ -1476,7 +1750,7 @@ onBeforeUnmount(() => {
   overflow-x: auto;
   overflow-y: hidden;
 }
-.implemented-template-card {
+.implemented-template-category {
   display: grid;
   grid-template-rows: minmax(0, 1fr) 24px;
   width: 200px;
@@ -1490,30 +1764,170 @@ onBeforeUnmount(() => {
   color: #223041;
   font-size: 11px;
   text-align: center;
-  cursor: grab;
+  cursor: pointer;
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
-.implemented-template-card:hover {
+.implemented-template-category:hover,
+.implemented-template-category--active {
   border-color: rgba(37, 99, 235, 0.48);
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
-.implemented-template-card:active {
+.implemented-template-category__preview {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  min-height: 0;
+  padding: 3px;
+  overflow: hidden;
+  background: #f7f9fc;
+}
+.implemented-template-category__preview--1 {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+}
+.implemented-template-category__preview--2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: 1fr;
+}
+.implemented-template-category__preview--3,
+.implemented-template-category__preview--4 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+.implemented-template-category__preview--3 .implemented-template-category__tile:last-child {
+  grid-column: 1 / 3;
+}
+.implemented-template-category__tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(31, 45, 61, 0.08);
+  background: #fff;
+}
+.implemented-template-category__tile img {
+  width: 100%;
+  height: 100%;
+  padding: 2px;
+  object-fit: contain;
+}
+.implemented-template-category__footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 0 3px 0 6px;
+  line-height: 24px;
+}
+.implemented-template-category__footer > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.implemented-template-category__count {
+  color: #728196;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.implemented-template-category__footer svg {
+  transition: transform 140ms ease;
+}
+.implemented-template-category--active .implemented-template-category__footer svg {
+  transform: rotate(180deg);
+}
+.template-category-menu {
+  position: fixed;
+  z-index: 50;
+  display: grid;
+  grid-template-rows: 38px minmax(0, 1fr);
+  max-height: calc(100vh - 210px);
+  padding: 7px;
+  border: 1px solid rgba(24, 33, 47, 0.16);
+  border-radius: 7px;
+  background: #fff;
+  box-shadow: 0 14px 34px rgba(31, 45, 61, 0.18);
+}
+.template-category-menu__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 3px 7px 7px;
+  border-bottom: 1px solid rgba(24, 33, 47, 0.08);
+}
+.template-category-menu__header > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.template-category-menu__header strong {
+  color: #223041;
+  font-size: 12px;
+}
+.template-category-menu__header span {
+  color: #728196;
+  font-size: 10px;
+}
+.template-category-menu__header button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  background: transparent;
+  color: #5b6b80;
+  cursor: pointer;
+}
+.template-category-menu__header button:hover {
+  background: #eef3f8;
+}
+.template-category-menu__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(126px, 1fr));
+  gap: 7px;
+  min-height: 0;
+  padding-top: 7px;
+  overflow-y: auto;
+}
+.template-category-menu__item {
+  display: grid;
+  grid-template-rows: 82px 24px;
+  min-width: 0;
+  padding: 5px;
+  border: 1px solid rgba(24, 33, 47, 0.1);
+  border-radius: 6px;
+  background: #fff;
+  color: #223041;
+  cursor: grab;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+.template-category-menu__item:hover {
+  border-color: rgba(37, 99, 235, 0.45);
+  background: #f8fbff;
+}
+.template-category-menu__item:active {
   cursor: grabbing;
 }
-.implemented-template-card__preview {
+.template-category-menu__preview {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
-.implemented-template-card__preview img {
+.template-category-menu__preview img {
   width: 100%;
   height: 100%;
   object-fit: contain;
 }
-.implemented-template-card > span {
+.template-category-menu__item > span {
   align-self: end;
   overflow: hidden;
+  font-size: 10px;
   line-height: 24px;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1604,6 +2018,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   padding: 10px;
+  background: #fff;
 }
 .workbench {
   display: flex;
@@ -2050,6 +2465,11 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 3px;
 }
+.recommendation-popup__header > .recommendation-popup__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
 .recommendation-popup__header strong {
   color: #18212f;
   font-size: 16px;
@@ -2071,6 +2491,10 @@ onBeforeUnmount(() => {
 }
 .recommendation-popup__close:hover {
   background: #f1f5f9;
+}
+.recommendation-popup__close:disabled {
+  color: #cbd5e1;
+  cursor: not-allowed;
 }
 .recommendation-popup__options {
   display: grid;
@@ -2382,14 +2806,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   border: 1px solid rgba(24, 33, 47, 0.08);
   border-radius: 28px;
-  background:
-    linear-gradient(rgba(28, 126, 214, 0.06) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(28, 126, 214, 0.06) 1px, transparent 1px),
-    linear-gradient(180deg, #ffffff 0%, #f4f8fc 100%);
-  background-size:
-    24px 24px,
-    24px 24px,
-    100% 100%;
+  background: #fff;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.7);
 }
 .canvas-board--dragging {
@@ -2411,6 +2828,12 @@ onBeforeUnmount(() => {
 .data-binding-drop-zone--invalid {
   fill: rgba(220, 38, 38, 0.14);
   stroke: #dc2626;
+}
+.data-binding-drop-zone__label {
+  fill: #1554b2;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
 }
 .data-binding-axis-drop-zone {
   stroke: #1c7ed6;
@@ -2697,6 +3120,14 @@ onBeforeUnmount(() => {
 .coordinate-guide-layer :deep(.polar-coordinate-radius-axis--upper),
 .coordinate-guide-layer :deep(.polar-coordinate-angle-axis--upper) {
   stroke: #1554b2;
+}
+.coordinate-guide-layer :deep(.polar-coordinate-axis-label) {
+  fill: #1554b2;
+  font-family: Inter, sans-serif;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0;
+  pointer-events: none;
 }
 .coordinate-guide-layer :deep(.polar-coordinate-angle-control) {
   cursor: grab;

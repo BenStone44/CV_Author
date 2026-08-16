@@ -99,14 +99,6 @@ export function useLlmRenderer() {
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.error ?? `Renderer API returned HTTP ${response.status}.`);
       const payload = body as RendererResponse;
-      console.groupCollapsed("[LLM Renderer] request schema");
-      console.log("schema statistics", schema);
-      console.groupEnd();
-      console.groupCollapsed("[LLM Renderer] API response");
-      console.log("payload", payload);
-      console.log("generated code", payload.program.code);
-      console.log("provenance", payload.provenance);
-      console.groupEnd();
       provenance.value = payload.provenance;
       const result = await runWorker(payload.program.code, dataset, node);
       if (!result.ok) throw new Error(result.error);

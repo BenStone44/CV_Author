@@ -20,9 +20,9 @@ Shape-family classification is currently disabled in the UI and filtering logic.
 | RadialBarChart         | Polar                     |
 | SpiralPlot             | Polar                     |
 | GeoHeatmap             | Geographic                |
-| Calendar               | None                      |
-| CirclePacking          | None                      |
-| WordCloud              | None                      |
+| Calendar               | Coordinate Free           |
+| CirclePacking          | Coordinate Free           |
+| WordCloud              | Coordinate Free           |
 
 ## Shape Family
 
@@ -34,6 +34,6 @@ You can revise it with a table like this:
 
 | Chart Type    | Coordinate System | Shape Family |
 | ------------- | ----------------- | ------------ |
-| Calendar      | None              | disabled     |
-| CirclePacking | None              | disabled     |
-| WordCloud     | None              | disabled     |
+| Calendar      | Coordinate Free   | disabled     |
+| CirclePacking | Coordinate Free   | disabled     |
+| WordCloud     | Coordinate Free   | disabled     |

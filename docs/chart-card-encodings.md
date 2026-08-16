@@ -19,6 +19,7 @@
 - 数值或时间字段绑定到 `Color`、`Size` 时可配置线性映射。
 - Cartesian 图表共享统一的 X/Y 坐标轴组件。Matrix 的 `Column/Row` 在坐标系统内分别映射为 `X/Y`，不是另一套坐标轴。
 - Pie 支持多选 Angle components；其他单值 Channel 使用统一字段选择组件。
+- 顶部模板浏览器按 D3 Gallery 语义显示 `Lines`、`Areas`、`Bars`、`Dots`、`Radial`、`Analysis`、`Hierarchies`、`Networks` 八张类别 Card。类别 Card 内最多展示四个模板缩略图；少于四个时自动铺满。点击类别 Card 后在下拉菜单中显示并允许拖拽该类全部模板。
 
 ## 2. Line Chart Card
 
@@ -147,4 +148,69 @@ Pie 的 Radius 有两种组合方式：
 | Donut Chart | Angle、Color、Ring、Radius | Color | 无 |
 | Matrix | Row、Column、Value、Color | Color | Row/Column 到共享 X/Y 轴映射 |
 
-实现中，`EncodingChannelField` 负责单个 Channel，`EncodingConfigPanel` 根据 contract 组合 Channel，并为 Pie 插入专用配置区。Store 的 `setChartEncoding` 负责把真实 Channel 写回 Chart Spec 及共享坐标关系。
+实现中，`EncodingChannelField` 负责单个 Channel，`EncodingConfigPanel` 根据 contract 组合 Channel，并为 Pie 插入专用配置区。Store 的 `setChartEncoding` 只把真实 Channel 写回 atomic Chart Unit 的 Mark Encoding；共享坐标关系在后续 Composition 阶段单独建立。
+
+## 9. Area Cards
+
+Area Chart、Stacked Area、Streamgraph 与 Horizon Chart 共用 Area renderer：
+
+| Channel | 必选 | 接受类型 | 作用 |
+| --- | --- | --- | --- |
+| `X` | 是 | nominal、temporal、quantitative | 横向顺序 |
+| `Y` | 是 | quantitative | 面积高度 |
+| `Series` (`Color`) | 否 | nominal、temporal | 拆分面积层 |
+
+Area Chart 使用官方示例的 `steelblue` 单面积；Stacked Area 使用 Tableau 10 与零基线；Streamgraph 使用 `stackOffsetWiggle` 和 `stackOrderInsideOut`。Horizon 按 Series 生成 25px 基准高度的行，并使用 `schemeBlues` 折叠色带；`Bands` 可编辑，默认 7。
+
+## 10. Parallel Coordinates Card
+
+| Channel | 必选 | 接受类型 | 作用 |
+| --- | --- | --- | --- |
+| `Numeric dimensions` | 是，至少两个 | quantitative，多选 | 生成平行数值轴 |
+| `Color` | 否 | nominal、temporal、quantitative | 区分记录 |
+
+与 Gallery 示例一致，每个 Numeric dimension 是一条水平数值轴，各轴从上到下排列。记录沿这些水平轴连接；连续 Color 使用反向 BrBG 色阶。
+
+## 11. Hierarchy Cards
+
+Icicle、Sunburst、Treemap 与 Dendrogram 共用 Hierarchy contract 和 D3 hierarchy 数据模型。
+
+| Channel | 必选 | 接受类型 | 作用 |
+| --- | --- | --- | --- |
+| `Node ID` | 是 | nominal、temporal、quantitative | 节点唯一标识 |
+| `Parent ID` | 是 | nominal、temporal、quantitative | 父节点标识；根节点留空 |
+| `Node value` | 否 | quantitative | 节点权重；未绑定时按节点计数 |
+| `Color` | 否 | nominal、quantitative | 节点颜色 |
+
+Icicle、Sunburst 按根节点的一级子树使用 Rainbow 色阶；Treemap 只绘制叶节点、使用 Tableau 10，并提供 `Binary`、`Squarify`、`Slice-dice`、`Slice`、`Dice` tiling；Dendrogram 使用 Gallery 的 Cluster layout 和水平 link。
+
+## 12. Statistical And Density Cards
+
+| Card | 必选 Channel | 可选 Channel |
+| --- | --- | --- |
+| Calendar | `Date` (temporal)、`Daily value` (quantitative) | `Color` |
+| Box Plot | `Bin variable` (`X` quantitative)、`Distribution value` (`Y` quantitative) | `Color` |
+| Contour | `X`、`Y`、`Grid value` (quantitative) | `Color` |
+| Hexbin | `X`、`Y` (quantitative) | `Color`、`Size` |
+
+- Calendar 按 Date 排序，用相邻两行 Daily value 计算百分比变化；以 Monday 为周起点、过滤周末、年份倒序，并绘制月份边界。
+- Box Plot 使用 `d3.bin().thresholds(width / 40)` 对连续 X 分箱，再在每个 bin 内计算 Y 的四分位数、1.5 IQR whisker 和 outlier。
+- Contour 要求 X/Y 构成规则网格，Grid value 进入 `d3.contours()`；正值数据使用 sequential-log Magma 与白色等高线。
+- Hexbin 与 Gallery 示例一致使用 X/Y log scale、BuPu 颜色和黑色边框；`Radius` 默认 8，并按图宽相对 928px 基准缩放。
+
+## 13. Relationship Cards
+
+Chord 与 Sankey 共用 Flow contract；Chord 以矩阵生成 arc/ribbon，Sankey 以有向边生成分层节点与流带。
+
+| Channel | 必选 | 接受类型 | 作用 |
+| --- | --- | --- | --- |
+| `Source` | 是 | nominal、temporal、quantitative | 边起点 |
+| `Target` | 是 | nominal、temporal、quantitative | 边终点 |
+| `Flow value` | 否 | quantitative | 边权重；未绑定时每行计为 1 |
+| `Color` | 否 | nominal、quantitative | 节点或连线颜色 |
+
+Chord 使用 `padAngle(20 / innerRadius)`、subgroup descending、target-colored ribbon 和 group ticks。Sankey 默认 `justify`、15px node width、10px padding，并保留 Node alignment 与 Link color 两个简单配置；Link color 默认 source-target gradient。
+
+## 14. D3 Gallery 对齐
+
+这 15 张新增 Card 的布局、默认色阶、排序、stack/partition/bin/contour/flow 算法均取自 Observable D3 Gallery 对应示例。模板只把示例中的固定数据字段替换为上述 Encoding bindings，并保留少量原示例已有的可编辑参数；画布尺寸变化时按同一算法重新计算几何。

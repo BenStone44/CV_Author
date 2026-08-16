@@ -107,6 +107,14 @@ function snapshotRelationshipState(includeDrafts = true) {
   return snapshot;
 }
 
+function migrateLegacyRelationshipState(source: ChartRelationshipState) {
+  const migrated = cloneChartRelationshipState(source);
+  Object.values(migrated.axes).forEach((axis) => {
+    if ((axis.coordinateType as string) === "None") axis.coordinateType = "CoordinateFree";
+  });
+  return migrated;
+}
+
 function nextId(prefix: string) {
   return `${prefix}:${crypto.randomUUID()}`;
 }
@@ -254,7 +262,7 @@ function bindAxis(
 function createAxisForChart(chartId: string, channel: CoordinateChannel, guide?: CoordinateGuide | null) {
   const chart = chartOrThrow(chartId);
   const contract = getChartTemplateContract(chart.chartType);
-  const coordinateType = contract?.coordinateSystem ?? guide?.type ?? "None";
+  const coordinateType = contract?.coordinateSystem ?? guide?.type ?? "CoordinateFree";
   const axis: AxisComponent = {
     id: nextId("axis"),
     coordinateType,
@@ -314,7 +322,7 @@ function createComposition(composition: Omit<RelationshipComposition, "sharedAxi
       getChartTemplateContract(chartOrThrow(chartId).chartType),
     );
     const coordinateTypes = new Set(contracts.map((contract) => contract?.coordinateSystem));
-    if (coordinateTypes.size !== 1 || coordinateTypes.has(undefined) || coordinateTypes.has("None")) {
+    if (coordinateTypes.size !== 1 || coordinateTypes.has(undefined) || coordinateTypes.has("CoordinateFree")) {
       throw new Error("Layer members must use the same shareable coordinate system.");
     }
     if (sharedChannels.some((channel) => contracts.some((contract) => !contract?.shareableChannels.includes(channel)))) {
@@ -678,7 +686,7 @@ function reconcileCanvasNodes(nodes: CanvasNode[]) {
         const sourceNode = chartNodes.find((node) => node.id === members[0]);
         relationshipState.value.axes[axisId] = {
           id: axisId,
-          coordinateType: sourceNode?.coordinateGuide?.type ?? "None",
+          coordinateType: sourceNode?.coordinateGuide?.type ?? "CoordinateFree",
           channel,
           config: axisConfigFromGuide(channel, sourceNode?.coordinateGuide),
           createdWithChartId: members[0],
@@ -760,7 +768,7 @@ function collectRelationshipIssues() {
       });
       const coordinateTypes = new Set(contracts);
       if (composition.sharedChannels.length === 0) issues.push(`Layer ${composition.id} does not share a coordinate channel.`);
-      if (coordinateTypes.size !== 1 || coordinateTypes.has(undefined) || coordinateTypes.has("None")) {
+      if (coordinateTypes.size !== 1 || coordinateTypes.has(undefined) || coordinateTypes.has("CoordinateFree")) {
         issues.push(`Layer ${composition.id} members do not use the same shareable coordinate system.`);
       }
       if (composition.sharedChannels.some((channel) => composition.memberChartIds.some((chartId) => {
@@ -805,7 +813,10 @@ export function useChartRelationshipStore() {
     relationshipIssues,
     dispatch,
     snapshot: snapshotRelationshipState,
-    restore: (snapshot: ChartRelationshipState) => dispatch({ type: "replace-state", state: snapshot }),
+    restore: (snapshot: ChartRelationshipState) => dispatch({
+      type: "replace-state",
+      state: migrateLegacyRelationshipState(snapshot),
+    }),
     bindingForChartChannel,
     bindingsForAxis,
     axesForChart: (chartId: string) => {

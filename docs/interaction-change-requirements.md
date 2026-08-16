@@ -1,8 +1,10 @@
 # CV Author 交互调整需求记录
 
-更新日期：2026-08-06  
-状态：已实现首版，仍保留产品细节待讨论项  
+更新日期：2026-08-15
+状态：历史需求记录；字段所有权以 atomic Chart Unit + Mark Encoding 模型为准
 现状参考：`docs/current-interaction.md`
+
+> 2026-08-15 架构更新：Axis 不再持有 X/Y 字段。每个 atomic Chart Unit 先独立完成 Mark Encoding，再进入 Composition；共享 Axis 只管理 scale、方向、可见性和共享关系。本文出现的 `Axis Binding` 是旧交互术语，不表示字段归 Axis 所有。
 
 ## 1. 文档边界
 

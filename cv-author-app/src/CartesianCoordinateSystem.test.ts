@@ -208,6 +208,7 @@ describe("independent Cartesian axis component", () => {
     owner.compositionSpec = compositionSpec;
     member.compositionSpec = compositionSpec;
 
+    expect(createCartesianAxisModel(owner)).toMatchObject({ xTitle: "", yTitle: "" });
     expect(getCartesianAxisChannels(owner, "static")).toEqual(["x", "y"]);
     expect(getCartesianAxisChannels(member, "static")).toEqual([]);
     expect(getCartesianAxisChannels(owner, "interactive")).toEqual([]);

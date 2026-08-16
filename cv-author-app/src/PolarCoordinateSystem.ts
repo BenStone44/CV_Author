@@ -9,6 +9,8 @@ export type PolarCoordinateSystemModel = {
   upperAngle: number;
   radiusEnd: Point;
   upperRadiusEnd: Point;
+  radiusLabel: Point;
+  thetaLabel: Point;
   upperControlArcPath: string;
   lowerControlArcPath: string;
   renderedScale: number;
@@ -70,6 +72,7 @@ export function createPolarCoordinateSystemModel(
     y: guide.origin.y,
   };
   const upperRadiusEnd = pointAtAngle(guide.origin, radius, upperAngle);
+  const thetaLabel = pointAtAngle(guide.origin, radius + 18, angleSpan >= 359.999 ? 315 : angleSpan / 2);
   return {
     origin: guide.origin,
     radius,
@@ -77,6 +80,8 @@ export function createPolarCoordinateSystemModel(
     upperAngle,
     radiusEnd,
     upperRadiusEnd,
+    radiusLabel: { x: guide.origin.x + radius * 0.52, y: guide.origin.y - 10 },
+    thetaLabel,
     upperControlArcPath: arcPath(guide.origin, radius, upperAngle + 30, upperAngle),
     lowerControlArcPath: arcPath(guide.origin, radius, 0, -30),
     renderedScale: Math.max(
@@ -145,6 +150,16 @@ export const PolarCoordinateSystem = defineComponent({
           d: model.lowerControlArcPath,
           "vector-effect": "non-scaling-stroke",
         }),
+        h("text", {
+          class: "polar-coordinate-axis-label polar-coordinate-axis-label--radius",
+          transform: `translate(${model.radiusLabel.x} ${model.radiusLabel.y}) scale(${1 / model.renderedScale})`,
+          "text-anchor": "middle",
+        }, "R"),
+        h("text", {
+          class: "polar-coordinate-axis-label polar-coordinate-axis-label--theta",
+          transform: `translate(${model.thetaLabel.x} ${model.thetaLabel.y}) scale(${1 / model.renderedScale})`,
+          "text-anchor": "middle",
+        }, "Theta"),
         h("g", {
           class: "polar-coordinate-angle-control",
           transform: `translate(${model.upperRadiusEnd.x} ${model.upperRadiusEnd.y}) scale(${1 / model.renderedScale})`,

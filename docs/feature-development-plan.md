@@ -580,6 +580,7 @@ Chart 坐标轴边界
 | 2026-08-11 | 暂时关闭 Dimension Options 的入口与自动弹窗；Layer 改为坐标系级变换单元，拖动、缩放或旋转任意成员都会同步变换所有 marks 与唯一坐标轴，并暂停拖出自动拆分 |
 | 2026-08-11 | Cartesian 初始 plot area 统一为居中 4:3；独立轴组件的初始屏幕字体缩小到约 8–9px，并按节点 scale 补偿内部字号 |
 | 2026-08-11 | 移除对象拖拽的 bbox clamp，消除随 Chart 尺寸与 scale 变化的画布内部停止边界；Layer 仍作为整体跟随指针移动 |
+| 2026-08-15 | 以 atomic Chart Unit 为 Composition 前置阶段：X/Y 归属各 Unit 的 Mark Encoding；Layer 不再继承 owner 字段，只对类型兼容的通道合并 domain 并共享 scale。此规则取代 2026-08-11 的 owner Encoding 继承约定 |
 
 ## 13. 验证记录
 

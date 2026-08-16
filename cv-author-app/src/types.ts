@@ -1,3 +1,5 @@
+import type { CubeChartBinding, CubeResult } from "./cubeModel";
+
 export type SvgCandidate = {
   id: string;
   name: string;
@@ -36,8 +38,8 @@ export type ElementOrientation = {
 
 export type CompositionType = "layer" | "facet" | "concat" | "nested";
 
-export type CoordinateSystem = "Cartesian" | "Polar" | "Geographic" | "None";
-export type IconKind = "cartesian" | "polar" | "geographic" | "none";
+export type CoordinateSystem = "Cartesian" | "Polar" | "Geographic" | "CoordinateFree";
+export type IconKind = "cartesian" | "polar" | "geographic" | "coordinate-free";
 
 export type DataColumnType = "nominal" | "temporal" | "quantitative";
 
@@ -54,19 +56,43 @@ export type Dataset = {
   columns: DataColumn[];
   rows: DataRow[];
   primaryKey?: string[];
+  cubeResult?: CubeResult;
 };
 
 export type EncodingChannel = "x" | "y";
 export type PolarEncodingChannel = "angle" | "radius" | "ring";
 export type MatrixEncodingChannel = "row" | "column" | "value";
+export type StructuredEncodingChannel =
+  | "key"
+  | "parent"
+  | "source"
+  | "target"
+  | "date"
+  | "category"
+  | "dimensions";
 export type OptionalEncodingChannel = "color" | "size" | "shape";
 export type ChartEncodingChannel =
   | EncodingChannel
   | PolarEncodingChannel
   | MatrixEncodingChannel
+  | StructuredEncodingChannel
   | OptionalEncodingChannel;
 export type CoordinateChannel = EncodingChannel | PolarEncodingChannel;
-export type ChartTemplateKind = "line" | "scatter" | "bar" | "pie" | "donut" | "matrix";
+export type ChartTemplateKind =
+  | "line"
+  | "scatter"
+  | "bar"
+  | "pie"
+  | "donut"
+  | "matrix"
+  | "area"
+  | "parallel"
+  | "hierarchy"
+  | "calendar"
+  | "boxplot"
+  | "contour"
+  | "hexbin"
+  | "flow";
 
 export type ChartEncoding = {
   field: string;
@@ -81,7 +107,7 @@ export type ChartPlotArea = {
 };
 
 export type ChartScaleSpec = {
-  type: "utc" | "linear" | "point";
+  type: "utc" | "linear" | "log" | "point";
   domain: [string, string] | [number, number] | string[];
   range: [number, number];
   nice?: boolean;
@@ -116,12 +142,32 @@ export type LinearSizeMapping = {
   stops: LinearSizeStop[];
 };
 
+export type CategoricalColorMapping = {
+  type: "categorical";
+  values: Record<string, string>;
+};
+
+export type LineSeriesShape = "solid" | "dashed" | "dotted";
+
+export type SeriesMemberStyle = {
+  color?: string;
+  strokeWidth?: number;
+  shape?: LineSeriesShape;
+};
+
+export type SeriesStyleMapping = {
+  type: "series-style";
+  values: Record<string, SeriesMemberStyle>;
+};
+
 export type MarkGroupConfigValue =
   | string
   | number
   | boolean
   | LinearColorMapping
-  | LinearSizeMapping;
+  | LinearSizeMapping
+  | CategoricalColorMapping
+  | SeriesStyleMapping;
 
 export type MarkGroupSharedConfig = Record<string, MarkGroupConfigValue>;
 
@@ -163,10 +209,12 @@ export type ChartSpec = {
   chartType: string;
   templateId?: ChartTemplateKind;
   datasetId: string;
+  cubeBinding?: CubeChartBinding;
   encodings: Partial<Record<ChartEncodingChannel, ChartEncoding>>;
   aggregations?: Partial<Record<ChartEncodingChannel, "sum" | "avg">>;
   dimensionAggregations?: Record<string, "sum" | "avg">;
   angleFields?: ChartEncoding[];
+  parallelFields?: ChartEncoding[];
   flattenFields?: string[];
   radiusMode?: "shared" | "per-component";
   componentRadiusFields?: Record<string, ChartEncoding>;
@@ -273,7 +321,16 @@ export type ChartDropZone = {
 
 export type DataBindingDropZone =
   | {
-    type: "polar-angle";
+    type: "polar-axis";
+    targetNodeId: string;
+    channel: "angle" | "radius";
+    path: string;
+    labelPosition: Point;
+    compatible: boolean;
+    fieldName?: string;
+  }
+  | {
+    type: "polar-slice";
     targetNodeId: string;
     channel: "angle";
     center: Point;
@@ -281,7 +338,6 @@ export type DataBindingDropZone =
     radiusY: number;
     rotation: number;
     compatible: boolean;
-    fieldName?: string;
   }
   | {
     type: "cartesian-axis";
@@ -501,7 +557,7 @@ export type SeriesCandidate = {
 
 export type AxisBindingTarget = {
   nodeId: string;
-  channel: EncodingChannel;
+  channel: CoordinateChannel;
   clientX?: number;
   clientY?: number;
 };

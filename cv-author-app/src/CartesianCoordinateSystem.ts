@@ -1,5 +1,5 @@
 import { defineComponent, h, type PropType } from "vue";
-import { scaleLinear, scalePoint, scaleUtc } from "d3-scale";
+import { scaleLinear, scaleLog, scalePoint, scaleUtc } from "d3-scale";
 import type {
   CanvasNode,
   ChartScaleSpec,
@@ -73,7 +73,7 @@ function axisTicks(spec: ChartScaleSpec, maximum: number): AxisTick[] {
       label: value.toISOString().slice(0, 7),
     }));
   }
-  const scale = scaleLinear().domain(spec.domain as [number, number]).range(spec.range);
+  const scale = (spec.type === "log" ? scaleLog() : scaleLinear()).domain(spec.domain as [number, number]).range(spec.range);
   return scale.ticks(maximum).map((value) => ({
     position: scale(value),
     label: formatNumber(value),
@@ -113,8 +113,15 @@ export function createCartesianAxisModel(node: CanvasNode): CartesianAxisModel |
     yEnd: { x: origin.x, y: guide.yDirection === -1 ? top : bottom },
     xTicks: axisTicks(xScale, Math.max(2, Math.min(6, Math.floor(plot.width / 80)))),
     yTicks: axisTicks(yScale, Math.max(2, Math.min(6, Math.floor(plot.height / 42)))),
-    xTitle: fieldLabel(node.chartSpec?.encodings.x?.field),
-    yTitle: fieldLabel(node.chartSpec?.encodings.y?.field),
+    // A shared axis represents several independent Mark Encodings. Showing
+    // only the owner's field would incorrectly assign that meaning to every
+    // member of the composition.
+    xTitle: node.coordinateSystem?.sharedChannels.includes("x")
+      ? ""
+      : fieldLabel(node.chartSpec?.encodings.x?.field),
+    yTitle: node.coordinateSystem?.sharedChannels.includes("y")
+      ? ""
+      : fieldLabel(node.chartSpec?.encodings.y?.field),
     fontFamily: tokens?.fontFamily ?? "Inter, ui-sans-serif, system-ui, sans-serif",
     fontSize,
     axisColor: tokens?.axisColor ?? "#64748b",

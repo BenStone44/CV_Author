@@ -4,7 +4,7 @@ declare module "virtual:chart-assets" {
   export const templateCatalog: Array<{
     name: string;
     chartType: string;
-    coordinateSystem: "Cartesian" | "Polar" | "Geographic" | "None";
+    coordinateSystem: "Cartesian" | "Polar" | "Geographic" | "CoordinateFree";
   }>;
   export const previewSrcByName: Map<string, string>;
   export const rawSvgSourceByName: Record<

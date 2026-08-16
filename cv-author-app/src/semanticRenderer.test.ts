@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { renderDeterministicChart, renderLayerChart, renderNestedPie } from "./semanticRenderer";
+import { deterministicChartPipelines, renderDeterministicChart, renderLayerChart, renderNestedPie } from "./semanticRenderer";
+import {
+  createMeasureSetBinding,
+  createMeasureBreakdownBinding,
+  cubeDimensionStyleKey,
+  cubeResultFromDataset,
+  withCubeSeriesColor,
+} from "./cubeModel";
 import type { ChartSpec, Dataset } from "./types";
 
 const dataset: Dataset = {
@@ -20,6 +27,15 @@ const lineSpec: ChartSpec = {
 };
 
 describe("semantic Case 1 renderers", () => {
+  it("keeps one registered pipeline per supported chart template", () => {
+    expect(Object.keys(deterministicChartPipelines).sort()).toEqual([
+      "area", "bar", "boxplot", "calendar", "contour", "donut", "flow",
+      "hexbin", "hierarchy", "line", "matrix", "parallel", "pie", "scatter",
+    ]);
+    expect(deterministicChartPipelines.bar.coordinateSystem).toBe("Cartesian");
+    expect(deterministicChartPipelines.donut.coordinateSystem).toBe("Polar");
+  });
+
   it("renders all Bar Chart variants through one Cartesian renderer", () => {
     const barDataset: Dataset = {
       id: "bars",
@@ -202,6 +218,113 @@ describe("semantic Case 1 renderers", () => {
     expect(full.content.match(/data-mark-role="arc"/g)).toHaveLength(40);
     expect(partial.content.match(/data-mark-role="arc"/g)).toHaveLength(40);
     expect(partial.content).not.toBe(full.content.replaceAll("full-pie", "partial-pie"));
+  });
+
+  it("renders the same converted Cube binding as a Pie or Donut with stable member colors", () => {
+    const converted: Dataset = {
+      id: "body-cube",
+      name: "body-cube",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "component", type: "nominal" },
+        { name: "weight", type: "quantitative" },
+      ],
+      rows: [
+        { person: "P1", component: "water", weight: "38" },
+        { person: "P1", component: "fat", weight: "18" },
+        { person: "P2", component: "water", weight: "40" },
+        { person: "P2", component: "fat", weight: "16" },
+      ],
+    };
+    const cube = cubeResultFromDataset(converted);
+    const waterStyleKey = cubeDimensionStyleKey("component", "water");
+    const binding = withCubeSeriesColor(
+      createMeasureBreakdownBinding(cube, "weight", "component", ["water", "fat"]),
+      waterStyleKey,
+      "#123456",
+    );
+    const render = (chartType: "PieChart" | "DonutChart") => renderDeterministicChart({
+      chartId: chartType,
+      width: 320,
+      height: 180,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Polar", origin: { x: 160, y: 90 } },
+      chartSpec: { chartType, datasetId: converted.id, encodings: {}, cubeBinding: binding },
+      dataset: converted,
+    });
+
+    const pie = render("PieChart");
+    const donut = render("DonutChart");
+
+    expect(pie.content).toContain('data-renderer="deterministic-cube-polar@1"');
+    expect(pie.content.match(/data-mark-role="arc"/g)).toHaveLength(2);
+    expect(pie.content).toContain('fill="#123456"');
+    expect(donut.content).toContain('data-chart-type="donut"');
+    expect(donut.content.match(/data-mark-role="arc"/g)).toHaveLength(2);
+    expect(donut.content).not.toBe(pie.content.replaceAll("PieChart", "DonutChart"));
+  });
+
+  it("treats Polar R as either a static outer radius or a mapped axis", () => {
+    const radiusDataset: Dataset = {
+      id: "cube-radius",
+      name: "cube-radius.csv",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "water", type: "quantitative" },
+        { name: "fat", type: "quantitative" },
+        { name: "shared_radius", type: "quantitative" },
+        { name: "water_radius", type: "quantitative" },
+        { name: "fat_radius", type: "quantitative" },
+      ],
+      rows: [
+        { person: "A", water: "30", fat: "15", shared_radius: "20", water_radius: "10", fat_radius: "100" },
+        { person: "B", water: "40", fat: "25", shared_radius: "40", water_radius: "10", fat_radius: "100" },
+      ],
+    };
+    const binding = createMeasureSetBinding(cubeResultFromDataset(radiusDataset), ["water", "fat"], undefined, "theta");
+    const render = (spec: Partial<ChartSpec>) => renderDeterministicChart({
+      chartId: "cube-radius-pie",
+      width: 320,
+      height: 180,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Polar", origin: { x: 160, y: 90 } },
+      chartSpec: {
+        chartType: "PieChart",
+        datasetId: radiusDataset.id,
+        encodings: {},
+        cubeBinding: binding,
+        ...spec,
+      },
+      dataset: radiusDataset,
+    });
+
+    const staticResult = render({});
+    expect(staticResult.content).toContain('data-radius-mode="static"');
+    expect(staticResult.content.match(/data-radius-value=""/g)).toHaveLength(2);
+
+    const mappedResult = render({
+      cubeBinding: {
+        ...binding,
+        slots: { ...binding.slots, radius: { kind: "measure", measureId: "shared_radius" } },
+      },
+      encodings: { radius: { field: "shared_radius", type: "quantitative" } },
+    });
+    expect(mappedResult.content).toContain('data-radius-mode="mapped"');
+    expect(mappedResult.content.match(/data-radius-field="shared_radius"/g)).toHaveLength(2);
+    expect(mappedResult.content.match(/data-radius-value="60"/g)).toHaveLength(2);
+
+    const smallerStaticResult = render({
+      markGroups: [{
+        id: "mark-group:cube-radius-pie:arc",
+        chartId: "cube-radius-pie",
+        role: "arc",
+        memberKeys: [],
+        sharedConfig: { outerRadius: 0.5 },
+      }],
+    });
+    expect(smallerStaticResult.plotArea.width).toBeCloseTo(staticResult.plotArea.width * 0.5);
   });
 
   it("renders scatter marks without duplicate axes", () => {

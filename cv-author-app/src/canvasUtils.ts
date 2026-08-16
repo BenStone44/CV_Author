@@ -6,6 +6,7 @@ import type {
   AbsoluteNodeFrame,
   ChartSpec,
 } from "./types";
+import { cloneCubeChartBinding } from "./cubeModel";
 
 export function clamp(value: number, min: number, max: number) {
   if (max < min) return min;
@@ -147,6 +148,7 @@ export function cloneChartSpec(chartSpec: ChartSpec | null | undefined) {
   if (!chartSpec) return chartSpec;
   return {
     ...chartSpec,
+    cubeBinding: cloneCubeChartBinding(chartSpec.cubeBinding),
     encodings: Object.fromEntries(
       Object.entries(chartSpec.encodings).map(([channel, encoding]) => [
         channel,
@@ -156,6 +158,7 @@ export function cloneChartSpec(chartSpec: ChartSpec | null | undefined) {
     aggregations: chartSpec.aggregations ? { ...chartSpec.aggregations } : undefined,
     dimensionAggregations: chartSpec.dimensionAggregations ? { ...chartSpec.dimensionAggregations } : undefined,
     angleFields: chartSpec.angleFields?.map((encoding) => ({ ...encoding })),
+    parallelFields: chartSpec.parallelFields?.map((encoding) => ({ ...encoding })),
     flattenFields: chartSpec.flattenFields ? [...chartSpec.flattenFields] : undefined,
     componentRadiusFields: chartSpec.componentRadiusFields
       ? Object.fromEntries(Object.entries(chartSpec.componentRadiusFields).map(([field, encoding]) => [field, { ...encoding }]))

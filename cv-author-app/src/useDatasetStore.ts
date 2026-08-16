@@ -7,12 +7,27 @@ type ParsedCsv = {
   errors: Papa.ParseError[];
 };
 
+function migrateStoredCase1(dataset: Dataset): Dataset {
+  if (dataset?.name?.toLowerCase() !== "case1.csv"
+    || dataset.columns.some((column) => column.name.trim().toLowerCase() === "id")) {
+    return dataset;
+  }
+  return {
+    ...dataset,
+    columns: [{ name: "id", type: "nominal" }, ...dataset.columns],
+    rows: dataset.rows.map((row, index) => ({ id: String(index + 1), ...row })),
+    primaryKey: ["id"],
+  };
+}
+
 const datasets = ref<Dataset[]>((() => {
   try {
     const raw = localStorage.getItem("cv-author-datasets-v1");
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed)
-      ? parsed.filter((dataset) => dataset?.id !== "dataset:llm-demo")
+      ? parsed
+        .filter((dataset) => dataset?.id !== "dataset:llm-demo")
+        .map((dataset) => migrateStoredCase1(dataset as Dataset))
       : [];
   } catch { return []; }
 })());
@@ -23,7 +38,7 @@ const isLoading = ref(false);
 
 watch(datasets, (value) => {
   try { localStorage.setItem("cv-author-datasets-v1", JSON.stringify(value)); } catch { /* storage is optional */ }
-}, { deep: true });
+}, { deep: true, immediate: true });
 
 const activeDataset = computed(() =>
   datasets.value.find((dataset) => dataset.id === activeDatasetId.value) ?? null,
@@ -40,7 +55,8 @@ function isTemporal(value: string) {
   return Number.isFinite(Date.parse(value));
 }
 
-function inferColumnType(values: string[]): DataColumnType {
+export function inferColumnType(columnName: string, values: string[]): DataColumnType {
+  if (columnName.trim().toLowerCase() === "id") return "nominal";
   const nonEmptyValues = values.map((value) => value.trim()).filter(Boolean);
   if (nonEmptyValues.length === 0) return "nominal";
   if (nonEmptyValues.every(isNumeric)) return "quantitative";
@@ -59,8 +75,14 @@ function normalizeHeaders(sourceHeaders: string[], columnCount: number) {
 }
 
 function createPrimaryKey(columns: DataColumn[], rows: DataRow[]) {
-  // Case 1 uses person + time. For other datasets, fall back to a unique
-  // nominal/temporal pair when one can be identified safely.
+  const idColumn = columns.find((column) => column.name.trim().toLowerCase() === "id");
+  if (idColumn) {
+    const ids = rows.map((row) => row[idColumn.name] ?? "");
+    if (ids.every(Boolean) && new Set(ids).size === ids.length) return [idColumn.name];
+  }
+
+  // Without an explicit id, prefer the Case 1 person + time grain, then fall
+  // back to any unique nominal/temporal pair that can be identified safely.
   const preferred = ["person", "time"];
   if (preferred.every((field) => columns.some((column) => column.name === field))) {
     const keys = rows.map((row) => preferred.map((field) => row[field] ?? "").join("\u001f"));
@@ -115,7 +137,7 @@ async function importDataset(file: File) {
     );
     const columns = headers.map((name, index) => ({
       name,
-      type: inferColumnType(rows.map((row) => row[name] ?? "")),
+      type: inferColumnType(name, rows.map((row) => row[name] ?? "")),
     } satisfies DataColumn));
     const dataset: Dataset = {
       id: `dataset:${crypto.randomUUID()}`,

@@ -1,7 +1,30 @@
 import { describe, expect, it } from "vitest";
 import { useChartRelationshipStore } from "./useChartRelationshipStore";
+import type { ChartRelationshipState } from "./types";
 
 describe("Chart relationship snapshots", () => {
+  it("migrates legacy None axes to CoordinateFree when restoring a project", () => {
+    const store = useChartRelationshipStore();
+    store.restore({
+      version: 1,
+      charts: {},
+      markGroups: {},
+      axes: {
+        legacy: {
+          id: "legacy",
+          coordinateType: "None",
+          channel: "x",
+          config: { origin: { x: 0, y: 0 }, direction: 1, scale: 1, visible: false },
+        },
+      },
+      axisBindings: {},
+      compositions: {},
+      nestedRelationships: {},
+    } as unknown as ChartRelationshipState);
+
+    expect(store.state.value.axes.legacy?.coordinateType).toBe("CoordinateFree");
+  });
+
   it("clones reactive Nested parameters before a canvas command records history", () => {
     const store = useChartRelationshipStore();
     store.dispatch({ type: "clear" });

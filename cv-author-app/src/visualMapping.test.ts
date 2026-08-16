@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  isCategoricalColorMapping,
+  isSeriesStyleMapping,
   interpolateLinearColor,
   interpolateLinearSize,
   mapColorValue,
@@ -42,5 +44,19 @@ describe("visual mapping", () => {
     expect(visualDomain([{ value: "4" }, { value: "12" }], { field: "value", type: "quantitative" })).toEqual([4, 12]);
     expect(visualDomain([{ date: "2026-01-01" }, { date: "2026-01-03" }], { field: "date", type: "temporal" }))
       .toEqual([Date.parse("2026-01-01"), Date.parse("2026-01-03")]);
+  });
+
+  it("recognizes categorical member color mappings", () => {
+    expect(isCategoricalColorMapping({ type: "categorical", values: { Person_A: "#00aa66" } })).toBe(true);
+    expect(isCategoricalColorMapping({ type: "categorical", values: [] })).toBe(false);
+    expect(isCategoricalColorMapping(colorMapping)).toBe(false);
+  });
+
+  it("recognizes per-series visual style mappings", () => {
+    expect(isSeriesStyleMapping({
+      type: "series-style",
+      values: { Person_A: { color: "#00aa66", strokeWidth: 4, shape: "dashed" } },
+    })).toBe(true);
+    expect(isSeriesStyleMapping({ type: "series-style", values: [] })).toBe(false);
   });
 });

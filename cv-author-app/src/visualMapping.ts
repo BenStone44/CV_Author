@@ -1,10 +1,12 @@
 import type {
+  CategoricalColorMapping,
   ChartEncoding,
   DataRow,
   LinearColorMapping,
   LinearColorStop,
   LinearSizeMapping,
   LinearSizeStop,
+  SeriesStyleMapping,
 } from "./types";
 
 export const defaultColorMapping: LinearColorMapping = {
@@ -55,6 +57,24 @@ export function isLinearSizeMapping(value: unknown): value is LinearSizeMapping 
   return candidate.type === "linear"
     && Array.isArray(candidate.stops)
     && normalizedSizeStops(candidate.stops).length >= 2;
+}
+
+export function isCategoricalColorMapping(value: unknown): value is CategoricalColorMapping {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<CategoricalColorMapping>;
+  return candidate.type === "categorical"
+    && !!candidate.values
+    && typeof candidate.values === "object"
+    && !Array.isArray(candidate.values);
+}
+
+export function isSeriesStyleMapping(value: unknown): value is SeriesStyleMapping {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<SeriesStyleMapping>;
+  return candidate.type === "series-style"
+    && !!candidate.values
+    && typeof candidate.values === "object"
+    && !Array.isArray(candidate.values);
 }
 
 export function parseVisualValue(value: string, encoding: ChartEncoding) {

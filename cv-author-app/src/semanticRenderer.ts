@@ -1,9 +1,10 @@
 import { extent } from "d3-array";
-import { scaleLinear, scalePoint, scaleUtc } from "d3-scale";
+import { scaleLinear, scaleLog, scalePoint, scaleUtc } from "d3-scale";
 import { arc, pie } from "d3-shape";
-import type { CartesianCoordinateGuide, ChartEncoding, ChartSpec, Dataset, LayerSpec, NestedSpec, ChartPlotArea, ChartScaleSpec, CoordinateGuide, MarkGroupSharedConfig } from "./types";
+import type { CartesianCoordinateGuide, ChartEncoding, ChartSpec, ChartTemplateKind, Dataset, LayerSpec, NestedSpec, ChartPlotArea, ChartScaleSpec, CoordinateGuide, MarkGroupSharedConfig } from "./types";
 import { renderLineChart, type LineRenderInput } from "./lineRenderer";
-import { normalizeBarChartVariant, normalizeChartTemplate } from "./chartTemplates";
+import { getChartTemplateContract, normalizeBarChartVariant, normalizeChartTemplate } from "./chartTemplates";
+import { resolvedPolarRadiusMode } from "./encodingConfig";
 import {
   isLinearColorMapping,
   isLinearSizeMapping,
@@ -12,6 +13,15 @@ import {
   parseVisualValue,
   visualDomain,
 } from "./visualMapping";
+import {
+  compileCubeValueSeries,
+  cubeResultFromDataset,
+  cubeSeriesColor,
+  cubeBindingMeasureIds,
+  type CubeChartBinding,
+  type NormalizedCubeSeriesRow,
+} from "./cubeModel";
+import { renderAdvancedChart } from "./advancedRenderer";
 
 function esc(value: string) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
@@ -84,7 +94,7 @@ export function chartScalePosition(spec: ChartScaleSpec) {
     const scale = scalePoint<string>().domain(spec.domain as string[]).range(spec.range).padding(0.5);
     return (value: string) => scale(value) ?? 0;
   }
-  const scale = scaleLinear().domain(spec.domain as [number, number]).range(spec.range);
+  const scale = (spec.type === "log" ? scaleLog() : scaleLinear()).domain(spec.domain as [number, number]).range(spec.range);
   return (value: string) => scale(Number(value));
 }
 
@@ -191,11 +201,11 @@ function renderBarChart(input: GenericRenderInput) {
     width: scaledPlotWidth,
     height: scaledPlotHeight,
   };
-  const xRange: [number, number] = input.sharedScales?.x.range
+  const xRange: [number, number] = input.sharedScales?.x?.range
     ?? (guide?.xDirection === -1
       ? [plotArea.x + plotArea.width, plotArea.x]
       : [plotArea.x, plotArea.x + plotArea.width]);
-  const yRange: [number, number] = input.sharedScales?.y.range
+  const yRange: [number, number] = input.sharedScales?.y?.range
     ?? (guide?.yDirection === 1
       ? [plotArea.y, plotArea.y + plotArea.height]
       : [plotArea.y + plotArea.height, plotArea.y]);
@@ -213,7 +223,7 @@ function renderBarChart(input: GenericRenderInput) {
   const minimum = Math.min(0, ...valuesForDomain);
   const maximum = Math.max(0, ...valuesForDomain);
   const span = maximum - minimum || Math.max(Math.abs(maximum), 1);
-  const yDomain: [number, number] = input.sharedScales?.y.type === "linear"
+  const yDomain: [number, number] = input.sharedScales?.y?.type === "linear"
     ? input.sharedScales.y.domain as [number, number]
     : minimum === 0 && maximum === 0
       ? [0, 1]
@@ -287,22 +297,114 @@ function resolvedPolarEncodings(spec: ChartSpec) {
   };
 }
 
+function compileCubeRadiusRows(
+  cube: ReturnType<typeof cubeResultFromDataset>,
+  binding: CubeChartBinding,
+  measureId: string,
+  preserveSlice: boolean,
+) {
+  const slots = { ...binding.slots, value: { kind: "measure" as const, measureId } };
+  const slice = slots.slice;
+  const filters = [...(binding.filters ?? [])];
+  if (!preserveSlice || slice?.kind === "value-series") {
+    if (slice?.kind === "dimension" && slice.memberIds?.length) {
+      filters.push({
+        kind: "members",
+        dimensionId: slice.dimensionId,
+        memberIds: [...slice.memberIds],
+        mode: "include",
+      });
+    }
+    delete slots.slice;
+  }
+  return compileCubeValueSeries(cube, {
+    ...binding,
+    slots,
+    filters,
+  }, "value", "slice");
+}
+
+function matchingCubeRadiusValue(
+  angleRow: NormalizedCubeSeriesRow,
+  radiusRows: NormalizedCubeSeriesRow[],
+) {
+  const matchingRow = angleRow.dimensionId
+    ? radiusRows.find((row) => row.dimensionId === angleRow.dimensionId && row.memberId === angleRow.memberId)
+    : radiusRows[0];
+  return matchingRow?.value ?? Number.NaN;
+}
+
 function renderPolarChart(input: GenericRenderInput, donut: boolean) {
   const { value, category, radius, ring } = resolvedPolarEncodings(input.chartSpec);
   const angleFields = donut ? [] : input.chartSpec.angleFields ?? [];
-  if (!value && angleFields.length === 0) throw new Error(`${donut ? "Donut" : "Pie"} renderer requires an angle/value encoding.`);
+  const cubeThetaSlot = input.chartSpec.cubeBinding?.slots.theta ? "theta" : "value";
+  if (!value && angleFields.length === 0 && !input.chartSpec.cubeBinding?.slots[cubeThetaSlot]) throw new Error(`${donut ? "Donut" : "Pie"} renderer requires a Theta encoding.`);
   const minX = input.minX;
   const minY = input.minY;
   const cx = input.coordinateGuide?.type === "Polar" ? input.coordinateGuide.origin.x : minX + input.width / 2;
   const cy = input.coordinateGuide?.type === "Polar" ? input.coordinateGuide.origin.y : minY + input.height / 2;
-  const outerRadius = Math.max(8, Math.min(input.width, input.height) * 0.38 * (input.coordinateGuide?.type === "Polar" ? input.coordinateGuide.radiusScale ?? 1 : 1));
   const config = groupConfig(input.chartSpec, "arc");
+  const staticRadiusRatio = typeof config.outerRadius === "number"
+    ? Math.max(0.15, Math.min(config.outerRadius, 1))
+    : 1;
+  const outerRadius = Math.max(8, Math.min(input.width, input.height) * 0.38
+    * (input.coordinateGuide?.type === "Polar" ? input.coordinateGuide.radiusScale ?? 1 : 1)
+    * staticRadiusRatio);
   const colorDomain = visualDomain(input.dataset.rows, category);
   const angleSpan = input.coordinateGuide?.type === "Polar"
     ? Math.max(1, Math.min(input.coordinateGuide.angleSpan ?? 360, 360))
     : 360;
   const layoutStartAngle = -270 * Math.PI / 180;
   const layoutEndAngle = layoutStartAngle + angleSpan * Math.PI / 180;
+  if (input.chartSpec.cubeBinding?.slots[cubeThetaSlot]) {
+    const cube = cubeResultFromDataset(input.dataset);
+    const binding = input.chartSpec.cubeBinding;
+    const compiled = compileCubeValueSeries(
+      cube,
+      binding,
+      cubeThetaSlot,
+      "slice",
+    );
+    if (compiled.errors.length > 0) throw new Error(compiled.errors.join(" "));
+    const componentValues = compiled.rows.map((row) => row.value);
+    if (componentValues.length === 0) throw new Error(`${donut ? "Donut" : "Pie"} Cube binding has no numeric values.`);
+    const layout = pie<number>()
+      .sort(null)
+      .value((datum) => datum)
+      .startAngle(layoutStartAngle)
+      .endAngle(layoutEndAngle)(componentValues);
+    const innerRadius = donut ? outerRadius * 0.44 : 0;
+    const radiusMode = resolvedPolarRadiusMode(input.chartSpec);
+    const radiusSource = binding.slots.radius;
+    const cubeRadiusField = radiusSource?.kind === "measure" ? radiusSource.measureId : radius?.field;
+    const mappedRadiusRows = radiusMode === "mapped" && cubeRadiusField
+      ? compileCubeRadiusRows(cube, binding, cubeRadiusField, binding.slots.slice?.kind === "dimension")
+      : { rows: [], errors: [] };
+    if (mappedRadiusRows.errors.length > 0) throw new Error(mappedRadiusRows.errors.join(" "));
+    const componentRadiusValues = compiled.rows.map((row) => radiusMode === "mapped"
+      ? matchingCubeRadiusValue(row, mappedRadiusRows.rows)
+      : Number.NaN);
+    const radiusDomainValues = componentRadiusValues.filter(Number.isFinite);
+    const radiusDomain = extent(radiusDomainValues) as [number | undefined, number | undefined];
+    const radiusScale = radiusDomain[0] === undefined || radiusDomain[1] === undefined || radiusDomain[0] === radiusDomain[1]
+      ? () => outerRadius
+      : scaleLinear().domain(radiusDomain as [number, number]).range([outerRadius * 0.42, outerRadius]);
+    const arcs = layout.map((datum, index) => {
+      const row = compiled.rows[index]!;
+      const fallbackColor = palette[index % palette.length]!;
+      const color = cubeSeriesColor(input.chartSpec.cubeBinding, row.styleKey)
+        ?? visualColor({}, category, null, config, fallbackColor);
+      const radiusValue = componentRadiusValues[index] ?? Number.NaN;
+      const componentOuterRadius = Number.isFinite(radiusValue) ? radiusScale(radiusValue) : outerRadius;
+      const path = arc<any>().innerRadius(innerRadius).outerRadius(componentOuterRadius);
+      return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="arc" data-mark-group-id="mark-group:${esc(input.chartId)}:arc" data-category-key="${esc(row.seriesKey)}" data-series-key="${esc(row.seriesKey)}" data-theta-field="${esc(row.measureId)}" data-theta-value="${row.value}" data-angle-field="${esc(row.measureId)}" data-angle-value="${row.value}" data-cube-style-key="${esc(row.styleKey)}" data-radius-mode="${radiusMode}" data-radius-field="${esc(cubeRadiusField ?? "")}" data-radius-value="${Number.isFinite(radiusValue) ? radiusValue : ""}" d="${path(datum) ?? ""}" transform="translate(${cx} ${cy})" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 1)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
+    }).join("");
+    return {
+      content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="${donut ? "donut" : "pie"}" data-renderer="deterministic-cube-polar@1" data-theta-fields="${esc(cubeBindingMeasureIds(input.chartSpec.cubeBinding, cubeThetaSlot).join("|"))}" data-angle-fields="${esc(cubeBindingMeasureIds(input.chartSpec.cubeBinding, cubeThetaSlot).join("|"))}" data-radius-mode="${radiusMode}">${arcs}</g>`,
+      plotArea: { x: cx - outerRadius, y: cy - outerRadius, width: outerRadius * 2, height: outerRadius * 2 },
+      scales: undefined,
+    };
+  }
   if (angleFields.length > 0) {
     const flattenFields = (input.chartSpec.flattenFields ?? []).filter((field) =>
       input.dataset.columns.some((column) => column.name === field),
@@ -333,23 +435,16 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
       .value((datum) => datum)
       .startAngle(layoutStartAngle)
       .endAngle(layoutEndAngle)(componentValues);
-    const radiusMode = input.chartSpec.radiusMode ?? "shared";
-    const sharedRadiusValues = radius ? numericFieldValues(input.dataset.rows, radius.field) : [];
-    const sharedRadiusValue = sharedRadiusValues.length > 0
-      ? sharedRadiusValues.reduce((sum, current) => sum + current, 0) / sharedRadiusValues.length
-      : Number.NaN;
+    const radiusMode = resolvedPolarRadiusMode(input.chartSpec);
     const componentRadiusValues = components.map((component) => {
-      if (radiusMode === "shared") return sharedRadiusValue;
-      const radiusEncoding = input.chartSpec.componentRadiusFields?.[component.field];
-      if (!radiusEncoding) return Number.NaN;
-      const values = numericFieldValues(component.rows, radiusEncoding.field);
+      if (radiusMode === "static") return Number.NaN;
+      if (!radius) return Number.NaN;
+      const values = numericFieldValues(component.rows, radius.field);
       return values.length > 0
         ? values.reduce((sum, current) => sum + Math.max(0, current), 0)
         : Number.NaN;
     });
-    const radiusDomainValues = radiusMode === "per-component"
-      ? componentRadiusValues.filter(Number.isFinite)
-      : sharedRadiusValues;
+    const radiusDomainValues = componentRadiusValues.filter(Number.isFinite);
     const radiusDomain = extent(radiusDomainValues) as [number | undefined, number | undefined];
     const radiusScale = radiusDomain[0] === undefined || radiusDomain[1] === undefined || radiusDomain[0] === radiusDomain[1]
       ? () => outerRadius
@@ -358,18 +453,15 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
       const component = components[index];
       const field = component?.field ?? String(index + 1);
       const categoryKey = [...(component?.flattenValues ?? []), field].join(" / ");
-      const radiusEncoding = radiusMode === "per-component"
-        ? input.chartSpec.componentRadiusFields?.[field]
-        : radius;
       const radiusValue = componentRadiusValues[index] ?? Number.NaN;
       const componentOuterRadius = Number.isFinite(radiusValue) ? radiusScale(radiusValue) : outerRadius;
       const path = arc<any>().innerRadius(0).outerRadius(componentOuterRadius);
       const representativeRow = component?.rows[0] ?? input.dataset.rows[index] ?? {};
       const color = visualColor(representativeRow, category, colorDomain, config, palette[index % palette.length]!);
-      return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="arc" data-mark-group-id="mark-group:${esc(input.chartId)}:arc" data-category-key="${esc(categoryKey)}" data-angle-field="${esc(field)}" data-angle-value="${componentValues[index] ?? 0}" data-flatten-fields="${esc(flattenFields.join("|"))}" data-flatten-values="${esc((component?.flattenValues ?? []).join("|"))}" data-radius-mode="${radiusMode}" data-radius-field="${esc(radiusEncoding?.field ?? "")}" data-radius-value="${Number.isFinite(radiusValue) ? radiusValue : ""}" d="${path(datum) ?? ""}" transform="translate(${cx} ${cy})" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 1)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
+      return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="arc" data-mark-group-id="mark-group:${esc(input.chartId)}:arc" data-category-key="${esc(categoryKey)}" data-theta-field="${esc(field)}" data-theta-value="${componentValues[index] ?? 0}" data-angle-field="${esc(field)}" data-angle-value="${componentValues[index] ?? 0}" data-flatten-fields="${esc(flattenFields.join("|"))}" data-flatten-values="${esc((component?.flattenValues ?? []).join("|"))}" data-radius-mode="${radiusMode}" data-radius-field="${esc(radius?.field ?? "")}" data-radius-value="${Number.isFinite(radiusValue) ? radiusValue : ""}" d="${path(datum) ?? ""}" transform="translate(${cx} ${cy})" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 1)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
     }).join("");
     return {
-      content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="pie" data-renderer="deterministic-chart@1" data-angle-fields="${esc(angleFields.map((encoding) => encoding.field).join("|"))}" data-flatten-fields="${esc(flattenFields.join("|"))}" data-radius-mode="${radiusMode}">${arcs}</g>`,
+      content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="pie" data-renderer="deterministic-chart@1" data-theta-fields="${esc(angleFields.map((encoding) => encoding.field).join("|"))}" data-angle-fields="${esc(angleFields.map((encoding) => encoding.field).join("|"))}" data-flatten-fields="${esc(flattenFields.join("|"))}" data-radius-mode="${radiusMode}">${arcs}</g>`,
       plotArea: { x: cx - outerRadius, y: cy - outerRadius, width: outerRadius * 2, height: outerRadius * 2 },
       scales: undefined,
     };
@@ -447,11 +539,11 @@ function renderMatrixChart(input: GenericRenderInput) {
     width: scaledPlotWidth,
     height: scaledPlotHeight,
   };
-  const xRange: [number, number] = input.sharedScales?.x.range
+  const xRange: [number, number] = input.sharedScales?.x?.range
     ?? (guide?.xDirection === -1
       ? [plotArea.x + plotArea.width, plotArea.x]
       : [plotArea.x, plotArea.x + plotArea.width]);
-  const yRange: [number, number] = input.sharedScales?.y.range
+  const yRange: [number, number] = input.sharedScales?.y?.range
     ?? (guide?.yDirection === 1
       ? [plotArea.y, plotArea.y + plotArea.height]
       : [plotArea.y + plotArea.height, plotArea.y]);
@@ -510,18 +602,80 @@ export type GenericRenderInput = {
   chartSpec: ChartSpec;
   dataset: Dataset;
   sharedPlotArea?: ChartPlotArea;
-  sharedScales?: { x: ChartScaleSpec; y: ChartScaleSpec };
+  sharedScales?: Partial<{ x: ChartScaleSpec; y: ChartScaleSpec }>;
+};
+
+export type DeterministicChartResult = {
+  content: string;
+  plotArea: ChartPlotArea;
+  scales?: { x: ChartScaleSpec; y: ChartScaleSpec };
+};
+
+type ChartPipeline = {
+  coordinateSystem: "Cartesian" | "Polar" | "CoordinateFree";
+  render: (input: GenericRenderInput) => DeterministicChartResult;
+};
+
+function requireCoordinateGuide<T extends "Cartesian" | "Polar">(
+  input: GenericRenderInput,
+  coordinateSystem: T,
+) {
+  if (input.coordinateGuide?.type !== coordinateSystem) {
+    throw new Error(`${input.chartSpec.chartType} requires a ${coordinateSystem} coordinate system.`);
+  }
+  return input.coordinateGuide;
+}
+
+function cartesianInput(input: GenericRenderInput) {
+  return { ...input, coordinateGuide: input.coordinateGuide as CartesianCoordinateGuide };
+}
+
+/**
+ * Chart-specific rendering is registered here so the public render entry point
+ * only coordinates template lookup, validation and execution.
+ */
+export const deterministicChartPipelines: Record<ChartTemplateKind, ChartPipeline> = {
+  line: {
+    coordinateSystem: "Cartesian",
+    render: (input) => renderLineChart(cartesianInput(input)),
+  },
+  scatter: {
+    coordinateSystem: "Cartesian",
+    render: (input) => renderScatterChart(cartesianInput(input)),
+  },
+  bar: {
+    coordinateSystem: "Cartesian",
+    render: (input) => renderBarChart(input),
+  },
+  pie: {
+    coordinateSystem: "Polar",
+    render: (input) => renderPolarChart(input, false),
+  },
+  donut: {
+    coordinateSystem: "Polar",
+    render: (input) => renderPolarChart(input, true),
+  },
+  matrix: {
+    coordinateSystem: "Cartesian",
+    render: (input) => renderMatrixChart(input),
+  },
+  area: { coordinateSystem: "Cartesian", render: renderAdvancedChart },
+  parallel: { coordinateSystem: "Cartesian", render: renderAdvancedChart },
+  hierarchy: { coordinateSystem: "CoordinateFree", render: renderAdvancedChart },
+  calendar: { coordinateSystem: "Cartesian", render: renderAdvancedChart },
+  boxplot: { coordinateSystem: "Cartesian", render: renderAdvancedChart },
+  contour: { coordinateSystem: "Cartesian", render: renderAdvancedChart },
+  hexbin: { coordinateSystem: "Cartesian", render: renderAdvancedChart },
+  flow: { coordinateSystem: "CoordinateFree", render: renderAdvancedChart },
 };
 
 export function renderDeterministicChart(input: GenericRenderInput) {
   const template = normalizeChartTemplate(input.chartSpec.chartType);
   if (!template) throw new Error(`Unsupported chart template: ${input.chartSpec.chartType}`);
-  if (template === "pie" || template === "donut") return renderPolarChart(input, template === "donut");
-  if (template === "matrix") return renderMatrixChart(input);
-  if (template === "bar") return renderBarChart(input);
-  if (input.coordinateGuide?.type !== "Cartesian") throw new Error(`${template} requires a Cartesian coordinate system.`);
-  const lineInput = { ...input, coordinateGuide: input.coordinateGuide as CartesianCoordinateGuide };
-  return template === "scatter" ? renderScatterChart(lineInput) : renderLineChart(lineInput);
+  const pipeline = deterministicChartPipelines[template];
+  const coordinateSystem = getChartTemplateContract(input.chartSpec.chartType)?.coordinateSystem ?? pipeline.coordinateSystem;
+  if (coordinateSystem !== "CoordinateFree") requireCoordinateGuide(input, coordinateSystem);
+  return pipeline.render(input);
 }
 
 export function renderLayerChart(input: LineRenderInput & { layerSpec: LayerSpec; childCharts?: ChartSpec[] }) {
