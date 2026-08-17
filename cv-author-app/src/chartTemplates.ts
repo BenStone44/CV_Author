@@ -5,7 +5,28 @@ import type {
   CoordinateChannel,
   DataColumnType,
 } from "./types";
-import type { SemanticBindingSlot } from "./cubeModel";
+
+export type SemanticBindingSlot =
+  | "x"
+  | "y"
+  | "series"
+  | "category"
+  | "value"
+  | "group"
+  | "segment"
+  | "theta"
+  | "slice"
+  | "radius"
+  | "ring"
+  | "row"
+  | "column"
+  | "cell"
+  | "key"
+  | "parent"
+  | "source"
+  | "target"
+  | "date"
+  | "dimensions";
 
 export type TemplateChannelMapping = {
   channel: ChartEncodingChannel;
@@ -21,6 +42,9 @@ export type ChartTemplateContract = {
   coordinateSystem: "Cartesian" | "Polar" | "CoordinateFree";
   markRole: "line" | "point" | "bar" | "arc" | "cell" | "area" | "path" | "node" | "box" | "contour" | "hexagon" | "link";
   channels: TemplateChannelMapping[];
+  aggregationPolicy: "allowed" | "forbidden";
+  requiresFunctionalDependency: boolean;
+  requiresIndependentDimensions: boolean;
   shareableChannels: CoordinateChannel[];
   unusedDimensionStrategies: Array<"flatten" | "facet" | "nested">;
 };
@@ -49,7 +73,7 @@ const unresolvedDimensionPolicies: TemplateBindingContract["unresolvedDimensionP
   "detail",
 ];
 
-/** Semantic data roles shown to Cube users. Native channels remain renderer details. */
+/** Semantic data roles shown to authors. Native channels remain renderer details. */
 export const templateBindingContracts: Record<ChartTemplateKind, TemplateBindingContract> = {
   line: {
     templateId: "line",
@@ -146,6 +170,9 @@ export const chartTemplateContracts: Record<ChartTemplateKind, ChartTemplateCont
       { channel: "size", role: "style", required: false, accepts: ["quantitative"] },
       { channel: "shape", role: "style", required: false, accepts: ["nominal"] },
     ],
+    aggregationPolicy: "forbidden",
+    requiresFunctionalDependency: true,
+    requiresIndependentDimensions: true,
     shareableChannels: ["x", "y"],
     unusedDimensionStrategies: ["flatten", "facet", "nested"],
   },
@@ -162,6 +189,9 @@ export const chartTemplateContracts: Record<ChartTemplateKind, ChartTemplateCont
       { channel: "size", role: "style", required: false, accepts: ["quantitative"] },
       { channel: "shape", role: "style", required: false, accepts: ["nominal"] },
     ],
+    aggregationPolicy: "forbidden",
+    requiresFunctionalDependency: false,
+    requiresIndependentDimensions: true,
     shareableChannels: ["x", "y"],
     unusedDimensionStrategies: ["flatten", "facet", "nested"],
   },
@@ -177,6 +207,9 @@ export const chartTemplateContracts: Record<ChartTemplateKind, ChartTemplateCont
       { channel: "color", role: "series", required: false, accepts: ["nominal", "temporal", "quantitative"] },
       { channel: "size", role: "style", required: false, accepts: ["quantitative"] },
     ],
+    aggregationPolicy: "allowed",
+    requiresFunctionalDependency: false,
+    requiresIndependentDimensions: true,
     shareableChannels: ["x", "y"],
     unusedDimensionStrategies: ["flatten", "facet", "nested"],
   },
@@ -191,6 +224,9 @@ export const chartTemplateContracts: Record<ChartTemplateKind, ChartTemplateCont
       { channel: "color", role: "dimension", required: false, accepts: ["nominal", "temporal"] },
       { channel: "radius", role: "measure", required: false, accepts: ["quantitative"] },
     ],
+    aggregationPolicy: "allowed",
+    requiresFunctionalDependency: false,
+    requiresIndependentDimensions: true,
     shareableChannels: ["angle", "radius"],
     unusedDimensionStrategies: ["flatten", "facet", "nested"],
   },
@@ -206,6 +242,9 @@ export const chartTemplateContracts: Record<ChartTemplateKind, ChartTemplateCont
       { channel: "ring", role: "series", required: false, accepts: ["nominal", "temporal"] },
       { channel: "radius", role: "measure", required: false, accepts: ["quantitative"] },
     ],
+    aggregationPolicy: "allowed",
+    requiresFunctionalDependency: false,
+    requiresIndependentDimensions: true,
     shareableChannels: ["angle", "radius", "ring"],
     unusedDimensionStrategies: ["flatten", "facet", "nested"],
   },
@@ -221,6 +260,9 @@ export const chartTemplateContracts: Record<ChartTemplateKind, ChartTemplateCont
       { channel: "value", role: "measure", required: false, accepts: ["quantitative"] },
       { channel: "color", role: "style", required: false, accepts: ["quantitative", "nominal"] },
     ],
+    aggregationPolicy: "allowed",
+    requiresFunctionalDependency: false,
+    requiresIndependentDimensions: true,
     // Matrix X/Y are the same Cartesian channels used by line and scatter.
     // The renderer maps them to column/row encodings, while the shared
     // coordinate-system and axis interaction continue to use x/y.
@@ -234,6 +276,7 @@ export const chartTemplateContracts: Record<ChartTemplateKind, ChartTemplateCont
       { channel: "y", role: "measure", required: true, accepts: ["quantitative"] },
       { channel: "color", role: "series", required: false, accepts: ["nominal", "temporal"] },
     ],
+    aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true,
     shareableChannels: ["x", "y"], unusedDimensionStrategies: ["flatten", "facet", "nested"],
   },
   parallel: {
@@ -242,6 +285,7 @@ export const chartTemplateContracts: Record<ChartTemplateKind, ChartTemplateCont
       { channel: "dimensions", role: "measure", required: true, accepts: ["quantitative"] },
       { channel: "color", role: "series", required: false, accepts: ["nominal", "temporal", "quantitative"] },
     ],
+    aggregationPolicy: "forbidden", requiresFunctionalDependency: false, requiresIndependentDimensions: true,
     shareableChannels: [], unusedDimensionStrategies: ["flatten", "facet", "nested"],
   },
   hierarchy: {
@@ -252,6 +296,7 @@ export const chartTemplateContracts: Record<ChartTemplateKind, ChartTemplateCont
       { channel: "value", role: "measure", required: false, accepts: ["quantitative"] },
       { channel: "color", role: "style", required: false, accepts: ["nominal", "quantitative"] },
     ],
+    aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true,
     shareableChannels: [], unusedDimensionStrategies: ["flatten", "facet", "nested"],
   },
   calendar: {
@@ -261,6 +306,7 @@ export const chartTemplateContracts: Record<ChartTemplateKind, ChartTemplateCont
       { channel: "value", role: "measure", required: true, accepts: ["quantitative"] },
       { channel: "color", role: "style", required: false, accepts: ["quantitative", "nominal"] },
     ],
+    aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true,
     shareableChannels: [], unusedDimensionStrategies: ["flatten", "facet", "nested"],
   },
   boxplot: {
@@ -270,6 +316,7 @@ export const chartTemplateContracts: Record<ChartTemplateKind, ChartTemplateCont
       { channel: "y", role: "measure", required: true, accepts: ["quantitative"] },
       { channel: "color", role: "style", required: false, accepts: ["nominal", "quantitative"] },
     ],
+    aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true,
     shareableChannels: ["x", "y"], unusedDimensionStrategies: ["flatten", "facet", "nested"],
   },
   contour: {
@@ -280,6 +327,7 @@ export const chartTemplateContracts: Record<ChartTemplateKind, ChartTemplateCont
       { channel: "value", role: "measure", required: true, accepts: ["quantitative"] },
       { channel: "color", role: "style", required: false, accepts: ["quantitative", "nominal"] },
     ],
+    aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true,
     shareableChannels: ["x", "y"], unusedDimensionStrategies: ["flatten", "facet", "nested"],
   },
   hexbin: {
@@ -290,6 +338,7 @@ export const chartTemplateContracts: Record<ChartTemplateKind, ChartTemplateCont
       { channel: "color", role: "style", required: false, accepts: ["quantitative", "nominal"] },
       { channel: "size", role: "style", required: false, accepts: ["quantitative"] },
     ],
+    aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true,
     shareableChannels: ["x", "y"], unusedDimensionStrategies: ["flatten", "facet", "nested"],
   },
   flow: {
@@ -300,6 +349,7 @@ export const chartTemplateContracts: Record<ChartTemplateKind, ChartTemplateCont
       { channel: "value", role: "measure", required: false, accepts: ["quantitative"] },
       { channel: "color", role: "style", required: false, accepts: ["nominal", "quantitative"] },
     ],
+    aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true,
     shareableChannels: [], unusedDimensionStrategies: ["flatten", "facet", "nested"],
   },
 };
@@ -311,31 +361,24 @@ const requiredEncodingFallbacks: Record<
   Partial<Record<ChartEncodingChannel, RequiredEncodingFallback>>
 > = {
   line: {
-    y: (spec) => spec.cubeBinding?.slots.y?.kind === "measure"
-      || spec.cubeBinding?.slots.y?.kind === "measure-set",
+    y: (spec) => !!spec.valueFields?.length,
   },
   scatter: {},
   bar: {},
   pie: {
-    angle: (spec) => !!spec.cubeBinding?.slots.theta
-      || !!spec.cubeBinding?.slots.value
-      || !!spec.angleFields?.length
+    angle: (spec) => !!spec.angleFields?.length
       || !!spec.encodings.y,
   },
   donut: {
-    angle: (spec) => !!spec.cubeBinding?.slots.theta
-      || !!spec.cubeBinding?.slots.value
-      || !!spec.encodings.y,
+    angle: (spec) => !!spec.angleFields?.length || !!spec.encodings.y,
   },
   matrix: {
     row: (spec) => !!spec.encodings.y,
     column: (spec) => !!spec.encodings.x,
   },
   area: {
-    y: (spec) => spec.cubeBinding?.slots.y?.kind === "measure"
-      || spec.cubeBinding?.slots.y?.kind === "measure-set",
-    color: (spec) => spec.cubeBinding?.slots.series?.kind === "dimension"
-      || spec.cubeBinding?.slots.series?.kind === "value-series",
+    y: (spec) => !!spec.valueFields?.length,
+    color: (spec) => (spec.valueFields?.length ?? 0) > 1,
   },
   parallel: { dimensions: (spec) => (spec.parallelFields?.length ?? 0) >= 2 },
   hierarchy: {},
@@ -355,9 +398,7 @@ export function hasRequiredChartEncodings(spec: ChartSpec) {
   const seriesField = spec.series?.field
     ?? spec.seriesFields?.[0]?.field
     ?? (spec.encodings.color?.type === "nominal" ? spec.encodings.color.field : undefined)
-    ?? (spec.cubeBinding?.slots.series?.kind === "dimension"
-      ? spec.cubeBinding.slots.series.dimensionId
-      : spec.cubeBinding?.slots.series?.kind === "value-series" ? "__cube_measure__" : "");
+    ?? ((spec.valueFields?.length ?? 0) > 1 ? "__csv_measure__" : "");
   if (chartType === "multilinechart" && !seriesField) return false;
   return contract.channels
     .filter((mapping) => mapping.required)

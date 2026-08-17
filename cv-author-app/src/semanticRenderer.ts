@@ -13,22 +13,15 @@ import {
   parseVisualValue,
   visualDomain,
 } from "./visualMapping";
-import {
-  compileCubeValueSeries,
-  cubeResultFromDataset,
-  cubeSeriesColor,
-  cubeBindingMeasureIds,
-  type CubeChartBinding,
-  type NormalizedCubeSeriesRow,
-} from "./cubeModel";
 import { renderAdvancedChart } from "./advancedRenderer";
+import { csvRowKey } from "./csvDataEngine";
 
 function esc(value: string) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
-function key(dataset: Dataset, row: Record<string, string>) {
-  return (dataset.primaryKey ?? []).map((field) => row[field] ?? "").join("|");
+function key(dataset: Dataset, row: Record<string, string>, rowIndex?: number) {
+  return csvRowKey(dataset, row, rowIndex);
 }
 
 function numericFieldValues(rows: Dataset["rows"], field: string) {
@@ -297,48 +290,10 @@ function resolvedPolarEncodings(spec: ChartSpec) {
   };
 }
 
-function compileCubeRadiusRows(
-  cube: ReturnType<typeof cubeResultFromDataset>,
-  binding: CubeChartBinding,
-  measureId: string,
-  preserveSlice: boolean,
-) {
-  const slots = { ...binding.slots, value: { kind: "measure" as const, measureId } };
-  const slice = slots.slice;
-  const filters = [...(binding.filters ?? [])];
-  if (!preserveSlice || slice?.kind === "value-series") {
-    if (slice?.kind === "dimension" && slice.memberIds?.length) {
-      filters.push({
-        kind: "members",
-        dimensionId: slice.dimensionId,
-        memberIds: [...slice.memberIds],
-        mode: "include",
-      });
-    }
-    delete slots.slice;
-  }
-  return compileCubeValueSeries(cube, {
-    ...binding,
-    slots,
-    filters,
-  }, "value", "slice");
-}
-
-function matchingCubeRadiusValue(
-  angleRow: NormalizedCubeSeriesRow,
-  radiusRows: NormalizedCubeSeriesRow[],
-) {
-  const matchingRow = angleRow.dimensionId
-    ? radiusRows.find((row) => row.dimensionId === angleRow.dimensionId && row.memberId === angleRow.memberId)
-    : radiusRows[0];
-  return matchingRow?.value ?? Number.NaN;
-}
-
 function renderPolarChart(input: GenericRenderInput, donut: boolean) {
   const { value, category, radius, ring } = resolvedPolarEncodings(input.chartSpec);
   const angleFields = donut ? [] : input.chartSpec.angleFields ?? [];
-  const cubeThetaSlot = input.chartSpec.cubeBinding?.slots.theta ? "theta" : "value";
-  if (!value && angleFields.length === 0 && !input.chartSpec.cubeBinding?.slots[cubeThetaSlot]) throw new Error(`${donut ? "Donut" : "Pie"} renderer requires a Theta encoding.`);
+  if (!value && angleFields.length === 0) throw new Error(`${donut ? "Donut" : "Pie"} renderer requires a Theta encoding.`);
   const minX = input.minX;
   const minY = input.minY;
   const cx = input.coordinateGuide?.type === "Polar" ? input.coordinateGuide.origin.x : minX + input.width / 2;
@@ -356,55 +311,6 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
     : 360;
   const layoutStartAngle = -270 * Math.PI / 180;
   const layoutEndAngle = layoutStartAngle + angleSpan * Math.PI / 180;
-  if (input.chartSpec.cubeBinding?.slots[cubeThetaSlot]) {
-    const cube = cubeResultFromDataset(input.dataset);
-    const binding = input.chartSpec.cubeBinding;
-    const compiled = compileCubeValueSeries(
-      cube,
-      binding,
-      cubeThetaSlot,
-      "slice",
-    );
-    if (compiled.errors.length > 0) throw new Error(compiled.errors.join(" "));
-    const componentValues = compiled.rows.map((row) => row.value);
-    if (componentValues.length === 0) throw new Error(`${donut ? "Donut" : "Pie"} Cube binding has no numeric values.`);
-    const layout = pie<number>()
-      .sort(null)
-      .value((datum) => datum)
-      .startAngle(layoutStartAngle)
-      .endAngle(layoutEndAngle)(componentValues);
-    const innerRadius = donut ? outerRadius * 0.44 : 0;
-    const radiusMode = resolvedPolarRadiusMode(input.chartSpec);
-    const radiusSource = binding.slots.radius;
-    const cubeRadiusField = radiusSource?.kind === "measure" ? radiusSource.measureId : radius?.field;
-    const mappedRadiusRows = radiusMode === "mapped" && cubeRadiusField
-      ? compileCubeRadiusRows(cube, binding, cubeRadiusField, binding.slots.slice?.kind === "dimension")
-      : { rows: [], errors: [] };
-    if (mappedRadiusRows.errors.length > 0) throw new Error(mappedRadiusRows.errors.join(" "));
-    const componentRadiusValues = compiled.rows.map((row) => radiusMode === "mapped"
-      ? matchingCubeRadiusValue(row, mappedRadiusRows.rows)
-      : Number.NaN);
-    const radiusDomainValues = componentRadiusValues.filter(Number.isFinite);
-    const radiusDomain = extent(radiusDomainValues) as [number | undefined, number | undefined];
-    const radiusScale = radiusDomain[0] === undefined || radiusDomain[1] === undefined || radiusDomain[0] === radiusDomain[1]
-      ? () => outerRadius
-      : scaleLinear().domain(radiusDomain as [number, number]).range([outerRadius * 0.42, outerRadius]);
-    const arcs = layout.map((datum, index) => {
-      const row = compiled.rows[index]!;
-      const fallbackColor = palette[index % palette.length]!;
-      const color = cubeSeriesColor(input.chartSpec.cubeBinding, row.styleKey)
-        ?? visualColor({}, category, null, config, fallbackColor);
-      const radiusValue = componentRadiusValues[index] ?? Number.NaN;
-      const componentOuterRadius = Number.isFinite(radiusValue) ? radiusScale(radiusValue) : outerRadius;
-      const path = arc<any>().innerRadius(innerRadius).outerRadius(componentOuterRadius);
-      return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="arc" data-mark-group-id="mark-group:${esc(input.chartId)}:arc" data-category-key="${esc(row.seriesKey)}" data-series-key="${esc(row.seriesKey)}" data-theta-field="${esc(row.measureId)}" data-theta-value="${row.value}" data-angle-field="${esc(row.measureId)}" data-angle-value="${row.value}" data-cube-style-key="${esc(row.styleKey)}" data-radius-mode="${radiusMode}" data-radius-field="${esc(cubeRadiusField ?? "")}" data-radius-value="${Number.isFinite(radiusValue) ? radiusValue : ""}" d="${path(datum) ?? ""}" transform="translate(${cx} ${cy})" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 1)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
-    }).join("");
-    return {
-      content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="${donut ? "donut" : "pie"}" data-renderer="deterministic-cube-polar@1" data-theta-fields="${esc(cubeBindingMeasureIds(input.chartSpec.cubeBinding, cubeThetaSlot).join("|"))}" data-angle-fields="${esc(cubeBindingMeasureIds(input.chartSpec.cubeBinding, cubeThetaSlot).join("|"))}" data-radius-mode="${radiusMode}">${arcs}</g>`,
-      plotArea: { x: cx - outerRadius, y: cy - outerRadius, width: outerRadius * 2, height: outerRadius * 2 },
-      scales: undefined,
-    };
-  }
   if (angleFields.length > 0) {
     const flattenFields = (input.chartSpec.flattenFields ?? []).filter((field) =>
       input.dataset.columns.some((column) => column.name === field),
@@ -718,6 +624,9 @@ export function renderNestedPie(input: {
 }) {
   const scales = scalesFromSpec(input.baseSpec);
   if (!scales) throw new Error("Nested Pie requires shared chart scales.");
+  const xEncoding = input.baseSpec.encodings.x;
+  const yEncoding = input.baseSpec.encodings.y;
+  if (!xEncoding || !yEncoding) throw new Error("Nested Pie requires explicit X and Y encodings.");
   const fields = input.nestedSpec.valueFields;
   const groupId = input.nestedSpec.groupId ?? `nested-pie-group:${input.nestedSpec.parentChartNodeId}`;
   const colors = ["#2563eb", "#dc2626", "#16a34a", "#d97706"];
@@ -741,8 +650,8 @@ export function renderNestedPie(input: {
     ? input.dataset.rows.filter((row) => selectedKeys.has(key(input.dataset, row)))
     : input.dataset.rows;
   const pies = rows.map((row) => {
-    const x = row[input.baseSpec.encodings.x?.field ?? "time"] ?? "";
-    const y = row[input.baseSpec.encodings.y?.field ?? "weight_kg"] ?? "";
+    const x = row[xEncoding.field] ?? "";
+    const y = row[yEncoding.field] ?? "";
     const cx = scales.xScale(x);
     const cy = scales.yScale(y);
     if (!Number.isFinite(cx) || !Number.isFinite(cy)) return "";
@@ -758,7 +667,7 @@ export function renderNestedPie(input: {
       angle = next;
       return `<path data-mark-role="pie-arc" data-mark-group-id="${esc(groupId)}" data-row-key="${esc(key(input.dataset, row))}" data-pie-component="${esc(fields[index] ?? "")}" d="${d}" fill="${colors[index % colors.length]}"/>`;
     }).join("");
-    return `<g data-mark-role="nested-pie" data-mark-group-id="${esc(groupId)}" data-composition-group-id="${esc(groupId)}" data-row-key="${esc(key(input.dataset, row))}" data-person="${esc(row.person ?? "")}" data-time="${esc(row.time ?? "")}" data-radius-field="${esc(radiusField ?? "")}" data-radius-value="${Number.isFinite(radiusValue) ? radiusValue : ""}" data-arc-count="${fields.length}">${arcs}</g>`;
+    return `<g data-mark-role="nested-pie" data-mark-group-id="${esc(groupId)}" data-composition-group-id="${esc(groupId)}" data-row-key="${esc(key(input.dataset, row))}" data-radius-field="${esc(radiusField ?? "")}" data-radius-value="${Number.isFinite(radiusValue) ? radiusValue : ""}" data-arc-count="${fields.length}">${arcs}</g>`;
   }).join("");
   const content = `<g data-chart-id="${esc(input.chartId)}" data-chart-type="nested-pie" data-mark-role="nested-pies" data-composition-group-id="${esc(groupId)}" data-parent-mark-group-id="${esc(input.nestedSpec.parentMarkGroupId ?? "")}">${pies}</g>`;
   return { content, plotArea: scales.plotArea, pointCount: rows.length };

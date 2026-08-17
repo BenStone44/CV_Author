@@ -6,7 +6,6 @@ import type {
   AbsoluteNodeFrame,
   ChartSpec,
 } from "./types";
-import { cloneCubeChartBinding } from "./cubeModel";
 
 export function clamp(value: number, min: number, max: number) {
   if (max < min) return min;
@@ -148,23 +147,18 @@ export function cloneChartSpec(chartSpec: ChartSpec | null | undefined) {
   if (!chartSpec) return chartSpec;
   return {
     ...chartSpec,
-    cubeBinding: cloneCubeChartBinding(chartSpec.cubeBinding),
     encodings: Object.fromEntries(
       Object.entries(chartSpec.encodings).map(([channel, encoding]) => [
         channel,
         encoding ? { ...encoding } : encoding,
       ]),
     ) as ChartSpec["encodings"],
-    aggregations: chartSpec.aggregations ? { ...chartSpec.aggregations } : undefined,
-    dimensionAggregations: chartSpec.dimensionAggregations ? { ...chartSpec.dimensionAggregations } : undefined,
     angleFields: chartSpec.angleFields?.map((encoding) => ({ ...encoding })),
-    parallelFields: chartSpec.parallelFields?.map((encoding) => ({ ...encoding })),
     flattenFields: chartSpec.flattenFields ? [...chartSpec.flattenFields] : undefined,
     componentRadiusFields: chartSpec.componentRadiusFields
       ? Object.fromEntries(Object.entries(chartSpec.componentRadiusFields).map(([field, encoding]) => [field, { ...encoding }]))
       : undefined,
     series: chartSpec.series ? { ...chartSpec.series } : undefined,
-    seriesFields: chartSpec.seriesFields?.map((encoding) => ({ ...encoding })),
     scales: chartSpec.scales
       ? {
         ...(chartSpec.scales.x
@@ -181,9 +175,6 @@ export function cloneChartSpec(chartSpec: ChartSpec | null | undefined) {
       : undefined,
     renderer: chartSpec.renderer ? { ...chartSpec.renderer } : undefined,
     filters: chartSpec.filters ? { ...chartSpec.filters } : undefined,
-    valueFilters: chartSpec.valueFilters
-      ? Object.fromEntries(Object.entries(chartSpec.valueFilters).map(([field, values]) => [field, [...values]]))
-      : undefined,
     markGroups: chartSpec.markGroups?.map((group) => ({
       ...group,
       memberKeys: [...group.memberKeys],

@@ -1,5 +1,3 @@
-import type { CubeChartBinding, CubeResult } from "./cubeModel";
-
 export type SvgCandidate = {
   id: string;
   name: string;
@@ -56,7 +54,6 @@ export type Dataset = {
   columns: DataColumn[];
   rows: DataRow[];
   primaryKey?: string[];
-  cubeResult?: CubeResult;
 };
 
 export type EncodingChannel = "x" | "y";
@@ -209,10 +206,10 @@ export type ChartSpec = {
   chartType: string;
   templateId?: ChartTemplateKind;
   datasetId: string;
-  cubeBinding?: CubeChartBinding;
   encodings: Partial<Record<ChartEncodingChannel, ChartEncoding>>;
   aggregations?: Partial<Record<ChartEncodingChannel, "sum" | "avg">>;
   dimensionAggregations?: Record<string, "sum" | "avg">;
+  valueFields?: ChartEncoding[];
   angleFields?: ChartEncoding[];
   parallelFields?: ChartEncoding[];
   flattenFields?: string[];
@@ -542,8 +539,6 @@ export type SemanticSelection = {
   markGroupId?: string;
   rowKey?: string;
   seriesKey?: string;
-  time?: string;
-  person?: string;
 };
 
 export type SeriesCandidate = {

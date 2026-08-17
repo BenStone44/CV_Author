@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { X } from "@lucide/vue";
-import CubeEncodingChannelField from "./CubeEncodingChannelField.vue";
 import EncodingChannelField from "./EncodingChannelField.vue";
 import VisualMappingEditor from "./VisualMappingEditor.vue";
 import {
@@ -15,11 +14,11 @@ import {
 } from "./encodingConfig";
 import type { EncodingChannelConfig } from "./encodingConfig";
 import { normalizeChartTemplate } from "./chartTemplates";
-import { semanticSlotForChannel } from "./chartTemplates";
 import type {
   ChartEncodingChannel,
   ChartSpec,
   DataColumn,
+  DataRow,
   LineSeriesShape,
   LinearColorMapping,
   LinearSizeMapping,
@@ -34,19 +33,12 @@ import {
   isLinearSizeMapping,
   isSeriesStyleMapping,
 } from "./visualMapping";
-import {
-  compileCubeValueSeries,
-  cubeBindingMeasureIds,
-  cubeSeriesColor,
-  summarizeCubeBinding,
-  type CubeResult,
-} from "./cubeModel";
 
 const props = defineProps<{
   chartName: string;
   chartSpec: ChartSpec;
   columns: DataColumn[];
-  cubeResult?: CubeResult;
+  rows: DataRow[];
   markConfig: MarkGroupSharedConfig;
   rendererError?: string;
   compatibilityMessage?: string;
@@ -58,10 +50,8 @@ const emit = defineEmits<{
   channelChange: [channel: ChartEncodingChannel, field: string];
   seriesFieldChange: [field: string];
   valueSeriesFieldsChange: [fields: string[]];
-  cubeSourceMembersChange: [target: ChartEncodingChannel | "series", sourceId: string, memberIds: string[]];
   angleFieldsChange: [fields: string[]];
   parallelFieldsChange: [fields: string[]];
-  cubeMemberColorChange: [styleKey: string, color: string];
   markConfigChange: [patch: MarkGroupSharedConfig];
 }>();
 
@@ -83,7 +73,7 @@ const standardConfigs = computed(() => configs.value.filter((config) => {
   if (isPolar.value && config.channel === "angle") return false;
   if (isPolar.value && config.channel === "radius") return false;
   if (isParallel.value && config.channel === "dimensions") return false;
-  if (supportsMeasureSeries.value && config.channel === "color") return false;
+  if (supportsMeasureSeries.value && (config.channel === "color" || config.channel === "y")) return false;
   return true;
 }));
 const seriesConfig = computed<EncodingChannelConfig | null>(() => (isMultiLine.value || areaRequiresSeries.value) && !usesDerivedSeries.value ? {
@@ -96,21 +86,17 @@ const seriesConfig = computed<EncodingChannelConfig | null>(() => (isMultiLine.v
 } : null);
 const seriesMembers = computed(() => {
   const field = resolvedSeriesField(props.chartSpec);
-  if (!field || !props.cubeResult) return [];
-  return props.cubeResult.schema.dimensions.find((dimension) => dimension.id === field)?.members ?? [];
+  if (!field) return [];
+  return Array.from(new Set(props.rows.map((row) => row[field] ?? "").filter(Boolean)))
+    .map((id) => ({ id, label: id }));
 });
 const selectedValueSeriesFields = computed(() => {
-  const source = props.chartSpec.cubeBinding?.slots.y;
-  if (source?.kind === "measure") return [source.measureId];
-  if (source?.kind === "measure-set") return source.measureIds;
+  if (props.chartSpec.valueFields?.length) return props.chartSpec.valueFields.map((encoding) => encoding.field);
   const field = resolvedEncodingField(props.chartSpec, "y");
   return field ? [field] : [];
 });
-const editableSeriesMembers = computed(() => usesDerivedSeries.value && props.cubeResult
-  ? selectedValueSeriesFields.value.map((measureId) => {
-    const measure = props.cubeResult!.schema.measures.find((item) => item.id === measureId);
-    return { id: measureId, label: measure?.label ?? measureId };
-  })
+const editableSeriesMembers = computed(() => usesDerivedSeries.value
+  ? selectedValueSeriesFields.value.map((field) => ({ id: field, label: field }))
   : seriesMembers.value);
 const seriesStyleMapping = computed<SeriesStyleMapping>(() => {
   if (isSeriesStyleMapping(props.markConfig.seriesStyleMapping)) return props.markConfig.seriesStyleMapping;
@@ -123,10 +109,7 @@ const seriesStyleMapping = computed<SeriesStyleMapping>(() => {
   };
 });
 const quantitativeColumns = computed(() => props.columns.filter((column) => column.type === "quantitative"));
-const cubeThetaSlot = computed(() => props.chartSpec.cubeBinding?.slots.theta ? "theta" : "value");
-const selectedAngleFields = computed(() => cubeBindingMeasureIds(props.chartSpec.cubeBinding, cubeThetaSlot.value).length > 0
-  ? cubeBindingMeasureIds(props.chartSpec.cubeBinding, cubeThetaSlot.value)
-  : props.chartSpec.angleFields?.map((encoding) => encoding.field)
+const selectedAngleFields = computed(() => props.chartSpec.angleFields?.map((encoding) => encoding.field)
   ?? (props.chartSpec.encodings.angle ? [props.chartSpec.encodings.angle.field] : []));
 const selectedParallelFields = computed(() => props.chartSpec.parallelFields?.map((encoding) => encoding.field) ?? []);
 const radiusMode = computed(() => resolvedPolarRadiusMode(props.chartSpec));
@@ -149,14 +132,6 @@ const sankeyAlignment = computed(() => typeof props.markConfig.nodeAlign === "st
 const sankeyLinkColor = computed(() => typeof props.markConfig.linkColor === "string" ? props.markConfig.linkColor : "source-target");
 const colorMapping = computed(() => isLinearColorMapping(props.markConfig.colorMapping) ? props.markConfig.colorMapping : defaultColorMapping);
 const sizeMapping = computed(() => isLinearSizeMapping(props.markConfig.sizeMapping) ? props.markConfig.sizeMapping : defaultSizeMapping);
-const cubeSeriesRows = computed(() => {
-  if (!props.cubeResult || !props.chartSpec.cubeBinding?.slots[cubeThetaSlot.value]) return [];
-  const compiled = compileCubeValueSeries(props.cubeResult, props.chartSpec.cubeBinding, cubeThetaSlot.value, "slice");
-  return compiled.errors.length > 0 ? [] : compiled.rows;
-});
-const cubeBindingSummary = computed(() => props.cubeResult
-  ? summarizeCubeBinding(props.cubeResult, props.chartSpec.cubeBinding, template.value)
-  : "");
 const fallbackSeriesColors = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#4d7c0f"];
 function seriesMemberColor(memberId: string, index: number) {
   return seriesStyleMapping.value.values[memberId]?.color
@@ -180,55 +155,21 @@ function updateSeriesMemberStyle(memberId: string, patch: { color?: string; stro
     },
   });
 }
-function cubeRowColor(styleKey: string, index: number) {
-  return cubeSeriesColor(props.chartSpec.cubeBinding, styleKey)
-    ?? fallbackSeriesColors[index % fallbackSeriesColors.length]!;
-}
 const canConfirm = computed(() => resolveChartEncodingIssues(props.chartSpec).length === 0
   && (!supportsMeasureSeries.value || usesDerivedSeries.value || !!resolvedSeriesField(props.chartSpec))
   && configs.value.every((config) => {
   if (!config.required) return true;
-  if (config.channel === "angle" && props.chartSpec.cubeBinding?.slots[cubeThetaSlot.value]) return true;
+  if (config.channel === "y" && supportsMeasureSeries.value && selectedValueSeriesFields.value.length) return true;
   if (config.channel === "dimensions") return selectedParallelFields.value.length >= 2;
   if (config.channel === "color" && usesDerivedSeries.value) return true;
   if (config.multiple) return selectedAngleFields.value.length > 0;
   return !!resolvedEncodingField(props.chartSpec, config.channel);
 }));
 
-function cubeSource(target: ChartEncodingChannel | "series") {
-  if (!props.cubeResult) return undefined;
-  const slot = target === "series" ? "series" : semanticSlotForChannel(props.chartSpec.chartType, target);
-  const source = slot ? props.chartSpec.cubeBinding?.slots[slot] : undefined;
-  if (source?.kind === "dimension") {
-    const dimension = props.cubeResult.schema.dimensions.find((item) => item.id === source.dimensionId);
-    return {
-      sourceId: source.dimensionId,
-      memberIds: source.memberIds?.length
-        ? source.memberIds
-        : dimension?.members.map((member) => member.id) ?? [],
-    };
-  }
-  if (source?.kind === "measure") return { sourceId: "__measures__", memberIds: [source.measureId] };
-  if (source?.kind === "measure-set") return { sourceId: "__measures__", memberIds: source.measureIds };
-
-  const field = target === "series"
-    ? resolvedSeriesField(props.chartSpec)
-    : resolvedEncodingField(props.chartSpec, target);
-  if (props.cubeResult.schema.measures.some((measure) => measure.id === field)) {
-    return { sourceId: "__measures__", memberIds: [field] };
-  }
-  const dimension = props.cubeResult.schema.dimensions.find((item) => item.id === field);
-  return dimension
-    ? { sourceId: dimension.id, memberIds: dimension.members.map((member) => member.id) }
-    : { sourceId: "", memberIds: [] };
-}
-
-function updateCubeSource(
-  target: ChartEncodingChannel | "series",
-  sourceId: string,
-  memberIds: string[],
-) {
-  emit("cubeSourceMembersChange", target, sourceId, memberIds);
+function toggleValueSeriesField(field: string) {
+  emit("valueSeriesFieldsChange", selectedValueSeriesFields.value.includes(field)
+    ? selectedValueSeriesFields.value.filter((item) => item !== field)
+    : [...selectedValueSeriesFields.value, field]);
 }
 
 function toggleAngleField(field: string) {
@@ -268,21 +209,8 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
     </header>
 
     <div v-if="columns.length" class="encoding-config__channels">
-      <p v-if="cubeBindingSummary" class="encoding-config__summary">{{ cubeBindingSummary }}</p>
-
       <template v-for="config in standardConfigs" :key="config.channel">
-        <CubeEncodingChannelField
-          v-if="cubeResult && config.role !== 'style'"
-          :config="config"
-          :cube-result="cubeResult"
-          :source-id="cubeSource(config.channel)?.sourceId ?? ''"
-          :member-ids="cubeSource(config.channel)?.memberIds ?? []"
-          :multiple-measures="supportsMeasureSeries && config.channel === 'y'"
-          @source-change="(sourceId, memberIds) => updateCubeSource(config.channel, sourceId, memberIds)"
-          @members-change="(memberIds) => updateCubeSource(config.channel, cubeSource(config.channel)?.sourceId ?? '', memberIds)"
-        />
         <EncodingChannelField
-          v-else
           :config="config"
           :columns="columns"
           :value="resolvedEncodingField(chartSpec, config.channel)"
@@ -290,22 +218,24 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
         />
       </template>
 
+      <section v-if="supportsMeasureSeries" class="encoding-config__angle" aria-label="Y value columns">
+        <span>Y values <abbr title="At least one required" aria-label="At least one required">*</abbr></span>
+        <label v-for="column in quantitativeColumns" :key="column.name">
+          <input
+            type="checkbox"
+            :checked="selectedValueSeriesFields.includes(column.name)"
+            @change="toggleValueSeriesField(column.name)"
+          />
+          <span>{{ column.name }}</span>
+        </label>
+      </section>
+
       <p v-if="usesDerivedSeries" class="encoding-config__derived-series">
         Series: selected measure names
       </p>
 
-      <CubeEncodingChannelField
-        v-if="seriesConfig && cubeResult"
-        :config="seriesConfig"
-        :cube-result="cubeResult"
-        :source-id="cubeSource('series')?.sourceId ?? ''"
-        :member-ids="cubeSource('series')?.memberIds ?? []"
-        @source-change="(sourceId, memberIds) => updateCubeSource('series', sourceId, memberIds)"
-        @members-change="(memberIds) => updateCubeSource('series', cubeSource('series')?.sourceId ?? '', memberIds)"
-      />
-
       <EncodingChannelField
-        v-else-if="seriesConfig"
+        v-if="seriesConfig"
         :config="seriesConfig"
         :columns="columns"
         :value="resolvedSeriesField(chartSpec)"
@@ -449,18 +379,7 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
           </select>
         </label>
       </div>
-      <div v-if="cubeSeriesRows.length" class="encoding-config__member-colors">
-        <span>Series colors</span>
-        <label v-for="(row, index) in cubeSeriesRows" :key="row.styleKey">
-          <span :title="row.seriesKey">{{ row.seriesKey }}</span>
-          <input
-            type="color"
-            :value="cubeRowColor(row.styleKey, index)"
-            @input="emit('cubeMemberColorChange', row.styleKey, ($event.target as HTMLInputElement).value)"
-          />
-        </label>
-      </div>
-      <label v-if="!isMultiLine && colorConfig && !colorField && !cubeSeriesRows.length" class="encoding-config__static">
+      <label v-if="!isMultiLine && colorConfig && !colorField" class="encoding-config__static">
         <span>Color value</span>
         <input type="color" :value="staticColor" @input="emit('markConfigChange', { color: ($event.target as HTMLInputElement).value })" />
       </label>

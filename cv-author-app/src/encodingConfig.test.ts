@@ -84,31 +84,25 @@ describe("card encoding configuration", () => {
         y: { field: "value", type: "quantitative" },
       },
     })).toBe(false);
-    const derivedSeriesBinding = {
-      version: 1 as const,
-      sourceId: "cube:data",
-      slots: {
-        y: { kind: "measure-set" as const, measureIds: ["weight", "water"] },
-        series: { kind: "value-series" as const, valueSlot: "y" as const },
-      },
-    };
+    const valueFields = ["weight", "water"]
+      .map((field) => ({ field, type: "quantitative" as const }));
     expect(hasRequiredChartEncodings({
       chartType: "MultiLineChart",
       datasetId: "data",
       encodings: { x: { field: "time", type: "temporal" } },
-      cubeBinding: derivedSeriesBinding,
+      valueFields,
     })).toBe(true);
     expect(hasRequiredChartEncodings({
       chartType: "StackedAreaChart",
       datasetId: "data",
       encodings: { x: { field: "time", type: "temporal" } },
-      cubeBinding: derivedSeriesBinding,
+      valueFields,
     })).toBe(true);
     expect(resolveChartEncodingIssues({
       chartType: "MultiLineChart",
       datasetId: "data",
       encodings: { x: { field: "time", type: "temporal" } },
-      cubeBinding: derivedSeriesBinding,
+      valueFields,
     })).toEqual([]);
   });
 
@@ -161,7 +155,7 @@ describe("card encoding configuration", () => {
     expect(semanticSlotForChannel("DonutChart", "angle")).toBe("theta");
   });
 
-  it("exposes Cube-first slot requirements separately from native channels", () => {
+  it("exposes semantic slot requirements separately from renderer channels", () => {
     expect(getTemplateBindingContract("PieChart")?.slots).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "theta", label: "Theta", required: true, accepts: ["measure", "measure-set"] }),
       expect.objectContaining({ id: "radius", label: "R", required: false, accepts: ["measure"] }),
@@ -181,28 +175,6 @@ describe("card encoding configuration", () => {
     expect(getEncodingChannelConfigsForSpec(multi).map((config) => config.channel)).toEqual(["x", "y"]);
   });
 
-  it("detects conflicting native and Cube sources", () => {
-    const issues = resolveChartEncodingIssues({
-      chartType: "LineGraph",
-      datasetId: "data",
-      encodings: {
-        x: { field: "time", type: "temporal" },
-        y: { field: "value", type: "quantitative" },
-      },
-      cubeBinding: {
-        version: 1,
-        sourceId: "cube:data",
-        slots: {
-          x: { kind: "dimension", dimensionId: "person" },
-          y: { kind: "measure", measureId: "value" },
-        },
-      },
-    });
-    expect(issues).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: "conflicting-sources", channels: ["x"], fields: ["time", "person"] }),
-    ]));
-  });
-
   it("rejects one field occupying two semantic data channels", () => {
     const issues = resolveChartEncodingIssues({
       chartType: "LineGraph",
@@ -217,7 +189,7 @@ describe("card encoding configuration", () => {
     ]);
   });
 
-  it("resolves a Cube-only Series and accepts a temporal Series source", () => {
+  it("resolves a temporal Series source", () => {
     const spec = {
       chartType: "MultiLineChart",
       datasetId: "data",
@@ -225,11 +197,7 @@ describe("card encoding configuration", () => {
         x: { field: "index", type: "quantitative" as const },
         y: { field: "value", type: "quantitative" as const },
       },
-      cubeBinding: {
-        version: 1 as const,
-        sourceId: "cube:data",
-        slots: { series: { kind: "dimension" as const, dimensionId: "date" } },
-      },
+      series: { field: "date", type: "temporal" as const },
     };
     expect(resolvedSeriesField(spec)).toBe("date");
     expect(resolveChartEncodingIssues(spec)).toEqual([]);
@@ -240,29 +208,15 @@ describe("card encoding configuration", () => {
     const base = { chartType: "PieChart", datasetId: "data", encodings: {} };
     expect(resolvedPolarRadiusMode(base)).toBe("static");
     expect(resolvedPolarRadiusMode({ ...base, encodings: { radius: { field: "total", type: "quantitative" } } })).toBe("mapped");
-    expect(resolvedPolarRadiusMode({
-      ...base,
-      cubeBinding: {
-        version: 1,
-        sourceId: "cube:data",
-        slots: { radius: { kind: "measure", measureId: "total" } },
-      },
-    })).toBe("mapped");
   });
 
-  it("projects Cube theta and radius slots to Theta and R badges", () => {
+  it("projects CSV theta and radius fields to Theta and R badges", () => {
     const spec = {
       chartType: "PieChart",
       datasetId: "data",
-      encodings: {},
-      cubeBinding: {
-        version: 1 as const,
-        sourceId: "cube:data",
-        slots: {
-          theta: { kind: "measure-set" as const, measureIds: ["water", "fat"] },
-          radius: { kind: "measure" as const, measureId: "weight" },
-        },
-      },
+      encodings: { radius: { field: "weight", type: "quantitative" as const } },
+      angleFields: ["water", "fat"]
+        .map((field) => ({ field, type: "quantitative" as const })),
     };
     expect(resolvedPolarAxisRoles(spec, "water")).toEqual([{ channel: "angle", label: "Theta" }]);
     expect(resolvedPolarAxisRoles(spec, "fat")).toEqual([{ channel: "angle", label: "Theta" }]);

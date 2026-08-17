@@ -56,6 +56,7 @@ import {
 } from "d3-sankey";
 import type { ChartEncoding, ChartPlotArea, ChartScaleSpec, Dataset } from "./types";
 import type { GenericRenderInput } from "./semanticRenderer";
+import { csvRowKey } from "./csvDataEngine";
 
 const tableau = schemeTableau10;
 
@@ -77,7 +78,7 @@ function plotArea(input: GenericRenderInput, inset = 10): ChartPlotArea {
 }
 
 function rowKey(dataset: Dataset, row: Dataset["rows"][number], index: number) {
-  return (dataset.primaryKey ?? []).map((field) => row[field] ?? "").join("|") || String(index);
+  return csvRowKey(dataset, row, index);
 }
 
 function numeric(row: Dataset["rows"][number], encoding: ChartEncoding | undefined, fallback = Number.NaN) {

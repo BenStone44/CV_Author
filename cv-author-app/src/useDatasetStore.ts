@@ -1,23 +1,25 @@
 import { computed, ref, watch } from "vue";
 import Papa from "papaparse";
 import type { DataColumn, DataColumnType, DataRow, Dataset } from "./types";
+import { inferCsvPrimaryKey } from "./csvDataEngine";
 
 type ParsedCsv = {
   data: unknown[][];
   errors: Papa.ParseError[];
 };
 
-function migrateStoredCase1(dataset: Dataset): Dataset {
-  if (dataset?.name?.toLowerCase() !== "case1.csv"
-    || dataset.columns.some((column) => column.name.trim().toLowerCase() === "id")) {
-    return dataset;
-  }
-  return {
-    ...dataset,
-    columns: [{ name: "id", type: "nominal" }, ...dataset.columns],
-    rows: dataset.rows.map((row, index) => ({ id: String(index + 1), ...row })),
-    primaryKey: ["id"],
-  };
+function normalizeStoredDataset(dataset: Dataset): Dataset {
+  const available = new Set(dataset.columns.map((column) => column.name));
+  const storedKeyValues = (dataset.primaryKey?.length ?? 0) > 0
+    ? dataset.rows.map((row) => dataset.primaryKey!.map((field) => row[field]?.trim() ?? ""))
+    : [];
+  const storedKeyIsValid = storedKeyValues.length > 0
+    && dataset.primaryKey!.every((field) => available.has(field))
+    && storedKeyValues.every((values) => values.every(Boolean))
+    && new Set(storedKeyValues.map((values) => JSON.stringify(values))).size === dataset.rows.length;
+  return storedKeyIsValid
+    ? dataset
+    : { ...dataset, primaryKey: inferCsvPrimaryKey(dataset) };
 }
 
 const datasets = ref<Dataset[]>((() => {
@@ -27,7 +29,7 @@ const datasets = ref<Dataset[]>((() => {
     return Array.isArray(parsed)
       ? parsed
         .filter((dataset) => dataset?.id !== "dataset:llm-demo")
-        .map((dataset) => migrateStoredCase1(dataset as Dataset))
+        .map((dataset) => normalizeStoredDataset(dataset as Dataset))
       : [];
   } catch { return []; }
 })());
@@ -55,8 +57,7 @@ function isTemporal(value: string) {
   return Number.isFinite(Date.parse(value));
 }
 
-export function inferColumnType(columnName: string, values: string[]): DataColumnType {
-  if (columnName.trim().toLowerCase() === "id") return "nominal";
+export function inferColumnType(values: string[]): DataColumnType {
   const nonEmptyValues = values.map((value) => value.trim()).filter(Boolean);
   if (nonEmptyValues.length === 0) return "nominal";
   if (nonEmptyValues.every(isNumeric)) return "quantitative";
@@ -72,28 +73,6 @@ function normalizeHeaders(sourceHeaders: string[], columnCount: number) {
     used.set(baseName, count + 1);
     return count === 0 ? baseName : `${baseName}_${count + 1}`;
   });
-}
-
-function createPrimaryKey(columns: DataColumn[], rows: DataRow[]) {
-  const idColumn = columns.find((column) => column.name.trim().toLowerCase() === "id");
-  if (idColumn) {
-    const ids = rows.map((row) => row[idColumn.name] ?? "");
-    if (ids.every(Boolean) && new Set(ids).size === ids.length) return [idColumn.name];
-  }
-
-  // Without an explicit id, prefer the Case 1 person + time grain, then fall
-  // back to any unique nominal/temporal pair that can be identified safely.
-  const preferred = ["person", "time"];
-  if (preferred.every((field) => columns.some((column) => column.name === field))) {
-    const keys = rows.map((row) => preferred.map((field) => row[field] ?? "").join("\u001f"));
-    if (new Set(keys).size === keys.length) return preferred;
-  }
-
-  const nominal = columns.find((column) => column.type === "nominal")?.name;
-  const temporal = columns.find((column) => column.type === "temporal")?.name;
-  if (!nominal || !temporal) return undefined;
-  const keys = rows.map((row) => `${row[nominal] ?? ""}\u001f${row[temporal] ?? ""}`);
-  return new Set(keys).size === keys.length ? [nominal, temporal] : undefined;
 }
 
 function parseFile(file: File) {
@@ -135,17 +114,17 @@ async function importDataset(file: File) {
         headers.map((header, index) => [header, row[index] ?? ""]),
       ),
     );
-    const columns = headers.map((name, index) => ({
+    const columns = headers.map((name) => ({
       name,
-      type: inferColumnType(name, rows.map((row) => row[name] ?? "")),
+      type: inferColumnType(rows.map((row) => row[name] ?? "")),
     } satisfies DataColumn));
-    const dataset: Dataset = {
+    const parsedDataset: Dataset = {
       id: `dataset:${crypto.randomUUID()}`,
       name: file.name,
       columns,
       rows,
-      primaryKey: createPrimaryKey(columns, rows),
     };
+    const dataset = { ...parsedDataset, primaryKey: inferCsvPrimaryKey(parsedDataset) };
     datasets.value = [...datasets.value, dataset];
     activeDatasetId.value = dataset.id;
     parseWarning.value = result.errors.length > 0

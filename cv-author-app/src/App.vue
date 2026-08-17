@@ -16,7 +16,6 @@ import {
 } from "./CartesianCoordinateSystem";
 import { PolarCoordinateSystem } from "./PolarCoordinateSystem";
 import CsvDataPanel from "./CsvDataPanel.vue";
-import type { CubeSelectionState } from "./cubeBinding";
 import EncodingConfigPanel from "./EncodingConfigPanel.vue";
 import type {
   CanvasNode,
@@ -35,17 +34,11 @@ import {
 import { useDatasetStore } from "./useDatasetStore";
 import { useLlmRenderer } from "./useLlmRenderer";
 import { isLineChartType } from "./lineRenderer";
-import { cubeResultFromDataset } from "./cubeModel";
+import { analyzeCsvGrain } from "./csvDataEngine";
 import {
   groupChartTemplateCandidates,
   type ChartTemplateCategory,
 } from "./chartTemplateCategories";
-import {
-  applyCompatibilityResolutionAction,
-  compatibilityResolutionStateFromChartSpec,
-  planCompatibilityResolution,
-} from "./compatibilityResolution";
-import { getSingleChartTemplateRequirement } from "./chartCompatibility";
 
 const canvasRef = ref<HTMLElement | null>(null);
 const encodingInspectorOpen = ref(true);
@@ -121,15 +114,12 @@ const {
   onCoordinateAxisScalePointerDown,
   onPolarAnglePointerDown,
   setAxisBindingAggregation,
-  setCubeValueFilters,
   clearSeriesBinding,
   setChartSeries,
   setChartEncoding,
-  setCubeChannelSelection,
   setPieAngleFields,
   setValueSeriesFields,
   setParallelFields,
-  setCubeSeriesColor,
   updateAxisBindingMarkGroupConfig,
   closeAxisBinding,
   setSelectionRotation,
@@ -198,10 +188,10 @@ function onTemplateCandidateDragEnd() {
 }
 
 const { activeDataset, getDataset } = useDatasetStore();
-const axisBindingCubeResult = computed(() => {
+const axisBindingRows = computed(() => {
   const datasetId = axisBindingNode.value?.chartSpec?.datasetId;
   const dataset = datasetId ? getDataset(datasetId) : activeDataset.value;
-  return dataset ? cubeResultFromDataset(dataset) : undefined;
+  return dataset?.rows ?? [];
 });
 const llmRenderer = useLlmRenderer();
 const {
@@ -301,7 +291,7 @@ function encodingReviewKey(node: CanvasNode | null) {
     series?.field ?? "",
     ...(angleFields ?? []).map((encoding) => `angle:${encoding.field}`),
     ...(parallelFields ?? []).map((encoding) => `dimension:${encoding.field}`),
-    JSON.stringify(node.chartSpec.cubeBinding?.slots ?? {}),
+    ...(node.chartSpec.valueFields ?? []).map((encoding) => `value:${encoding.field}`),
     JSON.stringify(node.chartSpec.aggregations ?? {}),
   ].join("|");
 }
@@ -365,42 +355,25 @@ function closeEncodingInspector() {
 const activeDimensionRecommendations = computed(() =>
   (axisBindingNode.value ?? llmNode.value)?.chartSpec?.dimensionRecommendations ?? [],
 );
-const compatibilitySelectionsByChart = ref<Record<string, string[]>>({});
-const activeCompatibilityPlan = computed(() => {
+const activeCompatibilityMessage = computed(() => {
   const node = axisBindingNode.value ?? llmNode.value;
   const dataset = node?.chartSpec ? getDataset(node.chartSpec.datasetId) : null;
-  if (!node?.chartSpec || !dataset || !getSingleChartTemplateRequirement(node.chartSpec.chartType)) return null;
-  if (encodingReviewApprovedKey.value !== encodingReviewKey(node)) return null;
-  const state = compatibilityResolutionStateFromChartSpec(node.chartSpec);
-  const checkedFields = compatibilitySelectionsByChart.value[node.id];
-  if (checkedFields) {
-    state.selectedFieldIds = Array.from(new Set([
-      ...Object.values(state.assignment).flatMap((fields) => fields ?? []),
-      ...checkedFields,
-    ]));
-  }
-  return planCompatibilityResolution(
-    state,
-    cubeResultFromDataset(dataset),
-    { maxDepth: 4, maxStates: 160, alternativeLimit: 4 },
-  );
-});
-const activeCompatibilityMessage = computed(() => {
-  const result = activeCompatibilityPlan.value?.compatibility;
-  if (!result || result.status === "compatible") return "";
-  return result.issues[0]?.message
-    ?? "The confirmed channel bindings do not satisfy this template's structural requirements.";
+  const x = node?.chartSpec?.encodings.x?.field;
+  const values = node?.chartSpec?.valueFields?.map((encoding) => encoding.field)
+    ?? [node?.chartSpec?.encodings.y?.field].filter((field): field is string => !!field);
+  if (!node?.chartSpec || !dataset || !x || !values.length) return "";
+  const result = analyzeCsvGrain(dataset, [x], values, { maxCombinationSize: 2, candidateLimit: 5 });
+  if (result.status !== "conflict") return "";
+  const candidate = result.candidates[0];
+  const grainMessage = result.ambiguous
+    ? ` Structurally equivalent grain candidates: ${result.topCandidateFields.map((fields) => fields.join(" + ")).join(" or ")}.`
+    : candidate ? ` Likely grain field: ${candidate.fields.join(" + ")}.` : "";
+  return `${result.baseline.duplicateGroupCount} X groups contain repeated rows (maximum ${result.baseline.maximumMultiplicity}).${grainMessage}`;
 });
 const selectedChartId = computed(() =>
   selectedNodes.value.length === 1 && selectedNodes.value[0]?.chartSpec
     ? selectedNodes.value[0].id
     : "",
-);
-const selectedChartSpec = computed(() =>
-  selectedNodes.value.length === 1 ? selectedNodes.value[0]?.chartSpec ?? undefined : undefined,
-);
-const selectedChartMarkConfig = computed(() =>
-  selectedChartSpec.value?.markGroups?.[0]?.sharedConfig ?? {},
 );
 const pendingDimension = computed(() => {
   const node = axisBindingNode.value ?? llmNode.value;
@@ -424,45 +397,14 @@ const recommendationPopupOpen = ref(false);
 let lastRecommendationKey = "";
 const resolutionHistoryDepth = ref(0);
 const resolutionHistoryChartId = ref("");
-const constrainedResolutionPlan = computed(() =>
-  activeCompatibilityPlan.value?.compatibility.status === "compatible"
-    ? null
-    : activeCompatibilityPlan.value,
-);
 const canChooseDimensionAggregation = computed(() => {
-  const field = pendingDimension.value?.field;
-  const plan = constrainedResolutionPlan.value;
-  if (!field || !plan) return !!field;
-  return plan.actions.some((action) => action.strategy === "aggregate"
-    && action.fieldId === field
-    && action.aggregation === pendingAggregation.value);
+  return !!pendingDimension.value?.field;
 });
 const canChooseDimensionFacet = computed(() => {
-  const field = pendingDimension.value?.field;
-  const plan = constrainedResolutionPlan.value;
-  if (!field || !plan) return !!pendingDimension.value?.facetRecommendation;
-  return plan.actions.some((action) => action.strategy === "facet" && action.fieldId === field);
+  return !!pendingDimension.value?.facetRecommendation;
 });
 const canChooseDimensionUpgrade = computed(() => {
-  const field = pendingDimension.value?.field;
-  const plan = constrainedResolutionPlan.value;
-  if (!field || !plan) return !!field;
-  if (plan.actions.some((action) => action.strategy === "bind-channel" && action.fieldId === field)) return true;
-  const node = axisBindingNode.value ?? llmNode.value;
-  const dataset = node?.chartSpec ? getDataset(node.chartSpec.datasetId) : null;
-  if (!dataset) return false;
-  const cube = cubeResultFromDataset(dataset);
-  return plan.actions.some((action) => {
-    if (action.strategy !== "change-template") return false;
-    const nextState = applyCompatibilityResolutionAction(plan.state, action, cube);
-    const nextPlan = planCompatibilityResolution(nextState, cube, {
-      maxDepth: 3,
-      maxStates: 80,
-      alternativeLimit: 0,
-    });
-    return nextPlan.actions.some((nextAction) =>
-      nextAction.strategy === "bind-channel" && nextAction.fieldId === field);
-  });
+  return !!pendingDimension.value?.field;
 });
 
 watch(pendingDimension, (dimension) => {
@@ -533,57 +475,6 @@ function chooseDimensionFacet() {
   finishDimensionChoice();
 }
 const selectedCanvasNodesWithCoordinateGuides = coordinateGuideNodes;
-const selectedChartFields = computed(() => {
-  if (selectedNodes.value.length !== 1) return [];
-  const node = selectedNodes.value[0];
-  const spec = node?.chartSpec;
-  if (!spec) return [];
-  return Array.from(new Set([
-    ...Object.values(spec.encodings).map((encoding) => encoding?.field),
-    ...(spec.angleFields ?? []).map((encoding) => encoding.field),
-    ...Object.values(spec.cubeBinding?.slots ?? {}).flatMap((source) => {
-      if (!source) return [];
-      if (source.kind === "dimension") return [source.dimensionId, ...(source.memberIds ?? [])];
-      if (source.kind === "measure") return [source.measureId];
-      if (source.kind === "measure-set") return source.measureIds;
-      return [];
-    }),
-    spec.series?.field,
-    ...(spec.seriesFields ?? []).map((encoding) => encoding.field),
-    ...Object.keys(spec.dimensionDecisions ?? {}),
-  ].filter((field): field is string => !!field)));
-});
-const selectedChartValueFilters = computed(() => {
-  if (selectedNodes.value.length !== 1) return {};
-  const spec = selectedNodes.value[0]?.chartSpec;
-  return {
-    ...Object.fromEntries(Object.entries(spec?.filters ?? {}).map(([field, value]) => [field, [value]])),
-    ...spec?.valueFilters,
-  };
-});
-
-function onCubeSelectionChange(state: CubeSelectionState) {
-  const chartId = selectedChartId.value;
-  if (!chartId) return;
-  compatibilitySelectionsByChart.value = {
-    ...compatibilitySelectionsByChart.value,
-    [chartId]: Array.from(new Set([
-      ...Object.entries(state.selected).flatMap(([fieldId, selected]) =>
-        selected && fieldId !== "__measures__" ? [fieldId] : []),
-      ...(state.selected.__measures__ ? state.values.__measures__ ?? [] : []),
-    ])),
-  };
-  setCubeValueFilters(Object.fromEntries(Object.entries(state.fields).map(([dimension, field]) => {
-    return [dimension, { field, values: state.values[dimension] ?? [] }];
-  })));
-  const seriesField = axisBindingNode.value?.chartSpec?.series?.field.toLowerCase() ?? "";
-  if (seriesField && state.selected[seriesField] === false) {
-    clearSeriesBinding();
-  }
-  const measureAggregation = state.aggregations.__measures__;
-  const aggregation = measureAggregation?.enabled ? measureAggregation.operation : undefined;
-  setAxisBindingAggregation("y", aggregation);
-}
 
 function openCompositionCandidates(type: CompositionType) {
   closeAxisBinding();
@@ -617,14 +508,6 @@ function onEncodingChannelChange(channel: ChartEncodingChannel, field: string) {
 
 function onSeriesFieldChange(field: string) {
   setChartSeries(field);
-}
-
-function onCubeSourceMembersChange(
-  target: ChartEncodingChannel | "series",
-  sourceId: string,
-  memberIds: string[],
-) {
-  setCubeChannelSelection(target, sourceId, memberIds);
 }
 
 function confirmEncodingInspector() {
@@ -833,17 +716,7 @@ onBeforeUnmount(() => {
     </Teleport>
 
     <div class="workbench">
-      <CsvDataPanel
-        :selected-chart-fields="selectedChartFields"
-        :selected-chart-id="selectedChartId"
-        :selected-chart-value-filters="selectedChartValueFilters"
-        :selected-chart-spec="selectedChartSpec"
-        :selected-chart-mark-config="selectedChartMarkConfig"
-        @cube-selection-change="onCubeSelectionChange"
-        @encoding-channel-change="onEncodingChannelChange"
-        @series-field-change="onSeriesFieldChange"
-        @mark-config-change="updateAxisBindingMarkGroupConfig"
-      />
+      <CsvDataPanel />
       <main class="workspace">
         <section
           ref="canvasRef"
@@ -1123,7 +996,7 @@ onBeforeUnmount(() => {
               :chart-name="axisBindingNode.chartSpec.chartType ?? axisBindingNode.name"
               :chart-spec="axisBindingNode.chartSpec"
               :columns="axisBindingColumns"
-              :cube-result="axisBindingCubeResult"
+              :rows="axisBindingRows"
               :mark-config="axisBindingMarkGroupConfig"
               :renderer-error="axisBindingRendererError"
               :compatibility-message="activeCompatibilityMessage"
@@ -1132,10 +1005,8 @@ onBeforeUnmount(() => {
               @channel-change="onEncodingChannelChange"
               @series-field-change="onSeriesFieldChange"
               @value-series-fields-change="setValueSeriesFields"
-              @cube-source-members-change="onCubeSourceMembersChange"
               @angle-fields-change="setPieAngleFields"
               @parallel-fields-change="setParallelFields"
-              @cube-member-color-change="setCubeSeriesColor"
               @mark-config-change="updateAxisBindingMarkGroupConfig"
             />
           </aside>

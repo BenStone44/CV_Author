@@ -12,6 +12,7 @@ import type {
   ParsedSvgTemplate,
   ParsedSvgTemplateNode,
 } from "./types";
+import { csvRowKey } from "./csvDataEngine";
 import {
   isCategoricalColorMapping,
   isLinearColorMapping,
@@ -143,10 +144,7 @@ function finiteExtent(values: number[]) {
 }
 
 function rowKey(dataset: Dataset, row: Record<string, string>) {
-  const fields = dataset.primaryKey ?? [];
-  return fields.length > 0
-    ? fields.map((field) => row[field] ?? "").join("|")
-    : "";
+  return csvRowKey(dataset, row);
 }
 
 type ParsedAxisValue = string | number | Date;

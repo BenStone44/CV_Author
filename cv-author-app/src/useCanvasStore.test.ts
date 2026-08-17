@@ -29,7 +29,6 @@ Object.defineProperty(globalThis, "window", {
 
 const { useCanvasStore } = await import("./useCanvasStore");
 const { useDatasetStore } = await import("./useDatasetStore");
-const { beginCubeBindingDrag, CUBE_BINDING_MIME } = await import("./cubeBinding");
 
 const layerDataset: Dataset = {
   id: "layer-dataset",
@@ -342,7 +341,7 @@ describe("implemented chart template cards", () => {
     expect(chart.renderedContent).toContain('width="18"');
   });
 
-  it("keeps native encodings, Cube slots, and Series synchronized after panel edits", () => {
+  it("keeps native encodings and Series synchronized after panel edits", () => {
     const dataset: Dataset = {
       id: "channel-resolution-line",
       name: "channel-resolution-line.csv",
@@ -367,16 +366,7 @@ describe("implemented chart template cards", () => {
       },
       series: { field: "person", type: "nominal" },
       seriesFields: [{ field: "person", type: "nominal" }],
-      cubeBinding: {
-        version: 1,
-        sourceId: `cube:${dataset.id}`,
-        slots: {
-          x: { kind: "dimension", dimensionId: "time", memberIds: ["2026-01"] },
-          y: { kind: "measure", measureId: "weight" },
-          series: { kind: "dimension", dimensionId: "person" },
-        },
-        aggregation: { weight: "sum" },
-      },
+      aggregations: { y: "sum" },
     };
     const store = useCanvasStore(ref(null));
     store.relationshipStore.dispatch({ type: "clear" });
@@ -387,31 +377,25 @@ describe("implemented chart template cards", () => {
 
     store.setChartEncoding("y", "water");
     expect(chart.chartSpec?.encodings.y?.field).toBe("water");
-    expect(chart.chartSpec?.cubeBinding?.slots.y).toEqual({ kind: "measure", measureId: "water" });
-    expect(chart.chartSpec?.cubeBinding?.aggregation).toBeUndefined();
+    expect(chart.chartSpec?.aggregations).toBeUndefined();
 
     store.setChartEncoding("y", "time");
     expect(chart.chartSpec?.encodings.y?.field).toBe("water");
-    expect(store.importNotice.value).toContain("already bound to X axis");
+    expect(store.importNotice.value).toContain("multiple data channels");
 
     store.setChartEncoding("x", "person");
     expect(chart.chartSpec?.encodings.x?.field).toBe("person");
-    expect(chart.chartSpec?.cubeBinding?.slots.x).toEqual({ kind: "dimension", dimensionId: "person" });
     expect(chart.chartSpec?.series).toBeUndefined();
     expect(chart.chartSpec?.seriesFields).toBeUndefined();
-    expect(chart.chartSpec?.cubeBinding?.slots.series).toBeUndefined();
     expect(chart.renderedContent).toBeNull();
 
-    store.setCubeChannelSelection("x", "person", ["A"]);
-    expect(chart.chartSpec?.cubeBinding?.slots.x).toEqual({
-      kind: "dimension",
-      dimensionId: "person",
-      memberIds: ["A"],
+    store.setValueFilters({
+      person: { field: "person", values: ["A"] },
     });
     expect(chart.chartSpec?.valueFilters?.person).toEqual(["A"]);
   });
 
-  it("resolves a Cartesian measure-set drop to the one visible axis field", () => {
+  it("binds one CSV field to the visible Cartesian axis", () => {
     const dataset: Dataset = {
       id: "axis-measure-set",
       name: "axis-measure-set.csv",
@@ -435,14 +419,10 @@ describe("implemented chart template cards", () => {
     store.selectedIds.value = [chart.id];
     store.axisBindingTarget.value = { nodeId: chart.id, channel: "y" };
 
-    store.bindMarkField("weight", "sum", {
-      kind: "measure-set",
-      measureIds: ["weight", "water"],
-    });
+    store.bindMarkField("weight", "sum");
 
     expect(chart.chartSpec?.encodings.y?.field).toBe("weight");
-    expect(chart.chartSpec?.cubeBinding?.slots.y).toEqual({ kind: "measure", measureId: "weight" });
-    expect(chart.chartSpec?.cubeBinding?.aggregation).toEqual({ weight: "sum" });
+    expect(chart.chartSpec?.aggregations).toEqual({ y: "sum" });
   });
 
   it("binds multiple Y measures atomically as a derived Multi-Line series", () => {
@@ -476,18 +456,13 @@ describe("implemented chart template cards", () => {
     store.selectedIds.value = [chart.id];
     store.axisBindingTarget.value = { nodeId: chart.id, channel: "y" };
 
-    store.setCubeChannelSelection("y", "__measures__", ["weight", "water", "fat", "muscle"]);
+    store.setValueSeriesFields(["weight", "water", "fat", "muscle"]);
 
-    expect(chart.chartSpec?.cubeBinding?.slots.y).toEqual({
-      kind: "measure-set",
-      measureIds: ["weight", "water", "fat", "muscle"],
-    });
-    expect(chart.chartSpec?.cubeBinding?.slots.series).toEqual({ kind: "value-series", valueSlot: "y" });
-    expect(chart.chartSpec?.encodings.y).toBeUndefined();
-    expect(chart.chartSpec?.series).toBeUndefined();
-    expect(chart.chartSpec?.cubeBinding?.unresolvedDimensions).toEqual([
-      { dimensionId: "person", policy: "rollup" },
+    expect(chart.chartSpec?.valueFields?.map((encoding) => encoding.field)).toEqual([
+      "weight", "water", "fat", "muscle",
     ]);
+    expect(chart.chartSpec?.encodings.y).toEqual({ field: "weight", type: "quantitative" });
+    expect(chart.chartSpec?.series).toBeUndefined();
     expect(chart.chartSpec?.dimensionRecommendations).toContainEqual(expect.objectContaining({
       field: "person",
       strategy: "facet",
@@ -528,14 +503,6 @@ describe("implemented chart template cards", () => {
         datasetId: dataset.id,
         encodings: { color: { field: "component", type: "nominal" }, x: { field: "component", type: "nominal" } },
         angleFields: [{ field: "weight", type: "quantitative" }],
-        cubeBinding: {
-          version: 1,
-          sourceId: `cube:${dataset.id}`,
-          slots: {
-            theta: { kind: "measure", measureId: "weight" },
-            slice: { kind: "dimension", dimensionId: "component" },
-          },
-        },
       },
       children: [],
     };
@@ -547,14 +514,13 @@ describe("implemented chart template cards", () => {
     store.axisBindingTarget.value = { nodeId: chart.id, channel: "angle" };
 
     store.setChartEncoding("angle", "fat");
-    expect(chart.chartSpec?.angleFields).toEqual([{ field: "fat", type: "quantitative" }]);
-    expect(chart.chartSpec?.cubeBinding?.slots.theta).toEqual({ kind: "measure", measureId: "fat" });
-    expect(chart.renderedContent).toContain('data-theta-fields="fat"');
+    expect(chart.chartSpec?.angleFields).toBeUndefined();
+    expect(chart.chartSpec?.encodings.angle).toEqual({ field: "fat", type: "quantitative" });
+    expect(chart.renderedContent).toContain('data-category-key="water"');
 
     store.setChartEncoding("color", "person");
     expect(chart.chartSpec?.encodings.color?.field).toBe("person");
     expect(chart.chartSpec?.encodings.x?.field).toBe("person");
-    expect(chart.chartSpec?.cubeBinding?.slots.slice).toEqual({ kind: "dimension", dimensionId: "person" });
   });
 });
 
@@ -787,11 +753,11 @@ describe("generic Layer composition", () => {
   });
 });
 
-describe("Cube to Pie binding", () => {
-  it("binds Cube measures to independent Theta and R drop zones", async () => {
+describe("CSV to Pie binding", () => {
+  it("binds CSV fields to independent Theta, R, and slice channels", () => {
     const dataset: Dataset = {
-      id: "cube-pie-dataset",
-      name: "cube-pie.csv",
+      id: "csv-pie-dataset",
+      name: "csv-pie.csv",
       columns: [
         { name: "person", type: "nominal" },
         { name: "time", type: "temporal" },
@@ -808,7 +774,7 @@ describe("Cube to Pie binding", () => {
     };
     const pieNode: CanvasGroupNode = {
       kind: "group",
-      id: "cube-pie",
+      id: "csv-pie",
       name: "Pie Chart",
       x: 120,
       y: 80,
@@ -837,63 +803,17 @@ describe("Cube to Pie binding", () => {
     useDatasetStore().datasets.value = [dataset];
     store.canvasNodes.value = [pieNode];
     store.selectedIds.value = [pieNode.id];
-    const dropBinding = async (
-      payload: Parameters<typeof beginCubeBindingDrag>[0],
-      localPoint: { x: number; y: number },
-      expectedType: "polar-axis" | "polar-slice",
-      expectedChannel: "angle" | "radius",
-    ) => {
-      const serialized = beginCubeBindingDrag(payload);
-      const dataTransfer = {
-        dropEffect: "none",
-        effectAllowed: "copy",
-        getData: (type: string) => type === CUBE_BINDING_MIME ? serialized : "",
-      } as unknown as DataTransfer;
-      const dragEvent = {
-        clientX: pieNode.x + localPoint.x,
-        clientY: pieNode.y + localPoint.y,
-        dataTransfer,
-        preventDefault() {},
-      } as unknown as DragEvent;
-      store.onCanvasDragOver(dragEvent);
-      expect(store.activeDataBindingDropZone.value?.compatible).toBe(true);
-      expect(store.activeDataBindingDropZone.value?.type).toBe(expectedType);
-      expect(store.activeDataBindingDropZone.value?.channel).toBe(expectedChannel);
-      await store.onCanvasDrop(dragEvent);
-      if (expectedType === "polar-axis") {
-        expect(store.axisBindingTarget.value).toEqual({
-          nodeId: pieNode.id,
-          channel: expectedChannel,
-        });
-      }
-    };
+    store.axisBindingTarget.value = { nodeId: pieNode.id, channel: "angle" };
+    store.setPieAngleFields(["weight"]);
+    store.bindPolarRadiusField("radius");
+    store.setChartEncoding("color", "component");
 
-    await dropBinding(
-      { kind: "measure-set", measureIds: ["weight"] },
-      { x: 160, y: 166 },
-      "polar-axis",
-      "angle",
-    );
-    await dropBinding(
-      { kind: "measure-set", measureIds: ["radius"] },
-      { x: 190, y: 90 },
-      "polar-axis",
-      "radius",
-    );
-    await dropBinding({
-      kind: "dimension",
-      dimensionId: "component",
-      memberIds: ["water", "fat", "muscle", "minerals"],
-    }, { x: 160, y: 90 }, "polar-slice", "angle");
-    expect(pieNode.chartSpec?.cubeBinding?.slots.theta).toEqual({ kind: "measure", measureId: "weight" });
-    expect(pieNode.chartSpec?.cubeBinding?.slots.radius).toEqual({ kind: "measure", measureId: "radius" });
-    expect(pieNode.chartSpec?.cubeBinding?.slots.slice).toEqual({
-      kind: "dimension",
-      dimensionId: "component",
-      memberIds: ["water", "fat", "muscle", "minerals"],
-    });
+    expect(pieNode.chartSpec?.angleFields).toBeUndefined();
+    expect(pieNode.chartSpec?.encodings.angle).toEqual({ field: "weight", type: "quantitative" });
+    expect(pieNode.chartSpec?.encodings.radius).toEqual({ field: "radius", type: "quantitative" });
+    expect(pieNode.chartSpec?.encodings.color).toEqual({ field: "component", type: "nominal" });
     expect(pieNode.renderedContent).toContain(
-      'data-angle-fields="weight"',
+      'data-category-key="water"',
     );
     expect(pieNode.renderedContent).toContain('data-radius-field="radius"');
     expect(pieNode.renderedContent).toContain('data-radius-value="10"');
@@ -901,7 +821,7 @@ describe("Cube to Pie binding", () => {
     expect(pieNode.renderedContent?.match(/data-mark-role="arc"/g)).toHaveLength(4);
   });
 
-  it("keeps the Donut R selector synchronized with the Cube radius slot", () => {
+  it("keeps the Donut R selector synchronized with its CSV encoding", () => {
     const dataset: Dataset = {
       id: "pie-radius-store",
       name: "pie-radius-store.csv",
@@ -929,11 +849,6 @@ describe("Cube to Pie binding", () => {
         chartType: "DonutChart",
         datasetId: dataset.id,
         encodings: {},
-        cubeBinding: {
-          version: 1,
-          sourceId: "cube:pie-radius-store",
-          slots: { theta: { kind: "measure", measureId: "water" } },
-        },
         angleFields: [
           { field: "water", type: "quantitative" },
           { field: "fat", type: "quantitative" },
@@ -954,15 +869,13 @@ describe("Cube to Pie binding", () => {
 
     store.bindPolarRadiusField("radius");
     expect(pieNode.chartSpec?.encodings.radius).toEqual({ field: "radius", type: "quantitative" });
-    expect(pieNode.chartSpec?.cubeBinding?.slots.radius).toEqual({ kind: "measure", measureId: "radius" });
 
     store.clearPolarRadiusField();
     expect(pieNode.chartSpec?.encodings.radius).toBeUndefined();
-    expect(pieNode.chartSpec?.cubeBinding?.slots.radius).toBeUndefined();
   });
 });
 
-describe("Cube to Cartesian axis binding", () => {
+describe("CSV field binding", () => {
   it("upgrades Single and Divergent Bar charts with a category dimension", () => {
     const dataset: Dataset = {
       id: "bar-upgrade-dataset",
@@ -1053,8 +966,8 @@ describe("Cube to Cartesian axis binding", () => {
 
   it("filters Line, Scatterplot, Bar, and Matrix by partial person/date selections", () => {
     const dataset: Dataset = {
-      id: "cube-filter-dataset",
-      name: "cube-filter.csv",
+      id: "csv-filter-dataset",
+      name: "csv-filter.csv",
       columns: [
         { name: "person", type: "nominal" },
         { name: "time", type: "temporal" },
@@ -1110,7 +1023,7 @@ describe("Cube to Cartesian axis binding", () => {
       store.selectedIds.value = [chart.id];
       store.axisBindingTarget.value = { nodeId: chart.id, channel: "x" };
 
-      store.setCubeValueFilters({
+      store.setValueFilters({
         person: { field: "person", values: selectedPeople },
         date: { field: "time", values: selectedDates },
       });
@@ -1123,253 +1036,6 @@ describe("Cube to Cartesian axis binding", () => {
     });
   });
 
-  it("binds Cube dimensions to Matrix X/Y through column/row encodings", async () => {
-    const dataset: Dataset = {
-      id: "cube-matrix-dataset",
-      name: "cube-matrix.csv",
-      columns: [
-        { name: "person", type: "nominal" },
-        { name: "category", type: "nominal" },
-        { name: "weight_kg", type: "quantitative" },
-      ],
-      rows: [
-        { person: "P1", category: "A", weight_kg: "88" },
-        { person: "P2", category: "B", weight_kg: "84" },
-      ],
-    };
-    const chart = lineChart("cube-matrix", 120, false);
-    chart.y = 80;
-    chart.width = 320;
-    chart.height = 180;
-    chart.coordinateGuide = {
-      type: "Cartesian",
-      origin: { x: 0, y: 180 },
-      xDirection: 1,
-      yDirection: -1,
-    };
-    chart.chartSpec = {
-      chartType: "MatrixDiagram",
-      datasetId: dataset.id,
-      encodings: {},
-    };
-    chart.renderedContent = null;
-    const canvasRef = ref({
-      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 800 }),
-      querySelectorAll: () => [],
-    } as unknown as HTMLElement);
-    const store = useCanvasStore(canvasRef);
-    store.relationshipStore.dispatch({ type: "clear" });
-    useDatasetStore().datasets.value = [dataset];
-    store.canvasNodes.value = [chart];
-
-    const dropField = async (payload: Parameters<typeof beginCubeBindingDrag>[0], clientX: number, clientY: number) => {
-      const serialized = beginCubeBindingDrag(payload);
-      const dataTransfer = {
-        dropEffect: "none",
-        effectAllowed: "copy",
-        getData: (type: string) => type === CUBE_BINDING_MIME ? serialized : "",
-      } as unknown as DataTransfer;
-      const dragEvent = { clientX, clientY, dataTransfer, preventDefault() {} } as unknown as DragEvent;
-      store.onCanvasDragOver(dragEvent);
-      expect(store.activeDataBindingDropZone.value?.compatible).toBe(true);
-      await store.onCanvasDrop(dragEvent);
-    };
-
-    await dropField({ kind: "dimension", dimensionId: "person", memberIds: ["P1", "P2"] }, chart.x + chart.width / 2, chart.y + chart.height);
-    expect(chart.chartSpec?.encodings.x?.field).toBe("person");
-    expect(chart.chartSpec?.encodings.column?.field).toBe("person");
-    expect(chart.chartSpec?.cubeBinding?.slots.column).toEqual({
-      kind: "dimension",
-      dimensionId: "person",
-      memberIds: ["P1", "P2"],
-    });
-
-    await dropField({ kind: "dimension", dimensionId: "category", memberIds: ["A", "B"] }, chart.x, chart.y + chart.height / 2);
-    expect(chart.chartSpec?.encodings.y?.field).toBe("category");
-    expect(chart.chartSpec?.encodings.row?.field).toBe("category");
-    expect(chart.chartSpec?.cubeBinding?.slots.row).toEqual({
-      kind: "dimension",
-      dimensionId: "category",
-      memberIds: ["A", "B"],
-    });
-    expect(chart.renderedContent).toContain('data-chart-type="matrix"');
-    expect(chart.chartSpec?.scales?.x?.type).toBe("point");
-    expect(chart.chartSpec?.scales?.y?.type).toBe("point");
-
-    const initialPlotWidth = chart.chartSpec?.plotArea?.width ?? 0;
-    store.onCoordinateAxisScalePointerDown(
-      chart,
-      "x",
-      pointerEvent(chart.x + chart.width, chart.y + chart.height),
-    );
-    listeners.get("pointermove")?.(
-      pointerEvent(chart.x + chart.width + 48, chart.y + chart.height),
-    );
-    listeners.get("pointerup")?.(
-      pointerEvent(chart.x + chart.width + 48, chart.y + chart.height),
-    );
-    expect(chart.coordinateGuide?.type === "Cartesian" && chart.coordinateGuide.xScale).toBeGreaterThan(1);
-    expect(chart.chartSpec?.plotArea?.width).toBeGreaterThan(initialPlotWidth);
-  });
-
-  it("selects an unselected chart on dragover and binds person to its X axis", async () => {
-    const dataset: Dataset = {
-      id: "cube-axis-dataset",
-      name: "cube-axis.csv",
-      columns: [
-        { name: "person", type: "nominal" },
-        { name: "time", type: "temporal" },
-        { name: "weight_kg", type: "quantitative" },
-      ],
-      rows: [
-        { person: "person1", time: "2025-01-01", weight_kg: "88" },
-        { person: "person2", time: "2025-02-01", weight_kg: "84" },
-      ],
-    };
-    const chart = lineChart("cube-line", 120, false);
-    chart.y = 80;
-    chart.width = 320;
-    chart.height = 180;
-    chart.coordinateGuide = {
-      type: "Cartesian",
-      origin: { x: 0, y: 180 },
-      xDirection: 1,
-      yDirection: -1,
-    };
-    chart.chartSpec = {
-      chartType: "LineGraph",
-      datasetId: dataset.id,
-      encodings: {
-        x: { field: "time", type: "temporal" },
-        y: { field: "weight_kg", type: "quantitative" },
-      },
-    };
-    const canvasRef = ref({
-      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 800 }),
-      querySelectorAll: () => [],
-    } as unknown as HTMLElement);
-    const store = useCanvasStore(canvasRef);
-    store.relationshipStore.dispatch({ type: "clear" });
-    useDatasetStore().datasets.value = [dataset];
-    store.canvasNodes.value = [chart];
-    store.selectedIds.value = [];
-    const serialized = beginCubeBindingDrag({
-      kind: "dimension",
-      dimensionId: "person",
-      memberIds: ["person1", "person2"],
-    });
-    const dataTransfer = {
-      dropEffect: "none",
-      effectAllowed: "copy",
-      getData: (type: string) => type === CUBE_BINDING_MIME ? serialized : "",
-    } as unknown as DataTransfer;
-    const dragEvent = {
-      clientX: chart.x + chart.width / 2,
-      clientY: chart.y + chart.height,
-      dataTransfer,
-      preventDefault() {},
-    } as unknown as DragEvent;
-
-    store.onCanvasDragOver(dragEvent);
-
-    expect(store.selectedIds.value).toEqual([chart.id]);
-    expect(store.activeDataBindingDropZone.value).toMatchObject({
-      type: "cartesian-axis",
-      targetNodeId: chart.id,
-      channel: "x",
-      fieldName: "person",
-      compatible: true,
-    });
-
-    await store.onCanvasDrop(dragEvent);
-
-    expect(chart.chartSpec?.encodings.x).toEqual({
-      field: "person",
-      type: "nominal",
-    });
-    expect(chart.chartSpec?.cubeBinding?.slots.x).toEqual({
-      kind: "dimension",
-      dimensionId: "person",
-      memberIds: ["person1", "person2"],
-    });
-    expect(store.selectedIds.value).toEqual([chart.id]);
-  });
-
-  it("binds the first available weight metric after date is already on X", async () => {
-    const dataset: Dataset = {
-      id: "cube-weight-dataset",
-      name: "cube-weight.csv",
-      columns: [
-        { name: "person", type: "nominal" },
-        { name: "time", type: "temporal" },
-        { name: "weight_kg", type: "quantitative" },
-        { name: "water_kg", type: "quantitative" },
-      ],
-      rows: [
-        { person: "person1", time: "2025-01-01", weight_kg: "88", water_kg: "38" },
-        { person: "person2", time: "2025-01-01", weight_kg: "84", water_kg: "36" },
-      ],
-    };
-    const chart = lineChart("cube-weight-line", 120, false);
-    chart.y = 80;
-    chart.width = 320;
-    chart.height = 180;
-    chart.coordinateGuide = {
-      type: "Cartesian",
-      origin: { x: 0, y: 180 },
-      xDirection: 1,
-      yDirection: -1,
-    };
-    chart.chartSpec = {
-      chartType: "LineGraph",
-      datasetId: dataset.id,
-      encodings: { x: { field: "time", type: "temporal" } },
-    };
-    const canvasRef = ref({
-      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 800 }),
-      querySelectorAll: () => [],
-    } as unknown as HTMLElement);
-    const store = useCanvasStore(canvasRef);
-    store.relationshipStore.dispatch({ type: "clear" });
-    useDatasetStore().datasets.value = [dataset];
-    store.canvasNodes.value = [chart];
-    store.selectedIds.value = [chart.id];
-    const serialized = beginCubeBindingDrag({
-      kind: "measure-set",
-      measureIds: ["weight_kg"],
-    });
-    const dataTransfer = {
-      dropEffect: "none",
-      effectAllowed: "copy",
-      getData: (type: string) => type === CUBE_BINDING_MIME ? serialized : "",
-    } as unknown as DataTransfer;
-    const dragEvent = {
-      clientX: chart.x,
-      clientY: chart.y + chart.height / 2,
-      dataTransfer,
-      preventDefault() {},
-    } as unknown as DragEvent;
-
-    store.onCanvasDragOver(dragEvent);
-    expect(store.activeDataBindingDropZone.value).toMatchObject({
-      type: "cartesian-axis",
-      targetNodeId: chart.id,
-      channel: "y",
-      fieldName: "weight_kg",
-      compatible: true,
-    });
-
-    await store.onCanvasDrop(dragEvent);
-    expect(chart.chartSpec?.encodings.x?.field).toBe("time");
-    expect(chart.chartSpec?.encodings.y).toEqual({
-      field: "weight_kg",
-      type: "quantitative",
-    });
-    expect(chart.chartSpec?.cubeBinding?.slots.y).toEqual({
-      kind: "measure",
-      measureId: "weight_kg",
-    });
-  });
 });
 
 describe("dimension overflow decisions", () => {

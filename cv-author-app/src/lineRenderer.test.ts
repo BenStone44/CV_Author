@@ -45,16 +45,26 @@ function createChartSpec(): ChartSpec {
 }
 
 describe("Case 1 deterministic line chart", () => {
-  it("ranks person as the stable series field", () => {
+  it("keeps both a business dimension and row identifier as valid series repairs", () => {
     const candidates = scoreSeriesCandidates(loadCase1Dataset(), createChartSpec());
+    const person = candidates.find((candidate) => candidate.field === "person");
+    const rowId = candidates.find((candidate) => candidate.field === "id");
 
-    expect(candidates[0]).toMatchObject({
+    expect(person).toMatchObject({
       field: "person",
       groupCount: 5,
       averageGroupSize: 8,
       coverage: 1,
       xUniqueness: 1,
     });
+    expect(rowId).toMatchObject({
+      field: "id",
+      groupCount: 40,
+      averageGroupSize: 1,
+      coverage: 1,
+      xUniqueness: 1,
+    });
+    expect(person?.score).toBe(rowId?.score);
   });
 
   it("renders five series with eight time-ordered rows each", () => {

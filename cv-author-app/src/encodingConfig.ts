@@ -1,6 +1,5 @@
 import type { ChartSpec, ChartEncodingChannel, DataColumnType } from "./types";
-import type { CubeBindingSource } from "./cubeModel";
-import { getChartTemplateContract, normalizeBarChartVariant, normalizeChartTemplate, semanticSlotForChannel } from "./chartTemplates";
+import { getChartTemplateContract, normalizeBarChartVariant, normalizeChartTemplate } from "./chartTemplates";
 
 export type EncodingChannelConfig = {
   channel: ChartEncodingChannel;
@@ -49,16 +48,15 @@ export type PolarAxisRole = {
 };
 
 export function resolvedSeriesField(spec: ChartSpec) {
-  const cubeSeries = spec.cubeBinding?.slots.series;
   return spec.series?.field
     ?? spec.seriesFields?.[0]?.field
     ?? (spec.encodings.color?.type === "nominal" ? spec.encodings.color.field : undefined)
-    ?? (cubeSeries?.kind === "dimension" ? cubeSeries.dimensionId : "");
+    ?? "";
 }
 
 export function hasDerivedValueSeries(spec: ChartSpec, valueSlot: "y" | "value" | "theta" = "y") {
-  const source = spec.cubeBinding?.slots.series;
-  return source?.kind === "value-series" && source.valueSlot === valueSlot;
+  if (valueSlot === "theta" || valueSlot === "value") return (spec.angleFields?.length ?? 0) > 1;
+  return (spec.valueFields?.length ?? 0) > 1;
 }
 
 export function resolveChartTemplateVariant(spec: ChartSpec): ChartTemplateVariant {
@@ -71,23 +69,19 @@ export function resolveChartTemplateVariant(spec: ChartSpec): ChartTemplateVaria
 }
 
 export function resolvedPolarRadiusMode(spec: ChartSpec): PolarRadiusBindingMode {
-  if (spec.cubeBinding?.slots.radius || spec.encodings.radius) return "mapped";
+  if (spec.encodings.radius) return "mapped";
   return "static";
 }
 
 export function resolvedPolarAxisRoles(spec: ChartSpec, field: string): PolarAxisRole[] {
   const template = normalizeChartTemplate(spec.chartType);
   if (template !== "pie" && template !== "donut") return [];
-  const sourceIds = (source: CubeBindingSource | undefined) => {
-    if (source?.kind === "measure") return [source.measureId];
-    if (source?.kind === "measure-set") return source.measureIds;
-    return [];
-  };
-  const theta = spec.cubeBinding?.slots.theta ?? spec.cubeBinding?.slots.value;
-  const radius = spec.cubeBinding?.slots.radius;
+  const thetaFields = spec.angleFields?.map((encoding) => encoding.field)
+    ?? [spec.encodings.angle?.field ?? spec.encodings.y?.field].filter((item): item is string => !!item);
+  const radiusField = spec.encodings.radius?.field;
   return [
-    ...(sourceIds(theta).includes(field) ? [{ channel: "angle" as const, label: "Theta" as const }] : []),
-    ...(sourceIds(radius).includes(field) ? [{ channel: "radius" as const, label: "R" as const }] : []),
+    ...(thetaFields.includes(field) ? [{ channel: "angle" as const, label: "Theta" as const }] : []),
+    ...(radiusField === field ? [{ channel: "radius" as const, label: "R" as const }] : []),
   ];
 }
 
@@ -182,18 +176,14 @@ function nativeEncodingFields(spec: ChartSpec, channel: ChartEncodingChannel) {
       spec.encodings.y?.field,
     ];
   }
+  if (channel === "y" && (template === "line" || template === "area") && spec.valueFields?.length) {
+    return spec.valueFields.map((encoding) => encoding.field);
+  }
   if (channel === "dimensions") return spec.parallelFields?.map((encoding) => encoding.field) ?? [];
   if (channel === "color" && (template === "pie" || template === "donut")) {
     return [spec.encodings.color?.field, spec.encodings.x?.field];
   }
   return [spec.encodings[channel]?.field];
-}
-
-function cubeSourceFields(source: CubeBindingSource | undefined) {
-  if (source?.kind === "dimension") return [source.dimensionId];
-  if (source?.kind === "measure") return [source.measureId];
-  if (source?.kind === "measure-set") return source.measureIds;
-  return [];
 }
 
 function uniqueFields(fields: Array<string | undefined>) {
@@ -210,25 +200,8 @@ export function resolveChartEncodingIssues(spec: ChartSpec): EncodingResolutionI
 
   configs.forEach((config) => {
     const native = uniqueFields(nativeEncodingFields(spec, config.channel));
-    const semanticSlot = config.role === "style" ? null : semanticSlotForChannel(spec.chartType, config.channel);
-    const cube = uniqueFields(cubeSourceFields(semanticSlot ? spec.cubeBinding?.slots[semanticSlot] : undefined));
-    if (native.length && cube.length) {
-      const source = semanticSlot ? spec.cubeBinding?.slots[semanticSlot] : undefined;
-      const sameSource = native.length === cube.length && native.every((field) => cube.includes(field));
-      const nativeMeasureMirror = source?.kind === "measure-set"
-        && native.length === 1
-        && cube.includes(native[0]!);
-      if (!sameSource && !nativeMeasureMirror) {
-        issues.push({
-          code: "conflicting-sources",
-          channels: [config.channel],
-          fields: uniqueFields([...native, ...cube]),
-          message: `${config.label} resolves to different native and Cube sources.`,
-        });
-      }
-    }
     if (config.role !== "style") {
-      resolvedDataChannels.push({ channel: config.channel, fields: native.length ? native : cube });
+      resolvedDataChannels.push({ channel: config.channel, fields: native });
     }
   });
 
@@ -237,19 +210,9 @@ export function resolveChartEncodingIssues(spec: ChartSpec): EncodingResolutionI
     ...(spec.seriesFields?.map((encoding) => encoding.field) ?? []),
     spec.encodings.color?.type === "nominal" ? spec.encodings.color.field : undefined,
   ]);
-  const seriesCube = uniqueFields(cubeSourceFields(spec.cubeBinding?.slots.series));
   const resolvesLineSeries = normalizeChartTemplate(spec.chartType) === "line";
-  if (resolvesLineSeries && seriesNative.length && seriesCube.length && (seriesNative.length !== seriesCube.length
-    || seriesNative.some((field) => !seriesCube.includes(field)))) {
-    issues.push({
-      code: "conflicting-sources",
-      channels: ["series"],
-      fields: uniqueFields([...seriesNative, ...seriesCube]),
-      message: "Series resolves to different native and Cube sources.",
-    });
-  }
-  if (resolvesLineSeries && resolveChartTemplateVariant(spec) === "line-multi") {
-    resolvedDataChannels.push({ channel: "series", fields: seriesNative.length ? seriesNative : seriesCube });
+  if (resolvesLineSeries && resolveChartTemplateVariant(spec) === "line-multi" && !hasDerivedValueSeries(spec)) {
+    resolvedDataChannels.push({ channel: "series", fields: seriesNative });
   }
 
   const owners = new Map<string, Array<ChartEncodingChannel | "series">>();
@@ -272,19 +235,13 @@ export function resolveChartEncodingIssues(spec: ChartSpec): EncodingResolutionI
 export function resolvedEncodingField(spec: ChartSpec, channel: ChartEncodingChannel) {
   const template = normalizeChartTemplate(spec.chartType);
   if (channel === "y" && (template === "line" || template === "area")) {
-    const source = spec.cubeBinding?.slots.y;
-    if (source?.kind === "measure") return source.measureId;
-    if (source?.kind === "measure-set") return source.measureIds[0] ?? "";
+    if (spec.valueFields?.length) return spec.valueFields[0]?.field ?? "";
   }
   if (channel === "angle" && (normalizeChartTemplate(spec.chartType) === "pie" || normalizeChartTemplate(spec.chartType) === "donut")) {
-    const source = spec.cubeBinding?.slots.theta ?? spec.cubeBinding?.slots.value;
-    if (source?.kind === "measure") return source.measureId;
-    if (source?.kind === "measure-set") return source.measureIds[0] ?? "";
+    if (spec.angleFields?.length) return spec.angleFields[0]?.field ?? "";
   }
   if (channel === "radius" && (normalizeChartTemplate(spec.chartType) === "pie" || normalizeChartTemplate(spec.chartType) === "donut")) {
-    const source = spec.cubeBinding?.slots.radius;
-    if (source?.kind === "measure") return source.measureId;
-    if (source?.kind === "measure-set") return source.measureIds[0] ?? "";
+    return spec.encodings.radius?.field ?? "";
   }
   if (channel === "column") return spec.encodings.column?.field ?? spec.encodings.x?.field ?? "";
   if (channel === "row") return spec.encodings.row?.field ?? spec.encodings.y?.field ?? "";

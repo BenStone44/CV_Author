@@ -89,28 +89,10 @@ import {
   hasRequiredChartEncodings,
   normalizeBarChartVariant,
   normalizeChartTemplate,
-  semanticSlotForChannel,
 } from "./chartTemplates";
 import { prepareChartData, rowMatchesChartFilters } from "./chartDataPipeline";
-import {
-  endCubeBindingDrag,
-  getActiveCubeBinding,
-  readCubeBinding,
-  type CubeBindingPayload,
-} from "./cubeBinding";
-import {
-  cubeBindingMatchesResult,
-  bindCubeSourceToSlot,
-  cubeResultFromDataset,
-  cubeBindingMeasureIds,
-  withCubeSeriesColor,
-  unbindCubeSlot,
-  type CubeDimensionSelection,
-  type CubeResult,
-  type CubeValueSelection,
-} from "./cubeModel";
+import { csvRowKey } from "./csvDataEngine";
 import { polarAngleSpanFromPoint } from "./PolarCoordinateSystem";
-import { createCartesianAxisModel } from "./CartesianCoordinateSystem";
 import { advancedTemplateDefinitions } from "./advancedChartCards";
 import { withD3GalleryThumbnail } from "./d3GalleryThumbnails";
 import {
@@ -812,17 +794,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const encoding = spec.encodings[channel];
     if (encoding) return encoding;
     if (channel === "angle") {
-      const source = spec.cubeBinding?.slots.theta ?? spec.cubeBinding?.slots.value;
-      if (source?.kind === "measure") return { field: source.measureId, type: "quantitative" as const };
-      if (source?.kind === "measure-set") {
-        const field = source.measureIds[0];
-        return field ? { field, type: "quantitative" as const } : undefined;
-      }
+      return spec.angleFields?.[0];
     }
-    if (channel === "radius") {
-      const source = spec.cubeBinding?.slots.radius;
-      if (source?.kind === "measure") return { field: source.measureId, type: "quantitative" as const };
-    }
+    if (channel === "radius") return spec.encodings.radius;
     return undefined;
   }
 
@@ -1220,9 +1194,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const seriesKey = target.getAttribute("data-series-key") ?? undefined;
     const rowTarget = target.hasAttribute("data-row-key") ? target : target.closest("[data-row-key]");
     const rowKey = rowTarget?.getAttribute("data-row-key") ?? undefined;
-    const dataset = node.layerSpec ? getDataset(node.layerSpec.datasetId) : node.chartSpec?.datasetId ? getDataset(node.chartSpec.datasetId) : activeDataset.value;
-    const row = dataset?.rows.find((item) => (dataset.primaryKey ?? []).map((field) => item[field] ?? "").join("|") === rowKey);
-    semanticSelection.value = { nodeId: node.id, role, markGroupId, seriesKey, rowKey, person: row?.person, time: row?.time };
+    semanticSelection.value = { nodeId: node.id, role, markGroupId, seriesKey, rowKey };
     dispatchRelationship({
       type: "select-entity",
       selection: markGroupId && chartRelationships.value.markGroups[markGroupId]
@@ -1888,10 +1860,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const datasetId = node.layerSpec?.datasetId ?? node.chartSpec?.datasetId;
     const dataset = datasetId ? getDataset(datasetId) : null;
     if (!dataset) return [];
-    const preferred = ["water_kg", "fat_kg", "muscle_kg", "minerals_kg"];
-    if (preferred.every((field) => dataset.columns.some((column) => column.name === field && column.type === "quantitative"))) {
-      return preferred;
-    }
     const occupied = new Set([
       node.chartSpec?.encodings.x?.field,
       node.chartSpec?.encodings.y?.field,
@@ -1899,8 +1867,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     ].filter((field): field is string => !!field));
     return dataset.columns
       .filter((column) => column.type === "quantitative" && !occupied.has(column.name))
-      .map((column) => column.name)
-      .slice(0, 4);
+      .map((column) => column.name);
   }
 
   function applyNestedPiesToNode(
@@ -1926,10 +1893,10 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       || !quantitative.has(radiusField)
     ) return false;
     const groupRows = dataset.rows.filter((row) => rowMatchesChartFilters(row, node.chartSpec!));
-    const pointGroupMemberKeys = groupRows.map((row, index) => {
-      const primaryKey = (dataset.primaryKey ?? []).map((field) => row[field] ?? "").join("|");
-      return primaryKey || String(index);
-    });
+    const groupDataset = { ...dataset, rows: groupRows };
+    const pointGroupMemberKeys = groupRows.map((row, index) =>
+      csvRowKey(groupDataset, row, index),
+    );
     const parentRowKeys = parentRowKey === "*"
       ? []
       : Array.from(new Set(pointGroupMemberKeys.length > 0 ? pointGroupMemberKeys : [parentRowKey]));
@@ -2053,9 +2020,10 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     };
     const pointSize = Number(spec.markGroups?.find((group) => group.role === "point")?.sharedConfig.size ?? 4);
     const hitRadius = Math.max(12 / Math.max(viewZoom.value, 0.25), pointSize * Math.max(Math.abs(node.scaleX), Math.abs(node.scaleY)) + 7 / Math.max(viewZoom.value, 0.25));
+    const filteredDataset = { ...dataset, rows };
     return rows.map((row, index) => {
       const center = toWorld(xPosition(row[xEncoding.field] ?? ""), yPosition(row[yEncoding.field] ?? ""));
-      const rowKey = (dataset.primaryKey ?? []).map((field) => row[field] ?? "").join("|") || String(index);
+      const rowKey = csvRowKey(filteredDataset, row, index);
       return { center, rowKey, distance: Math.hypot(point.x - center.x, point.y - center.y) };
     })
       .filter((candidate) => Number.isFinite(candidate.center.x) && Number.isFinite(candidate.center.y) && candidate.distance <= hitRadius)
@@ -2115,280 +2083,139 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function closeAxisBinding() {
     axisBindingTarget.value = null;
   }
-  function cubeSourceForColumn(
-    column: Dataset["columns"][number],
-    payload?: CubeBindingPayload | CubeDimensionSelection | CubeValueSelection,
-  ): CubeDimensionSelection | CubeValueSelection {
-    if (column.type === "quantitative") {
-      return { kind: "measure", measureId: column.name };
-    }
-    return {
-      kind: "dimension",
-      dimensionId: column.name,
-      memberIds: payload?.kind === "dimension"
-        && payload.dimensionId === column.name
-        && payload.memberIds
-        ? [...payload.memberIds]
-        : undefined,
-    };
-  }
-  function cubeBindingWithNativeEncodings(
-    cube: CubeResult,
-    dataset: Dataset,
-    spec: ChartSpec,
-  ) {
-    let binding = spec.cubeBinding;
-    getEncodingChannelConfigsForSpec(spec).forEach((config) => {
-      if (config.role === "style") return;
-      const slot = semanticSlotForChannel(spec.chartType, config.channel);
-      if (!slot || binding?.slots[slot]) return;
-      const field = resolvedEncodingField(spec, config.channel);
-      const column = dataset.columns.find((item) => item.name === field);
-      if (!column) return;
-      binding = bindCubeSourceToSlot(cube, binding, slot, cubeSourceForColumn(column));
-    });
-    if (!binding?.slots.series) {
-      const field = resolvedSeriesField(spec);
-      const column = dataset.columns.find((item) => item.name === field);
-      if (column && column.type !== "quantitative") {
-        binding = bindCubeSourceToSlot(cube, binding, "series", cubeSourceForColumn(column));
-      }
-    }
-    return binding;
-  }
-  function valueFiltersForCubeSource(
-    spec: ChartSpec,
-    dataset: Dataset,
-    source: CubeDimensionSelection | CubeValueSelection,
-  ) {
-    const valueFilters = { ...spec.valueFilters };
-    if (source.kind !== "dimension") return valueFilters;
-    const available = new Set(dataset.rows
-      .map((row) => row[source.dimensionId] ?? "")
-      .filter(Boolean));
-    const selected = Array.from(new Set(source.memberIds ?? []))
-      .filter((memberId) => available.has(memberId));
-    if (selected.length > 0 && selected.length < available.size) {
-      valueFilters[source.dimensionId] = selected;
-    } else {
-      delete valueFilters[source.dimensionId];
-    }
-    return valueFilters;
-  }
-  function bindMarkField(
-    fieldName: string,
-    aggregation?: "sum" | "avg",
-    cubeSource?: CubeBindingPayload | CubeDimensionSelection | CubeValueSelection,
-  ) {
+  function bindMarkField(fieldName: string, aggregation?: "sum" | "avg") {
     const target = axisBindingTarget.value;
     const node = axisBindingNode.value;
     const dataset = axisBindingDataset.value;
     if (!target || !node || !dataset) return;
     const column = dataset.columns.find((item) => item.name === fieldName);
     if (!column) return;
-    const candidateId = node.kind === "leaf" ? node.candidateId : "";
     const mappedChannel = mappedEncodingChannel(node, target.channel);
+    const encodings = { ...node.chartSpec?.encodings };
+    encodings[target.channel] = { field: column.name, type: column.type };
+    encodings[mappedChannel] = { field: column.name, type: column.type };
+    const clearsSeries = node.chartSpec?.series?.field === column.name
+      || node.chartSpec?.seriesFields?.some((encoding) => encoding.field === column.name);
+    const tentativeSpec: ChartSpec = {
+      ...node.chartSpec,
+      chartType: node.chartSpec?.chartType ?? (node.kind === "leaf" ? getCandidate(node.candidateId)?.chartType : undefined) ?? node.name,
+      datasetId: dataset.id,
+      encodings,
+      series: clearsSeries ? undefined : node.chartSpec?.series,
+      seriesFields: clearsSeries ? undefined : node.chartSpec?.seriesFields,
+      valueFields: mappedChannel === "y" ? undefined : node.chartSpec?.valueFields,
+    };
+    const conflict = resolveChartEncodingIssues(tentativeSpec)
+      .find((issue) => issue.code === "duplicate-data-field" && issue.fields.includes(column.name));
+    if (conflict) {
+      setImportNotice(conflict.message);
+      return;
+    }
     pushCanvasHistory();
-    // x/y belong to this atomic mark. Coordinate targets are only used for
-    // scale and direction propagation after a composition has been created.
-    [node].forEach((member) => {
-      member.llmRenderer = null;
-      const memberCandidateId = member.kind === "leaf" ? member.candidateId : candidateId;
-      const clearsSeries = member.chartSpec?.series?.field === column.name
-        || member.chartSpec?.seriesFields?.some((encoding) => encoding.field === column.name)
-        || (member.chartSpec?.encodings.color?.type === "nominal"
-          && member.chartSpec.encodings.color.field === column.name);
-      const series = clearsSeries ? undefined : member.chartSpec?.series;
-      const seriesFields = clearsSeries ? undefined : member.chartSpec?.seriesFields;
-      const aggregations = { ...member.chartSpec?.aggregations };
-      if (aggregation && column.type === "quantitative") {
-        aggregations[target.channel] = aggregation;
-        aggregations[mappedEncodingChannel(member, target.channel)] = aggregation;
-      } else {
-        delete aggregations[target.channel];
-        delete aggregations[mappedEncodingChannel(member, target.channel)];
-      }
-      const semanticSlot = member.chartSpec
-        ? semanticSlotForChannel(member.chartSpec.chartType, mappedEncodingChannel(member, target.channel))
-        : null;
-      const semanticSource = cubeSourceForColumn(column, cubeSource);
-      const valueFilters = valueFiltersForCubeSource(member.chartSpec!, dataset, semanticSource);
-      let cubeBinding = semanticSlot
-        ? bindCubeSourceToSlot(
-          cubeResultFromDataset(dataset),
-          cubeBindingWithNativeEncodings(cubeResultFromDataset(dataset), dataset, member.chartSpec!),
-          semanticSlot,
-          semanticSource,
-          aggregation,
-        )
-        : member.chartSpec?.cubeBinding;
-      if (clearsSeries) {
-        cubeBinding = unbindCubeSlot(
-          cubeResultFromDataset(dataset),
-          cubeBinding,
-          "series",
-        );
-      }
-      const encodings = {
-        ...member.chartSpec?.encodings,
-        [target.channel]: { field: column.name, type: column.type },
-        [mappedEncodingChannel(member, target.channel)]: { field: column.name, type: column.type },
-      };
-      if (clearsSeries && encodings.color?.field === column.name) delete encodings.color;
-      member.chartSpec = {
-        ...member.chartSpec,
-        chartType: member.chartSpec?.chartType ?? getCandidate(memberCandidateId)?.chartType ?? member.name,
-        datasetId: dataset.id,
-        cubeBinding,
-        encodings,
-        aggregations: Object.keys(aggregations).length > 0 ? aggregations : undefined,
-        valueFilters: Object.keys(valueFilters).length > 0 ? valueFilters : undefined,
-        series,
-        seriesFields,
-        dimensionDecisions: undefined,
-        dimensionRecommendations: undefined,
-      };
-      registerChartRelationship(member);
-    });
+    node.llmRenderer = null;
+    const aggregations = { ...node.chartSpec?.aggregations };
+    if (aggregation && column.type === "quantitative") aggregations[mappedChannel] = aggregation;
+    else delete aggregations[mappedChannel];
+    node.chartSpec = {
+      ...tentativeSpec,
+      aggregations: Object.keys(aggregations).length ? aggregations : undefined,
+      scales: undefined,
+      plotArea: undefined,
+      renderer: undefined,
+      dimensionDecisions: undefined,
+      dimensionRecommendations: undefined,
+    };
+    registerChartRelationship(node);
     renderLayerComposition(node);
   }
   function clearMarkField() {
     const target = axisBindingTarget.value;
     const node = axisBindingNode.value;
-    const mappedChannel = node ? mappedEncodingChannel(node, target?.channel ?? "x") : "x";
     if (!target || !node?.chartSpec) return;
-    const semanticSlot = semanticSlotForChannel(node.chartSpec.chartType, mappedChannel);
-    if (!node.chartSpec.encodings[mappedChannel]
-      && !node.chartSpec.encodings[target.channel]
-      && !(semanticSlot && node.chartSpec.cubeBinding?.slots[semanticSlot])) return;
+    const mappedChannel = mappedEncodingChannel(node, target.channel);
+    if (!node.chartSpec.encodings[target.channel] && !node.chartSpec.encodings[mappedChannel]) return;
     pushCanvasHistory();
-    [node].forEach((member) => {
-      if (!member.chartSpec) return;
-      member.llmRenderer = null;
-      const encodings = { ...member.chartSpec.encodings };
-      const aggregations = { ...member.chartSpec.aggregations };
-      const memberMappedChannel = mappedEncodingChannel(member, target.channel);
-      const semanticSlot = semanticSlotForChannel(member.chartSpec.chartType, memberMappedChannel);
-      const dataset = getDataset(member.chartSpec.datasetId);
-      delete encodings[target.channel];
-      delete encodings[memberMappedChannel];
-      delete aggregations[target.channel];
-      delete aggregations[memberMappedChannel];
-      member.chartSpec = {
-        ...member.chartSpec,
-        cubeBinding: semanticSlot && dataset
-          ? unbindCubeSlot(cubeResultFromDataset(dataset), member.chartSpec.cubeBinding, semanticSlot)
-          : member.chartSpec.cubeBinding,
-        encodings,
-        aggregations: Object.keys(aggregations).length > 0 ? aggregations : undefined,
-        scales: undefined,
-        plotArea: undefined,
-        renderer: undefined,
-        dimensionDecisions: undefined,
-        dimensionRecommendations: undefined,
-      };
-      member.renderedContent = null;
-    });
+    const encodings = { ...node.chartSpec.encodings };
+    const aggregations = { ...node.chartSpec.aggregations };
+    delete encodings[target.channel];
+    delete encodings[mappedChannel];
+    delete aggregations[target.channel];
+    delete aggregations[mappedChannel];
+    node.llmRenderer = null;
+    node.chartSpec = {
+      ...node.chartSpec,
+      encodings,
+      aggregations: Object.keys(aggregations).length ? aggregations : undefined,
+      valueFields: mappedChannel === "y" ? undefined : node.chartSpec.valueFields,
+      scales: undefined,
+      plotArea: undefined,
+      renderer: undefined,
+      dimensionDecisions: undefined,
+      dimensionRecommendations: undefined,
+    };
+    node.renderedContent = null;
     renderLayerComposition(node);
   }
   function setAxisBindingAggregation(channel: EncodingChannel, aggregation?: "sum" | "avg") {
     const node = axisBindingNode.value;
     const mappedChannel = node ? mappedEncodingChannel(node, channel) : channel;
-    const encoding = node?.chartSpec?.encodings[mappedChannel];
-    if (!node?.chartSpec || encoding?.type !== "quantitative") return;
-    if (node.chartSpec.aggregations?.[mappedChannel] === aggregation) return;
+    if (!node?.chartSpec || node.chartSpec.encodings[mappedChannel]?.type !== "quantitative") return;
     pushCanvasHistory();
-    [node].forEach((member) => {
-      if (!member.chartSpec) return;
-      const memberChannel = mappedEncodingChannel(member, channel);
-      const aggregations = { ...member.chartSpec.aggregations };
-      if (aggregation) aggregations[memberChannel] = aggregation;
-      else delete aggregations[memberChannel];
-      member.llmRenderer = null;
-      member.chartSpec = {
-        ...member.chartSpec,
-        aggregations: Object.keys(aggregations).length > 0 ? aggregations : undefined,
-        renderer: undefined,
-      };
-      registerChartRelationship(member);
-    });
-    renderLayerComposition(node);
-  }
-  function setCubeValueFilters(filters: Record<string, { field: string; values: string[] }>) {
-    const node = axisBindingNode.value ?? selectedNodes.value.find((item) => !!item.chartSpec);
-    if (!node?.chartSpec) return;
-    const template = normalizeChartTemplate(node.chartSpec.chartType);
-    if (template !== "line" && template !== "scatter" && template !== "matrix" && template !== "bar") return;
-    const next = { ...node.chartSpec.valueFilters };
-    const dataset = getDataset(node.chartSpec.datasetId);
-    const dimensionFields = new Set(dataset ? cubeResultFromDataset(dataset).schema.dimensions.map((dimension) => dimension.id) : []);
-    Object.keys(next).forEach((field) => {
-      if (dimensionFields.has(field)) delete next[field];
-    });
-    Object.values(filters).forEach((filter) => {
-      const availableCount = new Set(dataset?.rows.map((row) => row[filter.field] ?? "").filter(Boolean) ?? []).size;
-      if (filter.values.length > 0 && filter.values.length < availableCount) {
-        next[filter.field] = Array.from(new Set(filter.values));
-      }
-    });
-    pushCanvasHistory();
-    node.llmRenderer = null;
+    const aggregations = { ...node.chartSpec.aggregations };
+    if (aggregation) aggregations[mappedChannel] = aggregation;
+    else delete aggregations[mappedChannel];
     node.chartSpec = {
       ...node.chartSpec,
-      valueFilters: Object.keys(next).length > 0 ? next : undefined,
+      aggregations: Object.keys(aggregations).length ? aggregations : undefined,
+      renderer: undefined,
+    };
+    renderLayerComposition(node);
+  }
+  function setValueFilters(filters: Record<string, { field: string; values: string[] }>) {
+    const node = axisBindingNode.value ?? selectedNodes.value.find((item) => !!item.chartSpec);
+    const dataset = node?.chartSpec ? getDataset(node.chartSpec.datasetId) : null;
+    if (!node?.chartSpec || !dataset) return;
+    const next: Record<string, string[]> = {};
+    Object.values(filters).forEach(({ field, values }) => {
+      const availableCount = new Set(dataset.rows.map((row) => row[field] ?? "").filter(Boolean)).size;
+      if (values.length > 0 && values.length < availableCount) next[field] = Array.from(new Set(values));
+    });
+    pushCanvasHistory();
+    node.chartSpec = {
+      ...node.chartSpec,
+      valueFilters: Object.keys(next).length ? next : undefined,
       scales: undefined,
       plotArea: undefined,
       renderer: undefined,
     };
-    node.renderedContent = null;
     renderChartNode(node);
   }
   function confirmSeriesField(fieldName: string) {
     setChartSeries(fieldName);
   }
-  function setChartSeries(fieldName: string, memberIds?: string[]) {
+  function setChartSeries(fieldName: string) {
     const node = axisBindingNode.value;
     const dataset = axisBindingDataset.value;
     if (!node?.chartSpec || !dataset) return;
-    if (!fieldName) {
-      clearSeriesBinding();
-      return;
-    }
+    if (!fieldName) return clearSeriesBinding();
     const column = dataset.columns.find((item) => item.name === fieldName);
-    if (!column || (column.type !== "nominal" && column.type !== "temporal")) return;
-    const boundFields = new Set(Object.values(node.chartSpec.encodings).map((encoding) => encoding?.field));
-    if (boundFields.has(column.name)) {
-      setImportNotice(`${column.name} is already bound to another channel.`);
+    if (!column) return;
+    const occupied = Object.values(node.chartSpec.encodings).some((encoding) => encoding?.field === fieldName);
+    if (occupied) {
+      setImportNotice(`${fieldName} is already bound to another channel.`);
       return;
     }
-    const seriesEncoding = { field: column.name, type: column.type };
-    const seriesSource = {
-      kind: "dimension" as const,
-      dimensionId: column.name,
-      memberIds: memberIds ? Array.from(new Set(memberIds)) : undefined,
-    };
-    const valueFilters = valueFiltersForCubeSource(node.chartSpec, dataset, seriesSource);
-    const cubeBinding = bindCubeSourceToSlot(
-      cubeResultFromDataset(dataset),
-      cubeBindingWithNativeEncodings(cubeResultFromDataset(dataset), dataset, node.chartSpec),
-      "series",
-      seriesSource,
-    );
+    const encoding = { field: column.name, type: column.type };
     pushCanvasHistory();
-    node.llmRenderer = null;
     node.chartSpec = {
       ...node.chartSpec,
-      cubeBinding,
       encodings: normalizeChartTemplate(node.chartSpec.chartType) === "line"
         ? lineDataEncodings(node.chartSpec.encodings)
         : node.chartSpec.encodings,
-      series: seriesEncoding,
-      seriesFields: [seriesEncoding],
-      valueFilters: Object.keys(valueFilters).length > 0 ? valueFilters : undefined,
-      dimensionDecisions: {
-        ...node.chartSpec.dimensionDecisions,
-        [column.name]: "series",
-      },
+      series: encoding,
+      seriesFields: [encoding],
+      valueFields: undefined,
+      dimensionDecisions: { ...node.chartSpec.dimensionDecisions, [column.name]: "series" },
       scales: undefined,
       plotArea: undefined,
       renderer: undefined,
@@ -2398,36 +2225,19 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   }
   function clearSeriesBinding() {
     const node = axisBindingNode.value;
-    if (!node?.chartSpec
-      || (!node.chartSpec.series
-        && !node.chartSpec.seriesFields?.length
-        && node.chartSpec.encodings.color?.type !== "nominal"
-        && !node.chartSpec.cubeBinding?.slots.series)) return;
-    const cubeSeries = node.chartSpec.cubeBinding?.slots.series;
-    const seriesField = node.chartSpec.series?.field
-      ?? node.chartSpec.seriesFields?.[0]?.field
-      ?? (node.chartSpec.encodings.color?.type === "nominal" ? node.chartSpec.encodings.color.field : undefined)
-      ?? (cubeSeries?.kind === "dimension" ? cubeSeries.dimensionId : undefined);
-    const dataset = getDataset(node.chartSpec.datasetId);
-    const cubeBinding = dataset
-      ? unbindCubeSlot(cubeResultFromDataset(dataset), node.chartSpec.cubeBinding, "series")
-      : node.chartSpec.cubeBinding;
-    const dimensionDecisions = { ...node.chartSpec.dimensionDecisions };
-    if (seriesField) delete dimensionDecisions[seriesField];
+    if (!node?.chartSpec) return;
+    const field = resolvedSeriesField(node.chartSpec);
+    const decisions = { ...node.chartSpec.dimensionDecisions };
+    if (field) delete decisions[field];
     pushCanvasHistory();
-    node.llmRenderer = null;
     node.chartSpec = {
       ...node.chartSpec,
-      cubeBinding,
-      encodings: node.chartSpec.encodings.color?.type === "nominal"
-        ? lineDataEncodings(node.chartSpec.encodings)
-        : node.chartSpec.encodings,
       series: undefined,
       seriesFields: undefined,
       scales: undefined,
       plotArea: undefined,
       renderer: undefined,
-      dimensionDecisions: Object.keys(dimensionDecisions).length > 0 ? dimensionDecisions : undefined,
+      dimensionDecisions: Object.keys(decisions).length ? decisions : undefined,
       dimensionRecommendations: undefined,
     };
     renderChartNode(node);
@@ -2439,299 +2249,104 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function clearOptionalEncoding(channel: OptionalEncodingChannel) {
     setChartEncoding(channel, "");
   }
-  function setChartEncoding(
-    channel: ChartEncodingChannel,
-    fieldName: string,
-    cubeSource?: CubeDimensionSelection | CubeValueSelection,
-  ) {
+  function setChartEncoding(channel: ChartEncodingChannel, fieldName: string) {
     const node = axisBindingNode.value;
     const dataset = axisBindingDataset.value;
     if (!node?.chartSpec || !dataset) return;
-    const configs = getEncodingChannelConfigsForSpec(node.chartSpec);
-    const mapping = configs.find((item) => item.channel === channel);
+    const config = getEncodingChannelConfigsForSpec(node.chartSpec).find((item) => item.channel === channel);
     const column = fieldName ? dataset.columns.find((item) => item.name === fieldName) : undefined;
-    if (!mapping || (fieldName && (!column || !mapping.accepts.includes(column.type)))) return;
-    if (column && mapping.role !== "style") {
-      const conflict = configs.find((config) => config.channel !== channel
-        && config.role !== "style"
-        && resolvedEncodingField(node.chartSpec!, config.channel) === column.name);
-      const angleConflict = channel !== "angle"
-        && node.chartSpec.angleFields?.some((encoding) => encoding.field === column.name);
-      if (conflict || angleConflict) {
-        setImportNotice(`${column.name} is already bound to ${conflict?.label ?? "Theta"}.`);
-        return;
-      }
-    }
-    if (channel === "x" || channel === "y") {
-      setAxisBindingChannel(channel);
-      if (fieldName) bindMarkField(fieldName, undefined, cubeSource);
+    if (!config || (fieldName && (!column || !config.accepts.includes(column.type)))) return;
+    if (channel === "x" || channel === "y" || channel === "column" || channel === "row") {
+      setAxisBindingChannel(channel === "column" ? "x" : channel === "row" ? "y" : channel);
+      if (fieldName) bindMarkField(fieldName);
       else clearMarkField();
       return;
     }
-    if (channel === "column" || channel === "row") {
-      setAxisBindingChannel(channel === "column" ? "x" : "y");
-      if (fieldName) bindMarkField(fieldName, undefined, cubeSource);
-      else clearMarkField();
-      return;
-    }
-    if (channel === "angle") {
-      setPieAngleFields(fieldName ? [fieldName] : []);
-      return;
-    }
-    if (channel === "radius") {
-      if (fieldName) bindPolarRadiusField(fieldName);
-      else clearPolarRadiusField();
-      return;
-    }
-    if (channel === "color" && (normalizeChartTemplate(node.chartSpec.chartType) === "pie" || normalizeChartTemplate(node.chartSpec.chartType) === "donut")) {
-      const cube = cubeResultFromDataset(dataset);
-      const cubeBinding = column
-        ? bindCubeSourceToSlot(
-          cube,
-          node.chartSpec.cubeBinding,
-          "slice",
-          { kind: "dimension", dimensionId: column.name },
-        )
-        : unbindCubeSlot(cube, node.chartSpec.cubeBinding, "slice");
-      const encodings = { ...node.chartSpec.encodings };
-      if (column) {
-        encodings.color = { field: column.name, type: column.type };
-        encodings.x = { field: column.name, type: column.type };
-      } else {
-        delete encodings.color;
-        delete encodings.x;
-      }
-      pushCanvasHistory();
-      node.llmRenderer = null;
-      node.chartSpec = {
-        ...node.chartSpec,
-        cubeBinding,
-        encodings,
-        scales: undefined,
-        plotArea: undefined,
-        renderer: undefined,
-      };
-      node.renderedContent = null;
-      renderChartNode(node);
-      registerChartRelationship(node);
-      return;
-    }
-    pushCanvasHistory();
-    node.llmRenderer = null;
+    if (channel === "angle") return setPieAngleFields(fieldName ? [fieldName] : []);
+    if (channel === "radius") return fieldName ? bindPolarRadiusField(fieldName) : clearPolarRadiusField();
     const encodings = { ...node.chartSpec.encodings };
     if (column) encodings[channel] = { field: column.name, type: column.type };
     else delete encodings[channel];
-    const semanticSlot = mapping.role === "style"
-      ? null
-      : semanticSlotForChannel(node.chartSpec.chartType, channel);
-    const cube = cubeResultFromDataset(dataset);
-    const semanticSource = column ? cubeSource ?? cubeSourceForColumn(column) : undefined;
-    const cubeBinding = semanticSlot && semanticSource
-      ? bindCubeSourceToSlot(cube, node.chartSpec.cubeBinding, semanticSlot, semanticSource)
-      : semanticSlot
-        ? unbindCubeSlot(cube, node.chartSpec.cubeBinding, semanticSlot)
-        : node.chartSpec.cubeBinding;
-    node.chartSpec = {
-      ...node.chartSpec,
-      cubeBinding,
-      encodings,
-      valueFilters: semanticSource
-        ? (() => {
-          const valueFilters = valueFiltersForCubeSource(node.chartSpec!, dataset, semanticSource);
-          return Object.keys(valueFilters).length > 0 ? valueFilters : undefined;
-        })()
-        : node.chartSpec.valueFilters,
-      scales: undefined,
-      plotArea: undefined,
-      renderer: undefined,
-    };
-    node.renderedContent = null;
+    if (channel === "color" && ["pie", "donut"].includes(normalizeChartTemplate(node.chartSpec.chartType) ?? "")) {
+      if (column) encodings.x = { field: column.name, type: column.type };
+      else delete encodings.x;
+    }
+    pushCanvasHistory();
+    node.chartSpec = { ...node.chartSpec, encodings, scales: undefined, plotArea: undefined, renderer: undefined };
     renderChartNode(node);
     registerChartRelationship(node);
-  }
-  function setCubeChannelSelection(
-    target: ChartEncodingChannel | "series",
-    sourceId: string,
-    memberIds: string[],
-  ) {
-    const node = axisBindingNode.value;
-    const dataset = axisBindingDataset.value;
-    if (!node?.chartSpec || !dataset) return;
-    if (!sourceId || memberIds.length === 0) {
-      if (target === "series") clearSeriesBinding();
-      else setChartEncoding(target, "");
-      return;
-    }
-    const cube = cubeResultFromDataset(dataset);
-    const dimension = cube.schema.dimensions.find((item) => item.id === sourceId);
-    if (dimension) {
-      const selected = Array.from(new Set(memberIds))
-        .filter((memberId) => dimension.members.some((member) => member.id === memberId));
-      if (selected.length === 0) return;
-      if (target === "series") setChartSeries(dimension.id, selected);
-      else setChartEncoding(target, dimension.id, {
-        kind: "dimension",
-        dimensionId: dimension.id,
-        memberIds: selected,
-      });
-      return;
-    }
-    if (sourceId !== "__measures__" || target === "series") return;
-    const available = new Set(cube.schema.measures.map((measure) => measure.id));
-    const selected = Array.from(new Set(memberIds)).filter((measureId) => available.has(measureId));
-    const template = normalizeChartTemplate(node.chartSpec.chartType);
-    const type = node.chartSpec.chartType.replace(/[\s_-]/g, "").toLowerCase();
-    const supportsMeasureSet = target === "y" && (type === "multilinechart"
-      || (template === "area" && (type.includes("stacked") || type.includes("stream") || type.includes("horizon"))));
-    if (supportsMeasureSet) {
-      setValueSeriesFields(selected);
-      return;
-    }
-    setChartEncoding(target, selected[0] ?? "");
   }
   function bindPolarRadiusField(fieldName: string) {
     const node = axisBindingNode.value;
     const dataset = axisBindingDataset.value;
-    const column = dataset?.columns.find((item) => item.name === fieldName);
-    if (!node?.chartSpec || !dataset || !column || column.type !== "quantitative") return;
+    const column = dataset?.columns.find((item) => item.name === fieldName && item.type === "quantitative");
+    if (!node?.chartSpec || !column) return;
     pushCanvasHistory();
-    [node].forEach((member) => {
-      if (!member.chartSpec) return;
-      const cube = cubeResultFromDataset(dataset);
-      const cubeBinding = bindCubeSourceToSlot(
-        cube,
-        member.chartSpec.cubeBinding,
-        "radius",
-        { kind: "measure", measureId: column.name },
-      );
-      member.chartSpec = {
-        ...member.chartSpec,
-        cubeBinding,
-        radiusMode: undefined,
-        componentRadiusFields: undefined,
-        encodings: {
-          ...member.chartSpec.encodings,
-          radius: { field: column.name, type: column.type },
-        },
-        renderer: undefined,
-      };
-      renderChartNode(member);
-    });
+    node.chartSpec = {
+      ...node.chartSpec,
+      encodings: { ...node.chartSpec.encodings, radius: { field: column.name, type: column.type } },
+      radiusMode: undefined,
+      componentRadiusFields: undefined,
+      renderer: undefined,
+    };
+    renderChartNode(node);
   }
   function clearPolarRadiusField() {
     const node = axisBindingNode.value;
-    if (!node?.chartSpec || (!node.chartSpec.encodings.radius && !node.chartSpec.cubeBinding?.slots.radius)) return;
+    if (!node?.chartSpec?.encodings.radius) return;
+    const encodings = { ...node.chartSpec.encodings };
+    delete encodings.radius;
     pushCanvasHistory();
-    [node].forEach((member) => {
-      if (!member.chartSpec) return;
-      const encodings = { ...member.chartSpec.encodings };
-      delete encodings.radius;
-      const memberDataset = getDataset(member.chartSpec.datasetId);
-      const cubeBinding = memberDataset
-        ? unbindCubeSlot(cubeResultFromDataset(memberDataset), member.chartSpec.cubeBinding, "radius")
-        : member.chartSpec.cubeBinding;
-      member.chartSpec = {
-        ...member.chartSpec,
-        cubeBinding,
-        radiusMode: undefined,
-        componentRadiusFields: undefined,
-        encodings,
-        renderer: undefined,
-      };
-      renderChartNode(member);
-    });
+    node.chartSpec = { ...node.chartSpec, encodings, radiusMode: undefined, componentRadiusFields: undefined, renderer: undefined };
+    renderChartNode(node);
   }
   function applyPieAngleFields(node: CanvasNode, dataset: Dataset, fieldNames: string[]) {
     const template = normalizeChartTemplate(node.chartSpec?.chartType ?? "");
     if (!node.chartSpec || (template !== "pie" && template !== "donut")) return 0;
-    const selected = Array.from(new Set(fieldNames))
-      .map((field) => dataset.columns.find((column) => column.name === field))
-      .filter((column): column is NonNullable<typeof column> => column?.type === "quantitative")
-      .map((column) => ({ field: column.name, type: column.type }));
-    const cube = cubeResultFromDataset(dataset);
-    const thetaSource = selected.length === 1
-      ? { kind: "measure" as const, measureId: selected[0]!.field }
-      : { kind: "measure-set" as const, measureIds: selected.map((encoding) => encoding.field) };
-    const cubeBinding = selected.length > 0
-      ? bindCubeSourceToSlot(cube, node.chartSpec.cubeBinding, "theta", thetaSource)
-      : unbindCubeSlot(cube, node.chartSpec.cubeBinding, "theta");
-    pushCanvasHistory();
-    [node].forEach((member) => {
-      if (!member.chartSpec) return;
-      const encodings = { ...member.chartSpec.encodings };
-      delete encodings.angle;
-      delete encodings.y;
-      member.chartSpec = {
-        ...member.chartSpec,
-        cubeBinding,
-        encodings,
-        angleFields: selected.map((encoding) => ({ ...encoding })),
-        radiusMode: undefined,
-        componentRadiusFields: undefined,
-        renderer: undefined,
-        dimensionDecisions: undefined,
-        dimensionRecommendations: undefined,
-      };
-      renderChartNode(member);
+    const selected = Array.from(new Set(fieldNames)).flatMap((field) => {
+      const column = dataset.columns.find((item) => item.name === field && item.type === "quantitative");
+      return column ? [{ field: column.name, type: column.type }] : [];
     });
+    const encodings = { ...node.chartSpec.encodings };
+    delete encodings.angle;
+    delete encodings.y;
+    if (selected.length === 1) encodings.angle = { ...selected[0]! };
+    pushCanvasHistory();
+    node.chartSpec = {
+      ...node.chartSpec,
+      encodings,
+      angleFields: selected.length > 1 ? selected : undefined,
+      radiusMode: undefined,
+      componentRadiusFields: undefined,
+      renderer: undefined,
+      dimensionDecisions: undefined,
+      dimensionRecommendations: undefined,
+    };
+    renderChartNode(node);
     return selected.length;
   }
   function setPieAngleFields(fieldNames: string[]) {
     const node = axisBindingNode.value;
     const dataset = axisBindingDataset.value;
-    if (!node || !dataset) return;
-    applyPieAngleFields(node, dataset, fieldNames);
+    if (node && dataset) applyPieAngleFields(node, dataset, fieldNames);
   }
-  function setValueSeriesFields(fieldNames: string[], aggregation?: "sum" | "avg") {
+  function setValueSeriesFields(fieldNames: string[]) {
     const node = axisBindingNode.value;
     const dataset = axisBindingDataset.value;
     if (!node?.chartSpec || !dataset) return;
-    const template = normalizeChartTemplate(node.chartSpec.chartType);
-    const type = node.chartSpec.chartType.replace(/[\s_-]/g, "").toLowerCase();
-    const supported = type === "multilinechart"
-      || (template === "area" && (type.includes("stacked") || type.includes("stream") || type.includes("horizon")));
-    if (!supported) return;
     const selected = Array.from(new Set(fieldNames)).flatMap((field) => {
       const column = dataset.columns.find((item) => item.name === field && item.type === "quantitative");
-      return column ? [column.name] : [];
+      return column ? [{ field: column.name, type: column.type }] : [];
     });
-    const cube = cubeResultFromDataset(dataset);
-    let cubeBinding = cubeBindingWithNativeEncodings(cube, dataset, node.chartSpec);
-    if (!selected.length) {
-      cubeBinding = unbindCubeSlot(cube, cubeBinding, "y");
-      cubeBinding = unbindCubeSlot(cube, cubeBinding, "series");
-    } else {
-      cubeBinding = bindCubeSourceToSlot(
-        cube,
-        cubeBinding,
-        "y",
-        selected.length === 1
-          ? { kind: "measure", measureId: selected[0]! }
-          : { kind: "measure-set", measureIds: selected },
-        aggregation,
-      );
-      cubeBinding = selected.length > 1
-        ? {
-          ...cubeBinding,
-          slots: {
-            ...cubeBinding.slots,
-            series: { kind: "value-series", valueSlot: "y" },
-          },
-        }
-        : unbindCubeSlot(cube, cubeBinding, "series");
-    }
     const encodings = { ...node.chartSpec.encodings };
-    delete encodings.y;
     delete encodings.color;
-    if (selected.length === 1) {
-      encodings.y = { field: selected[0]!, type: "quantitative" };
-    }
+    if (selected[0]) encodings.y = { ...selected[0] };
+    else delete encodings.y;
     pushCanvasHistory();
-    node.llmRenderer = null;
     node.chartSpec = {
       ...node.chartSpec,
-      cubeBinding,
       encodings,
+      valueFields: selected.length ? selected : undefined,
       series: undefined,
       seriesFields: undefined,
       scales: undefined,
@@ -2740,117 +2355,20 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       dimensionDecisions: undefined,
       dimensionRecommendations: undefined,
     };
-    node.renderedContent = null;
     renderChartNode(node);
     registerChartRelationship(node);
   }
   function setParallelFields(fieldNames: string[]) {
     const node = axisBindingNode.value;
     const dataset = axisBindingDataset.value;
-    if (!node?.chartSpec || !dataset || normalizeChartTemplate(node.chartSpec.chartType) !== "parallel") return;
+    if (!node?.chartSpec || !dataset) return;
     const fields = Array.from(new Set(fieldNames)).flatMap((field) => {
       const column = dataset.columns.find((item) => item.name === field && item.type === "quantitative");
       return column ? [{ field: column.name, type: column.type }] : [];
     });
     pushCanvasHistory();
-    node.llmRenderer = null;
-    node.chartSpec = {
-      ...node.chartSpec,
-      parallelFields: fields,
-      scales: undefined,
-      plotArea: undefined,
-      renderer: undefined,
-    };
-    node.renderedContent = null;
+    node.chartSpec = { ...node.chartSpec, parallelFields: fields, scales: undefined, plotArea: undefined, renderer: undefined };
     renderChartNode(node);
-  }
-  function setCubeSeriesColor(styleKey: string, color: string) {
-    const node = axisBindingNode.value;
-    if (!node?.chartSpec?.cubeBinding || !/^#[0-9a-f]{6}$/i.test(color)) return;
-    pushCanvasHistory();
-    [node].forEach((member) => {
-      if (!member.chartSpec?.cubeBinding) return;
-      member.chartSpec = {
-        ...member.chartSpec,
-        cubeBinding: withCubeSeriesColor(member.chartSpec.cubeBinding, styleKey, color),
-        renderer: undefined,
-      };
-      renderChartNode(member);
-    });
-  }
-  function bindCubeBindingToPolar(
-    nodeId: string,
-    binding: CubeBindingPayload,
-    target: "angle" | "radius" | "slice" = binding.kind === "dimension" ? "slice" : "angle",
-  ) {
-    const node = findCanvasNode(nodeId);
-    const dataset = node?.chartSpec?.datasetId
-      ? getDataset(node.chartSpec.datasetId)
-      : activeDataset.value;
-    if (!node?.chartSpec || !dataset) return false;
-    const template = normalizeChartTemplate(node.chartSpec.chartType);
-    if (template !== "pie" && template !== "donut") return false;
-    const cube = cubeResultFromDataset(dataset);
-    if (!cubeBindingMatchesResult(binding, cube)) return false;
-    const current = node.chartSpec.cubeBinding?.sourceId === cube.schema.id
-      ? node.chartSpec.cubeBinding
-      : undefined;
-    const thetaSource = binding.kind === "measure-set" && binding.measureIds.length === 1
-      ? { kind: "measure" as const, measureId: binding.measureIds[0]! }
-      : binding.kind === "measure-set"
-        ? { kind: "measure-set" as const, measureIds: [...binding.measureIds] }
-        : null;
-    const cubeBinding = target === "angle" && thetaSource
-      ? bindCubeSourceToSlot(cube, current, "theta", thetaSource, binding.aggregation)
-      : target === "radius" && binding.kind === "measure-set" && binding.measureIds.length === 1
-        ? bindCubeSourceToSlot(
-          cube,
-          current,
-          "radius",
-          { kind: "measure", measureId: binding.measureIds[0]! },
-          binding.aggregation,
-        )
-        : target === "slice" && binding.kind === "dimension" && (current?.slots.theta ?? current?.slots.value)
-          ? bindCubeSourceToSlot(
-            cube,
-            current,
-            "slice",
-            { kind: "dimension", dimensionId: binding.dimensionId, memberIds: [...binding.memberIds] },
-            binding.aggregation,
-          )
-          : null;
-    if (!cubeBinding) return false;
-    pushCanvasHistory();
-    [node].forEach((member) => {
-      if (!member.chartSpec) return;
-      const thetaSlot = cubeBinding.slots.theta ? "theta" : "value";
-      const measureIds = cubeBindingMeasureIds(cubeBinding, thetaSlot);
-      const legacyAngleFields = measureIds
-        .map((field) => dataset.columns.find((column) => column.name === field && column.type === "quantitative"))
-        .filter((column): column is NonNullable<typeof column> => !!column)
-        .map((column) => ({ field: column.name, type: column.type }));
-      const radiusSource = cubeBinding.slots.radius;
-      const radiusField = radiusSource?.kind === "measure" ? radiusSource.measureId : undefined;
-      const radiusColumn = radiusField
-        ? dataset.columns.find((column) => column.name === radiusField && column.type === "quantitative")
-        : undefined;
-      const encodings = { ...member.chartSpec.encodings, angle: undefined, y: undefined };
-      if (radiusColumn) encodings.radius = { field: radiusColumn.name, type: radiusColumn.type };
-      member.chartSpec = {
-        ...member.chartSpec,
-        cubeBinding,
-        angleFields: legacyAngleFields.length > 0 ? legacyAngleFields : undefined,
-        encodings,
-        radiusMode: undefined,
-        componentRadiusFields: undefined,
-        renderer: undefined,
-        dimensionDecisions: undefined,
-        dimensionRecommendations: undefined,
-      };
-      renderChartNode(member);
-      registerChartRelationship(member);
-    });
-    return true;
   }
   function closeContextMenu() { contextMenu.value = null; }
 
@@ -2996,15 +2514,14 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       sourceDataset,
       chartSpec,
     );
-    const usesDerivedValueSeries = chartSpec.cubeBinding?.slots.y?.kind === "measure-set"
-      && chartSpec.cubeBinding?.slots.series?.kind === "value-series"
-      && chartSpec.cubeBinding.slots.series.valueSlot === "y";
+    const usesDerivedValueSeries = (chartSpec.valueFields?.length ?? 0) > 1;
     const persistedSyncedChartSpec = usesDerivedValueSeries
       ? {
         ...syncedChartSpec,
         encodings: chartSpec.encodings,
         series: chartSpec.series,
         seriesFields: chartSpec.seriesFields,
+        valueFields: chartSpec.valueFields,
       }
       : syncedChartSpec;
     const ownerScales = coordinateOwner ? mergedLayerScales(coordinateOwner) : undefined;
@@ -4018,216 +3535,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function resetCanvasZoom() { viewZoom.value = 1; viewPan.value = { x: 0, y: 0 }; }
 
   // --- drag & drop ---
-  function polarSectorPath(
-    node: CanvasNode,
-    origin: Point,
-    innerRadius: number,
-    outerRadius: number,
-    angleSpan: number,
-  ) {
-    const steps = Math.max(12, Math.ceil(angleSpan / 8));
-    const pointAt = (radius: number, degrees: number) => {
-      const radians = degrees * Math.PI / 180;
-      return nodeLocalToSelectionScopePoint(node, {
-        x: origin.x + Math.cos(radians) * radius,
-        y: origin.y + Math.sin(radians) * radius,
-      });
-    };
-    const outer = Array.from({ length: steps + 1 }, (_, index) => pointAt(outerRadius, angleSpan * index / steps));
-    const inner = Array.from({ length: steps + 1 }, (_, index) => pointAt(innerRadius, angleSpan * (steps - index) / steps));
-    return [...outer, ...inner].map((item, index) => `${index === 0 ? "M" : "L"} ${item.x} ${item.y}`).join(" ") + " Z";
-  }
-  function polarRadiusPath(node: CanvasNode, origin: Point, radius: number, halfWidth: number) {
-    const points = [
-      { x: origin.x, y: origin.y - halfWidth },
-      { x: origin.x + radius, y: origin.y - halfWidth },
-      { x: origin.x + radius, y: origin.y + halfWidth },
-      { x: origin.x, y: origin.y + halfWidth },
-    ].map((point) => nodeLocalToSelectionScopePoint(node, point));
-    return points.map((item, index) => `${index === 0 ? "M" : "L"} ${item.x} ${item.y}`).join(" ") + " Z";
-  }
-  function polarAxisDropZoneAt(
-    point: Point,
-    binding: CubeBindingPayload,
-  ): DataBindingDropZone | null {
-    const targets = [...getSelectionScopeNodes()].reverse().filter((node) =>
-      node.chartSpec
-      && node.coordinateGuide?.type === "Polar"
-      && getChartTemplateContract(node.chartSpec.chartType)?.coordinateSystem === "Polar",
-    );
-    for (const node of targets) {
-      if (node.coordinateGuide?.type !== "Polar") continue;
-      const localPoint = toNodeLocalPoint(node, point);
-      const radius = Math.max(
-        8,
-        Math.min(node.width, node.height) * 0.42
-          * (node.coordinateGuide.radiusScale ?? 1),
-      );
-      const distance = Math.hypot(
-        localPoint.x - node.coordinateGuide.origin.x,
-        localPoint.y - node.coordinateGuide.origin.y,
-      );
-      const dataset = node.chartSpec?.datasetId
-        ? getDataset(node.chartSpec.datasetId)
-        : activeDataset.value;
-      const cube = dataset ? cubeResultFromDataset(dataset) : null;
-      if (!cube || !cubeBindingMatchesResult(binding, cube)) continue;
-      const angleSpan = Math.max(1, Math.min(node.coordinateGuide.angleSpan ?? 360, 360));
-      const angle = (Math.atan2(
-        localPoint.y - node.coordinateGuide.origin.y,
-        localPoint.x - node.coordinateGuide.origin.x,
-      ) * 180 / Math.PI + 360) % 360;
-      const inAngularRange = angleSpan >= 359.999 || angle <= angleSpan;
-      const radiusEnd = { x: node.coordinateGuide.origin.x + radius * 0.78, y: node.coordinateGuide.origin.y };
-      const radiusHalfWidth = Math.max(14, radius * 0.13);
-      const radiusDistance = distanceToSegment(localPoint, node.coordinateGuide.origin, radiusEnd);
-      if (binding.kind === "measure-set" && binding.measureIds.length === 1
-        && radiusDistance <= radiusHalfWidth && distance <= radius * 0.82) {
-        return {
-          type: "polar-axis",
-          targetNodeId: node.id,
-          channel: "radius",
-          path: polarRadiusPath(node, node.coordinateGuide.origin, radius * 0.82, radiusHalfWidth),
-          labelPosition: nodeLocalToSelectionScopePoint(node, {
-            x: node.coordinateGuide.origin.x + radius * 0.42,
-            y: node.coordinateGuide.origin.y - radiusHalfWidth * 1.35,
-          }),
-          compatible: true,
-          fieldName: binding.measureIds[0],
-        };
-      }
-      if (binding.kind === "measure-set" && inAngularRange
-        && distance >= radius * 0.7 && distance <= radius * 1.25) {
-        return {
-          type: "polar-axis",
-          targetNodeId: node.id,
-          channel: "angle",
-          path: polarSectorPath(node, node.coordinateGuide.origin, radius * 0.7, radius * 1.25, angleSpan),
-          labelPosition: nodeLocalToSelectionScopePoint(node, {
-            x: node.coordinateGuide.origin.x + Math.cos(angleSpan / 2 * Math.PI / 180) * radius,
-            y: node.coordinateGuide.origin.y + Math.sin(angleSpan / 2 * Math.PI / 180) * radius,
-          }),
-          compatible: true,
-        };
-      }
-      const hasTheta = !!(node.chartSpec?.cubeBinding?.slots.theta ?? node.chartSpec?.cubeBinding?.slots.value);
-      if (binding.kind === "dimension" && hasTheta && inAngularRange && distance <= radius * 0.68) {
-        return {
-          type: "polar-slice",
-          targetNodeId: node.id,
-          channel: "angle",
-          center: nodeLocalToSelectionScopePoint(node, node.coordinateGuide.origin),
-          radiusX: radius * 0.68 * Math.abs(node.scaleX),
-          radiusY: radius * 0.68 * Math.abs(node.scaleY),
-          rotation: node.rotation,
-          compatible: true,
-        };
-      }
-    }
-    return null;
-  }
-  function cubeFieldForNode(node: CanvasNode, binding: CubeBindingPayload) {
-    const dataset = node.chartSpec?.datasetId
-      ? getDataset(node.chartSpec.datasetId)
-      : activeDataset.value;
-    if (!dataset) return undefined;
-    if (binding.kind === "dimension") {
-      return dataset.columns.some((column) => column.name === binding.dimensionId)
-        ? binding.dimensionId
-        : undefined;
-    }
-    return binding.measureIds
-      .map((measureId) => dataset.columns.find((column) =>
-        column.name === measureId && column.type === "quantitative",
-      )?.name)
-      .find((field): field is string => !!field);
-  }
-  function distanceToSegment(point: Point, start: Point, end: Point) {
-    const dx = end.x - start.x;
-    const dy = end.y - start.y;
-    const lengthSquared = dx * dx + dy * dy;
-    if (lengthSquared === 0) return Math.hypot(point.x - start.x, point.y - start.y);
-    const ratio = clamp(
-      ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared,
-      0,
-      1,
-    );
-    return Math.hypot(
-      point.x - (start.x + ratio * dx),
-      point.y - (start.y + ratio * dy),
-    );
-  }
-  function cartesianAxisDropZoneAt(
-    point: Point,
-    binding: CubeBindingPayload,
-  ): DataBindingDropZone | null {
-    const threshold = 24 / Math.max(viewZoom.value, 0.25);
-    const zones = getSelectionScopeNodes().flatMap((node) => {
-      if (node.coordinateGuide?.type !== "Cartesian" || !node.chartSpec) return [];
-      const guide = node.coordinateGuide;
-      const minX = node.kind === "leaf" ? node.contentMinX : 0;
-      const minY = node.kind === "leaf" ? node.contentMinY : 0;
-      const model = createCartesianAxisModel(node);
-      const origin = model?.origin ?? guide.origin;
-      const xEnd = model?.xEnd ?? {
-        x: guide.xDirection === 1 ? minX + node.width : minX,
-        y: origin.y,
-      };
-      const yEnd = model?.yEnd ?? {
-        x: origin.x,
-        y: guide.yDirection === -1 ? minY : minY + node.height,
-      };
-      const fieldName = cubeFieldForNode(node, binding);
-      const dataset = node.chartSpec.datasetId ? getDataset(node.chartSpec.datasetId) : activeDataset.value;
-      const column = dataset?.columns.find((item) => item.name === fieldName);
-      const contract = getChartTemplateContract(node.chartSpec.chartType);
-      const normalizedChartType = node.chartSpec.chartType.replace(/[\s_-]/g, "").toLowerCase();
-      const template = normalizeChartTemplate(node.chartSpec.chartType);
-      const acceptsMeasureSeries = normalizedChartType === "multilinechart"
-        || (template === "area" && (normalizedChartType.includes("stacked")
-          || normalizedChartType.includes("stream")
-          || normalizedChartType.includes("horizon")));
-      return (["x", "y"] as EncodingChannel[]).map((channel) => {
-        const localEnd = channel === "x" ? xEnd : yEnd;
-        const start = nodeLocalToSelectionScopePoint(node, origin);
-        const end = nodeLocalToSelectionScopePoint(node, localEnd);
-        const dataChannel = mappedEncodingChannel(node, channel);
-        const accepts = contract?.channels.find((item) => item.channel === dataChannel)?.accepts ?? [];
-        return {
-          type: "cartesian-axis" as const,
-          targetNodeId: node.id,
-          channel,
-          start,
-          end,
-          fieldName,
-          compatible: binding.kind === "measure-set" && binding.measureIds.length > 1
-            ? channel === "y" && acceptsMeasureSeries
-            : !!column && accepts.includes(column.type),
-          distance: distanceToSegment(point, start, end),
-        };
-      });
-    }).filter((zone) => zone.distance <= threshold)
-      .sort((left, right) => left.distance - right.distance);
-    const nearest = zones[0];
-    if (!nearest) return null;
-    const { distance: _distance, ...zone } = nearest;
-    return zone;
-  }
-  function chartAtDataBindingPoint(point: Point) {
-    return [...getSelectionScopeNodes()].reverse().find((node) => {
-      if (!node.chartSpec) return false;
-      const local = toNodeLocalPoint(node, point);
-      const minX = node.kind === "leaf" ? node.contentMinX : 0;
-      const minY = node.kind === "leaf" ? node.contentMinY : 0;
-      return local.x >= minX && local.x <= minX + node.width
-        && local.y >= minY && local.y <= minY + node.height;
-    }) ?? null;
-  }
-  function dataBindingDropZoneAt(point: Point, binding: CubeBindingPayload) {
-    const axisZone = cartesianAxisDropZoneAt(point, binding);
-    if (axisZone) return axisZone;
-    return polarAxisDropZoneAt(point, binding);
-  }
   function onCandidateDragStart(candidate: SvgCandidate, event: DragEvent) {
     draggedCandidateId.value = candidate.id;
     activeDataBindingDropZone.value = null;
@@ -4242,23 +3549,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   }
   function onCanvasDragOver(event: DragEvent) {
     event.preventDefault();
-    const cubeBinding = getActiveCubeBinding();
-    if (cubeBinding) {
-      activeDropZone.value = null;
-      const point = toSelectionScopePoint(event.clientX, event.clientY);
-      const hoveredChart = chartAtDataBindingPoint(point);
-      if (hoveredChart && !selectedIds.value.includes(hoveredChart.id)) {
-        setSelection([hoveredChart.id]);
-        dispatchRelationship({ type: "select-entity", selection: { type: "chart", id: hoveredChart.id } });
-      }
-      activeDataBindingDropZone.value = dataBindingDropZoneAt(point, cubeBinding);
-      if (event.dataTransfer) {
-        event.dataTransfer.dropEffect = activeDataBindingDropZone.value?.compatible
-          ? "copy"
-          : "none";
-      }
-      return;
-    }
     activeDataBindingDropZone.value = null;
     // Template cards always create atomic units first. Composition is an
     // explicit second step after every selected unit has valid mark encodings.
@@ -4275,49 +3565,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   async function onCanvasDrop(event: DragEvent) {
     event.preventDefault();
     const point = toSelectionScopePoint(event.clientX, event.clientY);
-    const cubeBinding = readCubeBinding(event.dataTransfer);
-    if (cubeBinding) {
-      const zone = activeDataBindingDropZone.value
-        ?? dataBindingDropZoneAt(point, cubeBinding);
-      activeDataBindingDropZone.value = null;
-      activeDropZone.value = null;
-      endCubeBindingDrag();
-      if (!zone) {
-        setImportNotice("Drop a Cube dimension or measure on a compatible chart slot.");
-        return;
-      }
-      if (!zone.compatible) {
-        setImportNotice("This Cube field is not compatible with the target channel.");
-        return;
-      }
-      if (zone.type === "cartesian-axis") {
-        const target = findCanvasNode(zone.targetNodeId);
-        if (!target || (!zone.fieldName && cubeBinding.kind !== "measure-set")) return;
-        axisBindingTarget.value = { nodeId: target.id, channel: zone.channel };
-        if (cubeBinding.kind === "measure-set" && cubeBinding.measureIds.length > 1 && zone.channel === "y") {
-          setValueSeriesFields(cubeBinding.measureIds, cubeBinding.aggregation);
-        } else if (zone.fieldName) {
-          bindMarkField(zone.fieldName, cubeBinding.aggregation, cubeBinding);
-        }
-        axisBindingTarget.value = null;
-        setSelection([target.id]);
-        setImportNotice(`${cubeBinding.kind === "measure-set" && cubeBinding.measureIds.length > 1
-          ? `${cubeBinding.measureIds.length} measures`
-          : zone.fieldName} bound to ${zone.channel.toUpperCase()} axis.`);
-        return;
-      }
-      const polarTarget = zone.type === "polar-slice" ? "slice" : zone.channel;
-      if (!bindCubeBindingToPolar(zone.targetNodeId, cubeBinding, polarTarget)) {
-        setImportNotice("The selected Cube source is not available in this polar chart dataset.");
-        return;
-      }
-      setSelection([zone.targetNodeId]);
-      if (polarTarget !== "slice") {
-        axisBindingTarget.value = { nodeId: zone.targetNodeId, channel: polarTarget };
-      }
-      setImportNotice(`${polarTarget === "angle" ? "Theta" : polarTarget === "radius" ? "R" : "Slice"} binding applied to the polar chart.`);
-      return;
-    }
     const droppedFiles = Array.from(event.dataTransfer?.files ?? []);
     const droppedSvg = droppedFiles.find(
       (f) => f.type === "image/svg+xml" || /\.svg$/i.test(f.name),
@@ -4752,7 +3999,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     bindMarkField,
     bindAxisField: bindMarkField,
     setAxisBindingAggregation,
-    setCubeValueFilters,
+    setValueFilters,
     clearMarkField,
     clearAxisBinding: clearMarkField,
     confirmSeriesField,
@@ -4761,14 +4008,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     bindOptionalEncoding,
     clearOptionalEncoding,
     setChartEncoding,
-    setCubeChannelSelection,
     bindPolarRadiusField,
     clearPolarRadiusField,
     setPieAngleFields,
     setValueSeriesFields,
     setParallelFields,
-    setCubeSeriesColor,
-    bindCubeBindingToPolar,
     closeAxisBinding,
     setSelectionRotation,
     onCandidateDragStart,

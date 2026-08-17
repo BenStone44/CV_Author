@@ -1,10 +1,10 @@
 import { inferChartStructure } from "./dimensionInference";
 import { normalizeChartTemplate } from "./chartTemplates";
-import { cubeResultFromDataset } from "./cubeModel";
+import { inferCsvPrimaryKey } from "./csvDataEngine";
 import type { ChartEncoding, ChartSpec, Dataset } from "./types";
 
-export const CUBE_MEASURE_ID_FIELD = "__cube_measure__";
-export const CUBE_MEASURE_VALUE_FIELD = "__cube_value__";
+export const CSV_MEASURE_ID_FIELD = "__csv_measure__";
+export const CSV_MEASURE_VALUE_FIELD = "__csv_value__";
 
 export function rowMatchesChartFilters(
   row: Dataset["rows"][number],
@@ -27,52 +27,47 @@ export function filterDatasetForChart(dataset: Dataset, spec: ChartSpec): Datase
   };
 }
 
-/**
- * Materializes a Cube measure set as ordinary long-form rows. The synthetic
- * fields are renderer details; cubeBinding remains the semantic source.
- */
-export function materializeCubeValueSeries(dataset: Dataset, spec: ChartSpec) {
+/** Materializes selected wide CSV value columns as ordinary long-form rows. */
+export function materializeCsvValueSeries(dataset: Dataset, spec: ChartSpec) {
   const template = normalizeChartTemplate(spec.chartType);
   if (template !== "line" && template !== "area") return { dataset, chartSpec: spec };
-  const value = spec.cubeBinding?.slots.y;
-  const series = spec.cubeBinding?.slots.series;
-  if (value?.kind !== "measure-set" || series?.kind !== "value-series" || series.valueSlot !== "y") {
-    return { dataset, chartSpec: spec };
-  }
-
-  const selected = Array.from(new Set(value.measureIds));
-  const cube = cubeResultFromDataset(dataset);
-  const available = new Set(cube.schema.measures.map((measure) => measure.id));
-  const measureIds = selected.filter((measureId) => available.has(measureId));
+  const available = new Set(dataset.columns.map((column) => column.name));
+  const measureIds = Array.from(new Set(spec.valueFields?.map((encoding) => encoding.field) ?? []))
+    .filter((field) => available.has(field));
+  if (measureIds.length < 2) return { dataset, chartSpec: spec };
   const rows = dataset.rows.flatMap((row) => measureIds.flatMap((measureId) => {
     const rawValue = row[measureId];
     if (rawValue === undefined || rawValue.trim() === "" || !Number.isFinite(Number(rawValue))) return [];
     return [{
       ...row,
-      [CUBE_MEASURE_ID_FIELD]: measureId,
-      [CUBE_MEASURE_VALUE_FIELD]: rawValue,
+      [CSV_MEASURE_ID_FIELD]: measureId,
+      [CSV_MEASURE_VALUE_FIELD]: rawValue,
     }];
   }));
-  const materializedDataset: Dataset = {
+  const materializedDatasetWithoutKey: Dataset = {
     ...dataset,
     columns: [
-      ...dataset.columns.filter((column) => column.name !== CUBE_MEASURE_ID_FIELD && column.name !== CUBE_MEASURE_VALUE_FIELD),
-      { name: CUBE_MEASURE_ID_FIELD, type: "nominal" },
-      { name: CUBE_MEASURE_VALUE_FIELD, type: "quantitative" },
+      ...dataset.columns.filter((column) => column.name !== CSV_MEASURE_ID_FIELD && column.name !== CSV_MEASURE_VALUE_FIELD),
+      { name: CSV_MEASURE_ID_FIELD, type: "nominal" },
+      { name: CSV_MEASURE_VALUE_FIELD, type: "quantitative" },
     ],
     rows,
-    primaryKey: dataset.primaryKey?.includes(CUBE_MEASURE_ID_FIELD)
-      ? dataset.primaryKey
-      : [...(dataset.primaryKey ?? []), CUBE_MEASURE_ID_FIELD],
   };
-  const seriesEncoding = { field: CUBE_MEASURE_ID_FIELD, type: "nominal" as const };
+  const sourceKey = dataset.primaryKey?.length ? dataset.primaryKey : undefined;
+  const materializedDataset: Dataset = {
+    ...materializedDatasetWithoutKey,
+    primaryKey: sourceKey
+      ? Array.from(new Set([...sourceKey, CSV_MEASURE_ID_FIELD]))
+      : inferCsvPrimaryKey(materializedDatasetWithoutKey),
+  };
+  const seriesEncoding = { field: CSV_MEASURE_ID_FIELD, type: "nominal" as const };
   return {
     dataset: materializedDataset,
     chartSpec: {
       ...spec,
       encodings: {
         ...spec.encodings,
-        y: { field: CUBE_MEASURE_VALUE_FIELD, type: "quantitative" as const },
+        y: { field: CSV_MEASURE_VALUE_FIELD, type: "quantitative" as const },
         color: seriesEncoding,
       },
       series: seriesEncoding,
@@ -126,7 +121,7 @@ export function prepareChartData(
   spec: ChartSpec,
 ) {
   const filteredDataset = filterDatasetForChart(sourceDataset, spec);
-  const materialized = materializeCubeValueSeries(filteredDataset, spec);
+  const materialized = materializeCsvValueSeries(filteredDataset, spec);
   const dataset = materialized.dataset;
   const synchronizedSpec = synchronizeChartEncodingTypes(materialized.chartSpec, dataset);
   return {

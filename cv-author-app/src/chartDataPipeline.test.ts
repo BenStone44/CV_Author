@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  CUBE_MEASURE_ID_FIELD,
-  CUBE_MEASURE_VALUE_FIELD,
+  CSV_MEASURE_ID_FIELD,
+  CSV_MEASURE_VALUE_FIELD,
   filterDatasetForChart,
-  materializeCubeValueSeries,
+  materializeCsvValueSeries,
   prepareChartData,
   synchronizeChartEncodingTypes,
 } from "./chartDataPipeline";
@@ -56,7 +56,7 @@ describe("chart data pipeline", () => {
     expect(prepared.chartSpec.markGroups?.[0]?.chartId).toBe("chart-1");
   });
 
-  it("materializes selected Cube measures as a reusable value series", () => {
+  it("materializes selected wide CSV fields as a reusable value series", () => {
     const wideDataset: Dataset = {
       id: "body-composition",
       name: "body-composition.csv",
@@ -77,30 +77,55 @@ describe("chart data pipeline", () => {
       chartType: "MultiLineChart",
       datasetId: wideDataset.id,
       encodings: { x: { field: "time", type: "temporal" } },
-      cubeBinding: {
-        version: 1,
-        sourceId: `cube:${wideDataset.id}`,
-        slots: {
-          x: { kind: "dimension", dimensionId: "time" },
-          y: { kind: "measure-set", measureIds: ["weight", "water", "fat", "muscle"] },
-          series: { kind: "value-series", valueSlot: "y" },
-        },
-      },
+      valueFields: ["weight", "water", "fat", "muscle"]
+        .map((field) => ({ field, type: "quantitative" as const })),
     };
 
-    const materialized = materializeCubeValueSeries(wideDataset, valueSeriesSpec);
+    const materialized = materializeCsvValueSeries(wideDataset, valueSeriesSpec);
     expect(materialized.dataset.rows).toHaveLength(8);
-    expect(materialized.dataset.rows.slice(0, 4).map((row) => row[CUBE_MEASURE_ID_FIELD])).toEqual([
+    expect(materialized.dataset.rows.slice(0, 4).map((row) => row[CSV_MEASURE_ID_FIELD])).toEqual([
       "weight", "water", "fat", "muscle",
     ]);
-    expect(materialized.dataset.rows.slice(0, 4).map((row) => row[CUBE_MEASURE_VALUE_FIELD])).toEqual([
+    expect(materialized.dataset.rows.slice(0, 4).map((row) => row[CSV_MEASURE_VALUE_FIELD])).toEqual([
       "80", "45", "18", "32",
     ]);
-    expect(materialized.chartSpec.encodings.y).toEqual({ field: CUBE_MEASURE_VALUE_FIELD, type: "quantitative" });
-    expect(materialized.chartSpec.series).toEqual({ field: CUBE_MEASURE_ID_FIELD, type: "nominal" });
+    expect(materialized.chartSpec.encodings.y).toEqual({ field: CSV_MEASURE_VALUE_FIELD, type: "quantitative" });
+    expect(materialized.chartSpec.series).toEqual({ field: CSV_MEASURE_ID_FIELD, type: "nominal" });
 
     const prepared = prepareChartData("measure-series-chart", wideDataset, valueSeriesSpec);
     expect(prepared.dataset.rows).toHaveLength(8);
     expect(prepared.chartSpec.templateId).toBe("line");
+  });
+
+  it("does not claim the derived measure field is a row key without a source key", () => {
+    const keylessDataset: Dataset = {
+      id: "keyless-wide",
+      name: "keyless-wide.csv",
+      columns: [
+        { name: "period", type: "temporal" },
+        { name: "first", type: "quantitative" },
+        { name: "second", type: "quantitative" },
+      ],
+      rows: [
+        { period: "2026-01-01", first: "10", second: "20" },
+        { period: "2026-02-01", first: "11", second: "21" },
+      ],
+    };
+    const spec: ChartSpec = {
+      chartType: "MultiLineChart",
+      datasetId: keylessDataset.id,
+      encodings: { x: { field: "period", type: "temporal" } },
+      valueFields: ["first", "second"].map((field) => ({
+        field,
+        type: "quantitative" as const,
+      })),
+    };
+
+    const materialized = materializeCsvValueSeries(keylessDataset, spec);
+
+    expect(materialized.dataset.primaryKey).not.toEqual([CSV_MEASURE_ID_FIELD]);
+    expect(new Set(materialized.dataset.rows.map((row) =>
+      (materialized.dataset.primaryKey ?? []).map((field) => row[field]).join("|"),
+    )).size).not.toBe(2);
   });
 });
