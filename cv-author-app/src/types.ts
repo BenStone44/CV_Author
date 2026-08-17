@@ -260,6 +260,7 @@ export type DimensionRecommendation = {
   sharedChannels: CoordinateChannel[];
   label: string;
   flattenFields?: string[];
+  facetDirection?: "row" | "column";
   facetGrid?: {
     rowField: string;
     columnField: string;
@@ -297,6 +298,7 @@ export type CompositionSpec = {
   direction?: "horizontal" | "vertical" | "radial";
   facetField?: string;
   facetValues?: string[];
+  facetDirection?: "row" | "column";
   facetGrid?: {
     rowField: string;
     columnField: string;

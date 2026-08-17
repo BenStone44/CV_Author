@@ -36,6 +36,18 @@ export type ColumnDimensionProfile = {
   maximum?: number;
 };
 
+export function analyzeDimensionGrainRepairs(
+  dataset: Dataset,
+  keyFields: string[],
+  valueFields: string[],
+) {
+  return analyzeCsvGrain(dataset, keyFields, valueFields, {
+    candidateFields: dataset.columns
+      .filter((column) => column.type !== "quantitative")
+      .map((column) => column.name),
+  });
+}
+
 export type ChannelDimensionStatistics = {
   channel: ChartEncodingChannel | "series";
   role: "dimension" | "measure" | "series" | "style";
@@ -162,10 +174,11 @@ export function scoreSeriesFields(
   _profiles?: ColumnDimensionProfile[],
 ): SeriesCandidate[] {
   if (!yEncoding) return [];
-  const analysis = analyzeCsvGrain(dataset, [xEncoding.field], [yEncoding.field], {
-    maxCombinationSize: 1,
-    candidateLimit: dataset.columns.length,
-  });
+  const analysis = analyzeDimensionGrainRepairs(
+    dataset,
+    [xEncoding.field],
+    [yEncoding.field],
+  );
   return analysis.candidates
     .filter((candidate) => candidate.fields.length === 1)
     .map((candidate) => {

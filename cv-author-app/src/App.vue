@@ -29,12 +29,13 @@ import {
   useCanvasStore,
   coordinateOptions,
   compositionOptions,
+  getDimensionChartUpgradeOptions,
   getFilterIconSvg,
 } from "./useCanvasStore";
 import { useDatasetStore } from "./useDatasetStore";
 import { useLlmRenderer } from "./useLlmRenderer";
 import { isLineChartType } from "./lineRenderer";
-import { analyzeCsvGrain } from "./csvDataEngine";
+import { analyzeDimensionGrainRepairs } from "./dimensionInference";
 import {
   groupChartTemplateCandidates,
   type ChartTemplateCategory,
@@ -104,9 +105,9 @@ const {
   onCanvasNodePointerDown,
   onCanvasNodeDoubleClick,
   onEditingGroupBackgroundPointerDown,
-  applyDimensionRecommendation,
   applyDimensionAggregation,
   applyDimensionChartUpgrade,
+  applyDimensionFacet,
   onCanvasNodeContextMenu,
   onScaleHandlePointerDown,
   onRotateHandlePointerDown,
@@ -355,70 +356,126 @@ function closeEncodingInspector() {
 const activeDimensionRecommendations = computed(() =>
   (axisBindingNode.value ?? llmNode.value)?.chartSpec?.dimensionRecommendations ?? [],
 );
-const activeCompatibilityMessage = computed(() => {
+const activeGrainAnalysis = computed(() => {
   const node = axisBindingNode.value ?? llmNode.value;
   const dataset = node?.chartSpec ? getDataset(node.chartSpec.datasetId) : null;
   const x = node?.chartSpec?.encodings.x?.field;
   const values = node?.chartSpec?.valueFields?.map((encoding) => encoding.field)
     ?? [node?.chartSpec?.encodings.y?.field].filter((field): field is string => !!field);
-  if (!node?.chartSpec || !dataset || !x || !values.length) return "";
-  const result = analyzeCsvGrain(dataset, [x], values, { maxCombinationSize: 2, candidateLimit: 5 });
+  if (!node?.chartSpec || !dataset || !x || !values.length) return null;
+  return analyzeDimensionGrainRepairs(dataset, [x], values);
+});
+const activeCompatibilityMessage = computed(() => {
+  const result = activeGrainAnalysis.value;
+  if (!result) return "";
+  if (result.status === "unresolvable") {
+    return `${result.baseline.duplicateGroupCount} X groups contain conflicting values, but no nominal or temporal field can repair them.`;
+  }
   if (result.status !== "conflict") return "";
-  const candidate = result.candidates[0];
-  const grainMessage = result.ambiguous
-    ? ` Structurally equivalent grain candidates: ${result.topCandidateFields.map((fields) => fields.join(" + ")).join(" or ")}.`
-    : candidate ? ` Likely grain field: ${candidate.fields.join(" + ")}.` : "";
-  return `${result.baseline.duplicateGroupCount} X groups contain repeated rows (maximum ${result.baseline.maximumMultiplicity}).${grainMessage}`;
+  const repairs = result.candidates
+    .map((candidate) => `[${candidate.fields.join(" + ")}]`)
+    .join(" or ");
+  return `${result.baseline.duplicateGroupCount} X groups contain conflicting values. Minimal repairs: ${repairs}.`;
 });
 const selectedChartId = computed(() =>
   selectedNodes.value.length === 1 && selectedNodes.value[0]?.chartSpec
     ? selectedNodes.value[0].id
     : "",
 );
+const repairPlanKey = (fields: string[]) => JSON.stringify(fields);
+const activeRepairPlans = computed(() => {
+  const result = activeGrainAnalysis.value;
+  if (result?.status === "conflict") {
+    return result.candidates.map((candidate) => ({
+      key: repairPlanKey(candidate.fields),
+      fields: [...candidate.fields],
+    }));
+  }
+  if (result && result.status !== "unique") return [];
+  const node = axisBindingNode.value ?? llmNode.value;
+  const dataset = node?.chartSpec ? getDataset(node.chartSpec.datasetId) : null;
+  if (!node?.chartSpec || !dataset) return [];
+  const fields = Array.from(new Set(activeDimensionRecommendations.value
+    .map((recommendation) => recommendation.field)
+    .filter((field) => dataset.columns.some((column) =>
+      column.name === field && column.type !== "quantitative"))
+    .filter((field) => !node.chartSpec?.dimensionDecisions?.[field])));
+  return fields.map((field) => ({ key: repairPlanKey([field]), fields: [field] }));
+});
+const selectedRepairPlanKey = ref("");
+const selectedRepairPlan = computed(() =>
+  activeRepairPlans.value.find((plan) => plan.key === selectedRepairPlanKey.value) ?? null,
+);
 const pendingDimension = computed(() => {
   const node = axisBindingNode.value ?? llmNode.value;
-  const dataset = llmDataset.value;
-  if (!node?.chartSpec || !dataset) return null;
+  const dataset = node?.chartSpec ? getDataset(node.chartSpec.datasetId) : null;
+  if (!node?.chartSpec || !dataset || !selectedRepairPlan.value) return null;
   if (encodingReviewApprovedKey.value !== encodingReviewKey(node)) return null;
-  const recommendation = activeDimensionRecommendations.value.find((item) =>
-    dataset.columns.some((column) => column.name === item.field)
-    && !node.chartSpec?.dimensionDecisions?.[item.field],
+  const field = selectedRepairPlan.value.fields.find((item) =>
+    dataset.columns.some((column) => column.name === item)
+    && !node.chartSpec?.dimensionDecisions?.[item],
   );
-  if (!recommendation) return null;
+  if (!field) return null;
   return {
-    field: recommendation.field,
-    valueCount: recommendation.valueCount,
-    facetRecommendation: activeDimensionRecommendations.value.find((item) =>
-      item.field === recommendation.field && item.strategy === "facet"),
+    field,
+    valueCount: new Set(dataset.rows.map((row) => row[field] ?? "")).size,
   };
 });
 const pendingAggregation = ref<"sum" | "avg">("avg");
+const pendingChartUpgrade = ref("");
+const pendingFacetDirection = ref<"row" | "column">("column");
 const recommendationPopupOpen = ref(false);
-let lastRecommendationKey = "";
+let lastResolutionStageKey = "";
 const resolutionHistoryDepth = ref(0);
 const resolutionHistoryChartId = ref("");
+const repairReviewApproved = computed(() => {
+  const node = axisBindingNode.value ?? llmNode.value;
+  return !!node?.chartSpec && encodingReviewApprovedKey.value === encodingReviewKey(node);
+});
+const repairDialogAvailable = computed(() => repairReviewApproved.value
+  && activeRepairPlans.value.length > 0
+  && (!selectedRepairPlan.value || !!pendingDimension.value));
+const dimensionChartUpgradeOptions = computed(() => {
+  const node = axisBindingNode.value ?? llmNode.value;
+  return node?.chartSpec && pendingDimension.value
+    ? getDimensionChartUpgradeOptions(node.chartSpec.chartType)
+    : [];
+});
+const availableFacetDirections = computed<Array<"row" | "column">>(() => {
+  const node = axisBindingNode.value ?? llmNode.value;
+  if (!pendingDimension.value || node?.compositionSpec?.facetGrid) return [];
+  if (node?.compositionSpec?.type !== "facet" || !node.compositionSpec.facetField) {
+    return ["column", "row"];
+  }
+  return [(node.compositionSpec.facetDirection ?? "column") === "column" ? "row" : "column"];
+});
 const canChooseDimensionAggregation = computed(() => {
   return !!pendingDimension.value?.field;
 });
 const canChooseDimensionFacet = computed(() => {
-  return !!pendingDimension.value?.facetRecommendation;
+  return !!pendingDimension.value?.field && availableFacetDirections.value.length > 0;
 });
 const canChooseDimensionUpgrade = computed(() => {
-  return !!pendingDimension.value?.field;
+  return !!pendingDimension.value?.field
+    && dimensionChartUpgradeOptions.value.some((option) => option.chartType === pendingChartUpgrade.value);
 });
 
-watch(pendingDimension, (dimension) => {
-  const key = dimension ? `${selectedChartId.value}:${dimension.field}` : "";
+watch([repairDialogAvailable, selectedRepairPlan, pendingDimension], ([available, plan, dimension]) => {
+  const key = available
+    ? `${selectedChartId.value}:${plan?.key ?? "choose-plan"}:${dimension?.field ?? ""}`
+    : "";
   if (!key) {
     recommendationPopupOpen.value = false;
-    lastRecommendationKey = "";
+    lastResolutionStageKey = "";
     return;
   }
-  if (key !== lastRecommendationKey) {
+  if (key !== lastResolutionStageKey) {
     pendingAggregation.value = "avg";
+    pendingChartUpgrade.value = dimensionChartUpgradeOptions.value[0]?.chartType ?? "";
+    pendingFacetDirection.value = availableFacetDirections.value[0] ?? "column";
     recommendationPopupOpen.value = true;
   }
-  lastRecommendationKey = key;
+  lastResolutionStageKey = key;
 }, { immediate: true });
 
 watch(selectedChartId, (chartId) => {
@@ -429,7 +486,7 @@ watch(selectedChartId, (chartId) => {
 });
 
 function openRecommendationPopup() {
-  recommendationPopupOpen.value = !!pendingDimension.value;
+  recommendationPopupOpen.value = repairDialogAvailable.value;
 }
 
 function closeRecommendationPopup() {
@@ -441,19 +498,30 @@ function finishDimensionChoice() {
   resolutionHistoryChartId.value = selectedChartId.value;
   resolutionHistoryDepth.value += 1;
   void nextTick(() => {
-    const dimension = pendingDimension.value;
-    const key = dimension ? `${selectedChartId.value}:${dimension.field}` : "";
-    if (key && key !== lastRecommendationKey) recommendationPopupOpen.value = true;
+    const node = axisBindingNode.value ?? llmNode.value;
+    encodingReviewApprovedKey.value = encodingReviewKey(node);
+    void nextTick(() => {
+      recommendationPopupOpen.value = repairDialogAvailable.value;
+    });
   });
 }
 
 function backDimensionResolution() {
-  if (resolutionHistoryDepth.value <= 0) return;
+  if (resolutionHistoryDepth.value <= 0) {
+    selectedRepairPlanKey.value = "";
+    return;
+  }
   undoCanvasChange();
   resolutionHistoryDepth.value -= 1;
   void nextTick(() => {
-    recommendationPopupOpen.value = !!pendingDimension.value;
+    const node = axisBindingNode.value ?? llmNode.value;
+    encodingReviewApprovedKey.value = encodingReviewKey(node);
+    recommendationPopupOpen.value = repairDialogAvailable.value;
   });
+}
+
+function chooseRepairPlan(key: string) {
+  selectedRepairPlanKey.value = key;
 }
 
 function chooseDimensionAggregation() {
@@ -464,14 +532,17 @@ function chooseDimensionAggregation() {
 
 function chooseDimensionChartUpgrade() {
   const field = pendingDimension.value?.field;
-  if (!field || !canChooseDimensionUpgrade.value || !applyDimensionChartUpgrade(field)) return;
+  if (!field
+    || !canChooseDimensionUpgrade.value
+    || !applyDimensionChartUpgrade(field, pendingChartUpgrade.value)) return;
   finishDimensionChoice();
 }
 
 function chooseDimensionFacet() {
-  const recommendation = pendingDimension.value?.facetRecommendation;
-  if (!recommendation || !canChooseDimensionFacet.value) return;
-  applyDimensionRecommendation(recommendation.id);
+  const field = pendingDimension.value?.field;
+  if (!field
+    || !canChooseDimensionFacet.value
+    || !applyDimensionFacet(field, pendingFacetDirection.value)) return;
   finishDimensionChoice();
 }
 const selectedCanvasNodesWithCoordinateGuides = coordinateGuideNodes;
@@ -512,6 +583,8 @@ function onSeriesFieldChange(field: string) {
 
 function confirmEncodingInspector() {
   const node = axisBindingNode.value;
+  selectedRepairPlanKey.value = "";
+  resolutionHistoryDepth.value = 0;
   void nextTick(() => {
     encodingReviewApprovedKey.value = encodingReviewKey(node);
   });
@@ -731,13 +804,13 @@ onBeforeUnmount(() => {
           @contextmenu="onCanvasContextMenu"
         >
           <button
-            v-if="pendingDimension && !recommendationPopupOpen"
+            v-if="repairDialogAvailable && !recommendationPopupOpen"
             class="dimension-decision-control"
             type="button"
             @click.stop="openRecommendationPopup"
           >
             <SlidersHorizontal :size="17" :stroke-width="1.7" aria-hidden="true" />
-            <span>Resolve {{ pendingDimension.field }}</span>
+            <span>{{ selectedRepairPlan ? `Resolve ${pendingDimension?.field ?? "repair"}` : "Choose repair plan" }}</span>
           </button>
           <button
             class="encoding-control"
@@ -1183,23 +1256,26 @@ onBeforeUnmount(() => {
             </div>
           </aside>
           <div
-            v-if="recommendationPopupOpen && pendingDimension"
+            v-if="recommendationPopupOpen && repairDialogAvailable"
             class="recommendation-popup-backdrop"
             @pointerdown="closeRecommendationPopup"
           ></div>
           <aside
-            v-if="recommendationPopupOpen && pendingDimension"
+            v-if="recommendationPopupOpen && repairDialogAvailable"
             class="recommendation-popup"
             role="dialog"
             aria-modal="true"
-            :aria-label="`Resolve ${pendingDimension.field} dimension`"
+            :aria-label="pendingDimension ? `Resolve ${pendingDimension.field} dimension` : 'Choose a minimal repair plan'"
             @click.stop
             @pointerdown.stop
           >
             <header class="recommendation-popup__header">
               <div>
-                <strong>Resolve {{ pendingDimension.field }}</strong>
-                <span>{{ pendingDimension.valueCount }} values do not fit the current chart structure</span>
+                <strong>{{ pendingDimension ? `Resolve ${pendingDimension.field}` : "Choose a minimal repair" }}</strong>
+                <span v-if="pendingDimension">
+                  {{ pendingDimension.valueCount }} values do not fit the current chart structure
+                </span>
+                <span v-else>Select one complete field set before resolving its elements.</span>
               </div>
               <div class="recommendation-popup__header-actions">
                 <button
@@ -1207,7 +1283,7 @@ onBeforeUnmount(() => {
                   type="button"
                   title="Back"
                   aria-label="Back one resolution step"
-                  :disabled="resolutionHistoryDepth <= 0"
+                  :disabled="resolutionHistoryDepth <= 0 && !selectedRepairPlan"
                   @click="backDimensionResolution"
                 >
                   <Undo2 :size="17" :stroke-width="1.7" aria-hidden="true" />
@@ -1223,7 +1299,20 @@ onBeforeUnmount(() => {
                 </button>
               </div>
             </header>
-            <div class="recommendation-popup__options">
+            <div v-if="!selectedRepairPlan" class="repair-plan-list">
+              <button
+                v-for="(plan, index) in activeRepairPlans"
+                :key="plan.key"
+                class="repair-plan-option"
+                type="button"
+                @click="chooseRepairPlan(plan.key)"
+              >
+                <span>Minimal repair {{ index + 1 }}</span>
+                <strong>{{ plan.fields.join(" + ") }}</strong>
+                <small>{{ plan.fields.length }} {{ plan.fields.length === 1 ? "field" : "fields" }}</small>
+              </button>
+            </div>
+            <div v-else-if="pendingDimension" class="recommendation-popup__options">
               <section class="recommendation-option-card">
                 <span class="recommendation-option-card__strategy">Data reduction</span>
                 <strong>Aggregate {{ pendingDimension.field }}</strong>
@@ -1233,26 +1322,43 @@ onBeforeUnmount(() => {
                 </select>
                 <button type="button" :disabled="!canChooseDimensionAggregation" @click="chooseDimensionAggregation">Apply</button>
               </section>
-              <button
+              <section
+                v-if="dimensionChartUpgradeOptions.length > 0"
                 class="recommendation-option-card"
-                type="button"
-                :disabled="!canChooseDimensionUpgrade"
-                @click="chooseDimensionChartUpgrade"
               >
                 <span class="recommendation-option-card__strategy">Chart upgrade</span>
-                <strong>Increase chart dimensionality</strong>
-                <span>Represent {{ pendingDimension.field }} inside the current chart.</span>
-              </button>
-              <button
+                <strong>Upgrade with {{ pendingDimension.field }}</strong>
+                <select v-model="pendingChartUpgrade" aria-label="Chart upgrade target">
+                  <option
+                    v-for="option in dimensionChartUpgradeOptions"
+                    :key="option.chartType"
+                    :value="option.chartType"
+                  >
+                    {{ option.label }}
+                  </option>
+                </select>
+                <button type="button" :disabled="!canChooseDimensionUpgrade" @click="chooseDimensionChartUpgrade">Apply</button>
+              </section>
+              <section
+                v-if="availableFacetDirections.length > 0"
                 class="recommendation-option-card"
-                type="button"
-                :disabled="!pendingDimension.facetRecommendation || !canChooseDimensionFacet"
-                @click="chooseDimensionFacet"
               >
                 <span class="recommendation-option-card__strategy">Facet</span>
                 <strong>Facet by {{ pendingDimension.field }}</strong>
-                <span>Create one chart and coordinate system for each value.</span>
-              </button>
+                <div class="facet-direction-control" role="group" aria-label="Facet direction">
+                  <button
+                    v-for="direction in availableFacetDirections"
+                    :key="direction"
+                    type="button"
+                    :class="{ 'facet-direction-control__button--active': pendingFacetDirection === direction }"
+                    :aria-pressed="pendingFacetDirection === direction"
+                    @click="pendingFacetDirection = direction"
+                  >
+                    {{ direction === "column" ? "Column" : "Row" }}
+                  </button>
+                </div>
+                <button type="button" :disabled="!canChooseDimensionFacet" @click="chooseDimensionFacet">Apply</button>
+              </section>
             </div>
           </aside>
 
@@ -2374,6 +2480,41 @@ onBeforeUnmount(() => {
   min-height: 0;
   overflow-y: auto;
 }
+.repair-plan-list {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.repair-plan-option {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.5fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 1px solid rgba(24, 33, 47, 0.12);
+  border-radius: 6px;
+  background: #fff;
+  color: #64748b;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.repair-plan-option:hover {
+  border-color: #2563eb;
+  background: #f8fbff;
+}
+.repair-plan-option strong {
+  overflow-wrap: anywhere;
+  color: #18212f;
+  font-size: 13px;
+}
+.repair-plan-option small {
+  color: #94a3b8;
+  font-size: 10px;
+}
 .recommendation-option-card {
   display: grid;
   align-content: start;
@@ -2417,6 +2558,32 @@ onBeforeUnmount(() => {
   color: #fff;
   font: inherit;
   cursor: pointer;
+}
+.facet-direction-control {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  min-height: 34px;
+  border: 1px solid rgba(24, 33, 47, 0.16);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.facet-direction-control__button--active,
+.facet-direction-control button {
+  min-width: 0;
+  border: 0;
+  background: #fff;
+  color: #64748b;
+  font: inherit;
+  cursor: pointer;
+}
+.facet-direction-control button + button {
+  border-left: 1px solid rgba(24, 33, 47, 0.12);
+}
+.facet-direction-control .facet-direction-control__button--active {
+  background: #e0f2fe;
+  color: #075985;
+  font-weight: 700;
 }
 .recommendation-option-card__strategy {
   width: fit-content;

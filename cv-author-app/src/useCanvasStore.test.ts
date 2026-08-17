@@ -27,7 +27,7 @@ Object.defineProperty(globalThis, "window", {
   },
 });
 
-const { useCanvasStore } = await import("./useCanvasStore");
+const { getDimensionChartUpgradeOptions, useCanvasStore } = await import("./useCanvasStore");
 const { useDatasetStore } = await import("./useDatasetStore");
 
 const layerDataset: Dataset = {
@@ -964,6 +964,54 @@ describe("CSV field binding", () => {
     expect(chart.chartSpec?.valueFilters?.person).toBeUndefined();
   });
 
+  it("offers explicit bar upgrade targets and stops at terminal chart variants", () => {
+    expect(getDimensionChartUpgradeOptions("SingleBarChart")).toEqual([
+      { chartType: "GroupedBarChart", label: "Grouped bar" },
+      { chartType: "StackedBarChart", label: "Stacked bar" },
+    ]);
+    expect(getDimensionChartUpgradeOptions("GroupedBarChart")).toEqual([]);
+    expect(getDimensionChartUpgradeOptions("StackedBarChart")).toEqual([]);
+    expect(getDimensionChartUpgradeOptions("MultiLineChart")).toEqual([]);
+
+    const dataset: Dataset = {
+      id: "stacked-upgrade-dataset",
+      name: "stacked-upgrade.csv",
+      columns: [
+        { name: "category", type: "nominal" },
+        { name: "group", type: "nominal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { category: "A", group: "One", value: "8" },
+        { category: "A", group: "Two", value: "3" },
+      ],
+    };
+    const chart = lineChart("stacked-upgrade", 120, false);
+    chart.chartSpec = {
+      chartType: "SingleBarChart",
+      datasetId: dataset.id,
+      encodings: {
+        x: { field: "category", type: "nominal" },
+        y: { field: "value", type: "quantitative" },
+      },
+    };
+    const canvasRef = ref({
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 800 }),
+      querySelectorAll: () => [],
+    } as unknown as HTMLElement);
+    const store = useCanvasStore(canvasRef);
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [chart];
+    store.selectedIds.value = [chart.id];
+    store.axisBindingTarget.value = { nodeId: chart.id, channel: "x" };
+
+    expect(store.applyDimensionChartUpgrade("group", "StackedBarChart")).toBe(true);
+    expect(chart.chartSpec?.chartType).toBe("StackedBarChart");
+    expect(chart.renderedContent).toContain('data-bar-variant="stacked"');
+    expect(store.applyDimensionChartUpgrade("group", "GroupedBarChart")).toBe(false);
+  });
+
   it("filters Line, Scatterplot, Bar, and Matrix by partial person/date selections", () => {
     const dataset: Dataset = {
       id: "csv-filter-dataset",
@@ -1084,5 +1132,85 @@ describe("dimension overflow decisions", () => {
     expect(new Set(store.canvasNodes.value.map((node) => node.coordinateSystem?.id)).size).toBe(2);
     expect(store.canvasNodes.value.every((node) => node.coordinateSystem?.ownerNodeId === node.id)).toBe(true);
     expect(store.canvasNodes.value.every((node) => node.compositionSpec?.sharedChannels.length === 0)).toBe(true);
+    const [left, right] = store.canvasNodes.value;
+    expect(left?.compositionSpec?.facetDirection).toBe("column");
+    expect(right?.y).toBe(left?.y);
+    expect((right?.x ?? 0) - (left?.x ?? 0)).toBe((left?.width ?? 0) * (left?.scaleX ?? 1) + 4);
+  });
+
+  it("lays out row facets vertically with a tight gap", () => {
+    const dataset: Dataset = {
+      ...layerDataset,
+      id: "row-facet-dataset",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "time", type: "temporal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { person: "A", time: "2026-01-01", value: "10" },
+        { person: "B", time: "2026-01-01", value: "14" },
+      ],
+    };
+    const chart = lineChart("row-facet-source", 100, false);
+    chart.chartSpec = { ...chart.chartSpec!, datasetId: dataset.id };
+    const canvasRef = ref({
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 800 }),
+      querySelectorAll: () => [],
+    } as unknown as HTMLElement);
+    const store = useCanvasStore(canvasRef);
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [chart];
+    store.selectedIds.value = [chart.id];
+    store.axisBindingTarget.value = { nodeId: chart.id, channel: "x" };
+
+    expect(store.applyDimensionFacet("person", "row")).toBe(true);
+    const [top, bottom] = store.canvasNodes.value;
+    expect(top?.compositionSpec?.facetDirection).toBe("row");
+    expect(bottom?.x).toBe(top?.x);
+    expect((bottom?.y ?? 0) - (top?.y ?? 0)).toBe((top?.height ?? 0) * (top?.scaleY ?? 1) + 4);
+  });
+
+  it("uses the remaining facet direction for a second repair field", () => {
+    const dataset: Dataset = {
+      ...layerDataset,
+      id: "facet-grid-repair-dataset",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "region", type: "nominal" },
+        { name: "time", type: "temporal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: ["A", "B"].flatMap((person) => ["East", "West"].map((region, index) => ({
+        person,
+        region,
+        time: "2026-01-01",
+        value: String(10 + index),
+      }))),
+    };
+    const chart = lineChart("facet-grid-repair-source", 100, false);
+    chart.chartSpec = { ...chart.chartSpec!, datasetId: dataset.id };
+    const canvasRef = ref({
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 800 }),
+      querySelectorAll: () => [],
+    } as unknown as HTMLElement);
+    const store = useCanvasStore(canvasRef);
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [chart];
+    store.selectedIds.value = [chart.id];
+    store.axisBindingTarget.value = { nodeId: chart.id, channel: "x" };
+
+    expect(store.applyDimensionFacet("person", "row")).toBe(true);
+    expect(store.applyDimensionFacet("region", "row")).toBe(false);
+    expect(store.applyDimensionFacet("region", "column")).toBe(true);
+    expect(store.canvasNodes.value).toHaveLength(4);
+    expect(store.canvasNodes.value[0]?.compositionSpec?.facetGrid).toMatchObject({
+      rowField: "person",
+      columnField: "region",
+      rowValues: ["A", "B"],
+      columnValues: ["East", "West"],
+    });
   });
 });

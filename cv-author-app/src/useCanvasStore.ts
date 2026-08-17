@@ -55,6 +55,7 @@ import type {
   MarkGroupSharedConfig,
   Dataset,
   ChartScaleSpec,
+  DimensionRecommendation,
 } from "./types";
 import { useDatasetStore } from "./useDatasetStore";
 import { useChartRelationshipStore } from "./useChartRelationshipStore";
@@ -175,6 +176,33 @@ function lineDataEncodings(encodings: ChartSpec["encodings"]): ChartSpec["encodi
   delete next.size;
   delete next.shape;
   return next;
+}
+
+export type DimensionChartUpgradeOption = {
+  chartType: string;
+  label: string;
+};
+
+export function getDimensionChartUpgradeOptions(chartType: string): DimensionChartUpgradeOption[] {
+  const normalized = chartType.replace(/[\s_-]/g, "").toLowerCase();
+  const template = normalizeChartTemplate(chartType);
+  if (template === "line") {
+    return normalized === "multilinechart"
+      ? []
+      : [{ chartType: "MultiLineChart", label: "Multi-line" }];
+  }
+  if (template !== "bar") return [];
+  const variant = normalizeBarChartVariant(chartType) ?? "single";
+  if (variant === "single") {
+    return [
+      { chartType: "GroupedBarChart", label: "Grouped bar" },
+      { chartType: "StackedBarChart", label: "Stacked bar" },
+    ];
+  }
+  if (variant === "divergent") {
+    return [{ chartType: "DivergentStackedBarChart", label: "Divergent stacked bar" }];
+  }
+  return [];
 }
 
 function migrateLineChartAppearance(spec: ChartSpec) {
@@ -1331,23 +1359,22 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     return true;
   }
 
-  function applyDimensionChartUpgrade(fieldName: string) {
+  function applyDimensionChartUpgrade(fieldName: string, requestedChartType?: string) {
     const node = axisBindingNode.value ?? selectedNodes.value[0];
     const dataset = node?.chartSpec ? getDataset(node.chartSpec.datasetId) : null;
     const column = dataset?.columns.find((item) => item.name === fieldName);
     if (!node?.chartSpec || !column) return false;
     const targets = dimensionDecisionTargets(node);
-    const supported = targets.filter((member) => {
-      const template = normalizeChartTemplate(member.chartSpec?.chartType ?? "");
-      return template === "line"
-        || template === "scatter"
-        || template === "bar"
-        || template === "pie"
-        || template === "donut";
+    const supported = targets.flatMap((member) => {
+      const options = getDimensionChartUpgradeOptions(member.chartSpec?.chartType ?? "");
+      const target = requestedChartType
+        ? options.find((option) => option.chartType === requestedChartType)
+        : options[0];
+      return target ? [{ member, targetChartType: target.chartType }] : [];
     });
     if (supported.length === 0) return false;
     pushCanvasHistory();
-    supported.forEach((member) => {
+    supported.forEach(({ member, targetChartType }) => {
       if (!member.chartSpec) return;
       const template = normalizeChartTemplate(member.chartSpec.chartType);
       member.llmRenderer = null;
@@ -1357,7 +1384,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         delete valueFilters[column.name];
         member.chartSpec = {
           ...member.chartSpec,
-          chartType: "MultiLineChart",
+          chartType: targetChartType,
           templateId: "line",
           encodings: lineDataEncodings(member.chartSpec.encodings),
           series: member.chartSpec.series ?? seriesEncoding,
@@ -1370,54 +1397,18 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           dimensionRecommendations: undefined,
           renderer: undefined,
         };
-      } else if (template === "scatter") {
-        member.chartSpec = {
-          ...member.chartSpec,
-          encodings: {
-            ...member.chartSpec.encodings,
-            color: { field: column.name, type: column.type },
-          },
-          dimensionDecisions: { ...member.chartSpec.dimensionDecisions, [fieldName]: "series" },
-          dimensionRecommendations: undefined,
-          renderer: undefined,
-        };
       } else if (template === "bar") {
-        const currentVariant = normalizeBarChartVariant(member.chartSpec.chartType) ?? "single";
-        const upgradedType = currentVariant === "divergent"
-          ? "DivergentStackedBarChart"
-          : currentVariant === "single"
-            ? "GroupedBarChart"
-            : member.chartSpec.chartType;
         const valueFilters = { ...member.chartSpec.valueFilters };
         delete valueFilters[column.name];
         member.chartSpec = {
           ...member.chartSpec,
-          chartType: upgradedType,
+          chartType: targetChartType,
           encodings: {
             ...member.chartSpec.encodings,
             color: { field: column.name, type: column.type },
           },
           valueFilters: Object.keys(valueFilters).length > 0 ? valueFilters : undefined,
           dimensionDecisions: { ...member.chartSpec.dimensionDecisions, [fieldName]: "series" },
-          dimensionRecommendations: undefined,
-          renderer: undefined,
-        };
-      } else if (template === "donut") {
-        member.chartSpec = {
-          ...member.chartSpec,
-          encodings: {
-            ...member.chartSpec.encodings,
-            ring: { field: column.name, type: column.type },
-          },
-          dimensionDecisions: { ...member.chartSpec.dimensionDecisions, [fieldName]: "series" },
-          dimensionRecommendations: undefined,
-          renderer: undefined,
-        };
-      } else {
-        member.chartSpec = {
-          ...member.chartSpec,
-          flattenFields: Array.from(new Set([...(member.chartSpec.flattenFields ?? []), fieldName])),
-          dimensionDecisions: { ...member.chartSpec.dimensionDecisions, [fieldName]: "flatten" },
           dimensionRecommendations: undefined,
           renderer: undefined,
         };
@@ -1429,16 +1420,21 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     return true;
   }
 
-  function applyDimensionRecommendation(recommendationId: string) {
+  function applyDimensionRecommendation(
+    recommendationId: string,
+    facetDirection: "row" | "column" = "column",
+    recommendationOverride?: DimensionRecommendation,
+  ) {
     const node = axisBindingNode.value ?? selectedNodes.value[0];
-    const recommendation = node?.chartSpec?.dimensionRecommendations?.find((item) => item.id === recommendationId);
+    const recommendation = recommendationOverride
+      ?? node?.chartSpec?.dimensionRecommendations?.find((item) => item.id === recommendationId);
     const dataset = node?.chartSpec ? getDataset(node.chartSpec.datasetId) : null;
     const column = dataset?.columns.find((item) => item.name === recommendation?.field);
-    if (!node?.chartSpec || !recommendation || !dataset) return;
+    if (!node?.chartSpec || !recommendation || !dataset) return false;
     if (recommendation.strategy === "flatten" && normalizeChartTemplate(node.chartSpec.chartType) === "pie") {
       const flattenFields = (recommendation.flattenFields ?? [recommendation.field])
         .filter((field) => dataset.columns.some((item) => item.name === field));
-      if (flattenFields.length === 0) return;
+      if (flattenFields.length === 0) return false;
       pushCanvasHistory();
       [node].forEach((member) => {
         if (!member.chartSpec) return;
@@ -1459,10 +1455,10 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         renderLayerComposition(member);
       });
       setImportNotice(`Flatten by [${flattenFields.join(", ")}] applied.`);
-      return;
+      return true;
     }
     if (recommendation.strategy === "series" || recommendation.strategy === "flatten") {
-      if (!column) return;
+      if (!column) return false;
       pushCanvasHistory();
       const valueFilters = { ...node.chartSpec.valueFilters };
       delete valueFilters[column.name];
@@ -1488,7 +1484,12 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       renderChartNode(node);
       registerChartRelationship(node);
       setImportNotice(`${recommendation.valueCount} ${column.name} lines are shown in one view.`);
-      return;
+      return true;
+    }
+    if (recommendation.strategy === "facet" && node.compositionSpec?.type === "facet") {
+      if (node.compositionSpec.facetGrid) return false;
+      const occupiedDirection = node.compositionSpec.facetDirection ?? "column";
+      if (node.compositionSpec.facetField && occupiedDirection === facetDirection) return false;
     }
     const facetMembers = recommendation.strategy === "facet"
       ? dimensionDecisionTargets(node)
@@ -1504,23 +1505,29 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         },
       };
     });
-    let appliedRecommendation = recommendation;
+    let appliedRecommendation = recommendation.strategy === "facet"
+      ? { ...recommendation, facetDirection }
+      : recommendation;
     if (recommendation.strategy === "facet"
       && node.compositionSpec?.type === "facet"
       && node.compositionSpec.facetField
       && node.compositionSpec.facetField !== recommendation.field) {
-      const columnValues = Array.from(new Set(dataset.rows
+      const addedValues = Array.from(new Set(dataset.rows
         .map((row) => row[recommendation.field] ?? "")
         .filter(Boolean)));
+      const existingDirection = node.compositionSpec.facetDirection ?? "column";
+      const existingField = node.compositionSpec.facetField;
+      const existingValues = [...(node.compositionSpec.facetValues ?? [])];
       appliedRecommendation = {
         ...recommendation,
         facetGrid: {
-          rowField: node.compositionSpec.facetField,
-          columnField: recommendation.field,
-          rowValues: [...(node.compositionSpec.facetValues ?? [])],
-          columnValues,
+          rowField: facetDirection === "row" ? recommendation.field : existingField,
+          columnField: facetDirection === "column" ? recommendation.field : existingField,
+          rowValues: facetDirection === "row" ? addedValues : existingValues,
+          columnValues: facetDirection === "column" ? addedValues : existingValues,
         },
       };
+      if (existingDirection === facetDirection) return false;
       setSelection(facetMembers.map((member) => member.id));
     }
     node.chartSpec.dimensionRecommendations = [
@@ -1533,10 +1540,39 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       recommendation.strategy !== "facet",
     );
     setImportNotice(created
-      ? recommendation.facetGrid
-        ? `${recommendation.facetGrid.rowValues.length} × ${recommendation.facetGrid.columnValues.length} facet grid created.`
+      ? appliedRecommendation.facetGrid
+        ? `${appliedRecommendation.facetGrid.rowValues.length} × ${appliedRecommendation.facetGrid.columnValues.length} facet grid created.`
         : `${recommendation.strategy === "facet" ? "Facet" : "Nested"} created from ${column?.name ?? recommendation.field}.`
       : "The selected recommendation cannot be applied in the current editing scope.");
+    return created;
+  }
+
+  function applyDimensionFacet(fieldName: string, direction: "row" | "column") {
+    const node = axisBindingNode.value ?? selectedNodes.value[0];
+    const dataset = node?.chartSpec ? getDataset(node.chartSpec.datasetId) : null;
+    if (!node?.chartSpec || !dataset) return false;
+    if (node.compositionSpec?.type === "facet") {
+      if (node.compositionSpec.facetGrid) return false;
+      const occupiedDirection = node.compositionSpec.facetDirection ?? "column";
+      if (node.compositionSpec.facetField && occupiedDirection === direction) return false;
+    }
+    const values = Array.from(new Set(dataset.rows
+      .map((row) => row[fieldName] ?? "")
+      .filter(Boolean)));
+    if (values.length === 0) return false;
+    const recommendationId = `${node.id}:${fieldName}:facet`;
+    const recommendation = node.chartSpec.dimensionRecommendations?.find((item) =>
+      item.strategy === "facet" && item.field === fieldName,
+    ) ?? {
+      id: recommendationId,
+      strategy: "facet" as const,
+      field: fieldName,
+      valueCount: values.length,
+      estimatedMarkCount: values.length,
+      sharedChannels: [],
+      label: `Facet by ${fieldName}`,
+    };
+    return applyDimensionRecommendation(recommendation.id, direction, recommendation);
   }
 
   function createLayer(recordHistory = true) {
@@ -1634,15 +1670,19 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       || !sourceNodes.every(isAtomicChartReady)
       || (type === "concat" && sourceNodes.length < 2)) return false;
     const compositionId = crypto.randomUUID();
-    const gap = Math.max(24, Math.min(bounds.width, bounds.height) * 0.08);
+    const gap = type === "facet"
+      ? 4
+      : Math.max(24, Math.min(bounds.width, bounds.height) * 0.08);
     if (recordHistory) pushCanvasHistory();
     let children: CanvasNode[] = [];
     let facetField: string | undefined;
     let facetValues: string[] | undefined;
+    let facetDirection: "row" | "column" | undefined;
     let facetGrid: NonNullable<CanvasNode["compositionSpec"]>["facetGrid"];
     if (type !== "concat") {
       const source = sourceNodes[0]!;
       const recommendation = source.chartSpec?.dimensionRecommendations?.find((item) => item.strategy === "facet");
+      facetDirection = recommendation?.facetDirection;
       const dataset = source.chartSpec ? getDataset(source.chartSpec.datasetId) : null;
       facetGrid = recommendation?.facetGrid
         ? {
@@ -1660,8 +1700,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
             const clone = cloneCanvasNodeForPaste(source);
             const baseX = type === "facet" ? bounds.minX : 0;
             const baseY = type === "facet" ? bounds.minY : 0;
-            clone.x = baseX + columnIndex * (source.width * source.scaleX + gap);
-            clone.y = baseY + rowIndex * (source.height * source.scaleY + gap);
             clone.name = `${source.name} - ${rowValue} / ${columnValue}`;
             if (clone.chartSpec) {
               clone.chartSpec = {
@@ -1674,6 +1712,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
               };
             }
             renderChartNode(clone);
+            clone.x = baseX + columnIndex * (clone.width * clone.scaleX + gap);
+            clone.y = baseY + rowIndex * (clone.height * clone.scaleY + gap);
             return clone;
           }),
         );
@@ -1682,15 +1722,17 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         facetValues = facetField && dataset
           ? Array.from(new Set(dataset.rows.map((row) => row[facetField!] ?? "").filter(Boolean)))
           : ["1", "2", "3"];
-        const columns = Math.max(1, Math.ceil(Math.sqrt(facetValues.length)));
+        const columns = recommendation?.facetDirection === "row"
+          ? 1
+          : Math.max(1, facetValues.length);
         children = facetValues.map((value, index) => {
           const clone = cloneCanvasNodeForPaste(source);
           const baseX = type === "facet" ? bounds.minX : 0;
           const baseY = type === "facet" ? bounds.minY : 0;
-          clone.x = baseX + (index % columns) * (source.width * source.scaleX + gap);
-          clone.y = baseY + Math.floor(index / columns) * (source.height * source.scaleY + gap);
           if (clone.chartSpec && facetField) clone.chartSpec = { ...clone.chartSpec, filters: { ...clone.chartSpec.filters, [facetField]: value } };
           renderChartNode(clone);
+          clone.x = baseX + (index % columns) * (clone.width * clone.scaleX + gap);
+          clone.y = baseY + Math.floor(index / columns) * (clone.height * clone.scaleY + gap);
           return clone;
         });
       }
@@ -1742,6 +1784,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       sharedChannels,
       facetField,
       facetValues,
+      facetDirection,
       facetGrid,
       members: children.map((node, index) => ({
         nodeId: node.id,
@@ -3987,6 +4030,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     applyDimensionRecommendation,
     applyDimensionAggregation,
     applyDimensionChartUpgrade,
+    applyDimensionFacet,
     applyLlmRenderer,
     onCanvasNodeContextMenu,
     onScaleHandlePointerDown,

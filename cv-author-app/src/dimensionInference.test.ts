@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { inferChartStructure } from "./dimensionInference";
+import {
+  analyzeDimensionGrainRepairs,
+  inferChartStructure,
+} from "./dimensionInference";
 import type { ChartSpec, Dataset } from "./types";
 
 const dataset: Dataset = {
@@ -27,6 +30,49 @@ const chartSpec: ChartSpec = {
 };
 
 describe("line chart dimension recommendations", () => {
+  it("excludes quantitative columns from every minimal dimension repair", () => {
+    const repairDataset: Dataset = {
+      id: "typed-dimension-repairs",
+      name: "typed-dimension-repairs.csv",
+      columns: [
+        { name: "entity", type: "nominal" },
+        { name: "numeric_alias", type: "quantitative" },
+        { name: "period", type: "temporal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { entity: "A", numeric_alias: "1", period: "T1", value: "10" },
+        { entity: "B", numeric_alias: "2", period: "T1", value: "20" },
+      ],
+    };
+
+    const result = analyzeDimensionGrainRepairs(repairDataset, ["period"], ["value"]);
+
+    expect(result.candidates.map((candidate) => candidate.fields)).toEqual([["entity"]]);
+    expect(result.candidates.flatMap((candidate) => candidate.fields)).not.toContain("numeric_alias");
+  });
+
+  it("reports unresolvable when only quantitative columns distinguish conflicts", () => {
+    const numericOnlyDataset: Dataset = {
+      id: "numeric-only-dimension-repair",
+      name: "numeric-only-dimension-repair.csv",
+      columns: [
+        { name: "numeric_group", type: "quantitative" },
+        { name: "period", type: "temporal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { numeric_group: "1", period: "T1", value: "10" },
+        { numeric_group: "2", period: "T1", value: "20" },
+      ],
+    };
+
+    const result = analyzeDimensionGrainRepairs(numericOnlyDataset, ["period"], ["value"]);
+
+    expect(result.status).toBe("unresolvable");
+    expect(result.candidates).toEqual([]);
+  });
+
   it("offers one-view and multiple-view choices for an inferred series", () => {
     const result = inferChartStructure("line-1", dataset, chartSpec);
 

@@ -55,7 +55,6 @@ describe("case1.csv chart-template compatibility and repair", () => {
     expect(result.repairs.map((repair) => repair.addedFields)).toEqual([
       ["id"],
       ["person"],
-      ["muscle_kg"],
     ]);
   });
 
@@ -111,10 +110,6 @@ describe("case1.csv chart-template compatibility and repair", () => {
     expect(addedFieldSets(spec)).toEqual([
       ["id"],
       ["time"],
-      ["water_kg"],
-      ["fat_kg"],
-      ["muscle_kg"],
-      ["minerals_kg"],
     ]);
     expect(result.repairs.every((repair) => repair.binding.series?.length === 1)).toBe(true);
   });
