@@ -1,0 +1,170 @@
+import { describe, expect, it, vi } from "vitest";
+import {
+  createPolarCoordinateSystemModel,
+  polarAngleSpanFromPoint,
+  PolarCoordinateSystem,
+} from "../components/PolarCoordinateSystem";
+import type { CanvasLeafNode } from "../types";
+
+function polarNode(overrides: Partial<CanvasLeafNode> = {}): CanvasLeafNode {
+  return {
+    kind: "leaf",
+    id: "pie",
+    candidateId: "builtin-template:pie",
+    name: "Pie Chart",
+    content: "",
+    viewBox: "10 20 200 160",
+    contentMinX: 10,
+    contentMinY: 20,
+    width: 200,
+    height: 160,
+    x: 300,
+    y: 200,
+    scaleX: 2,
+    scaleY: 2,
+    rotation: 0,
+    coordinateGuide: {
+      type: "Polar",
+      origin: { x: 110, y: 100 },
+      radiusScale: 1.5,
+      ringScale: 1,
+    },
+    ...overrides,
+  };
+}
+
+describe("independent Polar coordinate system component", () => {
+  it("derives its geometry from the node bounds and guide", () => {
+    const model = createPolarCoordinateSystemModel(polarNode(), 0.5)!;
+
+    expect(model).toMatchObject({
+      origin: { x: 110, y: 100 },
+      radius: 162,
+      angleSpan: 360,
+      upperAngle: 0,
+      radiusEnd: { x: 272, y: 100 },
+      upperRadiusEnd: { x: 272, y: 100 },
+      lowerControlArcPath: `M 272 100 A 162 162 0 0 1 ${110 + Math.cos(Math.PI / 6) * 162} 181`,
+      renderedScale: 1,
+    });
+    const upperArcValues = model.upperControlArcPath.match(/-?\d+(?:\.\d+)?/g)?.map(Number) ?? [];
+    expect(upperArcValues).toHaveLength(9);
+    expect(upperArcValues[0]).toBeCloseTo(110 + Math.cos(Math.PI / 6) * 162);
+    expect(upperArcValues[1]).toBeCloseTo(19);
+    expect(upperArcValues.at(-2)).toBe(272);
+    expect(upperArcValues.at(-1)).toBe(100);
+  });
+
+  it("renders overlapping boundary rays with separate 30-degree control arcs", () => {
+    const node = polarNode();
+    const render = (PolarCoordinateSystem as any).setup({
+      node,
+      viewZoom: 0.5,
+      applyTransform: false,
+    });
+    const coordinateSystem = render();
+    const classes = (child: any) => Array.isArray(child.props.class)
+      ? child.props.class
+      : String(child.props.class ?? "").split(" ");
+
+    expect(coordinateSystem.props.class).toContain("polar-coordinate-system");
+    expect(coordinateSystem.props.transform).toBeUndefined();
+    expect(coordinateSystem.children).toHaveLength(7);
+
+    const radiusAxes = coordinateSystem.children.filter((child: any) =>
+      classes(child).includes("polar-coordinate-radius-axis"),
+    );
+    expect(radiusAxes).toHaveLength(2);
+    expect(radiusAxes[0].props).toMatchObject({
+      x1: 110,
+      y1: 100,
+      x2: 272,
+      y2: 100,
+    });
+    expect(radiusAxes[1].props).toMatchObject({
+      x1: radiusAxes[0].props.x1,
+      y1: radiusAxes[0].props.y1,
+      x2: radiusAxes[0].props.x2,
+      y2: radiusAxes[0].props.y2,
+    });
+
+    const angleAxes = coordinateSystem.children.filter((child: any) =>
+      classes(child).includes("polar-coordinate-angle-axis"),
+    );
+    expect(angleAxes).toHaveLength(2);
+    expect(angleAxes.every((axis: any) => axis.type === "path")).toBe(true);
+
+    const labels = coordinateSystem.children.filter((child: any) => child.type === "text");
+    expect(labels.map((label: any) => label.children)).toEqual(["R", "Theta"]);
+
+    const control = coordinateSystem.children.find((child: any) =>
+      classes(child).includes("polar-coordinate-angle-control"),
+    );
+    expect(control.props["aria-valuenow"]).toBe(360);
+    expect(control.props.transform).toBe("translate(272 100) scale(1)");
+  });
+
+  it("subtracts an upper counter-clockwise rotation from the 360-degree range", () => {
+    const origin = { x: 100, y: 100 };
+    expect(polarAngleSpanFromPoint(origin, { x: 200, y: 100 })).toBe(360);
+    expect(polarAngleSpanFromPoint(origin, { x: 100, y: 0 })).toBe(270);
+    expect(polarAngleSpanFromPoint(origin, { x: 0, y: 100 })).toBe(180);
+
+    const node = polarNode({
+      coordinateGuide: {
+        type: "Polar",
+        origin,
+        radiusScale: 1,
+        angleSpan: 300,
+      },
+    });
+    const model = createPolarCoordinateSystemModel(node)!;
+    expect(model.upperAngle).toBe(60);
+    expect(model.radius).toBe(118);
+    expect(model.upperRadiusEnd.x).toBeCloseTo(159);
+    expect(model.upperRadiusEnd.y).toBeCloseTo(100 - Math.sqrt(3) * 59);
+  });
+
+  it("starts angle rotation from the upper ray and isolates the pointer event", () => {
+    const node = polarNode();
+    const onAnglePointerDown = vi.fn();
+    const render = (PolarCoordinateSystem as any).setup({
+      node,
+      viewZoom: 1,
+      applyTransform: false,
+      onAnglePointerDown,
+    });
+    const coordinateSystem = render();
+    const control = coordinateSystem.children.find((child: any) =>
+      String(child.props.class ?? "").includes("polar-coordinate-angle-control"),
+    );
+    const event = {
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    } as unknown as PointerEvent;
+
+    control.props.onPointerdown(event);
+
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(event.stopPropagation).toHaveBeenCalledOnce();
+    expect(onAnglePointerDown).toHaveBeenCalledWith(node, event);
+  });
+
+  it("does not render for a non-Polar guide", () => {
+    const node = polarNode({
+      coordinateGuide: {
+        type: "Cartesian",
+        origin: { x: 10, y: 20 },
+        xDirection: 1,
+        yDirection: -1,
+      },
+    });
+    const render = (PolarCoordinateSystem as any).setup({
+      node,
+      viewZoom: 1,
+      applyTransform: true,
+    });
+
+    expect(render()).toBeNull();
+  });
+});

@@ -55,9 +55,9 @@ Each template defines an explicit encoding contract. Examples include:
 ```text
 Line    -> X + Y required
 Scatter -> X + Y required
-Bar     -> Category + Value required
-Pie     -> Angle required
-Matrix  -> Row + Column required
+Bar     -> X + Y required
+Pie     -> Theta required
+Matrix  -> X + Y required
 ```
 
 A unit cannot participate in a Composition until all required Mark Encodings are complete. This ensures that Composition always operates on structured and independently valid visualization units.
@@ -72,8 +72,8 @@ Main implementation modules:
 The Semantic Data Binding module maps data semantics to Mark channels:
 
 ```text
-Dimension -> X / Color / Row / Slice
-Measure   -> Y / Size / Angle / Radius
+Dimension -> X / Y / Color / Slice
+Measure   -> Y / Size / Theta / Radius
 ```
 
 It manages:

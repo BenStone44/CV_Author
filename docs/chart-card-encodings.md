@@ -17,9 +17,9 @@
 - 标有 `必选` 的 Channel 未绑定时，图表不生成数据 marks。
 - `Color`、`Size`、`Shape` 等视觉 Channel 未绑定列时使用静态值。
 - 数值或时间字段绑定到 `Color`、`Size` 时可配置线性映射。
-- Cartesian 图表共享统一的 X/Y 坐标轴组件。Matrix 的 `Column/Row` 在坐标系统内分别映射为 `X/Y`，不是另一套坐标轴。
-- Pie 支持多选 Angle components；其他单值 Channel 使用统一字段选择组件。
-- 顶部模板浏览器按 D3 Gallery 语义显示 `Lines`、`Areas`、`Bars`、`Dots`、`Radial`、`Analysis`、`Hierarchies`、`Networks` 八张类别 Card。类别 Card 内最多展示四个模板缩略图；少于四个时自动铺满。点击类别 Card 后在下拉菜单中显示并允许拖拽该类全部模板。
+- Cartesian 图表共享统一的 X/Y 坐标轴组件。Matrix 的列/行维度分别写入 `X/Y`，不是 Vega-Lite 的 facet `column/row` 通道。
+- Pie 支持多选 Theta measures；其他单值 Channel 使用统一字段选择组件。
+- 顶部模板浏览器按 mark family 显示 Bar、Line、Area、Point、Rect、Arc、Contour、Hexbin、Chord、Sankey、Parallel coordinates、Hierarchy、Treemap、Dendrogram、Calendar、Boxplot 等类别 Card。类别 Card 内最多展示四个模板缩略图；少于四个时自动铺满。点击类别 Card 后在下拉菜单中显示并允许拖拽该类全部模板。
 
 ## 2. Line Chart Card
 
@@ -49,16 +49,16 @@
 
 ## 4. Bar Chart Cards
 
-五种 Bar Card 共用同一套 Channel contract 和 Bar renderer。Card 决定柱子的布局语义，`Color` 在不同变体中显示为 Color、Group 或 Segment。
+五种 Bar Card 共用同一套 Channel contract 和 Bar renderer。Card 决定柱子的布局语义，`Color` 在不同变体中承担普通颜色、分组或堆叠分段语义。
 
 ### Single Bar
 
 | Channel | 必选 | 接受类型 | 作用 |
 | --- | --- | --- | --- |
-| `Category` (`X`) | 是 | nominal、temporal | 每根柱所属类别 |
-| `Value` (`Y`) | 是 | quantitative | 柱高和数值 |
+| `X` | 是 | nominal、temporal | 每根柱所属类别 |
+| `Y` | 是 | quantitative | 柱高和数值 |
 | `Color` | 否 | nominal、temporal、quantitative | 柱色或连续颜色映射 |
-| `Bar width` (`Size`) | 否 | quantitative | 映射柱宽；未绑定时使用静态宽度 |
+| `Size` | 否 | quantitative | 映射柱宽；未绑定时使用静态宽度 |
 
 升维：增加分类字段后升级为 Grouped Bar，并把该字段绑定到 `Color`。
 
@@ -66,28 +66,30 @@
 
 | Channel | 必选 | 接受类型 | 作用 |
 | --- | --- | --- | --- |
-| `Category` (`X`) | 是 | nominal、temporal | 主类别 |
-| `Value` (`Y`) | 是 | quantitative | 每个组的柱高 |
-| `Group` (`Color`) | 否 | nominal、temporal、quantitative | 在主类别内生成并列柱；通常绑定分类字段 |
-| `Bar width` (`Size`) | 否 | quantitative | 映射组内柱宽 |
+| `X` | 是 | nominal、temporal | 主类别 |
+| `Y` | 是 | quantitative | 每个组的柱高 |
+| `Color` | 是 | nominal、temporal | 在主类别内区分并列组 |
+| `Size` | 否 | quantitative | 映射组内柱宽 |
 
 ### Stacked Bar
 
 | Channel | 必选 | 接受类型 | 作用 |
 | --- | --- | --- | --- |
-| `Category` (`X`) | 是 | nominal、temporal | 主类别 |
-| `Value` (`Y`) | 是 | quantitative | 每个分段的长度 |
-| `Segment` (`Color`) | 否 | nominal、temporal、quantitative | 在柱内生成堆叠分段；通常绑定分类字段 |
-| `Bar width` (`Size`) | 否 | quantitative | 映射整根柱的宽度 |
+| `X` | 是 | nominal、temporal | 主类别 |
+| `Y` | 是 | quantitative | 每个分段的长度 |
+| `Color` | 是 | nominal、temporal | 在柱内区分堆叠分段 |
+| `Size` | 否 | quantitative | 映射整根柱的宽度 |
+
+面板中的 `Segment` 是 `Color` 的模板语义。除绑定一个分类字段外，也支持多选定量列；多列会先折叠成长表，再以派生的 segment member 通过标准 `color` 通道堆叠。
 
 ### Divergent Bar
 
 | Channel | 必选 | 接受类型 | 作用 |
 | --- | --- | --- | --- |
-| `Category` (`X`) | 是 | nominal、temporal | 每根发散柱所属类别 |
-| `Value` (`Y`) | 是 | quantitative | 正负值决定零基线两侧的方向和长度 |
+| `X` | 是 | nominal、temporal | 每根发散柱所属类别 |
+| `Y` | 是 | quantitative | 正负值决定零基线两侧的方向和长度 |
 | `Color` | 否 | nominal、temporal、quantitative | 柱色或连续颜色映射 |
-| `Bar width` (`Size`) | 否 | quantitative | 映射柱宽 |
+| `Size` | 否 | quantitative | 映射柱宽 |
 
 升维：增加分类字段后升级为 Divergent Stacked Bar，并把该字段绑定到 `Color`。
 
@@ -95,10 +97,12 @@
 
 | Channel | 必选 | 接受类型 | 作用 |
 | --- | --- | --- | --- |
-| `Category` (`X`) | 是 | nominal、temporal | 主类别 |
-| `Value` (`Y`) | 是 | quantitative | 正负值分别在零基线两侧堆叠 |
-| `Segment` (`Color`) | 否 | nominal、temporal、quantitative | 生成正负两侧的组成分段 |
-| `Bar width` (`Size`) | 否 | quantitative | 映射整根柱的宽度 |
+| `X` | 是 | nominal、temporal | 主类别 |
+| `Y` | 是 | quantitative | 正负值分别在零基线两侧堆叠 |
+| `Color` | 是 | nominal、temporal | 生成正负两侧的组成分段 |
+| `Size` | 否 | quantitative | 映射整根柱的宽度 |
+
+Divergent Stacked Bar 使用相同的多列 Segment 机制，正负值分别从零基线两侧堆叠。
 
 ## 5. Pie Chart Card
 
@@ -106,14 +110,14 @@
 
 | Channel | 必选 | 接受类型 | 作用 |
 | --- | --- | --- | --- |
-| `Angle components` | 是 | quantitative | 一个或多个数值字段决定扇区角度 |
-| `Category` (`Color`) | 否 | nominal、temporal | 按类别分组并分配颜色 |
-| `Outer radius` (`Radius`) | 否 | quantitative | 映射扇区外半径 |
+| `Theta` | 是 | quantitative | 一个或多个数值字段决定扇区角度 |
+| `Color` | 否 | nominal、temporal | 按类别分组并分配颜色 |
+| `R` (`Radius`) | 否 | quantitative | 映射扇区外半径 |
 
 Pie 的 Radius 有两种组合方式：
 
-- `Shared`：全部 Angle components 共用一个 Radius 字段。
-- `Per component`：每个 Angle component 独立选择 Radius 字段。
+- `Shared`：全部 Theta measures 共用一个 Radius 字段。
+- `Per component`：每个 Theta measure 独立选择 Radius 字段。
 
 ## 6. Donut Chart Card
 
@@ -121,10 +125,10 @@ Pie 的 Radius 有两种组合方式：
 
 | Channel | 必选 | 接受类型 | 作用 |
 | --- | --- | --- | --- |
-| `Angle` | 是 | quantitative | 扇区角度 |
-| `Category` (`Color`) | 否 | nominal、temporal | 扇区分类和颜色 |
+| `Theta` | 是 | quantitative | 扇区角度 |
+| `Color` | 否 | nominal、temporal | 扇区分类和颜色 |
 | `Ring` | 否 | nominal、temporal | 按字段生成同心环系列 |
-| `Outer radius` (`Radius`) | 否 | quantitative | 映射外半径 |
+| `R` (`Radius`) | 否 | quantitative | 映射外半径 |
 
 ## 7. Matrix Card
 
@@ -132,10 +136,9 @@ Pie 的 Radius 有两种组合方式：
 
 | Channel | 必选 | 接受类型 | 作用 |
 | --- | --- | --- | --- |
-| `Row` | 是 | nominal、temporal | 矩阵行；映射到统一 Cartesian Y 轴 |
-| `Column` | 是 | nominal、temporal | 矩阵列；映射到统一 Cartesian X 轴 |
-| `Cell value` (`Value`) | 否 | quantitative | 单元格连续颜色和透明度的数值来源 |
-| `Color` | 否 | quantitative、nominal | 单元格颜色字段；未绑定时使用静态颜色 |
+| `X` | 是 | nominal、temporal | 矩阵列；对应列维度 |
+| `Y` | 是 | nominal、temporal | 矩阵行；对应行维度 |
+| `Color` | 否 | quantitative、nominal | 单元格数值或分类颜色来源 |
 
 ## 8. Card 与 Config 组合关系
 
@@ -143,10 +146,10 @@ Pie 的 Radius 有两种组合方式：
 | --- | --- | --- | --- |
 | Line Chart | X、Y、Color、Size、Shape | Color、Size | 无 |
 | Scatterplot | X、Y、Color、Size、Shape | Color、Size | 无 |
-| 5 种 Bar | X、Y、Color、Size | Color、Size | 变体化 Channel 标签 |
-| Pie Chart | Color | Color | 多 Angle、Radius 模式、分组件 Radius |
-| Donut Chart | Angle、Color、Ring、Radius | Color | 无 |
-| Matrix | Row、Column、Value、Color | Color | Row/Column 到共享 X/Y 轴映射 |
+| 5 种 Bar | X、Y、Color、Size | Color、Size | 变体化堆叠/分组语义 |
+| Pie Chart | Theta、Color、Radius | Color、Radius | 多 Theta measure、Radius 模式、分组件 Radius |
+| Donut Chart | Theta、Color、Ring、Radius | Color、Radius | Ring 是模板扩展角色 |
+| Matrix | X、Y、Color | Color | X/Y 到共享坐标轴映射 |
 
 实现中，`EncodingChannelField` 负责单个 Channel，`EncodingConfigPanel` 根据 contract 组合 Channel，并为 Pie 插入专用配置区。Store 的 `setChartEncoding` 只把真实 Channel 写回 atomic Chart Unit 的 Mark Encoding；共享坐标关系在后续 Composition 阶段单独建立。
 
@@ -158,7 +161,7 @@ Area Chart、Stacked Area、Streamgraph 与 Horizon Chart 共用 Area renderer�
 | --- | --- | --- | --- |
 | `X` | 是 | nominal、temporal、quantitative | 横向顺序 |
 | `Y` | 是 | quantitative | 面积高度 |
-| `Series` (`Color`) | 否 | nominal、temporal | 拆分面积层 |
+| `Color` | 否 | nominal、temporal | 拆分面积层 |
 
 Area Chart 使用官方示例的 `steelblue` 单面积；Stacked Area 使用 Tableau 10 与零基线；Streamgraph 使用 `stackOffsetWiggle` 和 `stackOrderInsideOut`。Horizon 按 Series 生成 25px 基准高度的行，并使用 `schemeBlues` 折叠色带；`Bands` 可编辑，默认 7。
 

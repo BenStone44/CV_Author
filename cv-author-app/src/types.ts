@@ -48,16 +48,28 @@ export type DataColumn = {
 
 export type DataRow = Record<string, string>;
 
+export type DatasetTable = {
+  columns: DataColumn[];
+  rows: DataRow[];
+};
+
+export type GraphTables = {
+  nodes: DatasetTable;
+  edges: DatasetTable;
+};
+
 export type Dataset = {
   id: string;
   name: string;
   columns: DataColumn[];
   rows: DataRow[];
   primaryKey?: string[];
+  graph?: GraphTables;
 };
 
 export type EncodingChannel = "x" | "y";
-export type PolarEncodingChannel = "angle" | "radius" | "ring";
+/** Vega-Lite polar channels use theta/radius. `angle` remains a legacy read alias. */
+export type PolarEncodingChannel = "theta" | "radius" | "ring" | "angle";
 export type MatrixEncodingChannel = "row" | "column" | "value";
 export type StructuredEncodingChannel =
   | "key"
@@ -206,6 +218,7 @@ export type ChartSpec = {
   chartType: string;
   templateId?: ChartTemplateKind;
   datasetId: string;
+  axisSwapped?: boolean;
   encodings: Partial<Record<ChartEncodingChannel, ChartEncoding>>;
   aggregations?: Partial<Record<ChartEncodingChannel, "sum" | "avg">>;
   dimensionAggregations?: Record<string, "sum" | "avg">;

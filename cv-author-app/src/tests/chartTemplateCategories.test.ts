@@ -1,0 +1,69 @@
+import { describe, expect, it } from "vitest";
+import { advancedTemplateDefinitions } from "../utils/advancedChartCards";
+import { groupChartTemplateCandidates } from "../utils/chartTemplateCategories";
+import type { SvgCandidate } from "../types";
+
+const existing: SvgCandidate[] = ([
+  ["line", "Single Line", "LineGraph", "Cartesian"],
+  ["multi-line", "Multi-Line Chart", "MultiLineChart", "Cartesian"],
+  ["scatter", "Scatterplot", "Scatterplot", "Cartesian"],
+  ["pie", "Pie Chart", "PieChart", "Polar"],
+  ["donut", "Donut", "DonutChart", "Polar"],
+  ["matrix", "Matrix", "MatrixDiagram", "Cartesian"],
+  ["single-bar", "Single Bar", "SingleBarChart", "Cartesian"],
+  ["grouped-bar", "Grouped Bar", "GroupedBarChart", "Cartesian"],
+  ["stacked-bar", "Stacked Bar", "StackedBarChart", "Cartesian"],
+  ["divergent-bar", "Divergent Bar", "DivergentBarChart", "Cartesian"],
+  ["divergent-stacked-bar", "Divergent Stacked Bar", "DivergentStackedBarChart", "Cartesian"],
+] as Array<[string, string, string, SvgCandidate["coordinateSystem"]]>).map(([id, name, chartType, coordinateSystem]) => ({ id, name, chartType, coordinateSystem, src: "preview" }));
+
+describe("chart template categories", () => {
+  it("groups every implemented template by family exactly once", () => {
+    const candidates = [...existing, ...advancedTemplateDefinitions];
+    const categories = groupChartTemplateCandidates(candidates);
+    const grouped = categories.flatMap((category) => category.candidates);
+    expect(categories.map((category) => category.label)).toEqual([
+      "Bar chart",
+      "Line chart",
+      "Area chart",
+      "Point",
+      "Rect",
+      "Arc",
+      "Contour",
+      "Hexbin",
+      "Chord",
+      "Sankey",
+      "Parallel coordinates",
+      "Sunburst / Icicle",
+      "Treemap",
+      "Dendrogram",
+      "Calendar",
+      "Boxplot",
+    ]);
+    expect(grouped).toHaveLength(candidates.length);
+    expect(new Set(grouped.map((candidate) => candidate.id)).size).toBe(candidates.length);
+    expect(categories.find((category) => category.id === "barchart")?.candidates).toHaveLength(5);
+    expect(categories.find((category) => category.id === "linechart")?.candidates).toHaveLength(2);
+    expect(categories.find((category) => category.id === "areachart")?.candidates).toHaveLength(4);
+    expect(categories.find((category) => category.id === "arc")?.candidates).toHaveLength(2);
+    expect(categories.find((category) => category.id === "sunburst-icicle")?.candidates).toHaveLength(2);
+  });
+
+  it("keeps unknown templates in an Other family", () => {
+    const unknown: SvgCandidate = { id: "future", name: "Future", chartType: "FutureChart", coordinateSystem: "CoordinateFree", src: "preview" };
+    const categories = groupChartTemplateCandidates([unknown]);
+    expect(categories).toEqual([{ id: "other", label: "Other", candidates: [unknown] }]);
+  });
+
+  it("groups candidates by chart type rather than coordinate system", () => {
+    const candidate: SvgCandidate = {
+      id: "future-bar",
+      name: "Future bar",
+      chartType: "GroupedBarChart",
+      coordinateSystem: "Polar",
+      src: "preview",
+    };
+    const categories = groupChartTemplateCandidates([candidate]);
+    expect(categories).toEqual([{ id: "barchart", label: "Bar chart", candidates: [candidate] }]);
+  });
+});

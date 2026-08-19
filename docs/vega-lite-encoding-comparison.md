@@ -9,7 +9,7 @@
 
 当前 Card List：Line Chart、Scatterplot、Pie Chart、Donut、Matrix、Single Bar、Grouped Bar、Stacked Bar、Divergent Bar、Divergent Stacked Bar。
 
-> 结论：Vega-Lite 的 channel 是视觉变量，例如 `x`、`y`、`theta`、`color`；当前项目中的 `Group`、`Segment`、`Ring`、`Cell value`、`Angle components` 则包含模板语义或数据整形语义。两者不应继续共用同一层枚举。加入 CSV -> Cube 转换后，用户层应优先绑定 `measure + dimension/member`，而不是直接选择底层 CSV column。
+> 结论：Vega-Lite 的 channel 是视觉变量，例如 `x`、`y`、`theta`、`color`；当前项目的持久化 `ChartSpec.encodings` 已对 Vega-Lite 原生模板统一使用这些通道。`Group`、`Segment`、`Ring`、`Cell value`、`Angle components` 只保留在模板语义或数据整形层，不再作为原生 encoding channel。加入 CSV -> Cube 转换后，用户层应优先绑定 `measure + dimension/member`，而不是直接选择底层 CSV column。
 
 ## 1. Vega-Lite channel 如何对应 column
 
@@ -65,12 +65,12 @@ Vega-Lite 最基本的字段绑定形式如下：
 | --- | --- | --- | --- | --- |
 | `x` | Cartesian 横向位置 | `x` | 直接绑定一列 | 保留 |
 | `y` | Cartesian 纵向位置 | `y` | 直接绑定一列 | 保留 |
-| `angle` | Pie / Donut 扇区角度 | `theta` | 通常绑定 quantitative 列 | 改为 `theta`；Vega-Lite 的 `angle` 是 mark 旋转角，不是扇区角度 |
+| `theta` (`angle` legacy) | Pie / Donut 扇区角度 | `theta` | 通常绑定 quantitative 列 | 新写入使用 `theta`；旧 `angle` 仅作读取兼容 |
 | `radius` | Arc 外半径 | `radius` | 可绑定 quantitative 列 | 保留；如表达环带边界，还需 `radius2` |
 | `ring` | Donut 同心环分组 | 无直接同名 channel | 当前绑定类别列后由 renderer 计算环序号 | 保留为模板角色；编译时转换为 `radius/radius2` 派生字段，或转换为 facet/layer |
-| `row` | Matrix 的行坐标 | Matrix 中应为 `y` | 当前绑定类别列 | 不应直接映射到 Vega-Lite `row`；后者表示纵向 facet |
-| `column` | Matrix 的列坐标 | Matrix 中应为 `x` | 当前绑定类别列 | 不应直接映射到 Vega-Lite `column`；后者表示横向 facet |
-| `value` | Matrix 单元格数值 | 通常为 `color` | 当前绑定 quantitative 列 | 保留为模板角色；编译到 `color.field`，不是原生 channel |
+| `x` (`column` legacy) | Matrix 的列坐标 | `x` | 当前绑定类别列 | 新写入使用 `x`；旧 `column` 仅作读取兼容 |
+| `y` (`row` legacy) | Matrix 的行坐标 | `y` | 当前绑定类别列 | 新写入使用 `y`；旧 `row` 仅作读取兼容 |
+| `color` (`value` legacy) | Matrix 单元格数值/颜色 | `color` | 当前绑定 quantitative 列 | 新写入使用 `color.field`；旧 `value` 仅作读取兼容 |
 | `color` | 颜色或分类系列 | `color`，也可细分为 `fill` / `stroke` | 可绑定列，也可使用固定值 | 保留；线图可进一步选择 `stroke`，实心 mark 可选择 `fill` |
 | `size` | 点大小、线宽或柱宽 | `size` 或 `strokeWidth` | 通常绑定 quantitative 列，也可固定 | 不应对所有 mark 使用同一种语义；Line 建议编译为 `strokeWidth` |
 | `shape` | 点形状或当前 Line 的预留样式 | `shape` | 通常绑定 nominal 列 | Scatter 保留；Line 路径本身不使用 shape，除非明确启用 point marks |
@@ -85,13 +85,13 @@ Vega-Lite 最基本的字段绑定形式如下：
 | --- | --- | --- | --- | --- | --- |
 | Line Chart | `line` | `x` 必选；`y` 必选；`color/size/shape` 可选 | `x: field`；`y: field`；系列用 `color` 或 `detail`；线宽用 `strokeWidth` | `x` 通常 T/Q/O，`y` 通常 Q；类别列作为 series 会把数据拆成多条线 | 当前 `size` 实际表示线宽；`shape` 不作用于 line path；`color: Q` 是逐点连续色，不能自然代表稳定 series |
 | Scatterplot | `point` / `circle` | `x/y` 必选；`color/size/shape` 可选 | `x`、`y`、`color`、`size`、`shape` | 每个 channel 各绑定一列；同一类别列可同时绑定 `color` 与 `shape` | 与 Vega-Lite 最接近；建议允许 O 类型 |
-| Single Bar | `bar` | `x=Category`；`y=Value`；`color/size` 可选 | `x: category`；`y: aggregate(measure)`；`color` 可选 | `x` 为 N/O/T；`y` 为 Q，通常需要 `sum/mean` | 当前 renderer 默认把相同 category 的 y 求和，这一聚合应显式进入 field definition |
-| Grouped Bar | `bar` | `x=Category`；`y=Value`；`color=Group` | `x: category`；`xOffset: group`；`y: aggregate(measure)`；`color: group` | 同一个 group column 通常同时绑定 `xOffset` 和 `color` | 当前把 Group 只存为 `color`，布局分组由 chart variant 隐式完成；Vega-Lite 需要显式 `xOffset` |
-| Stacked Bar | `bar` | `x=Category`；`y=Value`；`color=Segment` | `x: category`；`y: aggregate(measure), stack: "zero"`；`color: segment` | segment column 是额外 group-by；`color` 同时决定堆叠分段 | 与 Vega-Lite 接近，但建议显式保存 `stack`，避免靠默认推断 |
+| Single Bar | `bar` | `x`；`y`；`color/size` 可选 | `x: category`；`y: aggregate(measure)`；`color` 可选 | `x` 为 N/O/T；`y` 为 Q，通常需要 `sum/mean` | 当前 renderer 默认把相同 x 的 y 求和，这一聚合应显式进入 field definition |
+| Grouped Bar | `bar` | `x`；`y`；`color` | `x: category`；`xOffset: group`；`y: aggregate(measure)`；`color: group` | 同一个 group column 通常同时绑定 `xOffset` 和 `color` | 当前模板把分组布局作为 variant 语义，持久化仍写入标准 `color` |
+| Stacked Bar | `bar` | `x`；`y`；`color` | `x: category`；`y: aggregate(measure), stack: "zero"`；`color: segment` | segment 可以是一个分类字段，也可以由多列 measure 经 `fold` 转成 segment member | “segment”只是模板语义，底层使用标准 `color`；多列 Segment 不写成多个 color channel |
 | Divergent Bar | `bar` | 与 Single Bar 相同，但 y 允许正负 | `x: category`；`y: signed measure` | 正负值来自同一 Q column，零基线由 scale/domain 决定 | Vega-Lite 没有独立 divergent channel；它是数据与 scale 语义 |
 | Divergent Stacked Bar | `bar` | 与 Stacked Bar 相同，但 y 允许正负 | `x: category`；`y: signed measure, stack: "zero"`；`color: segment` | 对 `(category, segment)` 聚合；正负值分别从零点堆叠 | “divergent-stacked”是模板 preset，不是新 channel |
-| Pie Chart | `arc` | `angle`/`angleFields[]`；`color=Category`；`radius` | `theta: measure`；`color: component dimension`；所选 members 进入 filter/domain | Cube 中 `weight` 是 measure，`water/fat/muscle/minerals` 是 component members；每个 member 形成一个扇区 | `angle` 应改为 `theta`；Cube 路径下不再需要 `angleFields[]` |
-| Donut | `arc` + `innerRadius` | `angle`；`color=Category`；`ring`；`radius` | `theta: measure`；`color: component dimension`；固定 `mark.innerRadius`；多环需额外 ring dimension | component members 决定扇区和颜色；另一个 dimension 可决定同心环 | Donut 本身不是独立 encoding；`ring` 也不是 Vega-Lite 原生 channel |
+| Pie Chart | `arc` | `theta`；`color`；`radius` | `theta: measure`；`color: component dimension`；所选 members 进入 filter/domain | Cube 中 `weight` 是 measure，`water/fat/muscle/minerals` 是 component members；每个 member 形成一个扇区 | 宽表兼容路径可读取旧 `angle/angleFields[]`，新写入统一为 `theta` |
+| Donut | `arc` + `innerRadius` | `theta`；`color`；`ring`；`radius` | `theta: measure`；`color: component dimension`；固定 `mark.innerRadius`；多环需额外 ring dimension | component members 决定扇区和颜色；另一个 dimension 可决定同心环 | Donut 本身不是独立 encoding；`ring` 仍是模板扩展角色 |
 | Matrix | `rect` | `row`；`column`；`value`；`color` | `x: column category`；`y: row category`；`color: aggregate(cell value)` | row/column 两列共同定义 cell；value 列经聚合后控制颜色；无 value 时可用 `count()` | 当前 `row/column/value` 都是模板角色；Vega-Lite 的 `row/column` 会生成多个子视图，不是矩阵坐标 |
 
 ## 4. 典型 column mapping 示例

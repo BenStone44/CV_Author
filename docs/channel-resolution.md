@@ -30,19 +30,17 @@
 | Single Line | X | `encodings.x` | `x` |
 | Single Line | Y | `encodings.y` | `y` |
 | Multi-Line | Series | `series` + `seriesFields` | `series` |
-| Bar | Category | `encodings.x` | `category` |
-| Grouped Bar | Group | `encodings.color` | `group` |
-| Stacked Bar | Segment | `encodings.color` | `segment` |
-| Matrix | Column | `encodings.column` + X alias | `column` |
-| Matrix | Row | `encodings.row` + Y alias | `row` |
-| Matrix | Cell value | `encodings.value` | `cell` |
-| Pie / Donut | Theta | `angleFields` | `theta` |
-| Pie / Donut | Slice | `encodings.color` + X alias | `slice` |
+| Bar | X / Y / Color | `encodings.x/y/color` | `category/value/group/segment` |
+| Grouped Bar | X / Y / Color | `encodings.x/y/color` | `category/value/group` |
+| Stacked Bar | X / Y / Color (`Segment` supports multi-measure selection) | `encodings.x/y/color` | `category/value/segment` |
+| Matrix | X / Y / Color | `encodings.x/y/color`（旧 `column/row/value` 可读取） | `column/row/cell` |
+| Pie / Donut | Theta | `encodings.theta` + `angleFields` | `theta` |
+| Pie / Donut | Color | `encodings.color` | `slice` |
 | Pie / Donut | R | `encodings.radius` | `radius` |
 | Parallel Coordinates | Numeric dimensions | `parallelFields` | 当前无 Cube slot |
 | Hierarchy / Calendar / Flow | 模板专用 Channel | `encodings.*` | 当前无 Cube slot |
 
-Matrix 和 Polar 中的 X/Y 是历史 renderer alias，不是额外 Channel。Resolver 会把同一 alias 组视为一个语义 Channel，并要求别名值一致。
+Matrix 的 X/Y 现在就是原生 Cartesian channel；旧 `column/row/value` 仅作为迁移读取别名。Polar 的旧 `angle` 也只作为 `theta` 的读取别名。Resolver 会把别名组视为同一语义 source，并要求值一致。
 
 ## 4. 一次设定操作的处理顺序
 
