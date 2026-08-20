@@ -1,5 +1,6 @@
 import type { ChartSpec, ChartEncodingChannel, DataColumnType } from "../types";
-import { getChartTemplateContract, normalizeBarChartVariant, normalizeChartTemplate } from "./chartTemplates";
+import { getChartEncodingSchema } from "./chartEncodingSchemas";
+import { normalizeBarChartVariant, normalizeChartTemplate } from "./chartTemplates";
 
 export type EncodingChannelConfig = {
   channel: ChartEncodingChannel;
@@ -85,68 +86,12 @@ export function resolvedPolarAxisRoles(spec: ChartSpec, field: string): PolarAxi
   ];
 }
 
-const defaultLabels: Record<ChartEncodingChannel, string> = {
-  x: "X",
-  y: "Y",
-  theta: "Theta",
-  angle: "Theta",
-  radius: "R",
-  ring: "Ring",
-  row: "Row",
-  column: "Column",
-  value: "Value",
-  color: "Color",
-  size: "Size",
-  shape: "Shape",
-  key: "ID",
-  parent: "Parent ID",
-  source: "Source",
-  target: "Target",
-  date: "Date",
-  category: "Category",
-  dimensions: "Dimensions",
-};
-
-function channelLabel(chartType: string, channel: ChartEncodingChannel) {
-  const template = normalizeChartTemplate(chartType);
-  // Non-Vega-Lite templates keep their domain-specific role names. Native
-  // templates use the standard channel labels from `defaultLabels`.
-  if (template === "parallel" && channel === "dimensions") return "Numeric dimensions";
-  if (template === "hierarchy") {
-    if (channel === "key") return "Node ID";
-    if (channel === "parent") return "Parent ID";
-    if (channel === "value") return "Node value";
-  }
-  if (template === "calendar" && channel === "value") return "Daily value";
-  if (template === "flow" && channel === "value") return "Flow value";
-  return defaultLabels[channel];
-}
-
 export function getEncodingChannelConfigs(chartType: string): EncodingChannelConfig[] {
-  const contract = getChartTemplateContract(chartType);
-  if (!contract) return [];
-  const template = normalizeChartTemplate(chartType);
-  const chartTypeId = chartType.replace(/[\s_-]/g, "").toLowerCase();
-  const channels = chartTypeId === "linegraph"
-    ? contract.channels.filter((mapping) => mapping.role !== "series")
-    : contract.channels;
-  return channels.map((mapping) => ({
-    ...mapping,
-    role: template === "bar"
-      && mapping.channel === "color"
-      && (normalizeBarChartVariant(chartType) === "single" || normalizeBarChartVariant(chartType) === "divergent")
-      ? "style" as const
-      : mapping.role,
-    label: channelLabel(chartType, mapping.channel),
-    emptyLabel: mapping.role === "style" || mapping.channel === "color" || mapping.channel === "size"
-      ? "Static"
-      : "Not bound",
-    multiple: ((template === "pie" || template === "donut") && mapping.channel === "theta")
-      || (template === "parallel" && mapping.channel === "dimensions")
-      || (template === "bar"
-        && mapping.channel === "color"
-        && ["grouped", "stacked", "divergent-stacked"].includes(normalizeBarChartVariant(chartType) ?? "")),
-  }));
+  const schema = getChartEncodingSchema(chartType);
+  if (!schema) return [];
+  return schema.channels
+    .filter((channel) => channel.configurable !== false)
+    .map((channel) => ({ ...channel }));
 }
 
 export function getEncodingChannelConfigsForSpec(spec: ChartSpec): EncodingChannelConfig[] {

@@ -1,9 +1,10 @@
 import { extent } from "d3-array";
 import { scaleLinear, scaleLog, scalePoint, scaleUtc } from "d3-scale";
 import { arc, pie } from "d3-shape";
-import type { CartesianCoordinateGuide, ChartEncoding, ChartSpec, ChartTemplateKind, Dataset, LayerSpec, NestedSpec, ChartPlotArea, ChartScaleSpec, CoordinateGuide, MarkGroupSharedConfig } from "../types";
+import type { CartesianCoordinateGuide, ChartEncoding, ChartSpec, Dataset, LayerSpec, NestedSpec, ChartPlotArea, ChartScaleSpec, CoordinateGuide, MarkGroupSharedConfig } from "../types";
 import { renderLineChart, type LineRenderInput } from "./lineRenderer";
-import { cartesianAxisEncoding, getChartTemplateContract, normalizeBarChartVariant, normalizeChartTemplate } from "./chartTemplates";
+import { cartesianAxisEncoding, normalizeBarChartVariant, normalizeChartTemplate } from "./chartTemplates";
+import { getChartEncodingSchema, type ChartRendererKey } from "./chartEncodingSchemas";
 import { resolvedPolarRadiusMode } from "./encodingConfig";
 import {
   isLinearColorMapping,
@@ -563,7 +564,7 @@ function cartesianInput(input: GenericRenderInput) {
  * Chart-specific rendering is registered here so the public render entry point
  * only coordinates template lookup, validation and execution.
  */
-export const deterministicChartPipelines: Record<ChartTemplateKind, ChartPipeline> = {
+export const deterministicChartPipelines: Record<ChartRendererKey, ChartPipeline> = {
   line: {
     coordinateSystem: "Cartesian",
     render: (input) => renderLineChart(cartesianInput(input)),
@@ -589,9 +590,9 @@ export const deterministicChartPipelines: Record<ChartTemplateKind, ChartPipelin
     render: (input) => renderMatrixChart(input),
   },
   area: { coordinateSystem: "Cartesian", render: renderAdvancedChart },
-  parallel: { coordinateSystem: "Cartesian", render: renderAdvancedChart },
+  parallel: { coordinateSystem: "CoordinateFree", render: renderAdvancedChart },
   hierarchy: { coordinateSystem: "CoordinateFree", render: renderAdvancedChart },
-  calendar: { coordinateSystem: "Cartesian", render: renderAdvancedChart },
+  calendar: { coordinateSystem: "CoordinateFree", render: renderAdvancedChart },
   boxplot: { coordinateSystem: "Cartesian", render: renderAdvancedChart },
   contour: { coordinateSystem: "Cartesian", render: renderAdvancedChart },
   hexbin: { coordinateSystem: "Cartesian", render: renderAdvancedChart },
@@ -599,10 +600,10 @@ export const deterministicChartPipelines: Record<ChartTemplateKind, ChartPipelin
 };
 
 export function renderDeterministicChart(input: GenericRenderInput) {
-  const template = normalizeChartTemplate(input.chartSpec.chartType);
-  if (!template) throw new Error(`Unsupported chart template: ${input.chartSpec.chartType}`);
-  const pipeline = deterministicChartPipelines[template];
-  const coordinateSystem = getChartTemplateContract(input.chartSpec.chartType)?.coordinateSystem ?? pipeline.coordinateSystem;
+  const schema = getChartEncodingSchema(input.chartSpec.chartType);
+  if (!schema) throw new Error(`Unsupported chart template: ${input.chartSpec.chartType}`);
+  const pipeline = deterministicChartPipelines[schema.renderer];
+  const coordinateSystem = schema.coordinateSystem ?? pipeline.coordinateSystem;
   if (coordinateSystem !== "CoordinateFree") requireCoordinateGuide(input, coordinateSystem);
   return pipeline.render(input);
 }

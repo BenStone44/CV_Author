@@ -3,8 +3,19 @@ import type {
   ChartSpec,
   ChartTemplateKind,
   CoordinateChannel,
-  DataColumnType,
 } from "../types";
+import {
+  chartTemplateContracts as schemaContracts,
+  getChartEncodingSchema,
+  normalizeChartFamily,
+  type ChartEncodingChannelSchema,
+  type ChartEncodingSchema,
+} from "./chartEncodingSchemas";
+
+/** Compatibility exports. The declarative definitions live in chartEncodingSchemas.ts. */
+export const chartTemplateContracts = schemaContracts;
+export type ChartTemplateContract = ChartEncodingSchema;
+export type TemplateChannelMapping = ChartEncodingChannelSchema;
 
 export type SemanticBindingSlot =
   | "x"
@@ -27,27 +38,6 @@ export type SemanticBindingSlot =
   | "target"
   | "date"
   | "dimensions";
-
-export type TemplateChannelMapping = {
-  channel: ChartEncodingChannel;
-  role: "dimension" | "measure" | "series" | "style";
-  required: boolean;
-  accepts: DataColumnType[];
-};
-
-export type ChartTemplateContract = {
-  id: ChartTemplateKind;
-  label: string;
-  rendererVersion: 1 | 3;
-  coordinateSystem: "Cartesian" | "Polar" | "CoordinateFree";
-  markRole: "line" | "point" | "bar" | "arc" | "cell" | "area" | "path" | "node" | "box" | "contour" | "hexagon" | "link";
-  channels: TemplateChannelMapping[];
-  aggregationPolicy: "allowed" | "forbidden";
-  requiresFunctionalDependency: boolean;
-  requiresIndependentDimensions: boolean;
-  shareableChannels: CoordinateChannel[];
-  unusedDimensionStrategies: Array<"flatten" | "facet" | "nested">;
-};
 
 export type TemplateBindingSourceKind = "dimension" | "measure" | "measure-set" | "value-series";
 
@@ -156,201 +146,6 @@ export const templateBindingContracts: Record<ChartTemplateKind, TemplateBinding
   flow: { templateId: "flow", slots: [], unresolvedDimensionPolicies, compiler: "matrix" },
 };
 
-export const chartTemplateContracts: Record<ChartTemplateKind, ChartTemplateContract> = {
-  line: {
-    id: "line",
-    label: "Line Chart",
-    rendererVersion: 3,
-    coordinateSystem: "Cartesian",
-    markRole: "line",
-    channels: [
-      { channel: "x", role: "dimension", required: true, accepts: ["temporal", "quantitative", "nominal"] },
-      { channel: "y", role: "measure", required: true, accepts: ["temporal", "quantitative"] },
-      { channel: "color", role: "series", required: false, accepts: ["nominal", "temporal"] },
-      { channel: "size", role: "style", required: false, accepts: ["quantitative"] },
-      { channel: "shape", role: "style", required: false, accepts: ["nominal"] },
-    ],
-    aggregationPolicy: "forbidden",
-    requiresFunctionalDependency: true,
-    requiresIndependentDimensions: true,
-    shareableChannels: ["x", "y"],
-    unusedDimensionStrategies: ["flatten", "facet", "nested"],
-  },
-  scatter: {
-    id: "scatter",
-    label: "Scatterplot",
-    rendererVersion: 1,
-    coordinateSystem: "Cartesian",
-    markRole: "point",
-    channels: [
-      { channel: "x", role: "dimension", required: true, accepts: ["temporal", "quantitative", "nominal"] },
-      { channel: "y", role: "measure", required: true, accepts: ["quantitative", "temporal", "nominal"] },
-      { channel: "color", role: "style", required: false, accepts: ["nominal", "temporal", "quantitative"] },
-      { channel: "size", role: "style", required: false, accepts: ["quantitative"] },
-      { channel: "shape", role: "style", required: false, accepts: ["nominal"] },
-    ],
-    aggregationPolicy: "forbidden",
-    requiresFunctionalDependency: false,
-    requiresIndependentDimensions: true,
-    shareableChannels: ["x", "y"],
-    unusedDimensionStrategies: ["flatten", "facet", "nested"],
-  },
-  bar: {
-    id: "bar",
-    label: "Bar Chart",
-    rendererVersion: 1,
-    coordinateSystem: "Cartesian",
-    markRole: "bar",
-    channels: [
-      { channel: "x", role: "dimension", required: true, accepts: ["nominal", "temporal"] },
-      { channel: "y", role: "measure", required: true, accepts: ["quantitative"] },
-      { channel: "color", role: "series", required: false, accepts: ["nominal", "temporal"] },
-      { channel: "size", role: "style", required: false, accepts: ["quantitative"] },
-    ],
-    aggregationPolicy: "allowed",
-    requiresFunctionalDependency: false,
-    requiresIndependentDimensions: true,
-    shareableChannels: ["x", "y"],
-    unusedDimensionStrategies: ["flatten", "facet", "nested"],
-  },
-  pie: {
-    id: "pie",
-    label: "Pie Chart",
-    rendererVersion: 1,
-    coordinateSystem: "Polar",
-    markRole: "arc",
-    channels: [
-      { channel: "theta", role: "measure", required: true, accepts: ["quantitative"] },
-      { channel: "color", role: "dimension", required: false, accepts: ["nominal", "temporal"] },
-      { channel: "radius", role: "measure", required: false, accepts: ["quantitative"] },
-    ],
-    aggregationPolicy: "allowed",
-    requiresFunctionalDependency: false,
-    requiresIndependentDimensions: true,
-    shareableChannels: ["angle", "radius"],
-    unusedDimensionStrategies: ["flatten", "facet", "nested"],
-  },
-  donut: {
-    id: "donut",
-    label: "Donut Chart",
-    rendererVersion: 1,
-    coordinateSystem: "Polar",
-    markRole: "arc",
-    channels: [
-      { channel: "theta", role: "measure", required: true, accepts: ["quantitative"] },
-      { channel: "color", role: "dimension", required: false, accepts: ["nominal", "temporal"] },
-      { channel: "ring", role: "series", required: false, accepts: ["nominal", "temporal"] },
-      { channel: "radius", role: "measure", required: false, accepts: ["quantitative"] },
-    ],
-    aggregationPolicy: "allowed",
-    requiresFunctionalDependency: false,
-    requiresIndependentDimensions: true,
-    shareableChannels: ["angle", "radius", "ring"],
-    unusedDimensionStrategies: ["flatten", "facet", "nested"],
-  },
-  matrix: {
-    id: "matrix",
-    label: "Matrix",
-    rendererVersion: 1,
-    coordinateSystem: "Cartesian",
-    markRole: "cell",
-    channels: [
-      { channel: "x", role: "dimension", required: true, accepts: ["nominal", "temporal"] },
-      { channel: "y", role: "dimension", required: true, accepts: ["nominal", "temporal"] },
-      { channel: "color", role: "measure", required: false, accepts: ["quantitative", "nominal"] },
-    ],
-    aggregationPolicy: "allowed",
-    requiresFunctionalDependency: false,
-    requiresIndependentDimensions: true,
-    // Matrix uses the same Cartesian X/Y channels as line and scatter;
-    // quantitative color is the cell value encoding.
-    shareableChannels: ["x", "y"],
-    unusedDimensionStrategies: ["flatten", "facet", "nested"],
-  },
-  area: {
-    id: "area", label: "Area Chart", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "area",
-    channels: [
-      { channel: "x", role: "dimension", required: true, accepts: ["temporal", "quantitative", "nominal"] },
-      { channel: "y", role: "measure", required: true, accepts: ["quantitative"] },
-      { channel: "color", role: "series", required: false, accepts: ["nominal", "temporal"] },
-    ],
-    aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true,
-    shareableChannels: ["x", "y"], unusedDimensionStrategies: ["flatten", "facet", "nested"],
-  },
-  parallel: {
-    id: "parallel", label: "Parallel Coordinates", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "path",
-    channels: [
-      { channel: "dimensions", role: "measure", required: true, accepts: ["quantitative"] },
-      { channel: "color", role: "series", required: false, accepts: ["nominal", "temporal", "quantitative"] },
-    ],
-    aggregationPolicy: "forbidden", requiresFunctionalDependency: false, requiresIndependentDimensions: true,
-    shareableChannels: [], unusedDimensionStrategies: ["flatten", "facet", "nested"],
-  },
-  hierarchy: {
-    id: "hierarchy", label: "Hierarchy", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "node",
-    channels: [
-      { channel: "key", role: "dimension", required: true, accepts: ["nominal", "temporal", "quantitative"] },
-      { channel: "parent", role: "dimension", required: true, accepts: ["nominal", "temporal", "quantitative"] },
-      { channel: "value", role: "measure", required: false, accepts: ["quantitative"] },
-      { channel: "color", role: "style", required: false, accepts: ["nominal", "quantitative"] },
-    ],
-    aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true,
-    shareableChannels: [], unusedDimensionStrategies: ["flatten", "facet", "nested"],
-  },
-  calendar: {
-    id: "calendar", label: "Calendar", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "cell",
-    channels: [
-      { channel: "date", role: "dimension", required: true, accepts: ["temporal"] },
-      { channel: "value", role: "measure", required: true, accepts: ["quantitative"] },
-      { channel: "color", role: "style", required: false, accepts: ["quantitative", "nominal"] },
-    ],
-    aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true,
-    shareableChannels: [], unusedDimensionStrategies: ["flatten", "facet", "nested"],
-  },
-  boxplot: {
-    id: "boxplot", label: "Box Plot", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "box",
-    channels: [
-      { channel: "x", role: "dimension", required: true, accepts: ["quantitative"] },
-      { channel: "y", role: "measure", required: true, accepts: ["quantitative"] },
-      { channel: "color", role: "style", required: false, accepts: ["nominal", "quantitative"] },
-    ],
-    aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true,
-    shareableChannels: ["x", "y"], unusedDimensionStrategies: ["flatten", "facet", "nested"],
-  },
-  contour: {
-    id: "contour", label: "Contour", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "contour",
-    channels: [
-      { channel: "x", role: "dimension", required: true, accepts: ["quantitative"] },
-      { channel: "y", role: "dimension", required: true, accepts: ["quantitative"] },
-      { channel: "color", role: "measure", required: true, accepts: ["quantitative", "nominal"] },
-    ],
-    aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true,
-    shareableChannels: ["x", "y"], unusedDimensionStrategies: ["flatten", "facet", "nested"],
-  },
-  hexbin: {
-    id: "hexbin", label: "Hexbin", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "hexagon",
-    channels: [
-      { channel: "x", role: "dimension", required: true, accepts: ["quantitative"] },
-      { channel: "y", role: "dimension", required: true, accepts: ["quantitative"] },
-      { channel: "color", role: "style", required: false, accepts: ["quantitative", "nominal"] },
-      { channel: "size", role: "style", required: false, accepts: ["quantitative"] },
-    ],
-    aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true,
-    shareableChannels: ["x", "y"], unusedDimensionStrategies: ["flatten", "facet", "nested"],
-  },
-  flow: {
-    id: "flow", label: "Flow", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "link",
-    channels: [
-      { channel: "source", role: "dimension", required: true, accepts: ["nominal", "temporal", "quantitative"] },
-      { channel: "target", role: "dimension", required: true, accepts: ["nominal", "temporal", "quantitative"] },
-      { channel: "value", role: "measure", required: false, accepts: ["quantitative"] },
-      { channel: "color", role: "style", required: false, accepts: ["nominal", "quantitative"] },
-    ],
-    aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true,
-    shareableChannels: [], unusedDimensionStrategies: ["flatten", "facet", "nested"],
-  },
-};
-
 type RequiredEncodingFallback = (spec: ChartSpec) => boolean;
 
 const requiredEncodingFallbacks: Record<
@@ -425,26 +220,8 @@ export function hasRequiredChartEncodings(spec: ChartSpec) {
       || requiredEncodingFallbacks[template][mapping.channel]?.(spec) === true);
 }
 
-const chartTemplateMatchers: Array<readonly [ChartTemplateKind, (value: string) => boolean]> = [
-  ["parallel", (value) => value.includes("parallelcoordinate")],
-  ["hierarchy", (value) => ["icicle", "sunburst", "treemap", "dendrogram"].some((name) => value.includes(name))],
-  ["calendar", (value) => value.includes("calendar")],
-  ["boxplot", (value) => value.includes("boxplot") || value.includes("boxandwhisker")],
-  ["contour", (value) => value.includes("contour")],
-  ["hexbin", (value) => value.includes("hexbin")],
-  ["flow", (value) => value.includes("chord") || value.includes("sankey")],
-  ["area", (value) => value.includes("area") || value.includes("streamgraph") || value.includes("horizon")],
-  ["scatter", (value) => value.includes("scatter")],
-  ["bar", (value) => value.includes("barchart") || value === "bar"],
-  ["donut", (value) => value.includes("donut")],
-  ["pie", (value) => value.includes("pie")],
-  ["matrix", (value) => value.includes("matrix") || value.includes("heatmap")],
-  ["line", (value) => value === "linegraph" || value.includes("linechart")],
-];
-
 export function normalizeChartTemplate(chartType: string): ChartTemplateKind | null {
-  const value = chartType.replace(/[\s_-]/g, "").toLowerCase();
-  return chartTemplateMatchers.find(([, matches]) => matches(value))?.[0] ?? null;
+  return normalizeChartFamily(chartType);
 }
 
 export function cartesianAxisEncoding(spec: ChartSpec, axis: "x" | "y") {
@@ -503,26 +280,7 @@ export function semanticSlotForChannel(
 }
 
 export function getChartTemplateContract(chartType: string) {
-  const template = normalizeChartTemplate(chartType);
-  if (!template) return null;
-  const contract = chartTemplateContracts[template];
-  const value = chartType.replace(/[\s_-]/g, "").toLowerCase();
-  const requiresColor = template === "area"
-    ? value.includes("stacked") || value.includes("streamgraph") || value.includes("horizon")
-    : template === "bar"
-      ? ["grouped", "stacked", "divergent-stacked"].includes(normalizeBarChartVariant(chartType) ?? "")
-      : false;
-  const channels = contract.channels.map((channel) => ({
-    ...channel,
-    ...(requiresColor && channel.channel === "color" ? { required: true } : {}),
-  }));
-  return {
-    ...contract,
-    channels,
-    ...(template === "area" && value.includes("horizon")
-      ? { coordinateSystem: "CoordinateFree" as const, shareableChannels: [] }
-      : {}),
-  };
+  return getChartEncodingSchema(chartType);
 }
 
 export function getTemplateBindingContract(chartType: string) {

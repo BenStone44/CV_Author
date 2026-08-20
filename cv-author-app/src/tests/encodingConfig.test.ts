@@ -17,10 +17,27 @@ import {
   normalizeChartTemplate,
   semanticSlotForChannel,
 } from "../utils/chartTemplates";
+import { chartEncodingSchemas, getChartEncodingSchema } from "../utils/chartEncodingSchemas";
 
 const channels = (chartType: string) => getEncodingChannelConfigs(chartType).map((config) => config.channel);
 
 describe("card encoding configuration", () => {
+  it("keeps every built-in chart in the unified encoding schema", () => {
+    const chartTypes = [
+      "LineGraph", "MultiLineChart", "Scatterplot", "SingleBarChart", "GroupedBarChart",
+      "StackedBarChart", "DivergentBarChart", "DivergentStackedBarChart", "PieChart",
+      "DonutChart", "MatrixDiagram", "AreaChart", "StackedAreaChart", "Streamgraph",
+      "HorizonChart", "ParallelCoordinatesPlot", "Icicle", "Sunburst", "Treemap",
+      "Dendrogram", "Calendar", "Boxplot", "Contour", "Hexbin", "Chord", "Sankey",
+    ];
+    expect(Object.keys(chartEncodingSchemas)).toEqual(chartTypes);
+    chartTypes.forEach((chartType) => {
+      const schema = getChartEncodingSchema(chartType);
+      expect(schema?.channels.length).toBeGreaterThan(0);
+      expect(schema?.renderer).toBeTruthy();
+    });
+  });
+
   it("normalizes chart pipelines and variants through ordered rules", () => {
     expect(normalizeChartTemplate("Divergent_Stacked_BarChart")).toBe("bar");
     expect(normalizeChartTemplate("Heat Map")).toBe("matrix");
