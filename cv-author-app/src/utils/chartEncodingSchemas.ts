@@ -78,6 +78,7 @@ function defineSchema(
 
 const xAny = { channel: "x", label: "X", role: "dimension", required: true, accepts: ["temporal", "quantitative", "nominal"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
 const yMeasure = { channel: "y", label: "Y", role: "measure", required: true, accepts: ["temporal", "quantitative"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
+const multiLineYMeasure = { ...yMeasure, multiple: true } satisfies ChartEncodingChannelSchema;
 const lineSize = { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
 const lineShape = { channel: "shape", label: "Shape", role: "style", required: false, accepts: ["nominal"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
 const lineSeries = { channel: "color", label: "Color", role: "series", required: false, accepts: ["nominal", "temporal"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
@@ -111,7 +112,7 @@ const flowChannels: ChartEncodingChannelSchema[] = [
  */
 export const chartEncodingSchemas = {
   LineGraph: defineSchema("LineGraph", "Single Line", "line", [xAny, yMeasure, { ...lineSeries, configurable: false }, lineSize, lineShape]),
-  MultiLineChart: defineSchema("MultiLineChart", "Multi-Line Chart", "line", [xAny, yMeasure, lineSeries, lineSize, lineShape]),
+  MultiLineChart: defineSchema("MultiLineChart", "Multi-Line Chart", "line", [xAny, multiLineYMeasure, lineSeries, lineSize, lineShape]),
   Scatterplot: defineSchema("Scatterplot", "Scatterplot", "scatter", [
     xAny,
     { ...yMeasure, accepts: ["quantitative", "temporal", "nominal"] },

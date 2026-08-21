@@ -142,6 +142,35 @@ type BarDatum = {
   rows: Dataset["rows"];
 };
 
+function barData(input: GenericRenderInput, xField: string, yField: string, seriesFields: string[]) {
+  const rows = input.dataset.rows.flatMap((row) => {
+    const category = row[xField] ?? "";
+    const series = seriesFields.length > 0
+      ? seriesFields.map((field) => row[field] ?? "").join(" / ")
+      : "__single__";
+    const value = Number(row[yField] ?? "");
+    return category && series && Number.isFinite(value)
+      ? [{ category, series, value, rows: [row] }]
+      : [];
+  });
+  const aggregation = input.chartSpec.aggregations?.y;
+  if (!aggregation) return rows;
+  const groups = new Map<string, BarDatum>();
+  rows.forEach((datum) => {
+    const groupKey = `${datum.category}\u0000${datum.series}`;
+    const current = groups.get(groupKey);
+    if (current) {
+      current.value += datum.value;
+      current.rows.push(...datum.rows);
+    } else {
+      groups.set(groupKey, { ...datum, rows: [...datum.rows] });
+    }
+  });
+  const data = Array.from(groups.values());
+  if (aggregation === "avg") data.forEach((datum) => { datum.value /= datum.rows.length; });
+  return data;
+}
+
 function renderBarChart(input: GenericRenderInput) {
   const xEncoding = input.chartSpec.encodings.x;
   const yEncoding = input.chartSpec.encodings.y;
@@ -156,33 +185,18 @@ function renderBarChart(input: GenericRenderInput) {
         || input.chartSpec.encodings.color?.type === "temporal"
         ? [input.chartSpec.encodings.color]
         : [];
-  const seriesEncoding = seriesEncodings[0];
   const categoryValues = Array.from(new Set(input.dataset.rows.map((row) => row[xEncoding.field] ?? "").filter(Boolean)));
   const seriesValues = seriesEncodings.length > 0
     ? Array.from(new Set(input.dataset.rows.map((row) => seriesEncodings
       .map((encoding) => row[encoding.field] ?? "")
       .join(" / ")).filter(Boolean)))
     : ["__single__"];
-  const groups = new Map<string, BarDatum>();
-  input.dataset.rows.forEach((row) => {
-    const category = row[xEncoding.field] ?? "";
-    const series = seriesEncodings.length > 0
-      ? seriesEncodings.map((encoding) => row[encoding.field] ?? "").join(" / ")
-      : "__single__";
-    const value = Number(row[yEncoding.field] ?? "");
-    if (!category || !series || !Number.isFinite(value)) return;
-    const groupKey = `${category}\u0000${series}`;
-    const current = groups.get(groupKey);
-    if (current) {
-      current.value += value;
-      current.rows.push(row);
-    } else {
-      groups.set(groupKey, { category, series, value, rows: [row] });
-    }
-  });
-  const data = Array.from(groups.values());
-  const aggregation = input.chartSpec.aggregations?.y ?? "sum";
-  if (aggregation === "avg") data.forEach((datum) => { datum.value /= datum.rows.length; });
+  const data = barData(
+    input,
+    xEncoding.field,
+    yEncoding.field,
+    seriesEncodings.map((encoding) => encoding.field),
+  );
 
   const fontSize = Math.max(9, Math.min(input.chartSpec.styleTokens?.fontSize ?? 11, Math.min(input.width, input.height) * 0.045));
   const leftMargin = Math.min(Math.max(fontSize * 4.8, input.width * 0.09), input.width * 0.28);
@@ -243,7 +257,13 @@ function renderBarChart(input: GenericRenderInput) {
   const valuePosition = chartScalePosition(swapped ? xScale : yScale);
   const zeroPosition = valuePosition("0");
   const categoryBand = (swapped ? plotArea.height : plotArea.width) / Math.max(categoryValues.length, 1);
-  const groupCount = variant === "grouped" ? Math.max(seriesValues.length, 1) : 1;
+  const groupedMarkCounts = new Map(categoryValues.map((category) => [
+    category,
+    data.filter((datum) => datum.category === category).length,
+  ]));
+  const groupCount = variant === "grouped"
+    ? Math.max(...groupedMarkCounts.values(), 1)
+    : 1;
   const groupBand = categoryBand * 0.78 / groupCount;
   const defaultWidth = variant === "grouped" ? groupBand * 0.88 : categoryBand * 0.7;
   const config = groupConfig(input.chartSpec, "bar");
@@ -254,6 +274,7 @@ function renderBarChart(input: GenericRenderInput) {
   const stackOffsets = new Map<string, { positive: number; negative: number }>(
     categoryValues.map((category) => [category, { positive: 0, negative: 0 }]),
   );
+  const groupOffsets = new Map(categoryValues.map((category) => [category, 0]));
   const marks = data.map((datum, index) => {
     const categoryCenter = categoryPosition(datum.category);
     if (!Number.isFinite(categoryCenter)) return "";
@@ -263,8 +284,11 @@ function renderBarChart(input: GenericRenderInput) {
     const color = visualColor(representative, colorEncoding, colorDomain, config, fallbackColor);
     const mappedWidth = visualSize(representative, sizeEncoding, sizeDomain, config, defaultWidth);
     const barWidth = Math.max(1, Math.min(mappedWidth, variant === "grouped" ? groupBand * 0.92 : categoryBand * 0.9));
+    const groupIndex = groupOffsets.get(datum.category) ?? 0;
+    groupOffsets.set(datum.category, groupIndex + 1);
+    const categoryGroupCount = groupedMarkCounts.get(datum.category) ?? groupCount;
     const centerX = variant === "grouped"
-      ? categoryCenter + (seriesIndex - (groupCount - 1) / 2) * groupBand
+      ? categoryCenter + (groupIndex - (categoryGroupCount - 1) / 2) * groupBand
       : categoryCenter;
     let startValue = 0;
     let endValue = datum.value;

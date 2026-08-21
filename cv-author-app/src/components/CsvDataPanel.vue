@@ -5,15 +5,39 @@ import {
   ChevronsRight,
   Columns3,
   FileSpreadsheet,
+  GripVertical,
   Rows3,
   Trash2,
   Upload,
 } from "@lucide/vue";
 import defaultCsv from "../../../data/case1.csv?raw";
 import { useDatasetStore } from "../stores/useDatasetStore";
-import type { DataColumnType, DatasetTable } from "../types";
+import type { DataColumnType, DatasetTable, LineSeriesShape } from "../types";
+import {
+  beginCsvColumnDrag,
+  csvColumnDragMime,
+  encodeCsvColumnDragPayload,
+  endCsvColumnDrag,
+} from "../utils/csvColumnDrag";
 
 const previewRowLimit = 250;
+
+const props = withDefaults(defineProps<{
+  encodingBindings?: Record<string, string[]>;
+  seriesStyles?: Record<string, Array<{
+    memberId: string;
+    label: string;
+    color: string;
+    width: number;
+    shape: LineSeriesShape;
+  }>>;
+}>(), {
+  encodingBindings: () => ({}),
+  seriesStyles: () => ({}),
+});
+const emit = defineEmits<{
+  seriesStyleChange: [memberId: string, patch: { color?: string; strokeWidth?: number; shape?: LineSeriesShape }];
+}>();
 
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const panelRef = ref<HTMLElement | null>(null);
@@ -59,6 +83,12 @@ const tableStatus = computed(() => {
   const columnLabel = headers.value.length === 1 ? "column" : "columns";
   return `${rows.value.length} ${rowLabel} / ${headers.value.length} ${columnLabel}`;
 });
+function encodingLabels(field: string) {
+  return props.encodingBindings[field] ?? [];
+}
+function seriesStyles(field: string) {
+  return props.seriesStyles[field] ?? [];
+}
 function tableHeaders(table: DatasetTable) {
   return table.columns.map((column) => column.name);
 }
@@ -125,6 +155,28 @@ function onDrop(event: DragEvent) {
   if (file) importFile(file);
 }
 
+function onColumnDragStart(column: { name: string; type: DataColumnType }, event: DragEvent) {
+  const dataset = activeDataset.value;
+  if (!dataset || !event.dataTransfer) return;
+  const columnPayload = {
+    datasetId: dataset.id,
+    field: column.name,
+    type: column.type,
+  };
+  beginCsvColumnDrag(columnPayload);
+  event.dataTransfer.setData(csvColumnDragMime, encodeCsvColumnDragPayload(columnPayload));
+  event.dataTransfer.setData("text/plain", column.name);
+  event.dataTransfer.effectAllowed = "copy";
+}
+
+function onPanelDragEnter(event: DragEvent) {
+  if (Array.from(event.dataTransfer?.types ?? []).includes("Files")) isDragging.value = true;
+}
+
+function onPanelDragOver(event: DragEvent) {
+  if (Array.from(event.dataTransfer?.types ?? []).includes("Files")) isDragging.value = true;
+}
+
 function toggleExpanded() {
   if (!canExpand.value) return;
   isExpanded.value = !isExpanded.value;
@@ -164,8 +216,8 @@ onBeforeUnmount(() =>
     }"
     :style="panelStyle"
     aria-label="Imported data"
-    @dragenter.prevent="isDragging = true"
-    @dragover.prevent="isDragging = true"
+    @dragenter.prevent="onPanelDragEnter"
+    @dragover.prevent="onPanelDragOver"
     @dragleave.self.prevent="isDragging = false"
     @drop.prevent="onDrop"
   >
@@ -259,9 +311,18 @@ onBeforeUnmount(() =>
               scope="col"
               :title="header"
             >
-              <span>{{ header }}</span>
+              <span
+                class="data-table__draggable-field"
+                draggable="true"
+                @dragstart="onColumnDragStart(columns[columnIndex]!, $event)"
+                @dragend="endCsvColumnDrag"
+              >
+                <GripVertical :size="12" :stroke-width="1.8" aria-hidden="true" />
+                <span class="data-table__column-label">{{ header }}</span>
+              </span>
               <select
                 :value="columns[columnIndex]?.type"
+                class="data-table__column-type"
                 aria-label="Column type"
                 @change="onColumnTypeChange(header, $event)"
               >
@@ -269,6 +330,28 @@ onBeforeUnmount(() =>
                 <option value="temporal">temporal</option>
                 <option value="quantitative">quantitative</option>
               </select>
+            </th>
+          </tr>
+          <tr v-if="Object.keys(props.encodingBindings).length > 0" class="data-table__binding-row">
+            <th class="data-table__binding-label" scope="row">Encoding</th>
+            <th
+              v-for="header in headers"
+              :key="`encoding-${header}`"
+              class="data-table__binding-cell"
+              scope="col"
+            >
+              <span v-if="encodingLabels(header).length === 0" class="data-table__binding-empty">-</span>
+              <span v-else class="data-table__binding-values">
+                <span v-for="label in encodingLabels(header)" :key="`${header}-${label}`" class="data-table__binding-value">{{ label }}</span>
+                <span v-for="style in seriesStyles(header)" :key="`${header}-style-${style.memberId}`" class="data-table__series-style">
+                  <span class="data-table__series-style-head"><span>Color</span><span>Width</span><span>Line style</span></span>
+                  <span class="data-table__series-style-controls">
+                    <input type="color" :value="style.color" :aria-label="`${style.label} series color`" @input="emit('seriesStyleChange', style.memberId, { color: ($event.target as HTMLInputElement).value })" />
+                    <input type="number" min="0.5" max="16" step="0.5" :value="style.width" :aria-label="`${style.label} stroke width`" @change="emit('seriesStyleChange', style.memberId, { strokeWidth: Number(($event.target as HTMLInputElement).value) })" />
+                    <select :value="style.shape" :aria-label="`${style.label} line style`" @change="emit('seriesStyleChange', style.memberId, { shape: ($event.target as HTMLSelectElement).value as LineSeriesShape })"><option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option></select>
+                  </span>
+                </span>
+              </span>
             </th>
           </tr>
         </thead>
@@ -294,6 +377,7 @@ onBeforeUnmount(() =>
         <thead>
           <tr>
             <th class="data-table__field-name" scope="col">Field</th>
+            <th v-if="Object.keys(props.encodingBindings).length > 0" class="data-table__binding-cell" scope="col">Encoding</th>
             <th
               v-for="(_, rowIndex) in previewRows"
               :key="rowIndex"
@@ -313,9 +397,18 @@ onBeforeUnmount(() =>
               scope="row"
               :title="column.name"
             >
-              <span>{{ column.name }}</span>
+              <span
+                class="data-table__draggable-field"
+                draggable="true"
+                @dragstart="onColumnDragStart(column, $event)"
+                @dragend="endCsvColumnDrag"
+              >
+                <GripVertical :size="12" :stroke-width="1.8" aria-hidden="true" />
+                <span class="data-table__column-label">{{ column.name }}</span>
+              </span>
               <select
                 :value="column.type"
+                class="data-table__column-type"
                 :aria-label="`${column.name} column type`"
                 @change="onColumnTypeChange(column.name, $event)"
               >
@@ -324,6 +417,20 @@ onBeforeUnmount(() =>
                 <option value="quantitative">quantitative</option>
               </select>
             </th>
+            <td v-if="Object.keys(props.encodingBindings).length > 0" class="data-table__binding-cell">
+              <span v-if="encodingLabels(column.name).length === 0" class="data-table__binding-empty">-</span>
+              <span v-else class="data-table__binding-values">
+                <span v-for="label in encodingLabels(column.name)" :key="`${column.name}-${label}`" class="data-table__binding-value">{{ label }}</span>
+                <span v-for="style in seriesStyles(column.name)" :key="`${column.name}-style-${style.memberId}`" class="data-table__series-style">
+                  <span class="data-table__series-style-head"><span>Color</span><span>Width</span><span>Line style</span></span>
+                  <span class="data-table__series-style-controls">
+                    <input type="color" :value="style.color" :aria-label="`${style.label} series color`" @input="emit('seriesStyleChange', style.memberId, { color: ($event.target as HTMLInputElement).value })" />
+                    <input type="number" min="0.5" max="16" step="0.5" :value="style.width" :aria-label="`${style.label} stroke width`" @change="emit('seriesStyleChange', style.memberId, { strokeWidth: Number(($event.target as HTMLInputElement).value) })" />
+                    <select :value="style.shape" :aria-label="`${style.label} line style`" @change="emit('seriesStyleChange', style.memberId, { shape: ($event.target as HTMLSelectElement).value as LineSeriesShape })"><option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option></select>
+                  </span>
+                </span>
+              </span>
+            </td>
             <td
               v-for="(row, rowIndex) in previewRows"
               :key="rowIndex"
@@ -748,7 +855,45 @@ onBeforeUnmount(() =>
   display: block;
 }
 
-.data-table thead th select {
+.data-table thead th .data-table__draggable-field,
+.data-table tbody th .data-table__draggable-field {
+  display: flex;
+  align-items: center;
+  flex-direction: row;
+  gap: 3px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 15px;
+  overflow: hidden;
+  white-space: nowrap;
+  cursor: grab;
+  color: #52657a;
+}
+
+.data-table thead th .data-table__draggable-field > svg,
+.data-table tbody th .data-table__draggable-field > svg {
+  flex: 0 0 auto;
+  color: #7a8da2;
+  order: 0;
+}
+
+.data-table thead th .data-table__draggable-field > span,
+.data-table tbody th .data-table__draggable-field > span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.2;
+  order: 1;
+}
+
+.data-table__draggable-field:active {
+  cursor: grabbing;
+}
+
+.data-table thead th select.data-table__column-type {
   width: 100%;
   margin-top: 2px;
   padding: 0;
@@ -758,6 +903,113 @@ onBeforeUnmount(() =>
   font-size: 9px;
   font-weight: 500;
   text-transform: uppercase;
+  text-align: left;
+}
+
+.data-table__binding-row {
+  background: #f8fbfe;
+}
+
+.data-table__binding-label,
+.data-table__binding-cell {
+  height: auto !important;
+  min-height: 28px;
+  padding: 4px 9px !important;
+  background: #f8fbfe;
+  color: #52657a;
+  font-size: 9px;
+  font-weight: 600;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.data-table__binding-label {
+  min-width: 42px !important;
+  color: #33465b;
+}
+
+.data-table__binding-cell {
+  min-width: 260px;
+  max-width: 320px;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
+
+.data-table__binding-values {
+  display: grid;
+  gap: 2px;
+}
+
+.data-table__series-style {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding-top: 2px;
+  border-top: 1px solid rgba(28, 126, 214, 0.12);
+}
+
+.data-table__series-style-head,
+.data-table__series-style-controls {
+  display: grid;
+  grid-template-columns: 28px 48px 74px;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+}
+
+.data-table__series-style-head {
+  color: #52657a;
+  font-size: 9px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.data-table__series-style input,
+.data-table__series-style select {
+  box-sizing: border-box;
+  min-width: 0;
+  height: 20px;
+  padding: 1px 2px;
+  border: 1px solid #c9d5e1;
+  border-radius: 3px;
+  background: #fff;
+  color: #33465b;
+  font: inherit;
+  font-size: 9px;
+}
+
+.data-table__series-style input[type="color"] {
+  width: 28px;
+  padding: 1px;
+  cursor: pointer;
+}
+
+.data-table__series-style input[type="number"] {
+  width: 48px;
+}
+
+.data-table__series-style select {
+  width: 74px;
+  text-align: left;
+}
+
+.data-table__binding-value {
+  display: block;
+  max-width: none;
+  padding: 0;
+  color: #1554b2;
+  font-size: 9px;
+  font-weight: 650;
+  line-height: 1.2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.data-table__binding-empty {
+  color: #9aa8b7;
+  font-weight: 500;
 }
 
 .data-table tbody tr:nth-child(even) td,
@@ -816,6 +1068,7 @@ onBeforeUnmount(() =>
   font-size: 9px;
   font-weight: 500;
   text-transform: uppercase;
+  text-align: left;
 }
 
 .data-panel__empty {

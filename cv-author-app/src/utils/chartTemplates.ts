@@ -165,7 +165,7 @@ const requiredEncodingFallbacks: Record<
     color: (spec) => {
       const variant = normalizeBarChartVariant(spec.chartType);
       return (variant === "grouped" || variant === "stacked" || variant === "divergent-stacked")
-        && ((spec.valueFields?.length ?? 0) >= 2 || (spec.seriesFields?.length ?? 0) > 0 || !!spec.series);
+        && ((spec.valueFields?.length ?? 0) > 0 || (spec.seriesFields?.length ?? 0) > 0 || !!spec.series);
     },
   },
   pie: {
@@ -208,7 +208,7 @@ export function hasRequiredChartEncodings(spec: ChartSpec) {
   const seriesField = spec.series?.field
     ?? spec.seriesFields?.[0]?.field
     ?? (spec.encodings.color?.type === "nominal" ? spec.encodings.color.field : undefined)
-    ?? ((spec.valueFields?.length ?? 0) > 1 ? "__csv_measure__" : "");
+    ?? (chartType === "multilinechart" && (spec.valueFields?.length ?? 0) > 0 ? "__csv_measure__" : "");
   if (chartType === "multilinechart" && !seriesField) return false;
   const barVariant = template === "bar" ? normalizeBarChartVariant(spec.chartType) : null;
   return contract.channels

@@ -14,6 +14,7 @@ import type {
 } from "../types";
 import { csvRowKey } from "./csvDataEngine";
 import { cartesianAxisEncoding } from "./chartTemplates";
+import { CSV_MEASURE_ID_FIELD } from "./chartDataPipeline";
 import {
   isCategoricalColorMapping,
   isLinearColorMapping,
@@ -204,6 +205,21 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
       datum.x !== null && datum.y !== null && datum.series !== "",
     );
   if (sourceRows.length === 0) throw new Error("No valid rows remain after applying the line encodings.");
+  const progressionEncoding = chartSpec.axisSwapped ? yEncoding : xEncoding;
+  const progressionValue = (datum: LineDatum) => chartSpec.axisSwapped ? datum.y : datum.x;
+  const normalizedChartType = chartSpec.chartType.replace(/[\s_-]/g, "").toLowerCase();
+  const hasExplicitAggregation = chartSpec.aggregations?.y !== undefined
+    || Object.keys(chartSpec.dimensionAggregations ?? {}).length > 0;
+  const preserveUnboundLineRows = normalizedChartType === "linegraph"
+    || (normalizedChartType === "multilinechart" && chartSpec.valueFields?.length === 1);
+  const preserveSingleMeasureRows = preserveUnboundLineRows
+    && seriesEncodings.length === 0
+    && !hasExplicitAggregation;
+  const preserveMaterializedMeasureRows = normalizedChartType === "multilinechart"
+    && chartSpec.series?.field === CSV_MEASURE_ID_FIELD
+    && chartSpec.seriesFields?.every((encoding) => encoding.field === CSV_MEASURE_ID_FIELD) === true
+    && !hasExplicitAggregation;
+  const preserveDuplicateXRows = preserveSingleMeasureRows || preserveMaterializedMeasureRows;
   const dimensionAggregations = Object.entries(chartSpec.dimensionAggregations ?? {});
   const aggregateGroups = (groups: LineDatum[][], operation: "sum" | "avg") => groups.map((values): LineDatum => {
     const first = values[0]!;
@@ -218,12 +234,12 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
     };
   });
   let reducedRows = sourceRows;
-  dimensionAggregations.forEach(([field, operation], index) => {
+  if (!preserveDuplicateXRows) dimensionAggregations.forEach(([field, operation], index) => {
     const remainingFields = dimensionAggregations.slice(index + 1).map(([remainingField]) => remainingField);
     const grouped = group(
       reducedRows,
       (datum) => datum.series,
-      (datum) => String(datum.x),
+      (datum) => String(progressionValue(datum)),
       (datum) => remainingFields.map((remainingField) => datum.row[remainingField] ?? "").join("\u0000"),
     );
     reducedRows = aggregateGroups(
@@ -234,11 +250,13 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
     );
   });
   const yAggregation = chartSpec.aggregations?.y ?? "avg";
-  const rows = aggregateGroups(
-    Array.from(group(reducedRows, (datum) => datum.series, (datum) => String(datum.x)).values())
-      .flatMap((xGroups) => Array.from(xGroups.values())),
-    dimensionAggregations.length > 0 ? "avg" : yAggregation,
-  );
+  const rows = preserveDuplicateXRows
+    ? reducedRows
+    : aggregateGroups(
+      Array.from(group(reducedRows, (datum) => datum.series, (datum) => String(progressionValue(datum))).values())
+        .flatMap((xGroups) => Array.from(xGroups.values())),
+      dimensionAggregations.length > 0 ? "avg" : yAggregation,
+    );
   const groupedRows = Array.from(group(rows, (datum) => datum.series).entries())
     .sort(([left], [right]) => left.localeCompare(right, "en", { numeric: true }));
 
@@ -377,9 +395,9 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
     ? lineConfig.seriesColorMapping.values
     : {};
   const seriesMarkup = groupedRows.map(([seriesKey, values], index) => {
-    const ordered = xEncoding.type === "nominal"
+    const ordered = progressionEncoding.type === "nominal"
       ? [...values]
-      : [...values].sort((left, right) => Number(left.x) - Number(right.x));
+      : [...values].sort((left, right) => Number(progressionValue(left)) - Number(progressionValue(right)));
     const path = pathGenerator(ordered);
     if (!path) return "";
     const fallbackColor = tokens.palette[index % tokens.palette.length] ?? fallbackPalette[index % fallbackPalette.length]!;

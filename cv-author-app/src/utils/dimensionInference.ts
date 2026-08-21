@@ -384,7 +384,11 @@ export function inferChartStructure(chartId: string, dataset: Dataset, input: Ch
   const contract = getChartTemplateContract(input.chartType)!;
   const statistics = inferTemplateEncodings(dataset, templateId);
   let series = input.series;
-  if (!series && (templateId === "line" || templateId === "scatter") && input.encodings.x && input.encodings.y) {
+  const normalizedChartType = input.chartType.replace(/[\s_-]/g, "").toLowerCase();
+  const isSingleMeasureMultiLine = normalizedChartType === "multilinechart"
+    && input.valueFields?.length === 1;
+  if (!series && !isSingleMeasureMultiLine
+    && (templateId === "line" || templateId === "scatter") && input.encodings.x && input.encodings.y) {
     const candidates = statistics?.candidates.filter((item) =>
       item.dimensionality === 3
       && item.assignments.some((assignment) => assignment.channel === "x" && assignment.field === input.encodings.x?.field)

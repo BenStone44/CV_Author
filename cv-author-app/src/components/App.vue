@@ -29,13 +29,16 @@ import {
   useCanvasStore,
   coordinateOptions,
   compositionOptions,
-  getDimensionChartUpgradeOptions,
   getFilterIconSvg,
 } from "../stores/useCanvasStore";
 import { useDatasetStore } from "../stores/useDatasetStore";
 import { useLlmRenderer } from "../stores/useLlmRenderer";
 import { isLineChartType } from "../utils/lineRenderer";
-import { analyzeDimensionGrainRepairs } from "../utils/dimensionInference";
+import { normalizeBarChartVariant, normalizeChartTemplate } from "../utils/chartTemplates";
+import {
+  isCategoricalColorMapping,
+  isSeriesStyleMapping,
+} from "../utils/visualMapping";
 import {
   groupChartTemplateCandidates,
   type ChartTemplateCategory,
@@ -65,6 +68,7 @@ const {
   axisBindingColumns,
   axisBindingRendererError,
   coordinateGuideNodes,
+  barItemAxisBinding,
   contextMenu,
   draggedCandidateId,
   activeDropZone,
@@ -105,9 +109,6 @@ const {
   onCanvasNodePointerDown,
   onCanvasNodeDoubleClick,
   onEditingGroupBackgroundPointerDown,
-  applyDimensionAggregation,
-  applyDimensionChartUpgrade,
-  applyDimensionFacet,
   onCanvasNodeContextMenu,
   onScaleHandlePointerDown,
   onRotateHandlePointerDown,
@@ -123,8 +124,10 @@ const {
   setChartEncoding,
   setPieAngleFields,
   setValueSeriesFields,
+  removeBarItemField,
   setParallelFields,
   updateAxisBindingMarkGroupConfig,
+  updateSelectedChartMarkGroupConfig,
   closeAxisBinding,
   setSelectionRotation,
   onCandidateDragStart,
@@ -196,6 +199,105 @@ const axisBindingRows = computed(() => {
   const datasetId = axisBindingNode.value?.chartSpec?.datasetId;
   const dataset = datasetId ? getDataset(datasetId) : activeDataset.value;
   return dataset?.rows ?? [];
+});
+const csvEncodingBindings = computed<Record<string, string[]>>(() => {
+  const node = selectedIds.value.length === 1 ? selectedNodes.value[0] : null;
+  const spec = node?.chartSpec;
+  if (!spec) return {};
+  const bindings: Record<string, string[]> = {};
+  const add = (field: string | undefined, label: string) => {
+    if (!field) return;
+    const current = bindings[field] ?? [];
+    if (!current.includes(label)) bindings[field] = [...current, label];
+  };
+  const template = normalizeChartTemplate(spec.chartType);
+  const barVariant = template === "bar" ? normalizeBarChartVariant(spec.chartType) : null;
+  const isBarItemChart = barVariant === "grouped" || barVariant === "stacked" || barVariant === "divergent-stacked";
+  const isMultiLine = template === "line" && spec.chartType.replace(/[\s_-]/g, "").toLowerCase() === "multilinechart";
+  const isMeasureSeriesChart = isBarItemChart || isMultiLine;
+  const itemLabel = isMultiLine ? "Series" : barVariant === "grouped" ? "Group item" : "Segment item";
+
+  Object.entries(spec.encodings).forEach(([channel, encoding]) => {
+    if (!encoding) return;
+    if (channel === "y" && isMeasureSeriesChart && (isMultiLine || spec.valueFields?.length || spec.seriesFields?.length || spec.series)) return;
+    const label: Record<string, string> = {
+      x: "X",
+      y: "Y",
+      color: "Color",
+      size: "Size",
+      shape: "Shape",
+      theta: "Theta",
+      angle: "Theta",
+      radius: "Radius",
+      ring: "Ring",
+      dimensions: "Dimensions",
+    };
+    add(encoding.field, label[channel] ?? channel);
+  });
+
+  const seriesFields = spec.seriesFields?.map((encoding) => encoding.field)
+    ?? (spec.series ? [spec.series.field] : []);
+  if (isMeasureSeriesChart) {
+    if (isMultiLine && !spec.valueFields?.length && spec.encodings.y) {
+      add(spec.encodings.y.field, itemLabel);
+    }
+    seriesFields.forEach((field) => {
+      add(field, itemLabel);
+    });
+    (spec.valueFields ?? []).forEach((encoding) => {
+      add(encoding.field, itemLabel);
+    });
+  } else {
+    seriesFields.forEach((field) => {
+      add(field, "Series");
+    });
+    if (spec.valueFields?.length && !seriesFields.length) {
+      spec.valueFields.forEach((encoding) => {
+        add(encoding.field, "Y values");
+      });
+    }
+  }
+  return bindings;
+});
+const csvSeriesStyles = computed<Record<string, Array<{
+  memberId: string;
+  label: string;
+  color: string;
+  width: number;
+  shape: "solid" | "dashed" | "dotted";
+}>>>(() => {
+  const node = selectedIds.value.length === 1 ? selectedNodes.value[0] : null;
+  const spec = node?.chartSpec;
+  if (!spec) return {};
+  const rows = getDataset(spec.datasetId)?.rows ?? [];
+  const seriesFields = spec.seriesFields?.map((encoding) => encoding.field)
+    ?? (spec.series ? [spec.series.field] : []);
+  const fields = Array.from(new Set([
+    ...seriesFields,
+    ...(spec.valueFields?.map((encoding) => encoding.field) ?? []),
+  ]));
+  const markConfig = spec.markGroups?.[0]?.sharedConfig ?? {};
+  const mappedStyles = isSeriesStyleMapping(markConfig.seriesStyleMapping)
+    ? markConfig.seriesStyleMapping.values
+    : isCategoricalColorMapping(markConfig.seriesColorMapping)
+      ? Object.fromEntries(Object.entries(markConfig.seriesColorMapping.values).map(([member, color]) => [member, { color }]))
+      : {};
+  const fallbackColors = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#4d7c0f"];
+  return Object.fromEntries(fields.map((field) => {
+    const members = spec.valueFields?.length && !seriesFields.length
+      ? [field]
+      : Array.from(new Set(rows.map((row) => row[field] ?? "").filter(Boolean)));
+    return [field, members.map((member, index) => {
+      const style = (mappedStyles[member] ?? {}) as { color?: string; strokeWidth?: number; shape?: "solid" | "dashed" | "dotted" };
+      return {
+        memberId: member,
+        label: member,
+        color: style.color ?? fallbackColors[index % fallbackColors.length]!,
+        width: style.strokeWidth ?? Number(markConfig.strokeWidth ?? 2.5),
+        shape: style.shape ?? "solid",
+      };
+    })];
+  }));
 });
 const llmRenderer = useLlmRenderer();
 const {
@@ -356,134 +458,6 @@ function toggleEncodingInspector() {
 function closeEncodingInspector() {
   encodingInspectorOpen.value = false;
 }
-const activeDimensionRecommendations = computed(() =>
-  (axisBindingNode.value ?? llmNode.value)?.chartSpec?.dimensionRecommendations ?? [],
-);
-const activeGrainAnalysis = computed(() => {
-  const node = axisBindingNode.value ?? llmNode.value;
-  const dataset = node?.chartSpec ? getDataset(node.chartSpec.datasetId) : null;
-  const x = node?.chartSpec?.encodings.x?.field;
-  const values = node?.chartSpec?.valueFields?.map((encoding) => encoding.field)
-    ?? [node?.chartSpec?.encodings.y?.field].filter((field): field is string => !!field);
-  if (!node?.chartSpec || !dataset || !x || !values.length) return null;
-  return analyzeDimensionGrainRepairs(dataset, [x], values);
-});
-const activeCompatibilityMessage = computed(() => {
-  const result = activeGrainAnalysis.value;
-  if (!result) return "";
-  if (result.status === "unresolvable") {
-    return `${result.baseline.duplicateGroupCount} X groups contain conflicting values, but no nominal or temporal field can repair them.`;
-  }
-  if (result.status !== "conflict") return "";
-  const repairs = result.candidates
-    .map((candidate) => `[${candidate.fields.join(" + ")}]`)
-    .join(" or ");
-  return `${result.baseline.duplicateGroupCount} X groups contain conflicting values. Minimal repairs: ${repairs}.`;
-});
-const repairPlanKey = (fields: string[]) => JSON.stringify(fields);
-const activeRepairPlans = computed(() => {
-  const result = activeGrainAnalysis.value;
-  if (result?.status === "conflict") {
-    return result.candidates.map((candidate) => ({
-      key: repairPlanKey(candidate.fields),
-      fields: [...candidate.fields],
-    }));
-  }
-  if (result && result.status !== "unique") return [];
-  const node = axisBindingNode.value ?? llmNode.value;
-  const dataset = node?.chartSpec ? getDataset(node.chartSpec.datasetId) : null;
-  if (!node?.chartSpec || !dataset) return [];
-  const fields = Array.from(new Set(activeDimensionRecommendations.value
-    .map((recommendation) => recommendation.field)
-    .filter((field) => dataset.columns.some((column) =>
-      column.name === field && column.type !== "quantitative"))
-    .filter((field) => !node.chartSpec?.dimensionDecisions?.[field])));
-  return fields.map((field) => ({ key: repairPlanKey([field]), fields: [field] }));
-});
-const selectedRepairPlanKey = ref("");
-const selectedRepairPlan = computed(() =>
-  activeRepairPlans.value.find((plan) => plan.key === selectedRepairPlanKey.value) ?? null,
-);
-const pendingDimension = computed(() => {
-  const node = axisBindingNode.value ?? llmNode.value;
-  const dataset = node?.chartSpec ? getDataset(node.chartSpec.datasetId) : null;
-  if (!node?.chartSpec || !dataset || !selectedRepairPlan.value) return null;
-  const field = selectedRepairPlan.value.fields.find((item) =>
-    dataset.columns.some((column) => column.name === item)
-    && !node.chartSpec?.dimensionDecisions?.[item],
-  );
-  if (!field) return null;
-  return {
-    field,
-    valueCount: new Set(dataset.rows.map((row) => row[field] ?? "")).size,
-  };
-});
-const pendingAggregation = ref<"sum" | "avg">("avg");
-const pendingChartUpgrade = ref("");
-const pendingFacetDirection = ref<"row" | "column">("column");
-const encodingResolutionRequired = computed(() => activeGrainAnalysis.value?.status === "conflict"
-  && activeRepairPlans.value.length > 0
-  && (!selectedRepairPlan.value || !!pendingDimension.value));
-const dimensionChartUpgradeOptions = computed(() => {
-  const node = axisBindingNode.value ?? llmNode.value;
-  return node?.chartSpec && pendingDimension.value
-    ? getDimensionChartUpgradeOptions(node.chartSpec.chartType)
-    : [];
-});
-const availableFacetDirections = computed<Array<"row" | "column">>(() => {
-  const node = axisBindingNode.value ?? llmNode.value;
-  if (!pendingDimension.value || node?.compositionSpec?.facetGrid) return [];
-  if (node?.compositionSpec?.type !== "facet" || !node.compositionSpec.facetField) {
-    return ["column", "row"];
-  }
-  return [(node.compositionSpec.facetDirection ?? "column") === "column" ? "row" : "column"];
-});
-const canChooseDimensionAggregation = computed(() => {
-  return !!pendingDimension.value?.field;
-});
-const canChooseDimensionFacet = computed(() => {
-  return !!pendingDimension.value?.field && availableFacetDirections.value.length > 0;
-});
-const canChooseDimensionUpgrade = computed(() => {
-  return !!pendingDimension.value?.field
-    && dimensionChartUpgradeOptions.value.some((option) => option.chartType === pendingChartUpgrade.value);
-});
-
-function finishDimensionChoice() {
-  void nextTick(() => {
-    const node = axisBindingNode.value ?? llmNode.value;
-    encodingReviewApprovedKey.value = encodingReviewKey(node);
-  });
-}
-
-function chooseRepairPlan(key: string) {
-  selectedRepairPlanKey.value = key;
-  pendingAggregation.value = "avg";
-  pendingChartUpgrade.value = dimensionChartUpgradeOptions.value[0]?.chartType ?? "";
-  pendingFacetDirection.value = availableFacetDirections.value[0] ?? "column";
-}
-
-function chooseDimensionAggregation() {
-  const field = pendingDimension.value?.field;
-  if (!field || !canChooseDimensionAggregation.value || !applyDimensionAggregation(field, pendingAggregation.value)) return;
-  finishDimensionChoice();
-}
-
-function chooseDimensionChartUpgrade() {
-  const field = pendingDimension.value?.field;
-  if (!field
-    || !canChooseDimensionUpgrade.value
-    || !applyDimensionChartUpgrade(field, pendingChartUpgrade.value)) return;
-  finishDimensionChoice();
-}
-
-function chooseDimensionFacet() {
-  const field = pendingDimension.value?.field;
-  if (!field
-    || !canChooseDimensionFacet.value
-    || !applyDimensionFacet(field, pendingFacetDirection.value)) return;
-  finishDimensionChoice();
-}
 const selectedCanvasNodesWithCoordinateGuides = coordinateGuideNodes;
 
 function openCompositionCandidates(type: CompositionType) {
@@ -515,6 +489,27 @@ function onEncodingChannelChange(channel: ChartEncodingChannel, field: string) {
   setChartEncoding(channel, field);
 }
 
+function onCsvSeriesStyleChange(memberId: string, patch: { color?: string; strokeWidth?: number; shape?: "solid" | "dashed" | "dotted" }) {
+  const node = selectedIds.value.length === 1 ? selectedNodes.value[0] : null;
+  if (!node?.chartSpec) return;
+  const current = node.chartSpec.markGroups?.[0]?.sharedConfig.seriesStyleMapping;
+  const legacy = node.chartSpec.markGroups?.[0]?.sharedConfig.seriesColorMapping;
+  const values = isSeriesStyleMapping(current)
+    ? current.values
+    : isCategoricalColorMapping(legacy)
+      ? Object.fromEntries(Object.entries(legacy.values).map(([member, color]) => [member, { color }]))
+      : {};
+  updateSelectedChartMarkGroupConfig({
+    seriesStyleMapping: {
+      type: "series-style",
+      values: {
+        ...values,
+        [memberId]: { ...values[memberId], ...patch },
+      },
+    },
+  });
+}
+
 function onCompositionEncodingChange(patch: Parameters<typeof setCompositionEncoding>[0]) {
   setCompositionEncoding(patch);
 }
@@ -533,7 +528,6 @@ function onSeriesFieldsChange(fields: string[]) {
 
 function confirmEncodingInspector() {
   const node = axisBindingNode.value;
-  selectedRepairPlanKey.value = "";
   void nextTick(() => {
     encodingReviewApprovedKey.value = encodingReviewKey(node);
   });
@@ -738,7 +732,11 @@ onBeforeUnmount(() => {
     </Teleport>
 
     <div class="workbench">
-      <CsvDataPanel />
+      <CsvDataPanel
+        :encoding-bindings="csvEncodingBindings"
+        :series-styles="csvSeriesStyles"
+        @series-style-change="onCsvSeriesStyleChange"
+      />
       <main class="workspace">
         <section
           ref="canvasRef"
@@ -1013,26 +1011,8 @@ onBeforeUnmount(() => {
               :rows="axisBindingRows"
               :mark-config="axisBindingMarkGroupConfig"
               :renderer-error="axisBindingRendererError"
-              :compatibility-message="activeCompatibilityMessage"
-              :repair-plans="activeRepairPlans"
-              :selected-repair-plan-key="selectedRepairPlanKey"
-              :resolution-required="encodingResolutionRequired"
-              :pending-dimension="pendingDimension"
-              :pending-aggregation="pendingAggregation"
-              :pending-chart-upgrade="pendingChartUpgrade"
-              :dimension-chart-upgrade-options="dimensionChartUpgradeOptions"
-              :available-facet-directions="availableFacetDirections"
-              :pending-facet-direction="pendingFacetDirection"
-              :alternative-recommendations="activeDimensionRecommendations"
               @close="closeEncodingInspector"
               @confirm="confirmEncodingInspector"
-              @choose-repair-plan="chooseRepairPlan"
-              @choose-dimension-aggregation="chooseDimensionAggregation"
-              @choose-dimension-chart-upgrade="chooseDimensionChartUpgrade"
-              @choose-dimension-facet="chooseDimensionFacet"
-              @update-pending-aggregation="pendingAggregation = $event"
-              @update-pending-chart-upgrade="pendingChartUpgrade = $event"
-              @update-pending-facet-direction="pendingFacetDirection = $event"
               @channel-change="onEncodingChannelChange"
               @composition-change="onCompositionEncodingChange"
               @axis-swap="onAxisSwap"
@@ -1471,6 +1451,9 @@ onBeforeUnmount(() => {
                 :channels="getCartesianAxisChannels(node, 'interactive')"
                 :show-axis="false"
                 :interactive="true"
+                :binding-label="barItemAxisBinding(node)?.label ?? ''"
+                :binding-fields="barItemAxisBinding(node)?.fields ?? []"
+                :on-binding-remove="removeBarItemField"
                 :on-axis-scale-pointer-down="onCoordinateAxisScalePointerDown"
               />
               <PolarCoordinateSystem
@@ -2929,6 +2912,39 @@ onBeforeUnmount(() => {
   stroke: rgba(255, 255, 255, 0.94);
   stroke-width: 3px;
   stroke-linejoin: round;
+}
+.canvas-scene :deep(.cartesian-axis-item-bindings) {
+  pointer-events: all;
+}
+.canvas-scene :deep(.cartesian-axis-item-bindings__label) {
+  fill: #516176;
+  font-weight: 700;
+  letter-spacing: 0;
+  pointer-events: none;
+}
+.canvas-scene :deep(.cartesian-axis-item-binding__background) {
+  fill: #edf5fc;
+  stroke: rgba(28, 126, 214, 0.34);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.canvas-scene :deep(.cartesian-axis-item-binding__text) {
+  fill: #1554b2;
+  font-weight: 600;
+  letter-spacing: 0;
+  pointer-events: none;
+}
+.canvas-scene :deep(.cartesian-axis-item-binding__remove) {
+  cursor: pointer;
+}
+.canvas-scene :deep(.cartesian-axis-item-binding__remove path) {
+  fill: none;
+  stroke: #516176;
+  stroke-linecap: round;
+  stroke-width: 1.5;
+}
+.canvas-scene :deep(.cartesian-axis-item-binding__remove:hover path) {
+  stroke: #b42f2f;
 }
 .coordinate-guide-layer :deep(.coordinate-origin-handle) {
   fill: #111;

@@ -144,6 +144,9 @@ export const CartesianCoordinateSystem = defineComponent({
     showAxis: { type: Boolean, default: true },
     interactive: { type: Boolean, default: false },
     applyTransform: { type: Boolean, default: true },
+    bindingLabel: { type: String, default: "" },
+    bindingFields: { type: Array as PropType<string[]>, default: () => [] },
+    onBindingRemove: { type: Function as PropType<(nodeId: string, field: string) => void>, default: null },
     onAxisScalePointerDown: { type: Function as PropType<(node: CanvasNode, axis: "x" | "y", event: PointerEvent) => void>, default: null },
   },
   setup(props) {
@@ -196,15 +199,6 @@ export const CartesianCoordinateSystem = defineComponent({
               h("text", { class: "cartesian-axis-tick-label", x: textX, y: tick.position, "text-anchor": guide.xDirection === 1 ? "end" : "start", "dominant-baseline": "middle" }, tick.label),
             ];
           }));
-          const titleX = model.origin.x + (guide.xDirection === 1 ? -model.fontSize * 3.2 : model.fontSize * 3.2);
-          const titleY = model.top + (model.bottom - model.top) / 2;
-          if (model.yTitle) axisNodes.push(h("text", {
-            class: "cartesian-axis-title",
-            x: titleX,
-            y: titleY,
-            "text-anchor": "middle",
-            transform: `rotate(-90 ${titleX} ${titleY})`,
-          }, model.yTitle));
         }
         if (includes("x")) {
           axisNodes.push(h("line", {
@@ -224,12 +218,6 @@ export const CartesianCoordinateSystem = defineComponent({
               h("text", { class: "cartesian-axis-tick-label", x: tick.position, y: textY, "text-anchor": "middle" }, tick.label),
             ];
           }));
-          if (model.xTitle) axisNodes.push(h("text", {
-            class: "cartesian-axis-title",
-            x: model.left + (model.right - model.left) / 2,
-            y: model.origin.y + (guide.yDirection === -1 ? model.fontSize * 2.6 : -model.fontSize * 2.1),
-            "text-anchor": "middle",
-          }, model.xTitle));
         }
       } else if (props.showAxis) {
         if (includes("x")) axisNodes.push(
@@ -271,6 +259,69 @@ export const CartesianCoordinateSystem = defineComponent({
           return [endpoint(channel, end, direction)];
         })
         : [];
+      const bindingControls = props.interactive && props.bindingFields.length > 0
+        ? (() => {
+          const chipWidth = 138 / screenScale;
+          const chipHeight = 20 / screenScale;
+          const gap = 4 / screenScale;
+          const labelHeight = 18 / screenScale;
+          const availableHeight = Math.max((bottom - top) - labelHeight, chipHeight);
+          const rowsPerColumn = Math.max(1, Math.floor(availableHeight / (chipHeight + gap)));
+          const startX = origin.x + (guide.xDirection === 1 ? 10 / screenScale : -(chipWidth + 10 / screenScale));
+          const startY = top + 6 / screenScale;
+          return [h("g", { class: "cartesian-axis-item-bindings" }, [
+            h("text", {
+              class: "cartesian-axis-item-bindings__label",
+              x: startX,
+              y: startY + 10 / screenScale,
+              "font-size": 10 / screenScale,
+            }, props.bindingLabel),
+            ...props.bindingFields.map((field, index) => {
+              const column = Math.floor(index / rowsPerColumn);
+              const row = index % rowsPerColumn;
+              const x = startX + column * (chipWidth + gap);
+              const y = startY + labelHeight + row * (chipHeight + gap);
+              const remove = (event: PointerEvent) => {
+                event.preventDefault();
+                event.stopPropagation();
+                props.onBindingRemove?.(props.node.id, field);
+              };
+              return h("g", {
+                key: field,
+                class: "cartesian-axis-item-binding",
+                transform: `translate(${x} ${y})`,
+              }, [
+                h("title", null, `${field} - remove binding`),
+                h("rect", {
+                  class: "cartesian-axis-item-binding__background",
+                  width: chipWidth,
+                  height: chipHeight,
+                  rx: 4 / screenScale,
+                }),
+                h("text", {
+                  class: "cartesian-axis-item-binding__text",
+                  x: 7 / screenScale,
+                  y: 13.5 / screenScale,
+                  "font-size": 10 / screenScale,
+                }, field.length > 18 ? `${field.slice(0, 15)}...` : field),
+                h("g", {
+                  class: "cartesian-axis-item-binding__remove",
+                  transform: `translate(${chipWidth - 18 / screenScale} 0)`,
+                  role: "button",
+                  "aria-label": `Remove ${field}`,
+                  onPointerdown: remove,
+                }, [
+                  h("rect", { width: 18 / screenScale, height: chipHeight, fill: "transparent" }),
+                  h("path", {
+                    d: `M ${5 / screenScale} ${6 / screenScale} L ${13 / screenScale} ${14 / screenScale} M ${13 / screenScale} ${6 / screenScale} L ${5 / screenScale} ${14 / screenScale}`,
+                    "vector-effect": "non-scaling-stroke",
+                  }),
+                ]),
+              ]);
+            }),
+          ])];
+        })()
+        : [];
       const transform = props.applyTransform
         ? props.node.kind === "leaf" ? getLeafNodeTransform(props.node) : getNodeTransform(props.node)
         : undefined;
@@ -281,7 +332,7 @@ export const CartesianCoordinateSystem = defineComponent({
         "font-size": model?.fontSize,
         fill: model?.textColor,
         "aria-hidden": props.interactive ? undefined : "true",
-      }, [...axisNodes, ...controls]);
+      }, [...axisNodes, ...controls, ...bindingControls]);
     };
   },
 });

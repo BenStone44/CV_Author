@@ -102,6 +102,22 @@ describe("Case 1 deterministic line chart", () => {
     ]);
   });
 
+  it("swaps line axes into a vertical time progression", () => {
+    const result = renderLineChart({
+      chartId: "swapped-line",
+      width: 800,
+      height: 400,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Cartesian", origin: { x: 0, y: 400 }, xDirection: 1, yDirection: -1 },
+      chartSpec: { ...createChartSpec(), axisSwapped: true },
+      dataset: loadCase1Dataset(),
+    });
+
+    expect(result.scales.x.type).toBe("linear");
+    expect(result.scales.y.type).toBe("utc");
+  });
+
   it("applies configured colors to individual series members", () => {
     const dataset = loadCase1Dataset();
     const result = renderLineChart({
@@ -258,7 +274,7 @@ describe("Case 1 deterministic line chart", () => {
     });
 
     expect(result.content.match(/data-mark-role="line"/g)).toHaveLength(1);
-    expect(result.content).toContain('data-point-count="8"');
+    expect(result.content).toContain('data-point-count="40"');
     expect(result.content).not.toContain("data-mark-role=\"legend\"><g");
   });
 
@@ -305,6 +321,42 @@ describe("Case 1 deterministic line chart", () => {
     expect(average.scales.y.domain).toEqual([88, 102]);
     expect(sum.content).toContain('data-point-count="2"');
     expect(sum.scales.y.domain).toEqual([175, 205]);
+  });
+
+  it("keeps repeated X values on an unbound single line", () => {
+    const dataset: Dataset = {
+      id: "single-line-repeated-x",
+      name: "single-line-repeated-x.csv",
+      columns: [
+        { name: "time", type: "temporal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { time: "2025-01-01", value: "80" },
+        { time: "2025-01-01", value: "100" },
+        { time: "2025-02-01", value: "90" },
+        { time: "2025-02-01", value: "110" },
+      ],
+    };
+    const result = renderLineChart({
+      chartId: "single-line-repeated-x",
+      width: 800,
+      height: 400,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Cartesian", origin: { x: 0, y: 400 }, xDirection: 1, yDirection: -1 },
+      chartSpec: {
+        ...createChartSpec(),
+        datasetId: dataset.id,
+        encodings: {
+          x: { field: "time", type: "temporal" },
+          y: { field: "value", type: "quantitative" },
+        },
+      },
+      dataset,
+    });
+
+    expect(result.content).toContain('data-point-count="4"');
   });
 
   it("renders nominal fields on both axes with point scales", () => {

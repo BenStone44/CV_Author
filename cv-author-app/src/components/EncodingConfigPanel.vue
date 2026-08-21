@@ -25,7 +25,6 @@ import type {
   LinearSizeMapping,
   MarkGroupSharedConfig,
   SeriesStyleMapping,
-  DimensionRecommendation,
 } from "../types";
 import {
   defaultColorMapping,
@@ -43,17 +42,6 @@ const props = defineProps<{
   rows: DataRow[];
   markConfig: MarkGroupSharedConfig;
   rendererError?: string;
-  compatibilityMessage?: string;
-  repairPlans?: Array<{ key: string; fields: string[] }>;
-  selectedRepairPlanKey?: string;
-  resolutionRequired?: boolean;
-  pendingDimension?: { field: string; valueCount: number } | null;
-  pendingAggregation?: "sum" | "avg";
-  pendingChartUpgrade?: string;
-  dimensionChartUpgradeOptions?: Array<{ chartType: string; label: string }>;
-  availableFacetDirections?: Array<"row" | "column">;
-  pendingFacetDirection?: "row" | "column";
-  alternativeRecommendations?: DimensionRecommendation[];
   compositionSpec?: CompositionSpec | null;
 }>();
 
@@ -68,13 +56,6 @@ const emit = defineEmits<{
   parallelFieldsChange: [fields: string[]];
   markConfigChange: [patch: MarkGroupSharedConfig];
   axisSwap: [swapped: boolean];
-  chooseRepairPlan: [key: string];
-  chooseDimensionAggregation: [];
-  chooseDimensionChartUpgrade: [];
-  chooseDimensionFacet: [];
-  updatePendingAggregation: [value: "sum" | "avg"];
-  updatePendingChartUpgrade: [value: string];
-  updatePendingFacetDirection: [value: "row" | "column"];
   compositionChange: [patch: {
     facetField?: string;
     facetDirection?: "row" | "column";
@@ -116,7 +97,7 @@ const standardConfigs = computed(() => configs.value.filter((config) => {
     || (supportsMeasureSeries.value && config.channel === "color" && (!supportsBarValueSeries.value || usesBarValueSeries.value))) return false;
   return true;
 }));
-const seriesConfig = computed<EncodingChannelConfig | null>(() => (isMultiLine.value || areaRequiresSeries.value) && !usesDerivedSeries.value ? {
+const seriesConfig = computed<EncodingChannelConfig | null>(() => ((isMultiLine.value && !isExplicitMultiLine.value) || areaRequiresSeries.value) && !usesDerivedSeries.value ? {
   channel: "color",
   label: "Series",
   role: "series",
@@ -202,10 +183,6 @@ const facetRowField = computed(() => {
     ?? (composition.value.facetDirection === "row" ? composition.value.facetField : "")
     ?? "";
 });
-const hasResolutionContent = computed(() => !!props.compatibilityMessage
-  || !!props.repairPlans?.length
-  || !!props.pendingDimension
-  || !!props.alternativeRecommendations?.length);
 function updateFacetField(direction: "row" | "column", field: string) {
   const current = composition.value;
   if (!current || current.type !== "facet") return;
@@ -245,15 +222,15 @@ function updateSeriesMemberStyle(memberId: string, patch: { color?: string; stro
     },
   });
 }
-const hasResolutionBlocker = computed(() => !!props.compatibilityMessage || props.resolutionRequired === true);
-const canConfirm = computed(() => !hasResolutionBlocker.value
-  && resolveChartEncodingIssues(props.chartSpec).length === 0
+const canConfirm = computed(() => resolveChartEncodingIssues(props.chartSpec).length === 0
   && (!supportsMeasureSeries.value
     || (barRequiresSegments.value
       ? (!usesBarValueSeries.value || selectedValueSeriesFields.value.length >= 2)
       : isGroupedBar.value
         ? (!usesBarValueSeries.value || selectedValueSeriesFields.value.length >= 2)
-        : usesDerivedSeries.value || !!resolvedSeriesField(props.chartSpec)))
+        : isExplicitMultiLine.value
+          ? selectedValueSeriesFields.value.length >= 1 || !!resolvedSeriesField(props.chartSpec)
+          : usesDerivedSeries.value || !!resolvedSeriesField(props.chartSpec)))
   && configs.value.every((config) => {
     if (!config.required) return true;
   if (config.channel === "y" && supportsMeasureSeries.value
@@ -387,8 +364,8 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
         </label>
       </section>
 
-      <section v-if="supportsMeasureSeries && !barRequiresSegments && !isGroupedBar" class="encoding-config__angle" aria-label="Y value columns">
-        <span>{{ axisSwapped ? "X values" : "Y values" }} <abbr title="At least one required" aria-label="At least one required">*</abbr></span>
+      <section v-if="supportsMeasureSeries && !barRequiresSegments && !isGroupedBar" class="encoding-config__angle" aria-label="Series fields">
+        <span>{{ isExplicitMultiLine ? "Series" : (axisSwapped ? "X values" : "Y values") }} <abbr title="At least one required" aria-label="At least one required">*</abbr></span>
         <label v-for="column in quantitativeColumns" :key="column.name">
           <input
             type="checkbox"
@@ -546,86 +523,6 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
         </label>
       </section>
 
-      <section
-        v-if="hasResolutionContent"
-        class="encoding-config__column encoding-config__column--resolve encoding-config__resolution"
-        aria-label="Encoding resolution"
-      >
-        <div class="encoding-config__column-heading">
-          <strong>Resolve required</strong>
-          <span v-if="compatibilityMessage">This binding is not ready to apply.</span>
-          <span v-else>Review the available data alternatives.</span>
-        </div>
-        <p v-if="compatibilityMessage" class="encoding-config__error">{{ compatibilityMessage }}</p>
-        <div v-if="repairPlans?.length" class="encoding-config__repair-list">
-          <span>Minimal repairs</span>
-          <button
-            v-for="(plan, index) in repairPlans"
-            :key="plan.key"
-            type="button"
-            class="encoding-config__repair-option"
-            :class="{ 'encoding-config__repair-option--active': selectedRepairPlanKey === plan.key }"
-            @click="emit('chooseRepairPlan', plan.key)"
-          >
-            <strong>{{ index + 1 }}. {{ plan.fields.join(" + ") }}</strong>
-            <small>{{ plan.fields.length }} {{ plan.fields.length === 1 ? "field" : "fields" }}</small>
-          </button>
-        </div>
-        <div v-if="pendingDimension" class="encoding-config__resolution-options">
-          <div class="encoding-config__resolution-subtitle">
-            <strong>Resolve {{ pendingDimension.field }}</strong>
-            <span>{{ pendingDimension.valueCount }} values need a structural decision.</span>
-          </div>
-          <section class="encoding-config__resolution-card">
-            <span>Data reduction</span>
-            <strong>Aggregate {{ pendingDimension.field }}</strong>
-            <select
-              :value="pendingAggregation"
-              aria-label="Aggregation method"
-              @change="emit('updatePendingAggregation', ($event.target as HTMLSelectElement).value as 'sum' | 'avg')"
-            >
-              <option value="sum">Sum</option>
-              <option value="avg">Avg</option>
-            </select>
-            <button type="button" @click="emit('chooseDimensionAggregation')">Apply</button>
-          </section>
-          <section v-if="dimensionChartUpgradeOptions?.length" class="encoding-config__resolution-card">
-            <span>Chart upgrade</span>
-            <strong>Upgrade with {{ pendingDimension.field }}</strong>
-            <select
-              :value="pendingChartUpgrade"
-              aria-label="Chart upgrade target"
-              @change="emit('updatePendingChartUpgrade', ($event.target as HTMLSelectElement).value)"
-            >
-              <option v-for="option in dimensionChartUpgradeOptions" :key="option.chartType" :value="option.chartType">{{ option.label }}</option>
-            </select>
-            <button type="button" :disabled="!pendingChartUpgrade" @click="emit('chooseDimensionChartUpgrade')">Apply</button>
-          </section>
-          <section v-if="availableFacetDirections?.length" class="encoding-config__resolution-card">
-            <span>Facet</span>
-            <strong>Facet by {{ pendingDimension.field }}</strong>
-            <div class="encoding-config__facet-directions" role="group" aria-label="Facet direction">
-              <button
-                v-for="direction in availableFacetDirections"
-                :key="direction"
-                type="button"
-                :class="{ 'is-active': pendingFacetDirection === direction }"
-                @click="emit('updatePendingFacetDirection', direction)"
-              >
-                {{ direction === "column" ? "Column" : "Row" }}
-              </button>
-            </div>
-            <button type="button" @click="emit('chooseDimensionFacet')">Apply</button>
-          </section>
-        </div>
-        <div v-if="alternativeRecommendations?.length" class="encoding-config__alternative-list">
-          <span>Alternative recommendations</span>
-          <div v-for="recommendation in alternativeRecommendations" :key="recommendation.id" class="encoding-config__alternative-option">
-            <strong>{{ recommendation.label }}</strong>
-            <small>{{ recommendation.field }} · {{ recommendation.strategy }}</small>
-          </div>
-        </div>
-      </section>
       </div>
     </div>
     <p v-else class="encoding-config__empty">Import a CSV to bind channels.</p>
@@ -680,7 +577,7 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
       </label>
     </section>
 
-    <p v-if="rendererError && !hasResolutionContent" class="encoding-config__error">{{ rendererError }}</p>
+    <p v-if="rendererError" class="encoding-config__error">{{ rendererError }}</p>
     <div class="encoding-config__actions">
       <button type="button" :disabled="!canConfirm" @click="emit('confirm')">Confirm encodings</button>
     </div>
@@ -699,7 +596,6 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
 .encoding-config__columns { display: grid; grid-template-columns: repeat(3, minmax(220px, 1fr)); gap: 10px; align-items: stretch; overflow-x: auto; padding-bottom: 3px; }
 .encoding-config__column { display: grid; min-width: 0; align-content: start; gap: 10px; padding: 10px; border: 1px solid rgba(24, 33, 47, 0.1); border-radius: 6px; background: #fbfcfe; }
 .encoding-config__column--composition { grid-column: 2; background: #f8fbff; }
-.encoding-config__column--resolve { grid-column: 3; background: #fafafa; }
 .encoding-config__column-heading { display: grid; gap: 2px; padding-bottom: 2px; border-bottom: 1px solid rgba(24, 33, 47, 0.09); }
 .encoding-config__column-heading strong { color: #263548; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
 .encoding-config__column-heading span, .encoding-config__column-empty { color: #718096; font-size: 10px; line-height: 1.35; }
@@ -743,24 +639,6 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
 .encoding-config__empty, .encoding-config__error { margin: 0; font-size: 11px; line-height: 1.4; }
 .encoding-config__empty { color: #6b7889; }
 .encoding-config__error { color: #b42318; }
-.encoding-config__resolution { display: grid; gap: 8px; padding: 10px; border: 1px solid rgba(180, 35, 24, 0.2); border-radius: 6px; background: #fff8f7; }
-.encoding-config__repair-list, .encoding-config__alternative-list { display: grid; gap: 5px; padding-top: 7px; border-top: 1px solid rgba(180, 35, 24, 0.12); }
-.encoding-config__repair-list > span, .encoding-config__alternative-list > span { color: #8c2929; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
-.encoding-config__repair-option, .encoding-config__alternative-option { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; min-height: 34px; padding: 6px 8px; border: 1px solid rgba(180, 35, 24, 0.12); border-radius: 6px; background: #fff; font: inherit; text-align: left; }
-.encoding-config__repair-option { cursor: pointer; }
-.encoding-config__repair-option:hover, .encoding-config__repair-option--active { border-color: rgba(180, 35, 24, 0.45); background: #fff1ef; }
-.encoding-config__repair-option strong, .encoding-config__alternative-option strong { min-width: 0; overflow: hidden; color: #334155; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.encoding-config__repair-option small, .encoding-config__alternative-option small { flex: 0 0 auto; color: #9b5c57; font-size: 9px; }
-.encoding-config__resolution-options { display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid rgba(180, 35, 24, 0.14); }
-.encoding-config__resolution-subtitle { display: grid; gap: 2px; }
-.encoding-config__resolution-subtitle strong { color: #8c2929; font-size: 11px; }
-.encoding-config__resolution-subtitle span { color: #9b5c57; font-size: 10px; }
-.encoding-config__resolution-card { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: 7px; padding-top: 8px; border-top: 1px solid rgba(180, 35, 24, 0.14); }
-.encoding-config__resolution-card > span { color: #9b5c57; font-size: 9px; font-weight: 700; text-transform: uppercase; }
-.encoding-config__resolution-card > strong { min-width: 0; overflow: hidden; color: #334155; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.encoding-config__resolution-card select { width: 100%; height: 34px; min-width: 0; padding: 0 8px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 6px; background: #fff; color: #334155; font: inherit; font-size: 10px; }
-.encoding-config__resolution-card > button { width: 100%; height: 34px; padding: 0 10px; border: 1px solid #b42318; border-radius: 6px; background: #b42318; color: #fff; font: inherit; font-size: 10px; font-weight: 700; cursor: pointer; }
-.encoding-config__resolution-card > button:disabled { cursor: not-allowed; opacity: 0.45; }
 .encoding-config__facet-directions { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); width: 100%; gap: 4px; }
 .encoding-config__facet-directions button { width: 100%; height: 34px; padding: 0 8px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 6px; background: #fff; color: #516176; font: inherit; font-size: 10px; cursor: pointer; }
 .encoding-config__facet-directions button.is-active { border-color: #b42318; background: #fff1ef; color: #8c2929; font-weight: 700; }

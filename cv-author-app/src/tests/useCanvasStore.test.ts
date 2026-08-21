@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { nextTick, ref } from "vue";
 import type { CanvasGroupNode, CanvasLeafNode, CanvasNode, Dataset } from "../types";
 import { collectNodeSelectionBounds } from "../utils/canvasUtils";
+import { csvColumnDragMime, encodeCsvColumnDragPayload } from "../utils/csvColumnDrag";
 
 const storage = new Map<string, string>();
 Object.defineProperty(globalThis, "localStorage", {
@@ -164,6 +165,25 @@ function mouseEvent() {
     preventDefault() {},
     stopPropagation() {},
   } as unknown as MouseEvent;
+}
+
+function columnDragEvent(datasetId: string, field: string, type: "nominal" | "temporal" | "quantitative", clientX: number, clientY: number) {
+  const data = new Map([
+    [csvColumnDragMime, encodeCsvColumnDragPayload({ datasetId, field, type })],
+    ["text/plain", field],
+  ]);
+  return {
+    clientX,
+    clientY,
+    preventDefault() {},
+    relatedTarget: null,
+    dataTransfer: {
+      files: [],
+      types: Array.from(data.keys()),
+      dropEffect: "none",
+      getData: (format: string) => data.get(format) ?? "",
+    },
+  } as unknown as DragEvent;
 }
 
 describe("implemented chart template cards", () => {
@@ -339,6 +359,27 @@ describe("implemented chart template cards", () => {
     store.setChartEncoding("y", "value");
     expect(chart.renderedContent).toContain('fill="#123456"');
     expect(chart.renderedContent).toContain('width="18"');
+  });
+
+  it("renders a line chart vertically when Cartesian axes are swapped", () => {
+    const chart = lineChart("swapped-line-chart", 120, false);
+    chart.chartSpec = {
+      ...chart.chartSpec!,
+      chartType: "MultiLineChart",
+      valueFields: [{ field: "value", type: "quantitative" }],
+    };
+    const store = useCanvasStore(ref(null));
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    store.canvasNodes.value = [chart];
+    store.selectedIds.value = [chart.id];
+    store.axisBindingTarget.value = { nodeId: chart.id, channel: "x" };
+
+    store.setAxisSwap(true);
+
+    expect(chart.chartSpec?.axisSwapped).toBe(true);
+    expect(chart.chartSpec?.scales?.x?.type).toBe("linear");
+    expect(chart.chartSpec?.scales?.y?.type).toBe("utc");
   });
 
   it("keeps native encodings and Series synchronized after panel edits", () => {
@@ -1453,5 +1494,126 @@ describe("composition coordinate editing", () => {
 
     expect(store.canvasNodes.value).toHaveLength(1);
     expect(store.canvasNodes.value[0]?.nestedSpec?.type).toBe("nested");
+  });
+});
+
+describe("CSV column axis drag binding", () => {
+  function dragCanvasRef() {
+    return ref({
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 800 }),
+      querySelectorAll: () => [],
+    } as unknown as HTMLElement);
+  }
+
+  it("highlights and binds a compatible column on a Cartesian axis", async () => {
+    const chart = lineChart("column-drag-chart", 100, false);
+    const store = useCanvasStore(dragCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    store.canvasNodes.value = [chart];
+    const event = columnDragEvent(layerDataset.id, "time", "temporal", 500, 500);
+
+    store.onCanvasDragOver(event);
+    expect(store.activeDataBindingDropZone.value).toMatchObject({
+      type: "cartesian-axis",
+      targetNodeId: chart.id,
+      channel: "x",
+      compatible: true,
+      fieldName: "time",
+    });
+    expect(event.dataTransfer?.dropEffect).toBe("copy");
+
+    await store.onCanvasDrop(event);
+    expect(chart.chartSpec?.encodings.x).toEqual({ field: "time", type: "temporal" });
+    expect(store.selectedIds.value).toEqual([chart.id]);
+    expect(store.activeDataBindingDropZone.value).toBeNull();
+  });
+
+  it("shows an incompatible axis and leaves its binding unchanged", async () => {
+    const chart = lineChart("column-drag-incompatible", 100, false);
+    const store = useCanvasStore(dragCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    store.canvasNodes.value = [chart];
+    const event = columnDragEvent(layerDataset.id, "series", "nominal", 100, 300);
+
+    store.onCanvasDragOver(event);
+    expect(store.activeDataBindingDropZone.value).toMatchObject({
+      type: "cartesian-axis",
+      channel: "y",
+      compatible: false,
+    });
+    expect(event.dataTransfer?.dropEffect).toBe("none");
+
+    await store.onCanvasDrop(event);
+    expect(chart.chartSpec?.encodings.y).toEqual({ field: "value", type: "quantitative" });
+    expect(store.importNotice.value).toContain("not supported");
+  });
+
+  it("accumulates Group item fields on Y and removes one binding from the axis", async () => {
+    const dataset: Dataset = {
+      id: "drag-group-items",
+      name: "drag-group-items.csv",
+      columns: [
+        { name: "time", type: "temporal" },
+        { name: "weight", type: "quantitative" },
+        { name: "water", type: "quantitative" },
+        { name: "fat", type: "quantitative" },
+      ],
+      rows: [
+        { time: "2026-01", weight: "80", water: "45", fat: "18" },
+        { time: "2026-02", weight: "79", water: "44", fat: "17" },
+      ],
+    };
+    const chart = lineChart("column-drag-group-items", 100, false);
+    chart.chartSpec = {
+      chartType: "GroupedBarChart",
+      datasetId: dataset.id,
+      encodings: {
+        x: { field: "time", type: "temporal" },
+        y: { field: "weight", type: "quantitative" },
+      },
+    };
+    const store = useCanvasStore(dragCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [chart];
+    const yAxisEvent = (field: string) => {
+      const plot = chart.chartSpec?.plotArea;
+      return columnDragEvent(
+        dataset.id,
+        field,
+        "quantitative",
+        chart.x + (plot?.x ?? 0),
+        chart.y + (plot?.y ?? 0) + (plot?.height ?? chart.height) / 2,
+      );
+    };
+
+    await store.onCanvasDrop(yAxisEvent("water"));
+    expect(chart.chartSpec?.valueFields?.map((encoding) => encoding.field)).toEqual(["water"]);
+    expect(chart.renderedContent).toContain('data-bar-variant="grouped"');
+    await store.onCanvasDrop(yAxisEvent("fat"));
+
+    expect(chart.chartSpec?.valueFields?.map((encoding) => encoding.field)).toEqual(["water", "fat"]);
+    expect(chart.chartSpec?.encodings.y).toEqual({ field: "water", type: "quantitative" });
+    expect(store.barItemAxisBinding(chart)).toEqual({
+      label: "Group item",
+      fields: ["water", "fat"],
+    });
+
+    store.removeBarItemField(chart.id, "water");
+    expect(chart.chartSpec?.valueFields?.map((encoding) => encoding.field)).toEqual(["fat"]);
+    expect(chart.chartSpec?.encodings.y).toEqual({ field: "fat", type: "quantitative" });
+
+    expect(store.updateSelectedChartMarkGroupConfig({
+      seriesStyleMapping: {
+        type: "series-style",
+        values: { fat: { color: "#ef4444", strokeWidth: 4, shape: "dashed" } },
+      },
+    })).toBe(true);
+    expect(chart.chartSpec?.markGroups?.[0]?.sharedConfig.seriesStyleMapping).toEqual({
+      type: "series-style",
+      values: { fat: { color: "#ef4444", strokeWidth: 4, shape: "dashed" } },
+    });
   });
 });

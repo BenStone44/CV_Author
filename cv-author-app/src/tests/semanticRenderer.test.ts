@@ -72,12 +72,13 @@ describe("semantic Case 1 renderers", () => {
     const divergentStacked = render("DivergentStackedBarChart");
 
     expect(single.content).toContain('data-bar-variant="single"');
-    expect(single.content.match(/data-mark-role="bar"/g)).toHaveLength(2);
+    expect(single.content.match(/data-mark-role="bar"/g)).toHaveLength(4);
     expect(grouped.content).toContain('data-bar-variant="grouped"');
     expect(grouped.content.match(/data-mark-role="bar"/g)).toHaveLength(4);
     expect(stacked.content).toContain('data-bar-variant="stacked"');
     expect(stacked.content.match(/data-mark-role="bar"/g)).toHaveLength(4);
     expect(divergent.content).toContain('data-bar-variant="divergent"');
+    expect(divergent.content.match(/data-mark-role="bar"/g)).toHaveLength(4);
     expect(divergent.content).toContain('data-mark-role="zero-line"');
     expect(divergentStacked.content).toContain('data-bar-variant="divergent-stacked"');
     expect(divergentStacked.content).toContain('data-mark-role="zero-line"');
@@ -126,6 +127,49 @@ describe("semantic Case 1 renderers", () => {
     expect(render("GroupedBarChart").content.match(/data-mark-role="bar"/g)).toHaveLength(4);
     expect(render("StackedBarChart").content.match(/data-mark-role="bar"/g)).toHaveLength(4);
     expect(render("GroupedBarChart").content).toContain('data-series-key="East / Online"');
+  });
+
+  it("keeps every person-by-measure bar within one X category", () => {
+    const wideRows = Array.from({ length: 5 }, (_, personIndex) =>
+      ["weight", "water", "fat", "muscle"].map((measure, measureIndex) => ({
+        person: `P${personIndex + 1}`,
+        time: "2026-01-01",
+        measure,
+        value: String(personIndex + measureIndex + 1),
+      }))).flat();
+    const wideDataset: Dataset = {
+      id: "wide-grouped-bars",
+      name: "wide-grouped-bars.csv",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "time", type: "temporal" },
+        { name: "measure", type: "nominal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: wideRows,
+      primaryKey: ["person", "time", "measure"],
+    };
+    const render = (chartType: string) => renderDeterministicChart({
+      chartId: chartType,
+      width: 600,
+      height: 320,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Cartesian", origin: { x: 0, y: 320 }, xDirection: 1, yDirection: -1 },
+      chartSpec: {
+        chartType,
+        datasetId: wideDataset.id,
+        encodings: {
+          x: { field: "time", type: "temporal" },
+          y: { field: "value", type: "quantitative" },
+        },
+        seriesFields: [{ field: "measure", type: "nominal" }],
+      },
+      dataset: wideDataset,
+    });
+
+    expect(render("GroupedBarChart").content.match(/data-mark-role="bar"/g)).toHaveLength(20);
+    expect(render("StackedBarChart").content.match(/data-mark-role="bar"/g)).toHaveLength(20);
   });
 
   it("applies Bar Chart color and size column mappings", () => {
