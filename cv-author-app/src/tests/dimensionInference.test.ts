@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   analyzeDimensionGrainRepairs,
+  inferColumnIntents,
   inferChartStructure,
 } from "../utils/dimensionInference";
 import type { ChartSpec, Dataset } from "../types";
@@ -159,5 +160,133 @@ describe("line chart dimension recommendations", () => {
     expect(result.dimensionRecommendations?.some((recommendation) =>
       recommendation.strategy === "series",
     )).toBe(false);
+  });
+});
+
+describe("input-column intent inference", () => {
+  const barSpec: ChartSpec = {
+    chartType: "SingleBarChart",
+    datasetId: dataset.id,
+    encodings: {
+      x: { field: "time", type: "temporal" },
+      y: { field: "weight_kg", type: "quantitative" },
+    },
+  };
+
+  it("enumerates every legal intent for the one dragged column", () => {
+    const result = inferColumnIntents(
+      dataset,
+      barSpec,
+      { name: "person", type: "nominal" },
+      { type: "chart-body" },
+    );
+
+    expect(result.status).toBe("VALID");
+    expect(result.intents.map((intent) => intent.kind)).toEqual([
+      "aggregate",
+      "aggregate",
+      "facet",
+      "facet",
+      "upgrade",
+      "upgrade",
+    ]);
+    expect(result.intents.every((intent) => intent.inputColumn === "person")).toBe(true);
+    expect(result.intents.map((intent) => intent.targetChartType).filter(Boolean)).toEqual([
+      "GroupedBarChart",
+      "StackedBarChart",
+    ]);
+  });
+
+  it("validates an explicit channel role without scanning other columns", () => {
+    const valid = inferColumnIntents(
+      dataset,
+      barSpec,
+      { name: "person", type: "nominal" },
+      { type: "channel", channel: "x" },
+    );
+    const mismatch = inferColumnIntents(
+      dataset,
+      barSpec,
+      { name: "person", type: "nominal" },
+      { type: "channel", channel: "y" },
+    );
+
+    expect(valid.intents).toMatchObject([{
+      kind: "bind",
+      channel: "x",
+      binding: { x: ["person"], y: ["weight_kg"] },
+    }]);
+    expect(mismatch).toMatchObject({ status: "TYPE_MISMATCH", intents: [] });
+  });
+
+  it("does not substitute another column when the input is constant", () => {
+    const constantDataset: Dataset = {
+      ...dataset,
+      columns: [...dataset.columns, { name: "constant", type: "nominal" }],
+      rows: dataset.rows.map((row) => ({ ...row, constant: "same" })),
+    };
+    const result = inferColumnIntents(
+      constantDataset,
+      barSpec,
+      { name: "constant", type: "nominal" },
+      { type: "chart-body" },
+    );
+
+    expect(result).toMatchObject({
+      inputColumn: "constant",
+      status: "DIMENSION_UNDERFLOW",
+      intents: [],
+    });
+  });
+
+  it("requires the input column to resolve a non-aggregated chart grain", () => {
+    const unresolvedDataset: Dataset = {
+      ...dataset,
+      columns: [...dataset.columns, { name: "cohort", type: "nominal" }],
+      rows: dataset.rows.map((row, index) => ({
+        ...row,
+        cohort: index % 2 === 0 ? "first" : "second",
+      })),
+    };
+    const result = inferColumnIntents(
+      unresolvedDataset,
+      chartSpec,
+      { name: "cohort", type: "nominal" },
+      { type: "chart-body" },
+    );
+
+    expect(result).toMatchObject({ status: "DIMENSION_UNDERFLOW", intents: [] });
+  });
+
+  it.each([
+    ["GroupedBarChart", "Group item"],
+    ["StackedBarChart", "Segment item"],
+    ["DivergentStackedBarChart", "Segment item"],
+    ["MultiLineChart", "Series"],
+    ["StackedAreaChart", "Series"],
+    ["Streamgraph", "Series"],
+    ["HorizonChart", "Series"],
+  ])("offers the categorical Series Item intent for %s even in quantitative mode", (chartType, semanticRole) => {
+    const result = inferColumnIntents(
+      dataset,
+      {
+        chartType,
+        datasetId: dataset.id,
+        encodings: {
+          x: { field: "time", type: "temporal" },
+          y: { field: "weight_kg", type: "quantitative" },
+        },
+        valueFields: [{ field: "weight_kg", type: "quantitative" }],
+      },
+      { name: "person", type: "nominal" },
+      { type: "chart-body" },
+    );
+
+    expect(result.intents).toContainEqual(expect.objectContaining({
+      kind: "series",
+      semanticRole,
+      label: `Use as ${semanticRole}`,
+      binding: expect.objectContaining({ series: ["person"] }),
+    }));
   });
 });

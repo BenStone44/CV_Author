@@ -3,6 +3,7 @@ import { nextTick, ref } from "vue";
 import type { CanvasGroupNode, CanvasLeafNode, CanvasNode, Dataset } from "../types";
 import { collectNodeSelectionBounds } from "../utils/canvasUtils";
 import { csvColumnDragMime, encodeCsvColumnDragPayload } from "../utils/csvColumnDrag";
+import { inferColumnIntents } from "../utils/dimensionInference";
 
 const storage = new Map<string, string>();
 Object.defineProperty(globalThis, "localStorage", {
@@ -129,6 +130,41 @@ function lineChart(id: string, x: number, withSeries: boolean): CanvasGroupNode 
     },
     children: [],
   };
+}
+
+function cartesianChart(id: string, x: number, chartType: "AreaChart" | "LineGraph" | "SingleBarChart") {
+  const chart = lineChart(id, x, false);
+  chart.chartSpec = {
+    ...chart.chartSpec!,
+    chartType,
+    plotArea: { x: 80, y: 40, width: 640, height: 320 },
+  };
+  chart.renderedContent = `<g data-chart-type="${chartType}"/>`;
+  return chart;
+}
+
+function worldPlotArea(node: CanvasNode) {
+  const plotArea = node.chartSpec!.plotArea!;
+  const minX = node.kind === "leaf" ? node.contentMinX : 0;
+  const minY = node.kind === "leaf" ? node.contentMinY : 0;
+  const left = node.x + (plotArea.x - minX) * node.scaleX;
+  const top = node.y + (plotArea.y - minY) * node.scaleY;
+  return {
+    left,
+    top,
+    right: left + plotArea.width * node.scaleX,
+    bottom: top + plotArea.height * node.scaleY,
+  };
+}
+
+function worldScaleRange(node: CanvasNode, channel: "x" | "y") {
+  const scale = node.chartSpec!.scales![channel]!;
+  const min = node.kind === "leaf"
+    ? channel === "x" ? node.contentMinX : node.contentMinY
+    : 0;
+  const offset = channel === "x" ? node.x : node.y;
+  const factor = channel === "x" ? node.scaleX : node.scaleY;
+  return scale.range.map((value) => offset + (value - min) * factor);
 }
 
 function lineLeafChart(id: string, x: number, contentMinX: number, contentMinY: number): CanvasLeafNode {
@@ -504,10 +540,7 @@ describe("implemented chart template cards", () => {
     ]);
     expect(chart.chartSpec?.encodings.y).toEqual({ field: "weight", type: "quantitative" });
     expect(chart.chartSpec?.series).toBeUndefined();
-    expect(chart.chartSpec?.dimensionRecommendations).toContainEqual(expect.objectContaining({
-      field: "person",
-      strategy: "facet",
-    }));
+    expect(chart.chartSpec?.dimensionRecommendations).toBeUndefined();
     expect(chart.renderedContent).toContain('data-series-key="weight"');
     expect(chart.renderedContent).toContain('data-series-key="muscle"');
   });
@@ -687,6 +720,96 @@ describe("group editing scope", () => {
     listeners.get("pointerup")?.(pointerEvent(540, 200));
     expect(store.editingGroupPath.value).toEqual([]);
     expect(store.selectedIds.value).toEqual(["outside"]);
+  });
+});
+
+describe("composition selection hierarchy", () => {
+  it("selects and drags every member until the composition is entered", () => {
+    const store = useCanvasStore(ref({
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1800, height: 1000 }),
+      querySelectorAll: () => [],
+    } as unknown as HTMLElement));
+    store.relationshipStore.dispatch({ type: "clear" });
+    const first = lineChart("facet-member-a", 100, false);
+    const second = lineChart("facet-member-b", 950, false);
+    const composition = {
+      id: "composition:facet-selection",
+      type: "facet" as const,
+      members: [first, second].map((node) => ({
+        nodeId: node.id,
+        sourceNodeId: first.id,
+        chartType: node.chartSpec?.chartType,
+        sharedChannels: [],
+      })),
+      sharedChannels: [],
+    };
+    first.compositionSpec = composition;
+    second.compositionSpec = composition;
+    store.canvasNodes.value = [first, second];
+
+    store.onCanvasNodePointerDown(first, pointerEvent(140, 140));
+    expect(store.selectedIds.value).toEqual([first.id, second.id]);
+    expect(store.selectionBounds.value).toEqual({
+      minX: 100,
+      minY: 100,
+      maxX: 1750,
+      maxY: 500,
+      width: 1650,
+      height: 400,
+    });
+    listeners.get("pointermove")?.(pointerEvent(190, 180));
+    listeners.get("pointerup")?.(pointerEvent(190, 180));
+    expect([first.x, first.y, second.x, second.y]).toEqual([150, 140, 1000, 140]);
+
+    expect(store.canEnterSelection.value).toBe(true);
+    expect(store.enterSelection()).toBe(true);
+    expect(store.editingCompositionId.value).toBe(composition.id);
+    expect(store.selectedIds.value).toEqual([]);
+
+    store.onCanvasNodePointerDown(first, pointerEvent(190, 180));
+    listeners.get("pointermove")?.(pointerEvent(220, 200));
+    listeners.get("pointerup")?.(pointerEvent(220, 200));
+    expect(store.selectedIds.value).toEqual([first.id]);
+    expect([first.x, first.y]).toEqual([180, 160]);
+    expect([second.x, second.y]).toEqual([1000, 140]);
+  });
+
+  it("removes a selected composition while preserving its member charts", () => {
+    const store = useCanvasStore(ref(null));
+    store.relationshipStore.dispatch({ type: "clear" });
+    const first = lineChart("facet-member-a", 100, false);
+    const second = lineChart("facet-member-b", 950, false);
+    const composition = {
+      id: "composition:facet-removal",
+      type: "facet" as const,
+      members: [first, second].map((node) => ({
+        nodeId: node.id,
+        sourceNodeId: first.id,
+        chartType: node.chartSpec?.chartType,
+        sharedChannels: [],
+      })),
+      sharedChannels: [],
+    };
+    first.compositionSpec = composition;
+    second.compositionSpec = composition;
+    store.canvasNodes.value = [first, second];
+    store.relationshipStore.reconcileCanvasNodes(store.canvasNodes.value);
+    store.onCanvasNodePointerDown(first, pointerEvent(140, 140));
+
+    expect(store.canRemoveSelectionComposition.value).toBe(true);
+    expect(store.removeSelectionComposition()).toBe(true);
+    expect(store.canvasNodes.value).toHaveLength(2);
+    expect(store.canvasNodes.value.every((node) => node.compositionSpec == null)).toBe(true);
+    expect(store.canvasNodes.value.map((node) => node.coordinateSystem?.id)).toEqual([
+      `coordinate:${first.id}`,
+      `coordinate:${second.id}`,
+    ]);
+    expect(store.relationshipStore.state.value.compositions[composition.id]).toBeUndefined();
+    expect(store.selectedIds.value).toEqual([first.id, second.id]);
+    expect(store.canRemoveSelectionComposition.value).toBe(false);
+
+    store.undoCanvasChange();
+    expect(store.canvasNodes.value.every((node) => node.compositionSpec?.id === composition.id)).toBe(true);
   });
 });
 
@@ -998,7 +1121,8 @@ describe("CSV field binding", () => {
 
       expect(store.applyDimensionChartUpgrade("group")).toBe(true);
       expect(chart.chartSpec?.chartType).toBe(targetType);
-      expect(chart.chartSpec?.encodings.color?.field).toBe("group");
+      expect(chart.chartSpec?.encodings.color).toBeUndefined();
+      expect(chart.chartSpec?.seriesFields).toEqual([{ field: "group", type: "nominal" }]);
       expect(chart.renderedContent).toContain(`data-bar-variant="${variant}"`);
       expect(chart.renderedContent?.match(/data-mark-role="bar"/g)).toHaveLength(4);
     });
@@ -1218,6 +1342,21 @@ describe("dimension overflow decisions", () => {
     expect(left?.compositionSpec?.facetDirection).toBe("column");
     expect(right?.y).toBe(left?.y);
     expect((right?.x ?? 0) - (left?.x ?? 0)).toBe((left?.width ?? 0) * (left?.scaleX ?? 1) + 4);
+    expect(store.selectedIds.value).toEqual(store.canvasNodes.value.map((node) => node.id));
+    const leftBounds = collectNodeSelectionBounds(left!);
+    const rightBounds = collectNodeSelectionBounds(right!);
+    const minX = Math.min(leftBounds.minX, rightBounds.minX);
+    const minY = Math.min(leftBounds.minY, rightBounds.minY);
+    const maxX = Math.max(leftBounds.maxX, rightBounds.maxX);
+    const maxY = Math.max(leftBounds.maxY, rightBounds.maxY);
+    expect(store.selectionBounds.value).toEqual({
+      minX,
+      minY,
+      maxX,
+      maxY,
+      width: maxX - minX,
+      height: maxY - minY,
+    });
   });
 
   it("lays out row facets vertically with a tight gap", () => {
@@ -1336,6 +1475,54 @@ describe("dimension overflow decisions", () => {
     expect(compositionId).toBeTruthy();
     expect(store.chartRelationships.value.compositions[compositionId!]?.facetField).toBe("region");
   });
+
+  it("synchronizes chart encodings across facet cells and re-renders them after undo", () => {
+    const dataset: Dataset = {
+      ...layerDataset,
+      id: "facet-chart-encoding-dataset",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "time", type: "temporal" },
+        { name: "value", type: "quantitative" },
+        { name: "amount", type: "quantitative" },
+      ],
+      rows: [
+        { person: "A", time: "2026-01-01", value: "10", amount: "20" },
+        { person: "B", time: "2026-01-01", value: "14", amount: "28" },
+      ],
+    };
+    const chart = lineChart("facet-chart-encoding-source", 100, false);
+    chart.chartSpec = { ...chart.chartSpec!, datasetId: dataset.id };
+    const store = useCanvasStore(ref(null));
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [chart];
+    store.selectedIds.value = [chart.id];
+    store.axisBindingTarget.value = { nodeId: chart.id, channel: "x" };
+
+    expect(store.applyDimensionFacet("person", "column")).toBe(true);
+    const second = store.canvasNodes.value[1]!;
+    const filtersBefore = store.canvasNodes.value.map((node) => node.chartSpec?.filters);
+    store.canvasNodes.value.forEach((node) => { node.renderedContent = null; });
+    store.axisBindingTarget.value = { nodeId: second.id, channel: "y" };
+
+    store.setChartEncoding("y", "amount");
+
+    expect(store.canvasNodes.value.map((node) => node.chartSpec?.encodings.y?.field)).toEqual(["amount", "amount"]);
+    expect(store.canvasNodes.value.map((node) => node.chartSpec?.filters)).toEqual(filtersBefore);
+    expect(store.canvasNodes.value.every((node) => node.renderedContent?.includes("data-renderer="))).toBe(true);
+
+    store.undoCanvasChange();
+
+    expect(store.canvasNodes.value.map((node) => node.chartSpec?.encodings.y?.field)).toEqual(["value", "value"]);
+    expect(store.canvasNodes.value.map((node) => node.chartSpec?.filters)).toEqual(filtersBefore);
+    expect(store.canvasNodes.value.every((node) => node.renderedContent?.includes("data-renderer="))).toBe(true);
+
+    store.axisBindingTarget.value = { nodeId: store.canvasNodes.value[0]!.id, channel: "y" };
+    store.updateAxisBindingMarkGroupConfig({ color: "#123456" });
+    expect(store.canvasNodes.value.every((node) =>
+      node.chartSpec?.markGroups?.[0]?.sharedConfig.color === "#123456")).toBe(true);
+  });
 });
 
 describe("composition coordinate editing", () => {
@@ -1367,6 +1554,9 @@ describe("composition coordinate editing", () => {
     expect(store.canvasNodes.value).toHaveLength(2);
     const [first, second] = store.canvasNodes.value;
     expect(first && second).toBeTruthy();
+    if (first?.kind === "group") first.children = [leaf("stale-facet-template-child-a", -120, -80)];
+    if (second?.kind === "group") second.children = [leaf("stale-facet-template-child-b", -120, -80)];
+    expect(first?.kind === "group" && first.children.length).toBeGreaterThan(0);
     store.reverseCoordinateAxis(first!, "x");
     expect(second?.coordinateGuide?.type === "Cartesian" && second.coordinateGuide.xDirection).toBe(-1);
 
@@ -1376,13 +1566,41 @@ describe("composition coordinate editing", () => {
     await nextTick();
     expect(first?.coordinateGuide?.type === "Cartesian" && second?.coordinateGuide?.type === "Cartesian"
       && second.coordinateGuide.origin).toEqual(first?.coordinateGuide?.type === "Cartesian" ? first.coordinateGuide.origin : undefined);
+    const firstPlotArea = first!.chartSpec!.plotArea!;
+    expect(collectNodeSelectionBounds(first!).minX).toBe(first!.x + firstPlotArea.x * first!.scaleX);
 
+    const boundsBeforeScale = { ...store.selectionBounds.value! };
     store.onCoordinateAxisScalePointerDown(first!, "x", pointerEvent(first!.x + first!.width, first!.y + first!.height / 2));
     listeners.get("pointermove")?.(pointerEvent(first!.x + first!.width + 40, first!.y + first!.height / 2));
     listeners.get("pointerup")?.(pointerEvent(first!.x + first!.width + 40, first!.y + first!.height / 2));
     await nextTick();
     expect(second?.coordinateGuide?.type === "Cartesian" && first?.coordinateGuide?.type === "Cartesian"
       && second.coordinateGuide.xScale).toBe(first?.coordinateGuide?.type === "Cartesian" ? first.coordinateGuide.xScale : undefined);
+    const firstBounds = collectNodeSelectionBounds(first!);
+    const secondBounds = collectNodeSelectionBounds(second!);
+    const minX = Math.min(firstBounds.minX, secondBounds.minX);
+    const minY = Math.min(firstBounds.minY, secondBounds.minY);
+    const maxX = Math.max(firstBounds.maxX, secondBounds.maxX);
+    const maxY = Math.max(firstBounds.maxY, secondBounds.maxY);
+    expect(store.selectionBounds.value).toEqual({
+      minX,
+      minY,
+      maxX,
+      maxY,
+      width: maxX - minX,
+      height: maxY - minY,
+    });
+    expect(store.selectionBounds.value).not.toEqual(boundsBeforeScale);
+
+    const boundsBeforeYScale = { ...store.selectionBounds.value! };
+    store.onCoordinateAxisScalePointerDown(first!, "y", pointerEvent(first!.x + first!.width / 2, first!.y));
+    listeners.get("pointermove")?.(pointerEvent(first!.x + first!.width / 2, first!.y - 40));
+    listeners.get("pointerup")?.(pointerEvent(first!.x + first!.width / 2, first!.y - 40));
+    await nextTick();
+    expect(second?.coordinateGuide?.type === "Cartesian" && first?.coordinateGuide?.type === "Cartesian"
+      && second.coordinateGuide.yScale).toBe(first?.coordinateGuide?.type === "Cartesian" ? first.coordinateGuide.yScale : undefined);
+    expect(store.selectionBounds.value).not.toEqual(boundsBeforeYScale);
+    expect(store.selectionBounds.value?.height).not.toBe(boundsBeforeYScale.height);
   });
 
   it("synchronizes only the shared dimension for concatenation", () => {
@@ -1404,39 +1622,135 @@ describe("composition coordinate editing", () => {
     expect(second?.coordinateGuide?.type === "Cartesian" && second.coordinateGuide.xDirection).toBe(1);
   });
 
-  it("creates a layer when a configured block is dragged into another block", () => {
-    const source = lineChart("drag-layer-source", 100, false);
-    const target = lineChart("drag-layer-target", 950, false);
+  it.each([
+    ["AreaChart", "LineGraph"],
+    ["LineGraph", "SingleBarChart"],
+    ["SingleBarChart", "AreaChart"],
+  ] as const)("layers configured %s and %s blocks through an interior drop", async (sourceType, targetType) => {
+    const source = cartesianChart(`drag-layer-source-${sourceType}`, 100, sourceType);
+    const target = cartesianChart(`drag-layer-target-${targetType}`, 950, targetType);
     const store = useCanvasStore(coordinateCanvasRef());
     store.relationshipStore.dispatch({ type: "clear" });
     useDatasetStore().datasets.value = [layerDataset];
     store.canvasNodes.value = [source, target];
     store.selectedIds.value = [source.id];
+    const dropPoint = {
+      x: target.x + target.chartSpec!.plotArea!.x + target.chartSpec!.plotArea!.width / 2,
+      y: target.y + target.chartSpec!.plotArea!.y + target.chartSpec!.plotArea!.height / 2,
+    };
 
     store.onCanvasNodePointerDown(source, pointerEvent(source.x + 20, source.y + 20));
-    listeners.get("pointermove")?.(pointerEvent(target.x + target.width / 2, target.y + target.height / 2));
-    listeners.get("pointerup")?.(pointerEvent(target.x + target.width / 2, target.y + target.height / 2));
+    listeners.get("pointermove")?.(pointerEvent(dropPoint.x, dropPoint.y));
+    expect(store.activeDropZone.value).toMatchObject({
+      targetNodeId: target.id,
+      type: "layer",
+      sharedChannels: ["x", "y"],
+      compatible: true,
+    });
+    listeners.get("pointerup")?.(pointerEvent(dropPoint.x, dropPoint.y));
+    await nextTick();
 
     expect(store.canvasNodes.value).toHaveLength(2);
     expect(store.canvasNodes.value.every((node) => node.compositionSpec?.type === "layer")).toBe(true);
+    expect(store.canvasNodes.value[0]?.compositionSpec?.sharedChannels).toEqual(["x", "y"]);
+    const sourceAfter = store.canvasNodes.value.find((node) => node.id === source.id)!;
+    const targetAfter = store.canvasNodes.value.find((node) => node.id === target.id)!;
+    expect(sourceAfter.coordinateSystem?.ownerNodeId).toBe(target.id);
+    expect(targetAfter.coordinateSystem?.ownerNodeId).toBe(target.id);
+    expect(worldPlotArea(sourceAfter)).toEqual(worldPlotArea(targetAfter));
+    expect(sourceAfter.chartSpec?.scales?.x?.domain).toEqual(targetAfter.chartSpec?.scales?.x?.domain);
+    expect(sourceAfter.chartSpec?.scales?.y?.domain).toEqual(targetAfter.chartSpec?.scales?.y?.domain);
+    expect(sourceAfter.chartSpec?.scales?.x?.type).toBe("utc");
+    expect(targetAfter.chartSpec?.scales?.x?.type).toBe("utc");
+    expect(worldScaleRange(sourceAfter, "x")).toEqual(worldScaleRange(targetAfter, "x"));
+    expect(worldScaleRange(sourceAfter, "y")).toEqual(worldScaleRange(targetAfter, "y"));
+    if (sourceType === "LineGraph") {
+      const linePath = sourceAfter.renderedContent?.match(/<path d="([^"]+)"/)?.[1];
+      const firstX = Number(linePath?.match(/^M\s*([-\d.]+)/)?.[1]);
+      expect(sourceAfter.renderedContent).toContain('data-mark-role="line"');
+      expect(linePath).not.toContain("NaN");
+      expect(firstX).toBeGreaterThanOrEqual(sourceAfter.chartSpec!.plotArea!.x);
+    }
   });
 
-  it("creates horizontal concat when a configured block is dragged to a boundary", () => {
-    const source = lineChart("drag-concat-source", 100, false);
-    const target = lineChart("drag-concat-target", 950, false);
+  it.each([
+    ["left", "horizontal", "y", "before"],
+    ["right", "horizontal", "y", "after"],
+    ["top", "vertical", "x", "before"],
+    ["bottom", "vertical", "x", "after"],
+  ] as const)("concatenates a configured block at the %s boundary", async (edge, direction, channel, position) => {
+    const source = cartesianChart(`drag-concat-source-${edge}`, 100, "LineGraph");
+    const target = cartesianChart(`drag-concat-target-${edge}`, 950, "SingleBarChart");
     const store = useCanvasStore(coordinateCanvasRef());
     store.relationshipStore.dispatch({ type: "clear" });
     useDatasetStore().datasets.value = [layerDataset];
     store.canvasNodes.value = [source, target];
     store.selectedIds.value = [source.id];
+    const plotArea = target.chartSpec!.plotArea!;
+    const dropPoint = edge === "left" || edge === "right"
+      ? {
+        x: target.x + plotArea.x + (edge === "left" ? 2 : plotArea.width - 2),
+        y: target.y + plotArea.y + plotArea.height / 2,
+      }
+      : {
+        x: target.x + plotArea.x + plotArea.width / 2,
+        y: target.y + plotArea.y + (edge === "top" ? 2 : plotArea.height - 2),
+      };
 
     store.onCanvasNodePointerDown(source, pointerEvent(source.x + 20, source.y + 20));
-    listeners.get("pointermove")?.(pointerEvent(target.x + 2, target.y + target.height / 2));
-    listeners.get("pointerup")?.(pointerEvent(target.x + 2, target.y + target.height / 2));
+    listeners.get("pointermove")?.(pointerEvent(dropPoint.x, dropPoint.y));
+    expect(store.activeDropZone.value).toMatchObject({
+      targetNodeId: target.id,
+      type: "concat",
+      sharedChannels: [channel],
+      compatible: true,
+      direction,
+      concatPosition: position,
+    });
+    listeners.get("pointerup")?.(pointerEvent(dropPoint.x, dropPoint.y));
+    await nextTick();
 
     expect(store.canvasNodes.value).toHaveLength(2);
     expect(store.canvasNodes.value.every((node) => node.compositionSpec?.type === "concat")).toBe(true);
-    expect(store.canvasNodes.value[0]?.compositionSpec?.sharedChannels).toEqual(["y"]);
+    const composition = store.canvasNodes.value[0]?.compositionSpec;
+    expect(composition?.sharedChannels).toEqual([channel]);
+    expect(composition?.direction).toBe(direction);
+    expect(composition?.members.map((member) => member.nodeId)).toEqual(
+      position === "before" ? [source.id, target.id] : [target.id, source.id],
+    );
+    const sourceAfter = store.canvasNodes.value.find((node) => node.id === source.id)!;
+    const targetAfter = store.canvasNodes.value.find((node) => node.id === target.id)!;
+    expect(sourceAfter.coordinateSystem?.ownerNodeId).toBe(target.id);
+    expect(targetAfter.coordinateSystem?.ownerNodeId).toBe(target.id);
+    const sourcePlot = worldPlotArea(sourceAfter);
+    const targetPlot = worldPlotArea(targetAfter);
+    if (direction === "horizontal") {
+      expect(position === "before" ? sourceAfter.x < targetAfter.x : sourceAfter.x > targetAfter.x).toBe(true);
+      expect(sourcePlot.top).toBe(targetPlot.top);
+      expect(sourcePlot.bottom).toBe(targetPlot.bottom);
+      const plotGap = position === "before"
+        ? targetPlot.left - sourcePlot.right
+        : sourcePlot.left - targetPlot.right;
+      expect(plotGap).toBeGreaterThanOrEqual(0);
+      expect(plotGap).toBeLessThanOrEqual(16);
+    } else {
+      expect(position === "before" ? sourceAfter.y < targetAfter.y : sourceAfter.y > targetAfter.y).toBe(true);
+      expect(sourcePlot.left).toBe(targetPlot.left);
+      expect(sourcePlot.right).toBe(targetPlot.right);
+      const plotGap = position === "before"
+        ? targetPlot.top - sourcePlot.bottom
+        : sourcePlot.top - targetPlot.bottom;
+      expect(plotGap).toBeGreaterThanOrEqual(0);
+      expect(plotGap).toBeLessThanOrEqual(16);
+    }
+    expect(sourceAfter.chartSpec?.scales?.[channel]?.domain).toEqual(targetAfter.chartSpec?.scales?.[channel]?.domain);
+    expect(worldScaleRange(sourceAfter, channel)).toEqual(worldScaleRange(targetAfter, channel));
+    expect(sourceAfter.chartSpec?.scales?.[channel]?.type).toBe(channel === "x" ? "point" : "linear");
+    expect(targetAfter.chartSpec?.scales?.[channel]?.type).toBe(channel === "x" ? "point" : "linear");
+    if (channel === "x") {
+      expect(sourceAfter.renderedContent).toContain('data-mark-role="line"');
+      expect((sourceAfter.chartSpec?.scales?.y?.domain as [number, number])[0]).toBeGreaterThan(0);
+    }
   });
 
   it("nests a configured pie block when it is dragged onto a scatter mark", async () => {
@@ -1578,16 +1892,22 @@ describe("CSV column axis drag binding", () => {
       nodeId: chart.id,
       fieldName: "time",
     });
+    expect(store.dimensionDropTarget.value?.analysis.intents.every((intent) =>
+      intent.inputColumn === "time",
+    )).toBe(true);
     expect(chart.chartSpec?.encodings).toEqual({
       x: { field: "person", type: "nominal" },
       y: { field: "weight", type: "quantitative" },
     });
 
-    expect(store.applyDimensionAggregation("time", "avg")).toBe(true);
+    const averageIntent = store.dimensionDropTarget.value?.analysis.intents.find((intent) =>
+      intent.kind === "aggregate" && intent.aggregation === "avg",
+    );
+    expect(averageIntent).toBeDefined();
+    expect(store.applyInputColumnIntent(averageIntent!.id)).toBe(true);
     expect(chart.chartSpec?.aggregations?.y).toBe("avg");
     expect(chart.chartSpec?.dimensionAggregations?.time).toBe("avg");
     expect(chart.chartSpec?.dimensionDecisions?.time).toBe("aggregate");
-    store.closeDimensionDropDecision();
     expect(store.dimensionDropTarget.value).toBeNull();
   });
 
@@ -1622,9 +1942,14 @@ describe("CSV column axis drag binding", () => {
     store.canvasNodes.value = [chart];
 
     await store.onCanvasDrop(columnDragEvent(dataset.id, "time", "temporal", 500, 300));
-    expect(store.applyDimensionChartUpgrade("time", "StackedBarChart")).toBe(true);
+    const upgradeIntent = store.dimensionDropTarget.value?.analysis.intents.find((intent) =>
+      intent.kind === "upgrade" && intent.targetChartType === "StackedBarChart",
+    );
+    expect(upgradeIntent).toBeDefined();
+    expect(store.applyInputColumnIntent(upgradeIntent!.id)).toBe(true);
     expect(chart.chartSpec?.chartType).toBe("StackedBarChart");
-    expect(chart.chartSpec?.encodings.color).toEqual({ field: "time", type: "temporal" });
+    expect(chart.chartSpec?.encodings.color).toBeUndefined();
+    expect(chart.chartSpec?.seriesFields).toEqual([{ field: "time", type: "temporal" }]);
     expect(chart.renderedContent).toContain('data-bar-variant="stacked"');
   });
 
@@ -1649,7 +1974,7 @@ describe("CSV column axis drag binding", () => {
     expect(store.importNotice.value).toContain("not supported");
   });
 
-  it("accumulates Group item fields on Y and removes one binding from the axis", async () => {
+  it("accumulates quantitative Group items in the dedicated drop zone and locks Y", async () => {
     const dataset: Dataset = {
       id: "drag-group-items",
       name: "drag-group-items.csv",
@@ -1677,21 +2002,28 @@ describe("CSV column axis drag binding", () => {
     store.relationshipStore.dispatch({ type: "clear" });
     useDatasetStore().datasets.value = [dataset];
     store.canvasNodes.value = [chart];
-    const yAxisEvent = (field: string) => {
-      const plot = chart.chartSpec?.plotArea;
+    const itemDropEvent = (field: string) => {
+      const bounds = store.seriesItemDropBounds(chart);
       return columnDragEvent(
         dataset.id,
         field,
         "quantitative",
-        chart.x + (plot?.x ?? 0),
-        chart.y + (plot?.y ?? 0) + (plot?.height ?? chart.height) / 2,
+        bounds.minX + bounds.width / 2,
+        bounds.minY + bounds.height / 2,
       );
     };
 
-    await store.onCanvasDrop(yAxisEvent("water"));
+    const firstDrop = itemDropEvent("water");
+    store.onCanvasDragOver(firstDrop);
+    expect(store.activeDataBindingDropZone.value).toMatchObject({
+      type: "series-item",
+      label: "Group item",
+      compatible: true,
+    });
+    await store.onCanvasDrop(firstDrop);
     expect(chart.chartSpec?.valueFields?.map((encoding) => encoding.field)).toEqual(["water"]);
     expect(chart.renderedContent).toContain('data-bar-variant="grouped"');
-    await store.onCanvasDrop(yAxisEvent("fat"));
+    await store.onCanvasDrop(itemDropEvent("fat"));
 
     expect(chart.chartSpec?.valueFields?.map((encoding) => encoding.field)).toEqual(["water", "fat"]);
     expect(chart.chartSpec?.encodings.y).toEqual({ field: "water", type: "quantitative" });
@@ -1699,6 +2031,28 @@ describe("CSV column axis drag binding", () => {
       label: "Group item",
       fields: ["water", "fat"],
     });
+    store.selectedIds.value = [chart.id];
+    const itemFrame = store.seriesItemDropFrame(chart);
+    expect(itemFrame.x).toBe(store.selectionFrame.value?.x);
+    expect(itemFrame.y + itemFrame.height).toBe(store.selectionFrame.value?.y);
+    expect(itemFrame.width).toBeLessThanOrEqual(280);
+    expect(itemFrame.height).toBe(90);
+
+    const plot = chart.chartSpec?.plotArea;
+    const yAxisDrop = columnDragEvent(
+      dataset.id,
+      "weight",
+      "quantitative",
+      chart.x + (plot?.x ?? 0),
+      chart.y + (plot?.y ?? 0) + (plot?.height ?? chart.height) / 2,
+    );
+    store.onCanvasDragOver(yAxisDrop);
+    expect(store.activeDataBindingDropZone.value).toMatchObject({
+      type: "cartesian-axis",
+      channel: "y",
+      compatible: false,
+    });
+    expect(yAxisDrop.dataTransfer?.dropEffect).toBe("none");
 
     store.removeBarItemField(chart.id, "water");
     expect(chart.chartSpec?.valueFields?.map((encoding) => encoding.field)).toEqual(["fat"]);
@@ -1717,7 +2071,7 @@ describe("CSV column axis drag binding", () => {
   });
 
   it.each(["StackedAreaChart", "Streamgraph"])(
-    "accumulates %s Series fields on its physical value axis and follows XY swap",
+    "uses a dedicated %s Series drop zone and keeps logical Y locked after XY swap",
     async (chartType) => {
       const dataset: Dataset = {
         id: `drag-${chartType}`,
@@ -1757,9 +2111,19 @@ describe("CSV column axis drag binding", () => {
         chart.x + (chart.chartSpec?.plotArea?.x ?? 0),
         chart.y + (chart.chartSpec?.plotArea?.y ?? 0) + (chart.chartSpec?.plotArea?.height ?? chart.height) / 2,
       );
+      const itemDropEvent = (field: string, type: "nominal" | "temporal" | "quantitative" = "quantitative") => {
+        const bounds = store.seriesItemDropBounds(chart);
+        return columnDragEvent(
+          dataset.id,
+          field,
+          type,
+          bounds.minX + bounds.width / 2,
+          bounds.minY + bounds.height / 2,
+        );
+      };
 
-      await store.onCanvasDrop(yAxisEvent("alpha"));
-      await store.onCanvasDrop(yAxisEvent("beta"));
+      await store.onCanvasDrop(itemDropEvent("alpha"));
+      await store.onCanvasDrop(itemDropEvent("beta"));
       expect(store.barItemAxisBinding(chart)).toEqual({ label: "Series", fields: ["alpha", "beta"] });
       expect(chart.chartSpec?.valueFields?.map((encoding) => encoding.field)).toEqual(["alpha", "beta"]);
 
@@ -1772,20 +2136,245 @@ describe("CSV column axis drag binding", () => {
         chart.y + (chart.chartSpec?.plotArea?.y ?? 0) + (chart.chartSpec?.plotArea?.height ?? chart.height) / 2,
       ));
       expect(chart.chartSpec?.encodings.x).toEqual({ field: "time", type: "temporal" });
-      await store.onCanvasDrop(xAxisEvent("alpha"));
+      const lockedY = xAxisEvent("alpha");
+      store.onCanvasDragOver(lockedY);
+      expect(store.activeDataBindingDropZone.value).toMatchObject({
+        type: "cartesian-axis",
+        channel: "x",
+        compatible: false,
+      });
+      expect(lockedY.dataTransfer?.dropEffect).toBe("none");
       expect(chart.chartSpec?.valueFields?.map((encoding) => encoding.field)).toEqual(["alpha", "beta"]);
       expect(store.itemBindingAxis(chart)).toBe("x");
 
-      const incompatible = columnDragEvent(
-        dataset.id,
-        "label",
-        "nominal",
-        chart.x + (chart.chartSpec?.plotArea?.x ?? 0) + (chart.chartSpec?.plotArea?.width ?? chart.width) / 2,
-        chart.y + (chart.chartSpec?.plotArea?.y ?? 0) + (chart.chartSpec?.plotArea?.height ?? chart.height),
-      );
+      const incompatible = itemDropEvent("label", "nominal");
       store.onCanvasDragOver(incompatible);
-      expect(store.activeDataBindingDropZone.value).toMatchObject({ channel: "x", compatible: false });
+      expect(store.activeDataBindingDropZone.value).toMatchObject({ type: "series-item", compatible: false });
       expect(incompatible.dataTransfer?.dropEffect).toBe("none");
     },
   );
+
+  it.each([
+    "LineGraph",
+    "GroupedBarChart",
+    "StackedBarChart",
+    "MultiLineChart",
+    "AreaChart",
+    "StackedAreaChart",
+    "Streamgraph",
+    "HorizonChart",
+  ])("keeps categorical and quantitative Series Item modes exclusive for %s", (chartType) => {
+    const dataset: Dataset = {
+      id: `series-item-mode-${chartType}`,
+      name: `${chartType}.csv`,
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "cohort", type: "nominal" },
+        { name: "time", type: "temporal" },
+        { name: "weight", type: "quantitative" },
+        { name: "water", type: "quantitative" },
+      ],
+      rows: [
+        { person: "A", cohort: "first", time: "2026-01", weight: "80", water: "45" },
+        { person: "B", cohort: "second", time: "2026-01", weight: "76", water: "42" },
+      ],
+    };
+    const chart = lineChart(`series-item-mode-node-${chartType}`, 120, false);
+    chart.chartSpec = {
+      chartType,
+      datasetId: dataset.id,
+      encodings: {
+        x: { field: "time", type: "temporal" },
+        y: { field: "weight", type: "quantitative" },
+      },
+      valueFields: [
+        { field: "weight", type: "quantitative" },
+        { field: "water", type: "quantitative" },
+      ],
+    };
+    const store = useCanvasStore(ref(null));
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [chart];
+    store.selectedIds.value = [chart.id];
+    store.axisBindingTarget.value = { nodeId: chart.id, channel: "y" };
+
+    store.setSeriesFields(["person", "cohort"]);
+
+    expect(chart.chartSpec?.encodings.y).toEqual({ field: "weight", type: "quantitative" });
+    expect(chart.chartSpec?.series).toEqual({ field: "person", type: "nominal" });
+    expect(chart.chartSpec?.seriesFields).toEqual([{ field: "person", type: "nominal" }]);
+    expect(chart.chartSpec?.valueFields).toBeUndefined();
+
+    store.setValueSeriesFields(["weight", "water"]);
+
+    expect(chart.chartSpec?.encodings.y).toEqual({ field: "weight", type: "quantitative" });
+    expect(chart.chartSpec?.valueFields?.map((encoding) => encoding.field)).toEqual(["weight", "water"]);
+    expect(chart.chartSpec?.series).toBeUndefined();
+    expect(chart.chartSpec?.seriesFields).toBeUndefined();
+
+    store.setChartEncoding("y", "water");
+    expect(chart.chartSpec?.encodings.y).toEqual({ field: "weight", type: "quantitative" });
+    expect(store.importNotice.value).toContain("Y is derived from quantitative Series Items");
+  });
+
+  it("keeps Y available after a categorical field is dropped in the Group item zone", async () => {
+    const dataset: Dataset = {
+      id: "categorical-group-item-drop",
+      name: "categorical-group-item-drop.csv",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "time", type: "temporal" },
+        { name: "weight", type: "quantitative" },
+        { name: "water", type: "quantitative" },
+      ],
+      rows: [
+        { person: "A", time: "2026-01", weight: "80", water: "45" },
+        { person: "B", time: "2026-01", weight: "76", water: "42" },
+      ],
+    };
+    const chart = lineChart("categorical-group-item-drop-node", 100, false);
+    chart.chartSpec = {
+      chartType: "GroupedBarChart",
+      datasetId: dataset.id,
+      encodings: {
+        x: { field: "time", type: "temporal" },
+        y: { field: "weight", type: "quantitative" },
+      },
+    };
+    const store = useCanvasStore(dragCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [chart];
+    const bounds = store.seriesItemDropBounds(chart);
+    const groupDrop = columnDragEvent(
+      dataset.id,
+      "person",
+      "nominal",
+      bounds.minX + bounds.width / 2,
+      bounds.minY + bounds.height / 2,
+    );
+
+    store.onCanvasDragOver(groupDrop);
+    expect(store.activeDataBindingDropZone.value).toMatchObject({
+      type: "series-item",
+      label: "Group item",
+      compatible: true,
+    });
+    await store.onCanvasDrop(groupDrop);
+    expect(chart.chartSpec?.seriesFields).toEqual([{ field: "person", type: "nominal" }]);
+    expect(chart.chartSpec?.valueFields).toBeUndefined();
+    expect(chart.chartSpec?.encodings.y).toEqual({ field: "weight", type: "quantitative" });
+    expect(store.seriesItemDropFrame(chart).height).toBe(90);
+
+    const plot = chart.chartSpec?.plotArea;
+    const yDrop = columnDragEvent(
+      dataset.id,
+      "water",
+      "quantitative",
+      chart.x + (plot?.x ?? 0),
+      chart.y + (plot?.y ?? 0) + (plot?.height ?? chart.height) / 2,
+    );
+    store.onCanvasDragOver(yDrop);
+    expect(store.activeDataBindingDropZone.value).toMatchObject({
+      type: "cartesian-axis",
+      channel: "y",
+      compatible: true,
+    });
+    await store.onCanvasDrop(yDrop);
+    expect(chart.chartSpec?.encodings.y).toEqual({ field: "water", type: "quantitative" });
+    expect(chart.chartSpec?.seriesFields).toEqual([{ field: "person", type: "nominal" }]);
+  });
+
+  it("renders a temporal categorical Series Item and retains its Y binding", () => {
+    const dataset: Dataset = {
+      id: "temporal-series-item",
+      name: "temporal-series-item.csv",
+      columns: [
+        { name: "time", type: "temporal" },
+        { name: "snapshot", type: "temporal" },
+        { name: "weight", type: "quantitative" },
+      ],
+      rows: [
+        { time: "2026-01-01", snapshot: "2025-12-01", weight: "80" },
+        { time: "2026-02-01", snapshot: "2025-12-01", weight: "79" },
+        { time: "2026-01-01", snapshot: "2026-01-01", weight: "76" },
+        { time: "2026-02-01", snapshot: "2026-01-01", weight: "75" },
+      ],
+    };
+    const chart = lineChart("temporal-series-item-node", 120, false);
+    chart.chartSpec = {
+      chartType: "MultiLineChart",
+      datasetId: dataset.id,
+      encodings: {
+        x: { field: "time", type: "temporal" },
+        y: { field: "weight", type: "quantitative" },
+      },
+    };
+    const store = useCanvasStore(ref(null));
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [chart];
+    store.axisBindingTarget.value = { nodeId: chart.id, channel: "y" };
+
+    expect(store.setSeriesFields(["snapshot"])).toBe(true);
+    expect(chart.chartSpec?.encodings.y).toEqual({ field: "weight", type: "quantitative" });
+    expect(chart.chartSpec?.seriesFields).toEqual([{ field: "snapshot", type: "temporal" }]);
+    expect(chart.chartSpec?.renderer?.status).toBe("ready");
+  });
+
+  it("applies a categorical Data Engine intent over an existing quantitative Series Item mode", () => {
+    const dataset: Dataset = {
+      id: "series-intent-mode-switch",
+      name: "series-intent-mode-switch.csv",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "time", type: "temporal" },
+        { name: "weight", type: "quantitative" },
+        { name: "water", type: "quantitative" },
+      ],
+      rows: [
+        { person: "A", time: "2026-01", weight: "80", water: "45" },
+        { person: "B", time: "2026-01", weight: "76", water: "42" },
+      ],
+    };
+    const chart = lineChart("series-intent-mode-switch-node", 120, false);
+    chart.chartSpec = {
+      chartType: "MultiLineChart",
+      datasetId: dataset.id,
+      encodings: {
+        x: { field: "time", type: "temporal" },
+        y: { field: "weight", type: "quantitative" },
+      },
+      valueFields: [
+        { field: "weight", type: "quantitative" },
+        { field: "water", type: "quantitative" },
+      ],
+    };
+    const analysis = inferColumnIntents(
+      dataset,
+      chart.chartSpec,
+      { name: "person", type: "nominal" },
+      { type: "chart-body" },
+    );
+    const intent = analysis.intents.find((candidate) => candidate.kind === "series");
+    const store = useCanvasStore(ref(null));
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [chart];
+    store.axisBindingTarget.value = { nodeId: chart.id, channel: "x" };
+    store.dimensionDropTarget.value = {
+      nodeId: chart.id,
+      fieldName: "person",
+      clientX: 0,
+      clientY: 0,
+      analysis,
+    };
+
+    expect(intent).toBeDefined();
+    expect(store.applyInputColumnIntent(intent!.id)).toBe(true);
+    expect(chart.chartSpec?.seriesFields).toEqual([{ field: "person", type: "nominal" }]);
+    expect(chart.chartSpec?.valueFields).toBeUndefined();
+    expect(chart.chartSpec?.encodings.y).toEqual({ field: "weight", type: "quantitative" });
+  });
 });

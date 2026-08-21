@@ -48,12 +48,29 @@ describe("chart data pipeline", () => {
     expect(chartSpec.encodings.x?.type).toBe("nominal");
   });
 
-  it("runs filtering, synchronization and structure inference in order", () => {
+  it("runs filtering, synchronization and explicit structure materialization in order", () => {
     const prepared = prepareChartData("chart-1", dataset, chartSpec);
     expect(prepared.dataset.rows).toHaveLength(1);
     expect(prepared.chartSpec.templateId).toBe("line");
     expect(prepared.chartSpec.encodings.y?.type).toBe("quantitative");
     expect(prepared.chartSpec.markGroups?.[0]?.chartId).toBe("chart-1");
+  });
+
+  it("does not infer an unused series column while preparing render data", () => {
+    const repeatedDataset: Dataset = {
+      ...dataset,
+      rows: [
+        { group: "A", time: "2026-01-01", value: "10" },
+        { group: "B", time: "2026-01-01", value: "20" },
+      ],
+    };
+    const prepared = prepareChartData("explicit-chart", repeatedDataset, {
+      ...chartSpec,
+      filters: undefined,
+    });
+
+    expect(prepared.chartSpec.series).toBeUndefined();
+    expect(prepared.chartSpec.dimensionRecommendations).toBeUndefined();
   });
 
   it("materializes selected wide CSV fields as a reusable value series", () => {

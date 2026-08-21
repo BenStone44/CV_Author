@@ -283,6 +283,13 @@ export function getChartTemplateContract(chartType: string) {
   return getChartEncodingSchema(chartType);
 }
 
+export function getDimensionChartUpgradeOptions(chartType: string) {
+  return getChartEncodingSchema(chartType)?.dimensionUpgrades.map(({ chartType: targetChartType, label }) => ({
+    chartType: targetChartType,
+    label,
+  })) ?? [];
+}
+
 export function getTemplateBindingContract(chartType: string) {
   const template = normalizeChartTemplate(chartType);
   return template ? templateBindingContracts[template] : null;

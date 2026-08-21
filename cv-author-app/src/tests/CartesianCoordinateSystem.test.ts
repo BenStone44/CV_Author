@@ -180,6 +180,40 @@ describe("independent Cartesian axis component", () => {
     expect(model.yTitle).toBe("revenue");
   });
 
+  it("renders an independent static coordinate axis for every facet cell", () => {
+    const first = chartNode({ id: "facet-a", name: "Facet A" });
+    const second = chartNode({ id: "facet-b", name: "Facet B", x: 1104 });
+    const compositionSpec: CompositionSpec = {
+      id: "composition:facet",
+      type: "facet",
+      sharedChannels: [],
+      facetField: "region",
+      facetValues: ["North", "South"],
+      members: [first, second].map((node) => ({
+        nodeId: node.id,
+        sourceNodeId: first.id,
+        sharedChannels: [],
+      })),
+    };
+    [first, second].forEach((node) => {
+      node.compositionSpec = compositionSpec;
+      node.coordinateSystem = {
+        id: `coordinate:${node.id}`,
+        type: "Cartesian",
+        ownerNodeId: node.id,
+        members: [{ nodeId: node.id, channels: ["x", "y"] }],
+        sharedChannels: [],
+      };
+    });
+
+    [first, second].forEach((node) => {
+      expect(getCartesianAxisChannels(node, "static")).toEqual(["x", "y"]);
+      const layer = (CanvasCoordinateSystemLayer as any).setup({ node })();
+      expect(layer.children).toHaveLength(1);
+      expect(layer.children[0].type).toBe(CartesianCoordinateSystem);
+    });
+  });
+
   it("renders one static axis component and no Layer axis configuration controls", () => {
     const owner = chartNode();
     const member = chartNode({ id: "points", name: "Points" });

@@ -7,7 +7,7 @@ import {
   ref,
   watch,
 } from "vue";
-import { ChevronDown, SlidersHorizontal, X } from "@lucide/vue";
+import { ChevronDown, SlidersHorizontal, Ungroup, X } from "@lucide/vue";
 import { CanvasNodeView } from "./CanvasNodeView";
 import {
   CanvasCoordinateSystemLayer,
@@ -30,12 +30,10 @@ import {
   coordinateOptions,
   compositionOptions,
   getFilterIconSvg,
-  getDimensionChartUpgradeOptions,
 } from "../stores/useCanvasStore";
 import { useDatasetStore } from "../stores/useDatasetStore";
 import { useLlmRenderer } from "../stores/useLlmRenderer";
 import { isLineChartType } from "../utils/lineRenderer";
-import { normalizeBarChartVariant, normalizeChartTemplate } from "../utils/chartTemplates";
 import {
   isCategoricalColorMapping,
   isSeriesStyleMapping,
@@ -60,6 +58,9 @@ const {
   viewPan,
   selectedIds,
   editingGroupPath,
+  selectionScopeNodes,
+  chartDrilldown,
+  semanticSelection,
   nestedBindingTarget,
   nestedBindingNode,
   nestedBindingColumns,
@@ -70,7 +71,7 @@ const {
   axisBindingRendererError,
   coordinateGuideNodes,
   barItemAxisBinding,
-  itemBindingAxis,
+  seriesItemDropFrame,
   contextMenu,
   draggedCandidateId,
   activeDropZone,
@@ -99,6 +100,9 @@ const {
   canCompose,
   canFacet,
   canUngroup,
+  canTransformSelection,
+  canRemoveSelectionComposition,
+  canEnterSelection,
   canMoveSelectionForward,
   canMoveSelectionBackward,
   scaleHandles,
@@ -111,7 +115,10 @@ const {
   onCanvasContextMenu,
   onCanvasNodePointerDown,
   onCanvasNodeDoubleClick,
+  enterSelection,
+  removeSelectionComposition,
   onEditingGroupBackgroundPointerDown,
+  onSemanticMarkPointerDown,
   onCanvasNodeContextMenu,
   onScaleHandlePointerDown,
   onRotateHandlePointerDown,
@@ -150,9 +157,7 @@ const {
   confirmNestedBinding,
   closeNestedBinding,
   applyLlmRenderer,
-  applyDimensionAggregation,
-  applyDimensionFacet,
-  applyDimensionChartUpgrade,
+  applyInputColumnIntent,
   closeDimensionDropDecision,
   reorderSelectedNodes,
   alignSelection,
@@ -217,23 +222,9 @@ const csvEncodingBindings = computed<Record<string, string[]>>(() => {
     const current = bindings[field] ?? [];
     if (!current.includes(label)) bindings[field] = [...current, label];
   };
-  const template = normalizeChartTemplate(spec.chartType);
-  const barVariant = template === "bar" ? normalizeBarChartVariant(spec.chartType) : null;
-  const isBarItemChart = barVariant === "grouped" || barVariant === "stacked" || barVariant === "divergent-stacked";
-  const normalizedChartType = spec.chartType.replace(/[\s_-]/g, "").toLowerCase();
-  const isMultiLine = template === "line" && normalizedChartType === "multilinechart";
-  const isAreaValueSeries = template === "area"
-    && (normalizedChartType.includes("stacked")
-      || normalizedChartType.includes("stream")
-      || normalizedChartType.includes("horizon"));
-  const isMeasureSeriesChart = isBarItemChart || isMultiLine || isAreaValueSeries;
-  const itemLabel = isMultiLine || isAreaValueSeries
-    ? "Series"
-    : barVariant === "grouped" ? "Group item" : "Segment item";
-
   Object.entries(spec.encodings).forEach(([channel, encoding]) => {
     if (!encoding) return;
-    if (channel === "y" && isMeasureSeriesChart && (isMultiLine || spec.valueFields?.length || spec.seriesFields?.length || spec.series)) return;
+    if (channel === "y" && spec.valueFields?.length) return;
     const label: Record<string, string> = {
       x: "X",
       y: "Y",
@@ -249,47 +240,24 @@ const csvEncodingBindings = computed<Record<string, string[]>>(() => {
     add(encoding.field, label[channel] ?? channel);
   });
 
-  const seriesFields = spec.seriesFields?.map((encoding) => encoding.field)
-    ?? (spec.series ? [spec.series.field] : []);
-  if (isMeasureSeriesChart) {
-    if ((isMultiLine || isAreaValueSeries) && !spec.valueFields?.length && spec.encodings.y) {
-      add(spec.encodings.y.field, itemLabel);
-    }
-    seriesFields.forEach((field) => {
-      add(field, itemLabel);
-    });
-    (spec.valueFields ?? []).forEach((encoding) => {
-      add(encoding.field, itemLabel);
-    });
+  const itemBinding = barItemAxisBinding(node);
+  if (itemBinding) {
+    itemBinding.fields.forEach((field) => add(field, itemBinding.label));
   } else {
-    seriesFields.forEach((field) => {
-      add(field, "Series");
-    });
-    if (spec.valueFields?.length && !seriesFields.length) {
-      spec.valueFields.forEach((encoding) => {
-        add(encoding.field, "Y values");
-      });
-    }
+    const seriesFields = spec.seriesFields?.map((encoding) => encoding.field)
+      ?? (spec.series ? [spec.series.field] : []);
+    seriesFields.forEach((field) => add(field, "Series"));
   }
+
   return bindings;
 });
-const csvSeriesStyles = computed<Record<string, Array<{
-  memberId: string;
-  label: string;
-  color: string;
-  width: number;
-  shape: "solid" | "dashed" | "dotted";
-}>>>(() => {
-  const node = selectedIds.value.length === 1 ? selectedNodes.value[0] : null;
+function createSeriesItemPresentation(node: CanvasNode) {
   const spec = node?.chartSpec;
-  if (!spec) return {};
+  const binding = node ? barItemAxisBinding(node) : null;
+  if (!node || !spec || !binding) return null;
   const rows = getDataset(spec.datasetId)?.rows ?? [];
-  const seriesFields = spec.seriesFields?.map((encoding) => encoding.field)
-    ?? (spec.series ? [spec.series.field] : []);
-  const fields = Array.from(new Set([
-    ...seriesFields,
-    ...(spec.valueFields?.map((encoding) => encoding.field) ?? []),
-  ]));
+  const categoricalFields = new Set(spec.seriesFields?.map((encoding) => encoding.field)
+    ?? (spec.series ? [spec.series.field] : []));
   const markConfig = spec.markGroups?.[0]?.sharedConfig ?? {};
   const mappedStyles = isSeriesStyleMapping(markConfig.seriesStyleMapping)
     ? markConfig.seriesStyleMapping.values
@@ -297,22 +265,56 @@ const csvSeriesStyles = computed<Record<string, Array<{
       ? Object.fromEntries(Object.entries(markConfig.seriesColorMapping.values).map(([member, color]) => [member, { color }]))
       : {};
   const fallbackColors = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#4d7c0f"];
-  return Object.fromEntries(fields.map((field) => {
-    const members = spec.valueFields?.length && !seriesFields.length
-      ? [field]
-      : Array.from(new Set(rows.map((row) => row[field] ?? "").filter(Boolean)));
-    return [field, members.map((member, index) => {
+  const seen = new Set<string>();
+  const members = binding.fields.flatMap((field) => {
+    const fieldMembers = categoricalFields.has(field)
+      ? Array.from(new Set(rows.map((row) => row[field] ?? "").filter(Boolean)))
+      : [field];
+    return fieldMembers.flatMap((member) => {
+      if (seen.has(member)) return [];
+      seen.add(member);
+      const index = seen.size - 1;
       const style = (mappedStyles[member] ?? {}) as { color?: string; strokeWidth?: number; shape?: "solid" | "dashed" | "dotted" };
-      return {
+      return [{
         memberId: member,
         label: member,
         color: style.color ?? fallbackColors[index % fallbackColors.length]!,
         width: style.strokeWidth ?? Number(markConfig.strokeWidth ?? 2.5),
         shape: style.shape ?? "solid",
-      };
-    })];
-  }));
+      }];
+    });
+  });
+  return {
+    node,
+    label: binding.label,
+    fields: binding.fields,
+    members,
+    legendVisible: markConfig.legendVisible === true,
+    frame: seriesItemDropFrame(node),
+  };
+}
+const seriesItemPresentations = computed(() => selectionScopeNodes.value.flatMap((node) => {
+  const presentation = createSeriesItemPresentation(node);
+  return presentation ? [presentation] : [];
+}));
+const seriesItemOverlay = computed(() => {
+  if (selectedIds.value.length !== 1) return null;
+  return seriesItemPresentations.value.find((item) => item.node.id === selectedIds.value[0]) ?? null;
 });
+const seriesItemLegends = computed(() => seriesItemPresentations.value.flatMap((item) => {
+  if (!item.legendVisible || item.node.id === seriesItemOverlay.value?.node.id || item.members.length === 0) return [];
+  const longestLabel = Math.max(...item.members.map((member) => member.label.length), 1);
+  const height = item.members.length * 22;
+  return [{
+    ...item,
+    legendFrame: {
+      ...item.frame,
+      y: item.frame.y + item.frame.height - height,
+      width: Math.min(190, Math.max(90, 42 + longestLabel * 7)),
+      height,
+    },
+  }];
+}));
 const llmRenderer = useLlmRenderer();
 const {
   status: llmStatus,
@@ -447,20 +449,7 @@ const canToggleEncodingInspector = computed(() => !!encodingTargetNode.value);
 const dimensionDropNode = computed(() => dimensionDropTarget.value
   ? selectedNodes.value.find((node) => node.id === dimensionDropTarget.value?.nodeId) ?? null
   : null);
-const dimensionUpgradeOptions = computed(() => getDimensionChartUpgradeOptions(
-  dimensionDropNode.value?.chartSpec?.chartType ?? "",
-));
 const dimensionDropField = computed(() => dimensionDropTarget.value?.fieldName ?? "");
-function applyDimensionDecision(strategy: "sum" | "avg" | "facet" | string) {
-  const field = dimensionDropField.value;
-  if (!field) return;
-  const applied = strategy === "facet"
-    ? applyDimensionFacet(field, "column")
-    : strategy === "sum" || strategy === "avg"
-      ? applyDimensionAggregation(field, strategy)
-      : applyDimensionChartUpgrade(field, strategy);
-  if (applied) closeDimensionDropDecision();
-}
 
 function defaultEncodingChannel(node: CanvasNode): CoordinateChannel {
   return isPolarChartType(node.chartSpec?.chartType ?? "") ? "angle" : "x";
@@ -520,7 +509,7 @@ function onEncodingChannelChange(channel: ChartEncodingChannel, field: string) {
   setChartEncoding(channel, field);
 }
 
-function onCsvSeriesStyleChange(memberId: string, patch: { color?: string; strokeWidth?: number; shape?: "solid" | "dashed" | "dotted" }) {
+function onSeriesItemStyleChange(memberId: string, patch: { color?: string; strokeWidth?: number; shape?: "solid" | "dashed" | "dotted" }) {
   const node = selectedIds.value.length === 1 ? selectedNodes.value[0] : null;
   if (!node?.chartSpec) return;
   const current = node.chartSpec.markGroups?.[0]?.sharedConfig.seriesStyleMapping;
@@ -555,6 +544,12 @@ function onSeriesFieldChange(field: string) {
 
 function onSeriesFieldsChange(fields: string[]) {
   setSeriesFields(fields);
+}
+
+function removeSeriesCaptionItem(nodeId: string, field: string, event: Event) {
+  event.preventDefault();
+  event.stopPropagation();
+  removeBarItemField(nodeId, field);
 }
 
 function confirmEncodingInspector() {
@@ -765,8 +760,6 @@ onBeforeUnmount(() => {
     <div class="workbench">
       <CsvDataPanel
         :encoding-bindings="csvEncodingBindings"
-        :series-styles="csvSeriesStyles"
-        @series-style-change="onCsvSeriesStyleChange"
       />
       <main class="workspace">
         <section
@@ -1086,42 +1079,14 @@ onBeforeUnmount(() => {
               </button>
             </header>
             <div class="recommendation-popup__options dimension-drop-popup__options">
-              <article class="recommendation-option-card">
-                <span class="recommendation-option-card__strategy">Aggregate</span>
-                <strong>Aggregate by {{ dimensionDropField }}</strong>
-                <span>Reduce repeated visual keys with an explicit operation.</span>
-                <div class="dimension-drop-popup__actions">
-                  <button type="button" @click="applyDimensionDecision('sum')">Sum</button>
-                  <button type="button" @click="applyDimensionDecision('avg')">Average</button>
-                </div>
-              </article>
-              <article class="recommendation-option-card">
-                <span class="recommendation-option-card__strategy">Facet</span>
-                <strong>Facet by {{ dimensionDropField }}</strong>
-                <span>Create one independent chart for each field value.</span>
-                <div class="dimension-drop-popup__actions">
-                  <button type="button" @click="applyDimensionFacet(dimensionDropField, 'row') && closeDimensionDropDecision()">Rows</button>
-                  <button type="button" @click="applyDimensionDecision('facet')">Columns</button>
-                </div>
-              </article>
               <article
-                v-for="option in dimensionUpgradeOptions"
-                :key="option.chartType"
+                v-for="intent in dimensionDropTarget.analysis.intents"
+                :key="intent.id"
                 class="recommendation-option-card"
               >
-                <span class="recommendation-option-card__strategy">Upgrade</span>
-                <strong>{{ option.label }}</strong>
-                <span>Add {{ dimensionDropField }} as the chart's next visual dimension.</span>
-                <button type="button" @click="applyDimensionDecision(option.chartType)">Apply</button>
-              </article>
-              <article
-                v-if="dimensionUpgradeOptions.length === 0"
-                class="recommendation-option-card recommendation-option-card--disabled"
-              >
-                <span class="recommendation-option-card__strategy">Upgrade</span>
-                <strong>Chart upgrade</strong>
-                <span>This chart is already at its supported dimensionality.</span>
-                <button type="button" disabled>Unavailable</button>
+                <span class="recommendation-option-card__strategy">{{ intent.kind }}</span>
+                <strong>{{ intent.label }}</strong>
+                <button type="button" @click="applyInputColumnIntent(intent.id)">Apply</button>
               </article>
             </div>
           </aside>
@@ -1417,10 +1382,12 @@ onBeforeUnmount(() => {
                 :selected="selectedIds.includes(node.id)"
                 :interactive="true"
                 :editing-group-path="editingGroupPath"
+                :editing-chart-id="chartDrilldown?.nodeId ?? null"
                 :selected-ids="selectedIds"
                 :on-node-pointer-down="onCanvasNodePointerDown"
                 :on-node-double-click="onCanvasNodeDoubleClick"
                 :on-node-context-menu="onCanvasNodeContextMenu"
+                :on-mark-pointer-down="onSemanticMarkPointerDown"
                 :on-editing-background-pointer-down="onEditingGroupBackgroundPointerDown"
               />
               <CanvasCoordinateSystemLayer
@@ -1429,11 +1396,12 @@ onBeforeUnmount(() => {
                 :node="node"
               />
               <g v-if="activeDropZone" :transform="editingGroupTransform" class="composition-drop-zone-layer">
-                <rect
+                <component
+                  :is="activeDropZone.outline ? 'polygon' : 'rect'"
                   class="composition-drop-zone"
                   :class="{
                     'composition-drop-zone--layer': activeDropZone.type === 'layer',
-                  'composition-drop-zone--concat': activeDropZone.type === 'concat',
+                    'composition-drop-zone--concat': activeDropZone.type === 'concat',
                     'composition-drop-zone--horizontal': activeDropZone.direction === 'horizontal',
                     'composition-drop-zone--vertical': activeDropZone.direction === 'vertical',
                     'composition-drop-zone--before': activeDropZone.concatPosition === 'before',
@@ -1445,30 +1413,168 @@ onBeforeUnmount(() => {
                   :y="activeDropZone.bounds.minY"
                   :width="activeDropZone.bounds.width"
                   :height="activeDropZone.bounds.height"
+                  :points="activeDropZone.outline?.map((point) => `${point.x},${point.y}`).join(' ')"
                   vector-effect="non-scaling-stroke"
                 />
+              </g>
+              <g
+                v-for="legend in seriesItemLegends"
+                :key="`series-item-legend-${legend.node.id}`"
+                :transform="editingGroupTransform"
+                class="series-item-legend-layer"
+              >
+                <g :transform="`rotate(${legend.legendFrame.rotation} ${legend.legendFrame.center.x} ${legend.legendFrame.center.y})`">
+                  <foreignObject
+                    :x="legend.legendFrame.x"
+                    :y="legend.legendFrame.y"
+                    :width="legend.legendFrame.width"
+                    :height="legend.legendFrame.height"
+                  >
+                    <div xmlns="http://www.w3.org/1999/xhtml" class="series-item-legend">
+                      <div
+                        v-for="member in legend.members"
+                        :key="`${legend.node.id}-legend-${member.memberId}`"
+                        class="series-item-legend__item"
+                      >
+                        <span
+                          class="series-item-legend__swatch"
+                          :style="{ background: member.color }"
+                          aria-hidden="true"
+                        ></span>
+                        <span :title="member.label">{{ member.label }}</span>
+                      </div>
+                    </div>
+                  </foreignObject>
+                </g>
+              </g>
+              <g
+                v-if="seriesItemOverlay"
+                :transform="editingGroupTransform"
+                class="series-item-drop-guide"
+              >
+                <g
+                  :transform="`rotate(${seriesItemOverlay.frame.rotation} ${seriesItemOverlay.frame.center.x} ${seriesItemOverlay.frame.center.y})`"
+                >
+                  <foreignObject
+                    :x="seriesItemOverlay.frame.x"
+                    :y="seriesItemOverlay.frame.y"
+                    :width="seriesItemOverlay.frame.width"
+                    :height="seriesItemOverlay.frame.height"
+                  >
+                    <div
+                      xmlns="http://www.w3.org/1999/xhtml"
+                      class="series-item-panel"
+                      @pointerdown.stop
+                    >
+                      <header class="series-item-panel__header">
+                        <strong>{{ seriesItemOverlay.label }}</strong>
+                        <span class="series-item-panel__bindings">
+                          <span
+                            v-for="field in seriesItemOverlay.fields"
+                            :key="`${seriesItemOverlay.node.id}-binding-${field}`"
+                            class="series-item-panel__binding"
+                          >
+                            <span :title="field">{{ field }}</span>
+                            <button
+                              type="button"
+                              :title="`Remove ${field}`"
+                              :aria-label="`Remove ${field}`"
+                              @pointerdown.stop
+                              @click="removeSeriesCaptionItem(seriesItemOverlay.node.id, field, $event)"
+                            >
+                              <X :size="12" :stroke-width="1.8" aria-hidden="true" />
+                            </button>
+                          </span>
+                        </span>
+                      </header>
+                      <div
+                        v-for="member in seriesItemOverlay.members"
+                        :key="`${seriesItemOverlay.node.id}-series-member-${member.memberId}`"
+                        class="series-item-panel__member"
+                      >
+                        <span :title="member.label">{{ member.label }}</span>
+                        <label
+                          class="series-item-panel__color"
+                          :style="{ background: member.color }"
+                          :title="`${member.label} color`"
+                        >
+                          <input
+                            type="color"
+                            :value="member.color"
+                            :aria-label="`${member.label} color`"
+                            @input="onSeriesItemStyleChange(member.memberId, { color: ($event.target as HTMLInputElement).value })"
+                          />
+                        </label>
+                        <input
+                          type="number"
+                          min="0.5"
+                          max="16"
+                          step="0.5"
+                          :value="member.width"
+                          :aria-label="`${member.label} stroke width`"
+                          @change="onSeriesItemStyleChange(member.memberId, { strokeWidth: Number(($event.target as HTMLInputElement).value) })"
+                        />
+                        <select
+                          :value="member.shape"
+                          :aria-label="`${member.label} line style`"
+                          @change="onSeriesItemStyleChange(member.memberId, { shape: ($event.target as HTMLSelectElement).value as 'solid' | 'dashed' | 'dotted' })"
+                        >
+                          <option value="solid">Solid</option>
+                          <option value="dashed">Dashed</option>
+                          <option value="dotted">Dotted</option>
+                        </select>
+                      </div>
+                    </div>
+                  </foreignObject>
+                </g>
               </g>
               <g
                 v-if="activeDataBindingDropZone"
                 :transform="editingGroupTransform"
                 class="data-binding-drop-zone-layer"
               >
-                <path
-                  v-if="activeDataBindingDropZone.type === 'polar-axis'"
-                  class="data-binding-drop-zone"
-                  :class="{
-                    'data-binding-drop-zone--invalid': !activeDataBindingDropZone.compatible,
-                  }"
-                  :d="activeDataBindingDropZone.path"
-                  vector-effect="non-scaling-stroke"
-                />
-                <text
-                  v-if="activeDataBindingDropZone.type === 'polar-axis'"
-                  class="data-binding-drop-zone__label"
-                  :x="activeDataBindingDropZone.labelPosition.x"
-                  :y="activeDataBindingDropZone.labelPosition.y"
-                  text-anchor="middle"
-                >{{ activeDataBindingDropZone.channel === 'angle' ? 'Theta' : 'R' }}</text>
+                <template v-if="activeDataBindingDropZone.type === 'polar-axis'">
+                  <path
+                    class="data-binding-drop-zone"
+                    :class="{
+                      'data-binding-drop-zone--invalid': !activeDataBindingDropZone.compatible,
+                    }"
+                    :d="activeDataBindingDropZone.path"
+                    vector-effect="non-scaling-stroke"
+                  />
+                  <text
+                    class="data-binding-drop-zone__label"
+                    :x="activeDataBindingDropZone.labelPosition.x"
+                    :y="activeDataBindingDropZone.labelPosition.y"
+                    text-anchor="middle"
+                  >{{ activeDataBindingDropZone.channel === 'angle' ? 'Theta' : 'R' }}</text>
+                </template>
+                <template v-else-if="activeDataBindingDropZone.type === 'series-item'">
+                  <g :transform="`rotate(${activeDataBindingDropZone.frame.rotation} ${activeDataBindingDropZone.frame.center.x} ${activeDataBindingDropZone.frame.center.y})`">
+                    <rect
+                      class="data-binding-series-item-drop-zone"
+                      :class="{
+                        'data-binding-drop-zone--invalid': !activeDataBindingDropZone.compatible,
+                      }"
+                      :x="activeDataBindingDropZone.frame.x"
+                      :y="activeDataBindingDropZone.frame.y"
+                      :width="activeDataBindingDropZone.frame.width"
+                      :height="activeDataBindingDropZone.frame.height"
+                      rx="6"
+                      vector-effect="non-scaling-stroke"
+                    />
+                    <text
+                      class="data-binding-series-item-drop-zone__label"
+                      :class="{
+                        'data-binding-series-item-drop-zone__label--invalid': !activeDataBindingDropZone.compatible,
+                      }"
+                      :x="activeDataBindingDropZone.frame.x + activeDataBindingDropZone.frame.width / 2"
+                      :y="activeDataBindingDropZone.frame.y + activeDataBindingDropZone.frame.height / 2"
+                      text-anchor="middle"
+                      dominant-baseline="middle"
+                    >{{ activeDataBindingDropZone.label }}</text>
+                  </g>
+                </template>
                 <rect
                   v-else-if="activeDataBindingDropZone.type === 'chart-body'"
                   class="data-binding-chart-drop-zone"
@@ -1515,9 +1621,10 @@ onBeforeUnmount(() => {
                   :height="marqueeBounds.height"
                   :vector-effect="'non-scaling-stroke'"
                 />
-                <g v-if="selectionFrame && rotateHandle">
+                <g v-if="selectionFrame">
                   <rect
                     class="selection-box"
+                    :class="{ 'selection-box--semantic': !!semanticSelection }"
                     :x="selectionFrame.x"
                     :y="selectionFrame.y"
                     :width="selectionFrame.width"
@@ -1526,6 +1633,7 @@ onBeforeUnmount(() => {
                     :vector-effect="'non-scaling-stroke'"
                   />
                   <circle
+                    v-if="canTransformSelection"
                     v-for="handle in scaleHandles"
                     :key="handle.key"
                     class="selection-handle"
@@ -1536,6 +1644,7 @@ onBeforeUnmount(() => {
                     @pointerdown="onScaleHandlePointerDown(handle.key, $event)"
                   />
                   <line
+                    v-if="canTransformSelection && rotateHandle"
                     class="rotate-stem"
                     :x1="rotateHandle.stemX"
                     :y1="rotateHandle.stemY"
@@ -1543,6 +1652,7 @@ onBeforeUnmount(() => {
                     :y2="rotateHandle.y"
                   />
                   <circle
+                    v-if="canTransformSelection && rotateHandle"
                     class="rotate-handle"
                     :cx="rotateHandle.x"
                     :cy="rotateHandle.y"
@@ -1551,6 +1661,53 @@ onBeforeUnmount(() => {
                     title="Rotate"
                     @pointerdown="onRotateHandlePointerDown"
                   />
+                  <g
+                    v-if="canRemoveSelectionComposition"
+                    class="selection-uncompose"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Remove composition"
+                    :transform="`translate(${selectionFrame.x + selectionFrame.width / 2} ${selectionFrame.y + selectionFrame.height / 2})`"
+                    @pointerdown.stop.prevent="removeSelectionComposition"
+                    @keydown.enter.stop.prevent="removeSelectionComposition"
+                    @keydown.space.stop.prevent="removeSelectionComposition"
+                  >
+                    <title>Remove composition</title>
+                    <circle
+                      :r="Math.min(selectionFrame.width, selectionFrame.height) / 6"
+                      :stroke-width="Math.min(selectionFrame.width, selectionFrame.height) / 6"
+                    />
+                    <g
+                      class="selection-uncompose__icon"
+                      :transform="`translate(${-7 / selectionOverlayZoom} ${-Math.min(selectionFrame.width, selectionFrame.height) / 6 - 7 / selectionOverlayZoom})`"
+                    >
+                      <Ungroup
+                        :size="14 / selectionOverlayZoom"
+                        :stroke-width="2.2"
+                        aria-hidden="true"
+                      />
+                    </g>
+                  </g>
+                  <g
+                    v-if="canEnterSelection"
+                    class="selection-enter"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Enter selection"
+                    :transform="`translate(${selectionFrame.x + selectionFrame.width / 2} ${selectionFrame.y + selectionFrame.height / 2})`"
+                    @pointerdown.stop.prevent="enterSelection"
+                    @keydown.enter.stop.prevent="enterSelection"
+                  >
+                    <circle
+                      :r="Math.min(selectionFrame.width, selectionFrame.height) / (canRemoveSelectionComposition ? 12 : 4)"
+                      vector-effect="non-scaling-stroke"
+                    />
+                    <text
+                      text-anchor="middle"
+                      dominant-baseline="middle"
+                      :font-size="13 / selectionOverlayZoom"
+                    >Enter</text>
+                  </g>
                 </g>
               </g>
               <CartesianCoordinateSystem
@@ -1561,10 +1718,6 @@ onBeforeUnmount(() => {
                 :channels="getCartesianAxisChannels(node, 'interactive')"
                 :show-axis="false"
                 :interactive="true"
-                :binding-label="barItemAxisBinding(node)?.label ?? ''"
-                :binding-fields="barItemAxisBinding(node)?.fields ?? []"
-                :binding-axis="itemBindingAxis(node)"
-                :on-binding-remove="removeBarItemField"
                 :on-axis-scale-pointer-down="onCoordinateAxisScalePointerDown"
               />
               <PolarCoordinateSystem
@@ -2878,6 +3031,172 @@ onBeforeUnmount(() => {
 .data-binding-drop-zone-layer {
   pointer-events: none;
 }
+.series-item-drop-guide { pointer-events: none; }
+.series-item-drop-guide foreignObject { overflow: visible; pointer-events: all; }
+.series-item-legend-layer { pointer-events: none; }
+.series-item-legend {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  align-content: start;
+  overflow: hidden;
+  padding: 2px 5px;
+  background: rgba(255, 255, 255, 0.84);
+  color: #263548;
+  font-family: Inter, sans-serif;
+}
+.series-item-legend__item {
+  display: grid;
+  height: 22px;
+  min-width: 0;
+  grid-template-columns: 12px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 600;
+}
+.series-item-legend__item > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.series-item-legend__swatch {
+  display: block;
+  width: 11px;
+  height: 11px;
+  box-sizing: border-box;
+  border: 1px solid rgba(24, 33, 47, 0.38);
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.82);
+}
+.series-item-panel {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  grid-auto-rows: 30px;
+  overflow: hidden;
+  border: 1.5px dashed rgba(21, 84, 178, 0.48);
+  border-radius: 5px 5px 0 0;
+  background: rgba(255, 255, 255, 0.96);
+  color: #263548;
+  font-family: Inter, sans-serif;
+  pointer-events: auto;
+}
+.series-item-panel__header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border-bottom: 1px solid rgba(21, 84, 178, 0.16);
+  background: #edf5fc;
+}
+.series-item-panel__header strong {
+  flex: 0 0 auto;
+  color: #1554b2;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0;
+}
+.series-item-panel__member > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.series-item-panel__bindings {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 4px;
+  overflow: hidden;
+}
+.series-item-panel__binding {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 2px;
+  padding-left: 5px;
+  border: 1px solid rgba(21, 84, 178, 0.2);
+  border-radius: 4px;
+  background: #fff;
+  color: #516176;
+  font-size: 9px;
+}
+.series-item-panel__binding > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.series-item-panel__binding button {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-left: 1px solid rgba(21, 84, 178, 0.12);
+  background: transparent;
+  color: #687585;
+  cursor: pointer;
+}
+.series-item-panel__binding button:hover {
+  background: #fff1ef;
+  color: #b42318;
+}
+.series-item-panel__member {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) 28px 44px minmax(58px, 72px);
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px 3px 8px;
+  border-bottom: 1px solid rgba(24, 33, 47, 0.08);
+  background: #fff;
+  font-size: 10px;
+}
+.series-item-panel__member > span:first-child {
+  font-weight: 650;
+}
+.series-item-panel__member input[type="number"],
+.series-item-panel__member select {
+  min-width: 0;
+  height: 23px;
+  box-sizing: border-box;
+  border: 1px solid #c9d5e1;
+  border-radius: 4px;
+  background: #fff;
+  color: #33465b;
+  font: inherit;
+}
+.series-item-panel__color {
+  position: relative;
+  display: block;
+  width: 24px;
+  height: 20px;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid rgba(24, 33, 47, 0.38);
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+}
+.series-item-panel__color input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.series-item-panel__member input[type="number"] { width: 44px; padding: 0 3px; }
+.series-item-panel__member select { width: 100%; padding: 0 3px; }
 .data-binding-drop-zone {
   fill: rgba(28, 126, 214, 0.18);
   stroke: #1c7ed6;
@@ -2900,6 +3219,23 @@ onBeforeUnmount(() => {
   stroke-width: 2;
   stroke-dasharray: 8 6;
 }
+.data-binding-series-item-drop-zone {
+  fill: rgba(21, 84, 178, 0.1);
+  stroke: #1554b2;
+  stroke-width: 2;
+  stroke-dasharray: 7 5;
+}
+.data-binding-series-item-drop-zone.data-binding-drop-zone--invalid {
+  fill: rgba(180, 35, 24, 0.1);
+  stroke: #b42318;
+}
+.data-binding-series-item-drop-zone__label {
+  fill: #1554b2;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+.data-binding-series-item-drop-zone__label--invalid { fill: #b42318; }
 .data-binding-axis-drop-zone {
   stroke: #1c7ed6;
   stroke-width: 8;
@@ -2914,10 +3250,6 @@ onBeforeUnmount(() => {
   stroke: #2563eb;
   stroke-width: 2;
   stroke-dasharray: 7 5;
-}
-.composition-drop-zone--concat {
-  fill: rgba(5, 150, 105, 0.18);
-  stroke: #059669;
 }
 .composition-drop-zone--nested {
   fill: rgba(217, 119, 6, 0.16);
@@ -3259,6 +3591,56 @@ onBeforeUnmount(() => {
   stroke: #1c7ed6;
   stroke-width: 1.5;
   stroke-dasharray: 6 4;
+}
+.selection-box--semantic {
+  fill: rgba(21, 84, 178, 0.1);
+  stroke-dasharray: none;
+}
+.selection-enter {
+  opacity: 0.46;
+  pointer-events: all;
+  cursor: pointer;
+  outline: none;
+  transition: opacity 140ms ease;
+}
+.selection-enter circle {
+  fill: #b42318;
+  stroke: #fff;
+  stroke-width: 2.5;
+  filter: drop-shadow(0 3px 7px rgba(77, 18, 14, 0.38));
+}
+.selection-enter text {
+  fill: #fff;
+  font-family: inherit;
+  font-weight: 700;
+  letter-spacing: 0;
+  pointer-events: none;
+  user-select: none;
+}
+.selection-enter:hover,
+.selection-enter:focus {
+  opacity: 1;
+}
+.selection-uncompose {
+  opacity: 0.32;
+  pointer-events: all;
+  cursor: pointer;
+  outline: none;
+  transition: opacity 140ms ease;
+}
+.selection-uncompose > circle {
+  fill: none;
+  stroke: #b42318;
+  pointer-events: stroke;
+  filter: drop-shadow(0 3px 7px rgba(77, 18, 14, 0.28));
+}
+.selection-uncompose__icon {
+  color: #fff;
+  pointer-events: none;
+}
+.selection-uncompose:hover,
+.selection-uncompose:focus {
+  opacity: 0.86;
 }
 .marquee-box {
   fill: rgba(28, 126, 214, 0.12);

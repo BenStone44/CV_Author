@@ -20,12 +20,19 @@ export type ChartRendererKey =
 export type ChartEncodingChannelSchema = {
   channel: ChartEncodingChannel;
   label: string;
+  semanticLabel?: string;
   role: EncodingRole;
   required: boolean;
   accepts: DataColumnType[];
   emptyLabel: EncodingEmptyLabel;
   multiple?: boolean;
   configurable?: boolean;
+};
+
+export type ChartDimensionUpgradeSchema = {
+  chartType: string;
+  label: string;
+  role: "series";
 };
 
 export type ChartEncodingSchema = {
@@ -43,6 +50,7 @@ export type ChartEncodingSchema = {
   requiresIndependentDimensions: boolean;
   shareableChannels: CoordinateChannel[];
   unusedDimensionStrategies: Array<"flatten" | "facet" | "nested">;
+  dimensionUpgrades: ChartDimensionUpgradeSchema[];
 };
 
 type SchemaDefaults = Omit<ChartEncodingSchema, "chartType" | "label" | "channels">;
@@ -50,20 +58,20 @@ type SchemaDefaults = Omit<ChartEncodingSchema, "chartType" | "label" | "channel
 const commonStrategies: ChartEncodingSchema["unusedDimensionStrategies"] = ["flatten", "facet", "nested"];
 
 const familyDefaults: Record<ChartTemplateKind, SchemaDefaults> = {
-  line: { id: "line", family: "line", renderer: "line", rendererVersion: 3, coordinateSystem: "Cartesian", markRole: "line", aggregationPolicy: "forbidden", requiresFunctionalDependency: true, requiresIndependentDimensions: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies },
-  scatter: { id: "scatter", family: "scatter", renderer: "scatter", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "point", aggregationPolicy: "forbidden", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies },
-  bar: { id: "bar", family: "bar", renderer: "bar", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "bar", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies },
-  pie: { id: "pie", family: "pie", renderer: "pie", rendererVersion: 1, coordinateSystem: "Polar", markRole: "arc", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: ["angle", "radius"], unusedDimensionStrategies: commonStrategies },
-  donut: { id: "donut", family: "donut", renderer: "donut", rendererVersion: 1, coordinateSystem: "Polar", markRole: "arc", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: ["angle", "radius", "ring"], unusedDimensionStrategies: commonStrategies },
-  matrix: { id: "matrix", family: "matrix", renderer: "matrix", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "cell", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies },
-  area: { id: "area", family: "area", renderer: "area", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "area", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies },
-  parallel: { id: "parallel", family: "parallel", renderer: "parallel", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "path", aggregationPolicy: "forbidden", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: [], unusedDimensionStrategies: commonStrategies },
-  hierarchy: { id: "hierarchy", family: "hierarchy", renderer: "hierarchy", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "node", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: [], unusedDimensionStrategies: commonStrategies },
-  calendar: { id: "calendar", family: "calendar", renderer: "calendar", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "cell", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: [], unusedDimensionStrategies: commonStrategies },
-  boxplot: { id: "boxplot", family: "boxplot", renderer: "boxplot", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "box", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies },
-  contour: { id: "contour", family: "contour", renderer: "contour", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "contour", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies },
-  hexbin: { id: "hexbin", family: "hexbin", renderer: "hexbin", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "hexagon", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies },
-  flow: { id: "flow", family: "flow", renderer: "flow", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "link", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: [], unusedDimensionStrategies: commonStrategies },
+  line: { id: "line", family: "line", renderer: "line", rendererVersion: 3, coordinateSystem: "Cartesian", markRole: "line", aggregationPolicy: "forbidden", requiresFunctionalDependency: true, requiresIndependentDimensions: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  scatter: { id: "scatter", family: "scatter", renderer: "scatter", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "point", aggregationPolicy: "forbidden", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  bar: { id: "bar", family: "bar", renderer: "bar", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "bar", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  pie: { id: "pie", family: "pie", renderer: "pie", rendererVersion: 1, coordinateSystem: "Polar", markRole: "arc", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: ["angle", "radius"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  donut: { id: "donut", family: "donut", renderer: "donut", rendererVersion: 1, coordinateSystem: "Polar", markRole: "arc", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: ["angle", "radius", "ring"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  matrix: { id: "matrix", family: "matrix", renderer: "matrix", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "cell", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  area: { id: "area", family: "area", renderer: "area", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "area", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  parallel: { id: "parallel", family: "parallel", renderer: "parallel", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "path", aggregationPolicy: "forbidden", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: [], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  hierarchy: { id: "hierarchy", family: "hierarchy", renderer: "hierarchy", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "node", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: [], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  calendar: { id: "calendar", family: "calendar", renderer: "calendar", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "cell", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: [], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  boxplot: { id: "boxplot", family: "boxplot", renderer: "boxplot", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "box", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  contour: { id: "contour", family: "contour", renderer: "contour", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "contour", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  hexbin: { id: "hexbin", family: "hexbin", renderer: "hexbin", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "hexagon", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  flow: { id: "flow", family: "flow", renderer: "flow", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "link", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, shareableChannels: [], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
 };
 
 function defineSchema(
@@ -81,11 +89,11 @@ const yMeasure = { channel: "y", label: "Y", role: "measure", required: true, ac
 const multiLineYMeasure = { ...yMeasure, multiple: true } satisfies ChartEncodingChannelSchema;
 const lineSize = { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
 const lineShape = { channel: "shape", label: "Shape", role: "style", required: false, accepts: ["nominal"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
-const lineSeries = { channel: "color", label: "Color", role: "series", required: false, accepts: ["nominal", "temporal"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
+const lineSeries = { channel: "color", label: "Color", semanticLabel: "Series", role: "series", required: false, accepts: ["nominal", "temporal"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
 const barX = { channel: "x", label: "X", role: "dimension", required: true, accepts: ["nominal", "temporal"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
 const barY = { channel: "y", label: "Y", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
 const barStyle = { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "temporal"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
-const barSeries = { channel: "color", label: "Color", role: "series", required: true, accepts: ["nominal", "temporal"], emptyLabel: "Static", multiple: true } satisfies ChartEncodingChannelSchema;
+const barSeries = { channel: "color", label: "Color", semanticLabel: "Series", role: "series", required: true, accepts: ["nominal", "temporal"], emptyLabel: "Static", multiple: true } satisfies ChartEncodingChannelSchema;
 const barSize = { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
 const areaChannels = (requiresSeries: boolean): ChartEncodingChannelSchema[] => [
   xAny,
@@ -111,7 +119,9 @@ const flowChannels: ChartEncodingChannelSchema[] = [
  * `coordinateSystem`; validation consumes the remaining contract fields.
  */
 export const chartEncodingSchemas = {
-  LineGraph: defineSchema("LineGraph", "Single Line", "line", [xAny, yMeasure, { ...lineSeries, configurable: false }, lineSize, lineShape]),
+  LineGraph: defineSchema("LineGraph", "Single Line", "line", [xAny, yMeasure, { ...lineSeries, configurable: false }, lineSize, lineShape], {
+    dimensionUpgrades: [{ chartType: "MultiLineChart", label: "Multi-line", role: "series" }],
+  }),
   MultiLineChart: defineSchema("MultiLineChart", "Multi-Line Chart", "line", [xAny, multiLineYMeasure, lineSeries, lineSize, lineShape]),
   Scatterplot: defineSchema("Scatterplot", "Scatterplot", "scatter", [
     xAny,
@@ -120,11 +130,18 @@ export const chartEncodingSchemas = {
     lineSize,
     lineShape,
   ]),
-  SingleBarChart: defineSchema("SingleBarChart", "Single Bar", "bar", [barX, barY, barStyle, barSize]),
-  GroupedBarChart: defineSchema("GroupedBarChart", "Grouped Bar", "bar", [barX, barY, barSeries, barSize]),
-  StackedBarChart: defineSchema("StackedBarChart", "Stacked Bar", "bar", [barX, barY, barSeries, barSize]),
-  DivergentBarChart: defineSchema("DivergentBarChart", "Divergent Bar", "bar", [barX, barY, barStyle, barSize]),
-  DivergentStackedBarChart: defineSchema("DivergentStackedBarChart", "Divergent Stacked Bar", "bar", [barX, barY, barSeries, barSize]),
+  SingleBarChart: defineSchema("SingleBarChart", "Single Bar", "bar", [barX, barY, barStyle, barSize], {
+    dimensionUpgrades: [
+      { chartType: "GroupedBarChart", label: "Grouped bar", role: "series" },
+      { chartType: "StackedBarChart", label: "Stacked bar", role: "series" },
+    ],
+  }),
+  GroupedBarChart: defineSchema("GroupedBarChart", "Grouped Bar", "bar", [barX, barY, { ...barSeries, semanticLabel: "Group item" }, barSize]),
+  StackedBarChart: defineSchema("StackedBarChart", "Stacked Bar", "bar", [barX, barY, { ...barSeries, semanticLabel: "Segment item" }, barSize]),
+  DivergentBarChart: defineSchema("DivergentBarChart", "Divergent Bar", "bar", [barX, barY, barStyle, barSize], {
+    dimensionUpgrades: [{ chartType: "DivergentStackedBarChart", label: "Divergent stacked bar", role: "series" }],
+  }),
+  DivergentStackedBarChart: defineSchema("DivergentStackedBarChart", "Divergent Stacked Bar", "bar", [barX, barY, { ...barSeries, semanticLabel: "Segment item" }, barSize]),
   PieChart: defineSchema("PieChart", "Pie Chart", "pie", [
     { channel: "theta", label: "Theta", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound", multiple: true },
     { channel: "color", label: "Color", role: "dimension", required: false, accepts: ["nominal", "temporal"], emptyLabel: "Static" },
@@ -141,7 +158,11 @@ export const chartEncodingSchemas = {
     { channel: "y", label: "Y", role: "dimension", required: true, accepts: ["nominal", "temporal"], emptyLabel: "Not bound" },
     { channel: "color", label: "Color", role: "measure", required: false, accepts: ["quantitative", "nominal"], emptyLabel: "Static" },
   ]),
-  AreaChart: defineSchema("AreaChart", "Area Chart", "area", areaChannels(false), { aggregationPolicy: "forbidden", requiresFunctionalDependency: true }),
+  AreaChart: defineSchema("AreaChart", "Area Chart", "area", areaChannels(false), {
+    aggregationPolicy: "forbidden",
+    requiresFunctionalDependency: true,
+    dimensionUpgrades: [{ chartType: "StackedAreaChart", label: "Stacked area", role: "series" }],
+  }),
   StackedAreaChart: defineSchema("StackedAreaChart", "Stacked Area", "area", areaChannels(true)),
   Streamgraph: defineSchema("Streamgraph", "Streamgraph", "area", areaChannels(true)),
   HorizonChart: defineSchema("HorizonChart", "Horizon Chart", "area", areaChannels(true), { coordinateSystem: "CoordinateFree", shareableChannels: [] }),

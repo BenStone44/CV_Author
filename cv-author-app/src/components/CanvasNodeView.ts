@@ -186,6 +186,7 @@ export const CanvasNodeView: any = defineComponent({
     interactive: { type: Boolean, default: false },
     selected: { type: Boolean, default: false },
     editingGroupPath: { type: Array as PropType<string[]>, default: () => [] },
+    editingChartId: { type: String as PropType<string | null>, default: null },
     selectedIds: { type: Array as PropType<string[]>, default: () => [] },
     onNodePointerDown: { type: Function as PropType<(node: CanvasNode, event: PointerEvent) => void>, default: null },
     onNodeDoubleClick: { type: Function as PropType<(node: CanvasNode, event: MouseEvent) => void>, default: null },
@@ -225,7 +226,9 @@ export const CanvasNodeView: any = defineComponent({
       };
 
       if (props.node.kind === "leaf") {
-        const hasInteractiveMarks = !!props.node.renderedContent && !!markHandler;
+        const hasInteractiveMarks = !!props.node.renderedContent
+          && props.editingChartId === props.node.id
+          && !!markHandler;
         const isChartPlaceholder = !!props.node.chartSpec && !props.node.renderedContent;
         const hitBounds = getNodeSelectionBounds(props.node);
         return h("g", { ...sharedProps }, [
@@ -249,12 +252,13 @@ export const CanvasNodeView: any = defineComponent({
             "vector-effect": "non-scaling-stroke",
             "pointer-events": "none",
           })] : []),
-          h("g", { class: props.node.renderedContent && markHandler ? "semantic-rendered-content" : undefined, innerHTML: props.node.renderedContent ?? props.node.content, style: { pointerEvents: props.node.renderedContent && markHandler ? "all" : "none" }, onPointerdown: props.node.renderedContent && markHandler ? (event: PointerEvent) => markHandler(props.node, event) : undefined }),
+          h("g", { class: hasInteractiveMarks ? "semantic-rendered-content" : undefined, innerHTML: props.node.renderedContent ?? props.node.content, style: { pointerEvents: hasInteractiveMarks ? "all" : "none" }, onPointerdown: hasInteractiveMarks ? (event: PointerEvent) => markHandler!(props.node, event) : undefined }),
         ]);
       }
 
       if (props.node.renderedContent && !isEditingAncestor) {
         const hitBounds = getNodeSelectionBounds(props.node);
+        const hasInteractiveMarks = props.editingChartId === props.node.id && !!markHandler;
         return h("g", sharedProps, [
           h("rect", {
             class: "canvas-object-hit-target",
@@ -263,9 +267,9 @@ export const CanvasNodeView: any = defineComponent({
             width: hitBounds.width,
             height: hitBounds.height,
             fill: "transparent",
-            "pointer-events": markHandler ? "none" : "all",
+            "pointer-events": hasInteractiveMarks ? "none" : "all",
           }),
-          h("g", { class: markHandler ? "semantic-rendered-content" : undefined, innerHTML: props.node.renderedContent, style: { pointerEvents: markHandler ? "all" : "none" }, onPointerdown: markHandler ? (event: PointerEvent) => markHandler(props.node, event) : undefined }),
+          h("g", { class: hasInteractiveMarks ? "semantic-rendered-content" : undefined, innerHTML: props.node.renderedContent, style: { pointerEvents: hasInteractiveMarks ? "all" : "none" }, onPointerdown: hasInteractiveMarks ? (event: PointerEvent) => markHandler!(props.node, event) : undefined }),
         ]);
       }
 
@@ -331,6 +335,7 @@ export const CanvasNodeView: any = defineComponent({
             editingGroupPath: isEditingAncestor && editingPath[1] === child.id
               ? editingPath.slice(1)
               : [],
+            editingChartId: props.editingChartId,
             selectedIds: props.selectedIds,
             onNodePointerDown: props.onNodePointerDown,
             onNodeDoubleClick: props.onNodeDoubleClick,

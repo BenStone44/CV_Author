@@ -325,6 +325,7 @@ export type ChartDropZone = {
   type: "layer" | "concat" | "nested";
   sharedChannels: CoordinateChannel[];
   bounds: Bounds;
+  outline?: Point[];
   compatible: boolean;
   targetRowKey?: string;
   direction?: "horizontal" | "vertical";
@@ -338,6 +339,22 @@ export type DataBindingDropZone =
     fieldName: string;
     compatible: boolean;
     bounds: Bounds;
+  }
+  | {
+    type: "series-item";
+    targetNodeId: string;
+    fieldName: string;
+    label: string;
+    compatible: boolean;
+    bounds: Bounds;
+    frame: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      rotation: number;
+      center: Point;
+    };
   }
   | {
     type: "polar-axis";
@@ -561,6 +578,15 @@ export type SemanticSelection = {
   markGroupId?: string;
   rowKey?: string;
   seriesKey?: string;
+  categoryKey?: string;
+  level?: "item" | "part";
+  partCount?: number;
+  bounds?: Bounds;
+};
+
+export type ChartDrilldown = {
+  nodeId: string;
+  level: "item" | "part";
 };
 
 export type SeriesCandidate = {

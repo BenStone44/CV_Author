@@ -403,6 +403,67 @@ describe("Case 1 deterministic line chart", () => {
     expect(result.content).not.toContain('data-mark-role="y-axis"');
   });
 
+  it("renders temporal values against a shared bar point scale", () => {
+    const dataset: Dataset = {
+      id: "shared-temporal-point",
+      name: "shared-temporal-point.csv",
+      columns: [
+        { name: "time", type: "temporal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { time: "2025-01-01", value: "82" },
+        { time: "2025-02-01", value: "88" },
+      ],
+    };
+    const sharedPlotArea = { x: 80, y: 30, width: 600, height: 300 };
+    const result = renderLineChart({
+      chartId: "shared-temporal-point-line",
+      width: 800,
+      height: 400,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: {
+        type: "Cartesian",
+        origin: { x: 0, y: 400 },
+        xDirection: 1,
+        yDirection: -1,
+      },
+      chartSpec: {
+        ...createChartSpec(),
+        datasetId: dataset.id,
+        encodings: {
+          x: { field: "time", type: "temporal" },
+          y: { field: "value", type: "quantitative" },
+        },
+      },
+      dataset,
+      sharedPlotArea,
+      sharedScales: {
+        x: {
+          type: "point",
+          domain: ["2025-01-01", "2025-02-01"],
+          range: [sharedPlotArea.x, sharedPlotArea.x + sharedPlotArea.width],
+        },
+      },
+    });
+
+    expect(result.scales.x).toEqual({
+      type: "point",
+      domain: ["2025-01-01", "2025-02-01"],
+      range: [sharedPlotArea.x, sharedPlotArea.x + sharedPlotArea.width],
+    });
+    expect(result.content).toContain('data-mark-role="line"');
+    expect(result.content).not.toContain("NaN");
+    expect(result.series[0]?.points).toHaveLength(2);
+    result.series[0]?.points.forEach((point) => {
+      expect(point.x).toBeGreaterThanOrEqual(sharedPlotArea.x);
+      expect(point.x).toBeLessThanOrEqual(sharedPlotArea.x + sharedPlotArea.width);
+      expect(point.y).toBeGreaterThanOrEqual(sharedPlotArea.y);
+      expect(point.y).toBeLessThanOrEqual(sharedPlotArea.y + sharedPlotArea.height);
+    });
+  });
+
   it("applies independent Cartesian axis scale values to the plot area", () => {
     const result = renderLineChart({
       chartId: "scaled-line",

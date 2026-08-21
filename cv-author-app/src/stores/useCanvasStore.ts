@@ -37,6 +37,7 @@ import type {
   AxisBindingTarget,
   EncodingChannel,
   ChartSpec,
+  ChartPlotArea,
   ChartEncodingChannel,
   LayerSpec,
   NestedSpec,
@@ -50,6 +51,7 @@ import type {
   DataBindingDropZone,
   NestedBindingConfig,
   NestedBindingTarget,
+  ChartDrilldown,
   ChartRelationshipState,
   DataColumnType,
   MarkGroupSharedConfig,
@@ -86,11 +88,14 @@ import {
 } from "../utils/canvasUtils";
 import { chartScalePosition, renderDeterministicChart, renderLayerChart, renderNestedPie } from "../utils/semanticRenderer";
 import {
+  cartesianAxisEncoding,
+  getDimensionChartUpgradeOptions,
   getChartTemplateContract,
   hasRequiredChartEncodings,
   normalizeBarChartVariant,
   normalizeChartTemplate,
 } from "../utils/chartTemplates";
+export { getDimensionChartUpgradeOptions } from "../utils/chartTemplates";
 import { prepareChartData, rowMatchesChartFilters } from "../utils/chartDataPipeline";
 import { csvRowKey } from "../utils/csvDataEngine";
 import {
@@ -113,6 +118,11 @@ import {
   resolvedSeriesField,
   resolveChartEncodingIssues,
 } from "../utils/encodingConfig";
+import { resolveSemanticMarkMatch } from "../utils/chartSelection";
+import {
+  inferColumnIntents,
+  type InputColumnIntentAnalysis,
+} from "../utils/dimensionInference";
 
 const historyLimit = 50;
 export const MIN_ZOOM = 0.25;
@@ -187,38 +197,6 @@ function lineDataEncodings(encodings: ChartSpec["encodings"]): ChartSpec["encodi
   delete next.size;
   delete next.shape;
   return next;
-}
-
-export type DimensionChartUpgradeOption = {
-  chartType: string;
-  label: string;
-};
-
-export function getDimensionChartUpgradeOptions(chartType: string): DimensionChartUpgradeOption[] {
-  const normalized = chartType.replace(/[\s_-]/g, "").toLowerCase();
-  const template = normalizeChartTemplate(chartType);
-  if (template === "line") {
-    return normalized === "multilinechart"
-      ? []
-      : [{ chartType: "MultiLineChart", label: "Multi-line" }];
-  }
-  if (template === "area") {
-    return normalized === "areachart"
-      ? [{ chartType: "StackedAreaChart", label: "Stacked area" }]
-      : [];
-  }
-  if (template !== "bar") return [];
-  const variant = normalizeBarChartVariant(chartType) ?? "single";
-  if (variant === "single") {
-    return [
-      { chartType: "GroupedBarChart", label: "Grouped bar" },
-      { chartType: "StackedBarChart", label: "Stacked bar" },
-    ];
-  }
-  if (variant === "divergent") {
-    return [{ chartType: "DivergentStackedBarChart", label: "Divergent stacked bar" }];
-  }
-  return [];
 }
 
 function migrateLineChartAppearance(spec: ChartSpec) {
@@ -307,6 +285,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const viewPan = ref<Point>({ x: 0, y: 0 });
   const selectedIds = ref<string[]>([]);
   const editingGroupPath = ref<string[]>([]);
+  const editingCompositionId = ref<string | null>(null);
+  const chartDrilldown = ref<ChartDrilldown | null>(null);
   const rotationInputVisible = ref(false);
   const undoStack = ref<CanvasHistorySnapshot[]>([]);
   const redoStack = ref<CanvasHistorySnapshot[]>([]);
@@ -322,6 +302,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     fieldName: string;
     clientX: number;
     clientY: number;
+    analysis: InputColumnIntentAnalysis;
   } | null>(null);
   const nestedBindingTarget = ref<NestedBindingTarget | null>(null);
   const loadingDrop = ref(false);
@@ -425,9 +406,12 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (!memberChannels.has(nodeId)) {
       memberChannels.set(nodeId, axisEntries.map(({ binding }) => binding.channel));
     }
-    const ownerNodeId = sharedAxisIds.length > 0
-      ? chartsForAxis(sharedAxisIds[0]!)[0]?.chart.nodeId ?? nodeId
-      : nodeId;
+    const currentOwnerNodeId = findCanvasNode(nodeId)?.coordinateSystem?.ownerNodeId;
+    const ownerNodeId = currentOwnerNodeId && memberChannels.has(currentOwnerNodeId)
+      ? currentOwnerNodeId
+      : sharedAxisIds.length > 0
+        ? chartsForAxis(sharedAxisIds[0]!)[0]?.chart.nodeId ?? nodeId
+        : nodeId;
     return {
       id: sharedAxisIds.length > 0
         ? `coordinate:${sharedAxisIds.slice().sort().join("|")}`
@@ -633,8 +617,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       if (node.kind !== "group") return [node];
       const sourceComposition = node.compositionSpec;
       const type = sourceComposition?.type;
-      const isLayer = type === "layer" && node.children.length > 0;
-      if (!sourceComposition || (type !== "facet" && type !== "concat" && !isLayer)) {
+      const childIds = new Set(node.children.map((child) => child.id));
+      const containsCompositionMembers = sourceComposition?.members.some((member) => childIds.has(member.nodeId)) ?? false;
+      const isIndependentViewWrapper = (type === "facet" || type === "concat") && containsCompositionMembers;
+      const isLayer = type === "layer" && containsCompositionMembers;
+      if (!sourceComposition || (!isIndependentViewWrapper && !isLayer)) {
         node.children = migrateIndependentViewGroups(node.children);
         return [node];
       }
@@ -704,6 +691,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function getSelectionScopeNodes() {
     return getGroupAtPath()?.children ?? canvasNodes.value;
   }
+  const selectionScopeNodes = computed(() => getSelectionScopeNodes());
   function getSelectionNode(nodeId: string) {
     return getSelectionScopeNodes().find((node) => node.id === nodeId) ?? null;
   }
@@ -711,13 +699,15 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const expanded = new Set<string>();
     itemIds.forEach((id) => {
       const node = getSelectionNode(id);
-      if (node?.compositionSpec?.type !== "layer" || !node.coordinateSystem) {
-        if (node) expanded.add(id);
+      const composition = node?.compositionSpec;
+      if (!node) return;
+      if (composition && editingCompositionId.value !== composition.id) {
+        composition.members.forEach((member) => {
+          if (getSelectionNode(member.nodeId)) expanded.add(member.nodeId);
+        });
         return;
       }
-      node.coordinateSystem.members.forEach((member) => {
-        if (getSelectionNode(member.nodeId)) expanded.add(member.nodeId);
-      });
+      expanded.add(id);
     });
     return Array.from(expanded);
   }
@@ -838,6 +828,80 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       y: worldCenter.y + dx * Math.sin(radians) + dy * Math.cos(radians),
     };
   }
+  function seriesItemMemberCount(node: CanvasNode) {
+    const binding = barItemAxisBinding(node);
+    if (!binding || !node.chartSpec) return 0;
+    const categoricalFields = new Set(node.chartSpec.seriesFields?.map((encoding) => encoding.field)
+      ?? (node.chartSpec.series ? [node.chartSpec.series.field] : []));
+    const rows = getDataset(node.chartSpec.datasetId)?.rows ?? [];
+    const members = new Set<string>();
+    binding.fields.forEach((field) => {
+      if (!categoricalFields.has(field)) {
+        members.add(field);
+        return;
+      }
+      rows.forEach((row) => {
+        const value = row[field];
+        if (value) members.add(value);
+      });
+    });
+    return members.size;
+  }
+  function seriesItemDropFrame(node: CanvasNode) {
+    const selection = getNodeSelectionBounds(node);
+    const localMinX = node.kind === "leaf" ? node.contentMinX : 0;
+    const localMinY = node.kind === "leaf" ? node.contentMinY : 0;
+    const selectionTopLeft = {
+      x: node.x + (selection.minX - localMinX) * node.scaleX,
+      y: node.y + (selection.minY - localMinY) * node.scaleY,
+    };
+    const selectionWidth = selection.width * node.scaleX;
+    const width = Math.min(280, Math.max(252, selectionWidth));
+    const height = 30 + Math.max(seriesItemMemberCount(node), 1) * 30;
+    const center = {
+      x: selectionTopLeft.x + width / 2,
+      y: selectionTopLeft.y + selection.height * node.scaleY / 2,
+    };
+    return {
+      x: selectionTopLeft.x,
+      y: selectionTopLeft.y - height,
+      width,
+      height,
+      rotation: node.rotation,
+      center,
+    };
+  }
+  function seriesItemDropBounds(node: CanvasNode): Bounds {
+    const frame = seriesItemDropFrame(node);
+    const radians = frame.rotation * Math.PI / 180;
+    const rotate = (point: Point) => {
+      const dx = point.x - frame.center.x;
+      const dy = point.y - frame.center.y;
+      return {
+        x: frame.center.x + dx * Math.cos(radians) - dy * Math.sin(radians),
+        y: frame.center.y + dx * Math.sin(radians) + dy * Math.cos(radians),
+      };
+    };
+    const corners = [
+      rotate({ x: frame.x, y: frame.y }),
+      rotate({ x: frame.x + frame.width, y: frame.y }),
+      rotate({ x: frame.x, y: frame.y + frame.height }),
+      rotate({ x: frame.x + frame.width, y: frame.y + frame.height }),
+    ];
+    const xs = corners.map((corner) => corner.x);
+    const ys = corners.map((corner) => corner.y);
+    const bounds = {
+      minX: Math.min(...xs),
+      minY: Math.min(...ys),
+      maxX: Math.max(...xs),
+      maxY: Math.max(...ys),
+    };
+    return { ...bounds, width: bounds.maxX - bounds.minX, height: bounds.maxY - bounds.minY };
+  }
+  function pointInBounds(point: Point, bounds: Bounds) {
+    return point.x >= bounds.minX && point.x <= bounds.maxX
+      && point.y >= bounds.minY && point.y <= bounds.maxY;
+  }
   function getCandidate(candidateId: string) {
     return implementedTemplateDefinitions.find((c) => c.id === candidateId)
       ?? generatedCandidates.value.find((c) => c.id === candidateId)
@@ -865,17 +929,44 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     getSelectionScopeNodes().forEach((node) => {
       const spec = node.chartSpec;
       const guide = node.coordinateGuide;
-      if (!spec || !guide) return;
+      if (!spec) return;
       const dataset = getDataset(spec.datasetId);
       const column = dataset?.columns.find((item) => item.name === payload.field);
-      const accepts = (channel: ChartEncodingChannel) =>
-        spec.datasetId === payload.datasetId
-        && !!column
-        && column.type === payload.type
-        && (channel === itemBindingAxis(node) && barItemAxisBinding(node)
-          ? (barItemAxisBinding(node)?.label !== "Series" || column.type === "quantitative")
-          : getEncodingChannelConfigsForSpec(spec).some((config) => config.channel === logicalAxisChannel(node, channel)
-            && config.accepts.includes(column.type)));
+      const itemBinding = barItemAxisBinding(node);
+      if (spec.datasetId === payload.datasetId && column?.type === payload.type && itemBinding) {
+        const bounds = seriesItemDropBounds(node);
+        if (pointInBounds(point, bounds)) {
+          const categoricalFields = spec.seriesFields?.map((encoding) => encoding.field)
+            ?? (spec.series ? [spec.series.field] : []);
+          const categoricalMode = categoricalFields.length > 0;
+          const quantitativeMode = (spec.valueFields?.length ?? 0) > 0;
+          const compatible = categoricalMode
+            ? categoricalFields.includes(column.name)
+            : quantitativeMode
+              ? column.type === "quantitative"
+              : column.type === "quantitative" || column.type === "nominal" || column.type === "temporal";
+          nearestZone = {
+            type: "series-item",
+            targetNodeId: node.id,
+            fieldName: column.name,
+            label: itemBinding.label,
+            compatible,
+            bounds,
+            frame: seriesItemDropFrame(node),
+          };
+          nearestDistance = -1;
+        }
+      }
+      if (!guide || nearestDistance < 0) return;
+      const accepts = (channel: ChartEncodingChannel) => {
+        if (spec.datasetId !== payload.datasetId || !dataset || !column || column.type !== payload.type) return false;
+        const logicalChannel = logicalAxisChannel(node, channel);
+        if (logicalChannel === "y" && (spec.valueFields?.length ?? 0) > 0) return false;
+        return inferColumnIntents(dataset, spec, column, {
+          type: "channel",
+          channel: logicalChannel,
+        }).status === "VALID";
+      };
       if (guide.type === "Cartesian") {
         const model = createCartesianAxisModel(node);
         const minX = node.kind === "leaf" ? node.contentMinX : 0;
@@ -952,8 +1043,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const bodyTarget = [...getSelectionScopeNodes()].reverse().find((node) => {
       const spec = node.chartSpec;
       if (!spec || spec.datasetId !== payload.datasetId || !hasRequiredChartEncodings(spec)) return false;
-      const template = normalizeChartTemplate(spec.chartType);
-      if (template !== "bar" && template !== "line" && template !== "area") return false;
       const dataset = getDataset(spec.datasetId);
       const column = dataset?.columns.find((item) => item.name === payload.field);
       if (!column || column.type !== payload.type) return false;
@@ -969,13 +1058,18 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       return local.x >= minX && local.x <= minX + node.width
         && local.y >= minY && local.y <= minY + node.height;
     });
-    return bodyTarget ? {
+    if (!bodyTarget?.chartSpec) return null;
+    const dataset = getDataset(bodyTarget.chartSpec.datasetId);
+    const column = dataset?.columns.find((item) => item.name === payload.field);
+    if (!dataset || !column) return null;
+    const analysis = inferColumnIntents(dataset, bodyTarget.chartSpec, column, { type: "chart-body" });
+    return {
       type: "chart-body",
       targetNodeId: bodyTarget.id,
       fieldName: payload.field,
-      compatible: true,
+      compatible: analysis.status === "VALID" && analysis.intents.length > 0,
       bounds: collectNodeSelectionBounds(bodyTarget),
-    } : null;
+    };
   }
   function mappedEncodingChannel(node: CanvasNode, channel: CoordinateChannel): ChartEncodingChannel {
     const template = normalizeChartTemplate(node.chartSpec?.chartType ?? "");
@@ -998,9 +1092,23 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       && (!node.coordinateGuide || node.coordinateGuide.type === contract.coordinateSystem);
   }
 
+  const cartesianCompositionFamilies = new Set(["area", "line", "bar"]);
+
+  function isStandaloneCartesianCompositionChart(node: CanvasNode) {
+    const family = normalizeChartTemplate(node.chartSpec?.chartType ?? "");
+    const contract = node.chartSpec ? getChartTemplateContract(node.chartSpec.chartType) : null;
+    return !node.compositionSpec
+      && node.coordinateGuide?.type === "Cartesian"
+      && contract?.coordinateSystem === "Cartesian"
+      && !!family
+      && cartesianCompositionFamilies.has(family)
+      && isAtomicChartReady(node);
+  }
+
   function encodingForSharedChannel(node: CanvasNode, channel: CoordinateChannel) {
     const spec = node.chartSpec;
     if (!spec) return undefined;
+    if (channel === "x" || channel === "y") return cartesianAxisEncoding(spec, channel);
     const encoding = channel === "angle"
       ? spec.encodings.theta ?? spec.encodings.angle
       : spec.encodings[channel];
@@ -1107,26 +1215,18 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   }
   function barItemAxisBinding(node: CanvasNode) {
     const variant = normalizeBarChartVariant(node.chartSpec?.chartType ?? "");
-    const isMultiLine = normalizeChartTemplate(node.chartSpec?.chartType ?? "") === "line"
-      && node.chartSpec?.chartType.replace(/[\s_-]/g, "").toLowerCase() === "multilinechart";
-    const normalized = node.chartSpec?.chartType.replace(/[\s_-]/g, "").toLowerCase() ?? "";
     const template = normalizeChartTemplate(node.chartSpec?.chartType ?? "");
-    const isAreaValueSeries = template === "area"
-      && (normalized.includes("stacked") || normalized.includes("stream"));
-    if (!node.chartSpec || (!isMultiLine
-      && !isAreaValueSeries
+    const isSeriesChart = template === "line" || template === "area";
+    if (!node.chartSpec || (!isSeriesChart
       && variant !== "grouped" && variant !== "stacked" && variant !== "divergent-stacked")) {
       return null;
     }
     return {
-      label: isMultiLine || isAreaValueSeries ? "Series" : variant === "grouped" ? "Group item" : "Segment item",
+      label: isSeriesChart ? "Series" : variant === "grouped" ? "Group item" : "Segment item",
       fields: Array.from(new Set([
-        ...((isMultiLine || isAreaValueSeries) ? [] : (node.chartSpec.seriesFields?.map((encoding) => encoding.field)
-          ?? (node.chartSpec.series ? [node.chartSpec.series.field] : []))),
+        ...(node.chartSpec.seriesFields?.map((encoding) => encoding.field)
+          ?? (node.chartSpec.series ? [node.chartSpec.series.field] : [])),
         ...(node.chartSpec.valueFields?.map((encoding) => encoding.field) ?? []),
-        ...((isMultiLine || isAreaValueSeries) && !node.chartSpec.valueFields?.length && node.chartSpec.encodings.y
-          ? [node.chartSpec.encodings.y.field]
-          : []),
       ])),
     };
   }
@@ -1158,6 +1258,16 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   );
   const selectionBounds = computed<Bounds | null>(() => selectionScopeBounds.value);
   const selectionFrame = computed(() => {
+    const semanticBounds = semanticSelection.value?.bounds;
+    if (semanticBounds) {
+      return {
+        x: semanticBounds.minX,
+        y: semanticBounds.minY,
+        width: semanticBounds.width,
+        height: semanticBounds.height,
+        rotation: 0,
+      };
+    }
     const bounds = selectionBounds.value;
     const node = selectedIds.value.length === 1 ? getSelectionNode(selectedIds.value[0]!) : null;
     if (!bounds || !node) return bounds ? { x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height, rotation: 0 } : null;
@@ -1203,6 +1313,33 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const canUngroup = computed(() => selectedNodes.value.some(
     (node) => node.kind === "group" || !!node.renderedContent,
   ));
+  const canTransformSelection = computed(() => !semanticSelection.value && selectedIds.value.length > 0);
+  const canRemoveSelectionComposition = computed(() => {
+    if (semanticSelection.value || selectedNodes.value.length === 0) return false;
+    const composition = selectedNodes.value[0]?.compositionSpec;
+    if (!composition || editingCompositionId.value === composition.id) return false;
+    const memberIds = scopedCompositionMemberIds(selectedNodes.value[0]!);
+    return memberIds.length > 1
+      && memberIds.every((id) => selectedIds.value.includes(id));
+  });
+  const canEnterSelection = computed(() => {
+    const semantic = semanticSelection.value;
+    if (semantic) {
+      return semantic.level === "item"
+        && (semantic.partCount ?? 0) > 1
+        && chartDrilldown.value?.nodeId === semantic.nodeId;
+    }
+    if (selectedNodes.value.length === 1) {
+      const node = selectedNodes.value[0]!;
+      if (node.kind === "group" && node.children.length > 0 && !node.renderedContent) return true;
+      if (node.chartSpec && node.renderedContent && chartDrilldown.value?.nodeId !== node.id) return true;
+    }
+    const composition = selectedNodes.value[0]?.compositionSpec;
+    if (!composition || editingCompositionId.value === composition.id) return false;
+    const members = scopedCompositionMemberIds(selectedNodes.value[0]!);
+    return members.length > 1
+      && members.every((id) => selectedIds.value.includes(id));
+  });
   const canMoveSelectionForward = computed(() => {
     const sel = new Set(selectedIds.value);
     const nodes = getSelectionScopeNodes();
@@ -1220,6 +1357,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     });
   });
   const scaleHandles = computed(() => {
+    if (!canTransformSelection.value) return [];
     const frame = selectionFrame.value;
     if (!frame) return [];
     const center = { x: frame.x + frame.width / 2, y: frame.y + frame.height / 2 };
@@ -1236,6 +1374,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     ];
   });
   const rotateHandle = computed(() => {
+    if (!canTransformSelection.value) return null;
     const frame = selectionFrame.value;
     if (!frame) return null;
     const radians = frame.rotation * Math.PI / 180;
@@ -1293,12 +1432,27 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function restoreCanvasHistory(snapshot: CanvasHistorySnapshot) {
     interaction.value = null;
     detachPointerListeners();
+    editingCompositionId.value = null;
+    chartDrilldown.value = null;
     canvasNodes.value = migrateIndependentViewGroups(snapshot.nodes.map((n) => cloneCanvasNode(n)));
     if (snapshot.relationships) restoreRelationships(snapshot.relationships);
     else {
       dispatchRelationship({ type: "clear" });
       reconcileRelationshipNodes(canvasNodes.value);
     }
+    const renderedLayers = new Set<string>();
+    walkCanvasNodes().forEach((node) => {
+      if (!node.chartSpec || node.llmRenderer) return;
+      if (node.layerSpec) {
+        renderSemanticNode(node);
+        return;
+      }
+      if (node.compositionSpec?.type === "layer") {
+        if (renderedLayers.has(node.compositionSpec.id)) return;
+        renderedLayers.add(node.compositionSpec.id);
+      }
+      renderSharedCoordinateComposition(node);
+    });
     editingGroupPath.value = snapshot.editingGroupPath && getGroupAtPath(snapshot.editingGroupPath)
       ? [...snapshot.editingGroupPath]
       : [];
@@ -1322,10 +1476,23 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   }
 
   // --- selection ---
+  function scopedCompositionMemberIds(node: CanvasNode) {
+    const composition = node.compositionSpec;
+    if (!composition || editingCompositionId.value === composition.id) return [node.id];
+    const members = new Set(composition.members.map((member) => member.nodeId));
+    const memberIds = getSelectionScopeNodes()
+      .filter((candidate) => members.has(candidate.id))
+      .map((candidate) => candidate.id);
+    return memberIds.length > 0 ? memberIds : [node.id];
+  }
   function normalizeSelection(ids: string[]) {
     const normalized = new Set<string>();
     const nodes = getSelectionScopeNodes();
-    ids.forEach((id) => { if (nodes.some((node) => node.id === id)) normalized.add(id); });
+    ids.forEach((id) => {
+      const node = nodes.find((candidate) => candidate.id === id);
+      if (!node) return;
+      scopedCompositionMemberIds(node).forEach((memberId) => normalized.add(memberId));
+    });
     return nodes.filter((n) => normalized.has(n.id)).map((n) => n.id);
   }
   function setSelection(ids: string[]) {
@@ -1348,6 +1515,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     dispatchRelationship({ type: "clear" });
     selectedIds.value = [];
     editingGroupPath.value = [];
+    editingCompositionId.value = null;
+    chartDrilldown.value = null;
     axisBindingTarget.value = null;
     semanticSelection.value = null;
     nestedBindingTarget.value = null;
@@ -1430,7 +1599,36 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     return true;
   }
 
+  function semanticSelectionBounds(elements: Element[]) {
+    let bounds: Bounds | null = null;
+    elements.forEach((element) => {
+      const rect = element.getBoundingClientRect();
+      if (rect.width <= 0 && rect.height <= 0) return;
+      const topLeft = toSelectionScopePoint(rect.left, rect.top);
+      const bottomRight = toSelectionScopePoint(rect.right, rect.bottom);
+      bounds = mergeBounds(bounds, {
+        minX: Math.min(topLeft.x, bottomRight.x),
+        minY: Math.min(topLeft.y, bottomRight.y),
+        maxX: Math.max(topLeft.x, bottomRight.x),
+        maxY: Math.max(topLeft.y, bottomRight.y),
+        width: Math.abs(bottomRight.x - topLeft.x),
+        height: Math.abs(bottomRight.y - topLeft.y),
+      });
+    });
+    return bounds;
+  }
+
+  function semanticMarkElements(target: Element, mode: "category" | "mark", categoryKey?: string) {
+    if (mode === "mark" || !categoryKey) return [target];
+    const chartRoot = target.closest("[data-chart-type]");
+    if (!chartRoot) return [target];
+    return Array.from(chartRoot.querySelectorAll("[data-mark-role]"))
+      .filter((element) => element.getAttribute("data-category-key") === categoryKey);
+  }
+
   function onSemanticMarkPointerDown(node: CanvasNode, event: PointerEvent) {
+    const drilldown = chartDrilldown.value;
+    if (!drilldown || drilldown.nodeId !== node.id) return;
     const target = event.target instanceof Element ? event.target.closest("[data-mark-role]") : null;
     if (!(target instanceof Element)) return;
     compositionDragSourceId.value = null;
@@ -1438,9 +1636,27 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const role = target.getAttribute("data-mark-role") ?? "";
     const markGroupId = target.getAttribute("data-mark-group-id") ?? undefined;
     const seriesKey = target.getAttribute("data-series-key") ?? undefined;
+    const categoryKey = target.getAttribute("data-category-key") ?? undefined;
     const rowTarget = target.hasAttribute("data-row-key") ? target : target.closest("[data-row-key]");
     const rowKey = rowTarget?.getAttribute("data-row-key") ?? undefined;
-    semanticSelection.value = { nodeId: node.id, role, markGroupId, seriesKey, rowKey };
+    const match = resolveSemanticMarkMatch(node.chartSpec?.chartType ?? "", drilldown.level, {
+      role,
+      categoryKey,
+      seriesKey,
+      rowKey,
+    });
+    const elements = semanticMarkElements(target, match.mode, categoryKey);
+    semanticSelection.value = {
+      nodeId: node.id,
+      role,
+      markGroupId,
+      seriesKey,
+      categoryKey,
+      rowKey,
+      level: drilldown.level,
+      partCount: elements.length,
+      bounds: semanticSelectionBounds(elements) ?? undefined,
+    };
     dispatchRelationship({
       type: "select-entity",
       selection: markGroupId && chartRelationships.value.markGroups[markGroupId]
@@ -1470,16 +1686,17 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (hasModifier) toggleSelection([node.id]);
     else {
       setSelection([node.id]);
-      if (node.chartSpec) {
-        compositionDragSourceId.value = node.id;
-        startMove([node.id], event);
-      }
     }
     event.preventDefault();
     event.stopPropagation();
   }
 
-  function updateNodeMarkGroupConfig(node: CanvasNode, patch: MarkGroupSharedConfig, requestedRole?: string) {
+  function updateNodeMarkGroupConfig(
+    node: CanvasNode,
+    patch: MarkGroupSharedConfig,
+    requestedRole?: string,
+    recordHistory = true,
+  ) {
     const role = requestedRole ?? getChartTemplateContract(node.chartSpec?.chartType ?? "")?.markRole;
     if (!role) return false;
     const specs = [node.chartSpec, ...(node.layerSpec?.children.map((child) => child.chartSpec) ?? [])]
@@ -1491,7 +1708,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       return [{ spec, group }];
     });
     if (updates.length === 0 && node.chartSpec && !requestedRole) {
-      pushCanvasHistory();
+      if (recordHistory) pushCanvasHistory();
       node.chartSpec = {
         ...node.chartSpec,
         markGroups: [{
@@ -1508,7 +1725,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     }
     if (updates.length === 0) return false;
 
-    pushCanvasHistory();
+    if (recordHistory) pushCanvasHistory();
     updates.forEach(({ group }) => {
       group.sharedConfig = { ...group.sharedConfig, ...patch };
       if (chartRelationships.value.markGroups[group.id]) {
@@ -1524,7 +1741,14 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function updateAxisBindingMarkGroupConfig(patch: MarkGroupSharedConfig) {
     const node = axisBindingNode.value;
     if (!node) return;
-    updateNodeMarkGroupConfig(node, patch);
+    const targets = encodingTargets(node);
+    if (targets.length <= 1) {
+      updateNodeMarkGroupConfig(node, patch);
+      return;
+    }
+    pushCanvasHistory();
+    targets.forEach((target) => updateNodeMarkGroupConfig(target, patch, undefined, false));
+    reconcileRelationshipNodes(canvasNodes.value);
   }
 
   function updateSelectedChartMarkGroupConfig(patch: MarkGroupSharedConfig) {
@@ -1545,6 +1769,27 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     return node.compositionSpec.members
       .map((member) => findCanvasNode(member.nodeId))
       .filter((member): member is CanvasNode => !!member?.chartSpec);
+  }
+
+  function encodingTargets(node: CanvasNode) {
+    return dimensionDecisionTargets(node);
+  }
+
+  function updateEncodingTargets(
+    node: CanvasNode,
+    update: (target: CanvasNode, spec: ChartSpec) => ChartSpec,
+    render = true,
+  ) {
+    const targets = encodingTargets(node);
+    pushCanvasHistory();
+    targets.forEach((target) => {
+      if (!target.chartSpec) return;
+      target.llmRenderer = null;
+      target.chartSpec = update(target, target.chartSpec);
+      if (render) renderSharedCoordinateComposition(target);
+      registerChartRelationship(target);
+    });
+    reconcileRelationshipNodes(canvasNodes.value);
   }
 
   function applyDimensionAggregation(fieldName: string, aggregation: "sum" | "avg") {
@@ -1609,7 +1854,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       const template = normalizeChartTemplate(member.chartSpec.chartType);
       member.llmRenderer = null;
       if (template === "line" || template === "area") {
-        const seriesEncoding = { field: column.name, type: "nominal" as const };
+        const seriesEncoding = { field: column.name, type: column.type };
         const valueFilters = { ...member.chartSpec.valueFilters };
         delete valueFilters[column.name];
         member.chartSpec = {
@@ -1619,11 +1864,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           encodings: template === "line"
             ? lineDataEncodings(member.chartSpec.encodings)
             : { ...member.chartSpec.encodings, color: seriesEncoding },
-          series: member.chartSpec.series ?? seriesEncoding,
-          seriesFields: Array.from(new Map([
-            ...(member.chartSpec.seriesFields ?? (member.chartSpec.series ? [member.chartSpec.series] : [])),
-            seriesEncoding,
-          ].map((encoding) => [encoding.field, encoding])).values()),
+          series: seriesEncoding,
+          seriesFields: [seriesEncoding],
+          valueFields: undefined,
           valueFilters: Object.keys(valueFilters).length > 0 ? valueFilters : undefined,
           dimensionDecisions: { ...member.chartSpec.dimensionDecisions, [fieldName]: "series" },
           dimensionRecommendations: undefined,
@@ -1632,13 +1875,16 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       } else if (template === "bar") {
         const valueFilters = { ...member.chartSpec.valueFilters };
         delete valueFilters[column.name];
+        const encodings = { ...member.chartSpec.encodings };
+        delete encodings.color;
+        const seriesEncoding = { field: column.name, type: column.type };
         member.chartSpec = {
           ...member.chartSpec,
           chartType: targetChartType,
-          encodings: {
-            ...member.chartSpec.encodings,
-            color: { field: column.name, type: column.type },
-          },
+          encodings,
+          series: seriesEncoding,
+          seriesFields: [seriesEncoding],
+          valueFields: undefined,
           valueFilters: Object.keys(valueFilters).length > 0 ? valueFilters : undefined,
           dimensionDecisions: { ...member.chartSpec.dimensionDecisions, [fieldName]: "series" },
           dimensionRecommendations: undefined,
@@ -1684,7 +1930,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           dimensionRecommendations: undefined,
           renderer: undefined,
         };
-        renderLayerComposition(member);
+        renderSharedCoordinateComposition(member);
       });
       setImportNotice(`Flatten by [${flattenFields.join(", ")}] applied.`);
       return true;
@@ -1707,6 +1953,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           : node.chartSpec.encodings,
         series: { field: column.name, type: column.type },
         seriesFields: [{ field: column.name, type: column.type }],
+        valueFields: undefined,
         valueFilters: Object.keys(valueFilters).length > 0 ? valueFilters : undefined,
         dimensionDecisions: {
           ...node.chartSpec.dimensionDecisions,
@@ -1811,18 +2058,45 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     dimensionDropTarget.value = null;
   }
 
-  function createLayer(recordHistory = true) {
+  function applyInputColumnIntent(intentId: string) {
+    const target = dimensionDropTarget.value;
+    const node = target ? findCanvasNode(target.nodeId) : null;
+    const dataset = node?.chartSpec ? getDataset(node.chartSpec.datasetId) : null;
+    const column = dataset?.columns.find((candidate) => candidate.name === target?.fieldName);
+    if (!target || !node?.chartSpec || !dataset || !column) return false;
+    const analysis = inferColumnIntents(dataset, node.chartSpec, column, { type: "chart-body" });
+    const intent = analysis.intents.find((candidate) => candidate.id === intentId);
+    if (!intent) {
+      dimensionDropTarget.value = { ...target, analysis };
+      setImportNotice("That column intent is no longer valid for the current chart.");
+      return false;
+    }
+    const applied = intent.kind === "aggregate" && intent.aggregation
+      ? applyDimensionAggregation(target.fieldName, intent.aggregation)
+      : intent.kind === "facet" && intent.facetDirection
+        ? applyDimensionFacet(target.fieldName, intent.facetDirection)
+        : intent.kind === "upgrade" && intent.targetChartType
+          ? applyDimensionChartUpgrade(target.fieldName, intent.targetChartType)
+          : intent.kind === "series"
+            ? setSeriesFields([target.fieldName])
+          : false;
+    if (applied) closeDimensionDropDecision();
+    return applied;
+  }
+
+  function createLayer(recordHistory = true, requestedChannels?: CoordinateChannel[]) {
     const nodes = selectedNodes.value.filter((node) => node.chartSpec && node.coordinateGuide);
     if (nodes.length < 2 || !nodes.every(isAtomicChartReady)) return false;
     const contracts = nodes.map((node) => getChartTemplateContract(node.chartSpec!.chartType));
     if (contracts.some((contract) => !contract)) return false;
     const coordinateType = contracts[0]!.coordinateSystem;
     if (coordinateType === "CoordinateFree" || !nodes.every((node) => node.coordinateGuide?.type === coordinateType)) return false;
-    const sharedChannels = contracts[0]!.shareableChannels.filter((channel) =>
+    const compatibleChannels = contracts[0]!.shareableChannels.filter((channel) =>
       contracts.every((contract) => contract!.shareableChannels.includes(channel))
       && sharedChannelEncodingsAreCompatible(nodes, channel),
     );
-    if (sharedChannels.length === 0) return false;
+    const sharedChannels = requestedChannels ?? compatibleChannels;
+    if (sharedChannels.length === 0 || !sharedChannels.every((channel) => compatibleChannels.includes(channel))) return false;
     const datasetId = nodes[0]!.chartSpec!.datasetId;
     const filterKey = JSON.stringify({
       single: Object.entries(nodes[0]!.chartSpec!.filters ?? {}).sort(),
@@ -1887,7 +2161,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       node.compositionSpec = compositionSpec;
       node.layerSpec = null;
     });
-    renderLayerComposition(owner);
+    renderSharedCoordinateComposition(owner);
     replaceSelectionScopeNodes([
       ...getSelectionScopeNodes().filter((node) => !selectedIds.value.includes(node.id)),
       ...layerNodes,
@@ -1905,10 +2179,18 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       || sourceNodes.length === 0
       || !sourceNodes.every(isAtomicChartReady)
       || (type === "concat" && sourceNodes.length < 2)) return false;
+    if (type === "concat") {
+      const sharedChannel: CoordinateChannel = (concatDirection ?? "horizontal") === "horizontal" ? "y" : "x";
+      const sharedChannels = requestedChannels ?? [sharedChannel];
+      if (!sourceNodes.every(isStandaloneCartesianCompositionChart)
+        || sharedChannels.length !== 1
+        || sharedChannels[0] !== sharedChannel
+        || !sharedChannelEncodingsAreCompatible(sourceNodes, sharedChannel)) return false;
+    }
     const compositionId = crypto.randomUUID();
     const gap = type === "facet"
       ? 4
-      : Math.max(24, Math.min(bounds.width, bounds.height) * 0.08);
+      : Math.max(6, Math.min(14, Math.min(bounds.width, bounds.height) * 0.025));
     if (recordHistory) pushCanvasHistory();
     let children: CanvasNode[] = [];
     let facetField: string | undefined;
@@ -1979,14 +2261,13 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         ? [sourceNodes[1]!, sourceNodes[0]!, ...sourceNodes.slice(2)]
         : sourceNodes;
       children = orderedNodes.map((node) => {
+        const plotBounds = collectNodeSelectionBounds(node);
         if (direction === "vertical") {
-          node.x = bounds.minX;
-          node.y = bounds.minY + cursor;
-          cursor += node.height * node.scaleY + gap;
+          node.y += bounds.minY + cursor - plotBounds.minY;
+          cursor += plotBounds.height + gap;
         } else {
-          node.x = bounds.minX + cursor;
-          node.y = bounds.minY;
-          cursor += node.width * node.scaleX + gap;
+          node.x += bounds.minX + cursor - plotBounds.minX;
+          cursor += plotBounds.width + gap;
         }
         return node;
       });
@@ -2001,7 +2282,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const coordinateSystem: CoordinateSystemSpec | null = sharedChannels.length > 0 ? {
       id: `coordinate:${compositionId}`,
       type: children[0]?.coordinateGuide?.type ?? "CoordinateFree",
-      ownerNodeId: type === "nested" ? compositionId : children[0]!.id,
+      ownerNodeId: type === "nested"
+        ? compositionId
+        : type === "concat"
+          ? sourceNodes[0]!.id
+          : children[0]!.id,
       members: children.map((node) => ({
         nodeId: node.id,
         channels: [...(getChartTemplateContract(node.chartSpec?.chartType ?? "")?.shareableChannels ?? [])],
@@ -2031,6 +2316,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     };
     if (type !== "nested") {
       children.forEach((node) => { node.compositionSpec = compositionSpec; });
+      if (type === "concat") renderSharedCoordinateComposition(children[0]!);
       replaceSelectionScopeNodes([
         ...getSelectionScopeNodes().filter((node) => !selectedIds.value.includes(node.id)),
         ...children,
@@ -2064,7 +2350,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
 
   function executeComposition(type: "layer" | "concat" | "facet", recordHistory = true, requestedChannels?: CoordinateChannel[], concatDirection?: "horizontal" | "vertical", concatPosition?: "before" | "after") {
     const created = type === "layer"
-      ? createLayer(recordHistory)
+      ? createLayer(recordHistory, requestedChannels)
       : createStructuralComposition(type, recordHistory, requestedChannels, concatDirection, concatPosition);
     setImportNotice(created
       ? `${type[0]!.toUpperCase()}${type.slice(1)} composition created.`
@@ -2321,6 +2607,25 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     return result;
   }
 
+  function localRectDropGeometry(node: CanvasNode, rect: ChartPlotArea) {
+    const outline = [
+      { x: rect.x, y: rect.y },
+      { x: rect.x + rect.width, y: rect.y },
+      { x: rect.x + rect.width, y: rect.y + rect.height },
+      { x: rect.x, y: rect.y + rect.height },
+    ].map((corner) => nodeLocalToSelectionScopePoint(node, corner));
+    const xs = outline.map(({ x }) => x);
+    const ys = outline.map(({ y }) => y);
+    const minX = Math.min(...xs);
+    const minY = Math.min(...ys);
+    const maxX = Math.max(...xs);
+    const maxY = Math.max(...ys);
+    return {
+      outline,
+      bounds: { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY },
+    };
+  }
+
   function compositionDropZoneAtPoint(point: Point, sourceNodeId: string): ChartDropZone | null {
     const source = findCanvasNode(sourceNodeId);
     if (!source?.chartSpec || !source.coordinateGuide) return null;
@@ -2328,16 +2633,23 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       node.id !== sourceNodeId
       && !!node.chartSpec
       && !!node.coordinateGuide
-      && (!source.compositionSpec || node.compositionSpec?.id !== source.compositionSpec.id),
+      && !node.compositionSpec,
     );
-    const edgeSize = Math.max(18 / Math.max(viewZoom.value, 0.25), 12);
     for (const target of targets) {
-      if (!target.coordinateGuide) continue;
-      const targetBounds = collectNodeSelectionBounds(target);
-      const inside = point.x >= targetBounds.minX
-        && point.x <= targetBounds.maxX
-        && point.y >= targetBounds.minY
-        && point.y <= targetBounds.maxY;
+      if (!target.coordinateGuide || !target.chartSpec) continue;
+      const localPoint = toNodeLocalPoint(target, point);
+      const localMinX = target.kind === "leaf" ? target.contentMinX : 0;
+      const localMinY = target.kind === "leaf" ? target.contentMinY : 0;
+      const plotArea = target.chartSpec.plotArea ?? {
+        x: localMinX,
+        y: localMinY,
+        width: target.width,
+        height: target.height,
+      };
+      const inside = localPoint.x >= plotArea.x
+        && localPoint.x <= plotArea.x + plotArea.width
+        && localPoint.y >= plotArea.y
+        && localPoint.y <= plotArea.y + plotArea.height;
       if (!inside) continue;
 
       const nestedPoint = scatterPointDropZone(target, point);
@@ -2354,65 +2666,68 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         };
       }
 
-      const left = point.x - targetBounds.minX;
-      const right = targetBounds.maxX - point.x;
-      const top = point.y - targetBounds.minY;
-      const bottom = targetBounds.maxY - point.y;
-      const nearest = Math.min(left, right, top, bottom);
-      if (nearest <= edgeSize) {
-        const horizontal = Math.min(left, right) <= Math.min(top, bottom);
+      const left = localPoint.x - plotArea.x;
+      const right = plotArea.x + plotArea.width - localPoint.x;
+      const top = localPoint.y - plotArea.y;
+      const bottom = plotArea.y + plotArea.height - localPoint.y;
+      const edgeSizeX = Math.min(plotArea.width * 0.22, Math.max(18 / Math.max(viewZoom.value * Math.abs(target.scaleX), 0.25), 12));
+      const edgeSizeY = Math.min(plotArea.height * 0.22, Math.max(18 / Math.max(viewZoom.value * Math.abs(target.scaleY), 0.25), 12));
+      const horizontal = Math.min(left / edgeSizeX, right / edgeSizeX) <= Math.min(top / edgeSizeY, bottom / edgeSizeY);
+      const withinBoundary = horizontal
+        ? Math.min(left, right) <= edgeSizeX
+        : Math.min(top, bottom) <= edgeSizeY;
+      if (withinBoundary) {
         const direction = horizontal ? "horizontal" : "vertical";
         const sharedChannel: CoordinateChannel = horizontal ? "y" : "x";
         const before = horizontal ? left <= right : top <= bottom;
         const sourceContract = getChartTemplateContract(source.chartSpec.chartType);
         const targetContract = getChartTemplateContract(target.chartSpec!.chartType);
-        const compatible = sourceContract?.coordinateSystem === targetContract?.coordinateSystem
-          && source.coordinateGuide.type === target.coordinateGuide.type
+        const compatible = isStandaloneCartesianCompositionChart(source)
+          && isStandaloneCartesianCompositionChart(target)
+          && sourceContract?.coordinateSystem === targetContract?.coordinateSystem
           && !!sourceContract?.shareableChannels.includes(sharedChannel)
           && !!targetContract?.shareableChannels.includes(sharedChannel)
           && sharedChannelEncodingsAreCompatible([source, target], sharedChannel);
-        const bounds: Bounds = horizontal
+        const localZone: ChartPlotArea = horizontal
           ? {
-            minX: left <= right ? targetBounds.minX : targetBounds.maxX - edgeSize,
-            minY: targetBounds.minY,
-            maxX: left <= right ? targetBounds.minX + edgeSize : targetBounds.maxX,
-            maxY: targetBounds.maxY,
-            width: edgeSize,
-            height: targetBounds.height,
+            x: left <= right ? plotArea.x : plotArea.x + plotArea.width - edgeSizeX,
+            y: plotArea.y,
+            width: edgeSizeX,
+            height: plotArea.height,
           }
           : {
-            minX: targetBounds.minX,
-            minY: top <= bottom ? targetBounds.minY : targetBounds.maxY - edgeSize,
-            maxX: targetBounds.maxX,
-            maxY: top <= bottom ? targetBounds.minY + edgeSize : targetBounds.maxY,
-            width: targetBounds.width,
-            height: edgeSize,
+            x: plotArea.x,
+            y: top <= bottom ? plotArea.y : plotArea.y + plotArea.height - edgeSizeY,
+            width: plotArea.width,
+            height: edgeSizeY,
           };
+        const geometry = localRectDropGeometry(target, localZone);
         return {
           targetNodeId: target.id,
           type: "concat",
           sharedChannels: [sharedChannel],
-          bounds,
+          ...geometry,
           compatible,
           direction,
           concatPosition: before ? "before" : "after",
         };
       }
 
-      const sourceContract = getChartTemplateContract(source.chartSpec.chartType);
-      const targetContract = getChartTemplateContract(target.chartSpec!.chartType);
-      const sharedChannels = sourceContract?.shareableChannels.filter((channel) =>
-        targetContract?.shareableChannels.includes(channel)
-        && sharedChannelEncodingsAreCompatible([source, target], channel),
-      ) ?? [];
-      const compatible = sourceContract?.coordinateSystem === targetContract?.coordinateSystem
-        && source.coordinateGuide.type === target.coordinateGuide.type
-        && sharedChannels.length > 0;
+      const sharedChannels: CoordinateChannel[] = ["x", "y"];
+      const compatible = isStandaloneCartesianCompositionChart(source)
+        && isStandaloneCartesianCompositionChart(target)
+        && sharedChannels.every((channel) => sharedChannelEncodingsAreCompatible([source, target], channel));
+      const layerArea = {
+        x: plotArea.x + edgeSizeX,
+        y: plotArea.y + edgeSizeY,
+        width: Math.max(0, plotArea.width - edgeSizeX * 2),
+        height: Math.max(0, plotArea.height - edgeSizeY * 2),
+      };
       return {
         targetNodeId: target.id,
         type: "layer",
         sharedChannels,
-        bounds: targetBounds,
+        ...localRectDropGeometry(target, layerArea),
         compatible,
       };
     }
@@ -2447,7 +2762,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       setSelection([target.id]);
       return true;
     }
-    setSelection([target.id, source.id]);
+    // Selection normalization follows canvas z-order, but concat ordering must
+    // preserve the semantic target/source order supplied by the drop gesture.
+    selectedIds.value = [target.id, source.id];
     const created = executeComposition(zone.type, false, zone.sharedChannels, zone.direction, zone.concatPosition);
     if (created) axisBindingTarget.value = null;
     return created;
@@ -2503,16 +2820,13 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function setAxisSwap(swapped: boolean) {
     const node = axisBindingNode.value;
     if (!node?.chartSpec || node.coordinateGuide?.type !== "Cartesian") return;
-    pushCanvasHistory();
-    node.chartSpec = {
-      ...node.chartSpec,
+    updateEncodingTargets(node, (_target, spec) => ({
+      ...spec,
       axisSwapped: swapped || undefined,
       scales: undefined,
       plotArea: undefined,
       renderer: undefined,
-    };
-    renderLayerComposition(node);
-    registerChartRelationship(node);
+    }));
   }
   function closeAxisBinding() {
     axisBindingTarget.value = null;
@@ -2525,8 +2839,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const column = dataset.columns.find((item) => item.name === fieldName);
     if (!column) return;
     const mappedChannel = mappedEncodingChannel(node, target.channel);
-    const encodings = { ...node.chartSpec?.encodings };
-    encodings[mappedChannel] = { field: column.name, type: column.type };
+    if (mappedChannel === "y" && (node.chartSpec?.valueFields?.length ?? 0) > 0) {
+      setImportNotice("Y is derived from quantitative Series Items and cannot be bound separately.");
+      return;
+    }
+    const encodings = { ...node.chartSpec?.encodings, [mappedChannel]: { field: column.name, type: column.type } };
     const clearsSeries = node.chartSpec?.series?.field === column.name
       || node.chartSpec?.seriesFields?.some((encoding) => encoding.field === column.name);
     const tentativeSpec: ChartSpec = {
@@ -2544,65 +2861,72 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       setImportNotice(conflict.message);
       return;
     }
-    pushCanvasHistory();
-    node.llmRenderer = null;
-    const aggregations = { ...node.chartSpec?.aggregations };
-    if (aggregation && column.type === "quantitative") aggregations[mappedChannel] = aggregation;
-    else delete aggregations[mappedChannel];
-    node.chartSpec = {
-      ...tentativeSpec,
-      aggregations: Object.keys(aggregations).length ? aggregations : undefined,
-      scales: undefined,
-      plotArea: undefined,
-      renderer: undefined,
-      dimensionDecisions: undefined,
-      dimensionRecommendations: undefined,
-    };
-    registerChartRelationship(node);
-    renderLayerComposition(node);
+    updateEncodingTargets(node, (member, spec) => {
+      const memberChannel = mappedEncodingChannel(member, target.channel);
+      const memberEncodings = { ...spec.encodings, [memberChannel]: { field: column.name, type: column.type } };
+      const memberClearsSeries = spec.series?.field === column.name
+        || spec.seriesFields?.some((encoding) => encoding.field === column.name);
+      const aggregations = { ...spec.aggregations };
+      if (aggregation && column.type === "quantitative") aggregations[memberChannel] = aggregation;
+      else delete aggregations[memberChannel];
+      return {
+        ...spec,
+        encodings: memberEncodings,
+        series: memberClearsSeries ? undefined : spec.series,
+        seriesFields: memberClearsSeries ? undefined : spec.seriesFields,
+        valueFields: memberChannel === "y" ? undefined : spec.valueFields,
+        aggregations: Object.keys(aggregations).length ? aggregations : undefined,
+        scales: undefined,
+        plotArea: undefined,
+        renderer: undefined,
+        dimensionDecisions: undefined,
+        dimensionRecommendations: undefined,
+      };
+    });
   }
   function clearMarkField() {
     const target = axisBindingTarget.value;
     const node = axisBindingNode.value;
     if (!target || !node?.chartSpec) return;
-    const mappedChannel = mappedEncodingChannel(node, target.channel);
-    if (!node.chartSpec.encodings[target.channel] && !node.chartSpec.encodings[mappedChannel]) return;
-    pushCanvasHistory();
-    const encodings = { ...node.chartSpec.encodings };
-    const aggregations = { ...node.chartSpec.aggregations };
-    delete encodings[target.channel];
-    delete encodings[mappedChannel];
-    delete aggregations[target.channel];
-    delete aggregations[mappedChannel];
-    node.llmRenderer = null;
-    node.chartSpec = {
-      ...node.chartSpec,
-      encodings,
-      aggregations: Object.keys(aggregations).length ? aggregations : undefined,
-      valueFields: mappedChannel === "y" ? undefined : node.chartSpec.valueFields,
-      scales: undefined,
-      plotArea: undefined,
-      renderer: undefined,
-      dimensionDecisions: undefined,
-      dimensionRecommendations: undefined,
-    };
-    node.renderedContent = null;
-    renderLayerComposition(node);
+    if (!encodingTargets(node).some((member) => member.chartSpec?.encodings[target.channel]
+      || member.chartSpec?.encodings[mappedEncodingChannel(member, target.channel)])) return;
+    updateEncodingTargets(node, (member, spec) => {
+      const memberChannel = mappedEncodingChannel(member, target.channel);
+      const encodings = { ...spec.encodings };
+      const aggregations = { ...spec.aggregations };
+      delete encodings[target.channel];
+      delete encodings[memberChannel];
+      delete aggregations[target.channel];
+      delete aggregations[memberChannel];
+      member.renderedContent = null;
+      return {
+        ...spec,
+        encodings,
+        aggregations: Object.keys(aggregations).length ? aggregations : undefined,
+        valueFields: memberChannel === "y" ? undefined : spec.valueFields,
+        scales: undefined,
+        plotArea: undefined,
+        renderer: undefined,
+        dimensionDecisions: undefined,
+        dimensionRecommendations: undefined,
+      };
+    });
   }
   function setAxisBindingAggregation(channel: EncodingChannel, aggregation?: "sum" | "avg") {
     const node = axisBindingNode.value;
     const mappedChannel = node ? mappedEncodingChannel(node, channel) : channel;
     if (!node?.chartSpec || node.chartSpec.encodings[mappedChannel]?.type !== "quantitative") return;
-    pushCanvasHistory();
-    const aggregations = { ...node.chartSpec.aggregations };
-    if (aggregation) aggregations[mappedChannel] = aggregation;
-    else delete aggregations[mappedChannel];
-    node.chartSpec = {
-      ...node.chartSpec,
-      aggregations: Object.keys(aggregations).length ? aggregations : undefined,
-      renderer: undefined,
-    };
-    renderLayerComposition(node);
+    updateEncodingTargets(node, (member, spec) => {
+      const memberChannel = mappedEncodingChannel(member, channel);
+      const aggregations = { ...spec.aggregations };
+      if (aggregation) aggregations[memberChannel] = aggregation;
+      else delete aggregations[memberChannel];
+      return {
+        ...spec,
+        aggregations: Object.keys(aggregations).length ? aggregations : undefined,
+        renderer: undefined,
+      };
+    });
   }
   function setValueFilters(filters: Record<string, { field: string; values: string[] }>) {
     const node = axisBindingNode.value ?? selectedNodes.value.find((item) => !!item.chartSpec);
@@ -2639,32 +2963,29 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       return;
     }
     const encoding = { field: column.name, type: column.type };
-    pushCanvasHistory();
-    node.chartSpec = {
-      ...node.chartSpec,
-      encodings: normalizeChartTemplate(node.chartSpec.chartType) === "line"
-        ? lineDataEncodings(node.chartSpec.encodings)
-        : node.chartSpec.encodings,
+    updateEncodingTargets(node, (_target, spec) => ({
+      ...spec,
+      encodings: normalizeChartTemplate(spec.chartType) === "line"
+        ? lineDataEncodings(spec.encodings)
+        : spec.encodings,
       series: encoding,
       seriesFields: [encoding],
       valueFields: undefined,
-      dimensionDecisions: { ...node.chartSpec.dimensionDecisions, [column.name]: "series" },
+      dimensionDecisions: { ...spec.dimensionDecisions, [column.name]: "series" },
       scales: undefined,
       plotArea: undefined,
       renderer: undefined,
-    };
-    renderChartNode(node);
-    registerChartRelationship(node);
+    }));
   }
   function setSeriesFields(fieldNames: string[]) {
     const node = axisBindingNode.value;
     const dataset = axisBindingDataset.value;
-    if (!node?.chartSpec || !dataset) return;
+    if (!node?.chartSpec || !dataset) return false;
     const selected = Array.from(new Set(fieldNames)).flatMap((field) => {
       const column = dataset.columns.find((item) => item.name === field
         && (item.type === "nominal" || item.type === "temporal"));
       return column ? [{ field: column.name, type: column.type }] : [];
-    });
+    }).slice(0, 1);
     const occupied = new Set(Object.values(node.chartSpec.encodings)
       .filter((encoding): encoding is NonNullable<typeof encoding> => !!encoding)
       .map((encoding) => encoding.field));
@@ -2672,46 +2993,56 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       && encoding.field !== node.chartSpec?.encodings.color?.field);
     if (conflicting) {
       setImportNotice(`${conflicting.field} is already bound to another channel.`);
-      return;
+      return false;
     }
-    pushCanvasHistory();
-    const encodings = { ...node.chartSpec.encodings };
-    if (normalizeChartTemplate(node.chartSpec.chartType) === "bar") delete encodings.color;
-    const dimensionDecisions = { ...node.chartSpec.dimensionDecisions };
-    selected.forEach((encoding) => { dimensionDecisions[encoding.field] = "series"; });
-    node.chartSpec = {
-      ...node.chartSpec,
-      encodings,
-      series: selected[0],
-      seriesFields: selected.length ? selected : undefined,
-      scales: undefined,
-      plotArea: undefined,
-      renderer: undefined,
-      dimensionDecisions: Object.keys(dimensionDecisions).length ? dimensionDecisions : undefined,
-      dimensionRecommendations: undefined,
-    };
-    renderChartNode(node);
-    registerChartRelationship(node);
+    updateEncodingTargets(node, (_target, spec) => {
+      const encodings = { ...spec.encodings };
+      const template = normalizeChartTemplate(spec.chartType);
+      if (template === "bar" || template === "line") delete encodings.color;
+      else if (template === "area") {
+        if (selected[0]) encodings.color = { ...selected[0] };
+        else if (encodings.color?.field === spec.series?.field
+          || spec.seriesFields?.some((encoding) => encoding.field === encodings.color?.field)) {
+          delete encodings.color;
+        }
+      }
+      const dimensionDecisions = { ...spec.dimensionDecisions };
+      (spec.seriesFields ?? (spec.series ? [spec.series] : []))
+        .forEach((encoding) => { delete dimensionDecisions[encoding.field]; });
+      selected.forEach((encoding) => { dimensionDecisions[encoding.field] = "series"; });
+      return {
+        ...spec,
+        encodings,
+        series: selected[0],
+        seriesFields: selected.length ? selected : undefined,
+        valueFields: selected.length ? undefined : spec.valueFields,
+        scales: undefined,
+        plotArea: undefined,
+        renderer: undefined,
+        dimensionDecisions: Object.keys(dimensionDecisions).length ? dimensionDecisions : undefined,
+        dimensionRecommendations: undefined,
+      };
+    });
+    return true;
   }
   function clearSeriesBinding() {
     const node = axisBindingNode.value;
     if (!node?.chartSpec) return;
-    const field = resolvedSeriesField(node.chartSpec);
-    const decisions = { ...node.chartSpec.dimensionDecisions };
-    if (field) delete decisions[field];
-    pushCanvasHistory();
-    node.chartSpec = {
-      ...node.chartSpec,
-      series: undefined,
-      seriesFields: undefined,
-      scales: undefined,
-      plotArea: undefined,
-      renderer: undefined,
-      dimensionDecisions: Object.keys(decisions).length ? decisions : undefined,
-      dimensionRecommendations: undefined,
-    };
-    renderChartNode(node);
-    registerChartRelationship(node);
+    updateEncodingTargets(node, (_target, spec) => {
+      const field = resolvedSeriesField(spec);
+      const decisions = { ...spec.dimensionDecisions };
+      if (field) delete decisions[field];
+      return {
+        ...spec,
+        series: undefined,
+        seriesFields: undefined,
+        scales: undefined,
+        plotArea: undefined,
+        renderer: undefined,
+        dimensionDecisions: Object.keys(decisions).length ? decisions : undefined,
+        dimensionRecommendations: undefined,
+      };
+    });
   }
   function bindOptionalEncoding(channel: OptionalEncodingChannel, fieldName: string) {
     setChartEncoding(channel, fieldName);
@@ -2726,6 +3057,10 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const config = getEncodingChannelConfigsForSpec(node.chartSpec).find((item) => item.channel === channel);
     const column = fieldName ? dataset.columns.find((item) => item.name === fieldName) : undefined;
     if (!config || (fieldName && (!column || !config.accepts.includes(column.type)))) return;
+    if (channel === "y" && (node.chartSpec.valueFields?.length ?? 0) > 0) {
+      setImportNotice("Y is derived from quantitative Series Items and cannot be bound separately.");
+      return;
+    }
     if (channel === "x" || channel === "y") {
       setAxisBindingChannel(channel);
       if (fieldName) bindMarkField(fieldName);
@@ -2734,13 +3069,12 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     }
     if (channel === "theta" || channel === "angle") return setPieAngleFields(fieldName ? [fieldName] : []);
     if (channel === "radius") return fieldName ? bindPolarRadiusField(fieldName) : clearPolarRadiusField();
-    const encodings = { ...node.chartSpec.encodings };
-    if (column) encodings[channel] = { field: column.name, type: column.type };
-    else delete encodings[channel];
-    pushCanvasHistory();
-    node.chartSpec = { ...node.chartSpec, encodings, scales: undefined, plotArea: undefined, renderer: undefined };
-    renderChartNode(node);
-    registerChartRelationship(node);
+    updateEncodingTargets(node, (_target, spec) => {
+      const memberEncodings = { ...spec.encodings };
+      if (column) memberEncodings[channel] = { field: column.name, type: column.type };
+      else delete memberEncodings[channel];
+      return { ...spec, encodings: memberEncodings, scales: undefined, plotArea: undefined, renderer: undefined };
+    });
   }
 
   function setCompositionEncoding(patch: {
@@ -2815,24 +3149,22 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const dataset = axisBindingDataset.value;
     const column = dataset?.columns.find((item) => item.name === fieldName && item.type === "quantitative");
     if (!node?.chartSpec || !column) return;
-    pushCanvasHistory();
-    node.chartSpec = {
-      ...node.chartSpec,
-      encodings: { ...node.chartSpec.encodings, radius: { field: column.name, type: column.type } },
+    updateEncodingTargets(node, (_target, spec) => ({
+      ...spec,
+      encodings: { ...spec.encodings, radius: { field: column.name, type: column.type } },
       radiusMode: undefined,
       componentRadiusFields: undefined,
       renderer: undefined,
-    };
-    renderChartNode(node);
+    }));
   }
   function clearPolarRadiusField() {
     const node = axisBindingNode.value;
     if (!node?.chartSpec?.encodings.radius) return;
-    const encodings = { ...node.chartSpec.encodings };
-    delete encodings.radius;
-    pushCanvasHistory();
-    node.chartSpec = { ...node.chartSpec, encodings, radiusMode: undefined, componentRadiusFields: undefined, renderer: undefined };
-    renderChartNode(node);
+    updateEncodingTargets(node, (_target, spec) => {
+      const encodings = { ...spec.encodings };
+      delete encodings.radius;
+      return { ...spec, encodings, radiusMode: undefined, componentRadiusFields: undefined, renderer: undefined };
+    });
   }
   function applyPieAngleFields(node: CanvasNode, dataset: Dataset, fieldNames: string[]) {
     const template = normalizeChartTemplate(node.chartSpec?.chartType ?? "");
@@ -2841,23 +3173,23 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       const column = dataset.columns.find((item) => item.name === field && item.type === "quantitative");
       return column ? [{ field: column.name, type: column.type }] : [];
     });
-    const encodings = { ...node.chartSpec.encodings };
-    delete encodings.theta;
-    delete encodings.angle;
-    delete encodings.y;
-    if (selected.length === 1) encodings.theta = { ...selected[0]! };
-    pushCanvasHistory();
-    node.chartSpec = {
-      ...node.chartSpec,
-      encodings,
-      angleFields: selected.length > 1 ? selected : undefined,
-      radiusMode: undefined,
-      componentRadiusFields: undefined,
-      renderer: undefined,
-      dimensionDecisions: undefined,
-      dimensionRecommendations: undefined,
-    };
-    renderChartNode(node);
+    updateEncodingTargets(node, (_target, spec) => {
+      const memberEncodings = { ...spec.encodings };
+      delete memberEncodings.theta;
+      delete memberEncodings.angle;
+      delete memberEncodings.y;
+      if (selected.length === 1) memberEncodings.theta = { ...selected[0]! };
+      return {
+        ...spec,
+        encodings: memberEncodings,
+        angleFields: selected.length > 1 ? selected : undefined,
+        radiusMode: undefined,
+        componentRadiusFields: undefined,
+        renderer: undefined,
+        dimensionDecisions: undefined,
+        dimensionRecommendations: undefined,
+      };
+    });
     return selected.length;
   }
   function setPieAngleFields(fieldNames: string[]) {
@@ -2873,34 +3205,24 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       const column = dataset.columns.find((item) => item.name === field && item.type === "quantitative");
       return column ? [{ field: column.name, type: column.type }] : [];
     });
-    const encodings = { ...node.chartSpec.encodings };
-    delete encodings.color;
-    if (selected[0]) encodings.y = { ...selected[0] };
-    else delete encodings.y;
-    const isMultiSeriesBar = normalizeChartTemplate(node.chartSpec.chartType) === "bar"
-      && ["grouped", "stacked", "divergent-stacked"].includes(normalizeBarChartVariant(node.chartSpec.chartType) ?? "");
-    const existingSeriesFields = isMultiSeriesBar
-      ? (node.chartSpec.seriesFields?.length
-        ? node.chartSpec.seriesFields
-        : node.chartSpec.series
-          ? [node.chartSpec.series]
-          : undefined)
-      : undefined;
-    pushCanvasHistory();
-    node.chartSpec = {
-      ...node.chartSpec,
-      encodings,
-      valueFields: selected.length ? selected : undefined,
-      series: existingSeriesFields?.[0],
-      seriesFields: existingSeriesFields,
-      scales: undefined,
-      plotArea: undefined,
-      renderer: undefined,
-      dimensionDecisions: undefined,
-      dimensionRecommendations: undefined,
-    };
-    renderChartNode(node);
-    registerChartRelationship(node);
+    updateEncodingTargets(node, (_target, spec) => {
+      const memberEncodings = { ...spec.encodings };
+      delete memberEncodings.color;
+      if (selected[0]) memberEncodings.y = { ...selected[0] };
+      else delete memberEncodings.y;
+      return {
+        ...spec,
+        encodings: memberEncodings,
+        valueFields: selected.length ? selected : undefined,
+        series: undefined,
+        seriesFields: undefined,
+        scales: undefined,
+        plotArea: undefined,
+        renderer: undefined,
+        dimensionDecisions: undefined,
+        dimensionRecommendations: undefined,
+      };
+    });
   }
   function addBarItemField(fieldName: string) {
     const node = axisBindingNode.value;
@@ -2908,21 +3230,16 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (!node?.chartSpec || !dataset || !barItemAxisBinding(node)) return false;
     const column = dataset.columns.find((item) => item.name === fieldName);
     if (!column) return false;
-    if (barItemAxisBinding(node)?.label === "Series" && column.type !== "quantitative") return false;
     if (column.type === "quantitative") {
       const current = node.chartSpec.valueFields?.map((encoding) => encoding.field)
-        ?? (barItemAxisBinding(node)?.label === "Series" && node.chartSpec.encodings.y
-          ? [node.chartSpec.encodings.y.field]
-          : []);
+        ?? [];
       if (current.includes(fieldName)) return true;
       setValueSeriesFields([...current, fieldName]);
       return true;
     }
-    const current = node.chartSpec.seriesFields?.map((encoding) => encoding.field)
-      ?? (node.chartSpec.series ? [node.chartSpec.series.field] : []);
-    if (current.includes(fieldName)) return true;
-    setSeriesFields([...current, fieldName]);
-    return true;
+    if (node.chartSpec.series?.field === fieldName
+      || node.chartSpec.seriesFields?.some((encoding) => encoding.field === fieldName)) return true;
+    return setSeriesFields([fieldName]);
   }
   function removeBarItemField(nodeId: string, fieldName: string) {
     const node = findCanvasNode(nodeId);
@@ -2945,30 +3262,39 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       const column = dataset.columns.find((item) => item.name === field && item.type === "quantitative");
       return column ? [{ field: column.name, type: column.type }] : [];
     });
-    pushCanvasHistory();
-    node.chartSpec = { ...node.chartSpec, parallelFields: fields, scales: undefined, plotArea: undefined, renderer: undefined };
-    renderChartNode(node);
+    updateEncodingTargets(node, (_target, spec) => ({
+      ...spec,
+      parallelFields: fields,
+      scales: undefined,
+      plotArea: undefined,
+      renderer: undefined,
+    }));
   }
   function closeContextMenu() { contextMenu.value = null; }
 
-  function mergeLayerScale(
+  function mergeSharedScale(
     scales: ChartScaleSpec[],
     ownerScale: ChartScaleSpec,
+    encodingType: DataColumnType,
   ): ChartScaleSpec {
-    if (ownerScale.type === "point") {
+    if (encodingType === "nominal") {
       return {
         ...ownerScale,
-        domain: Array.from(new Set(scales.flatMap((scale) => scale.domain as string[]))),
+        type: "point",
+        domain: Array.from(new Set(scales.flatMap((scale) =>
+          (scale.domain as Array<string | number>).map(String)
+        ))),
       };
     }
-    if (ownerScale.type === "utc") {
+    if (encodingType === "temporal") {
       const values = scales
-        .flatMap((scale) => scale.domain as string[])
-        .map((value) => Date.parse(value))
+        .flatMap((scale) => scale.domain as Array<string | number>)
+        .map((value) => Date.parse(String(value)))
         .filter(Number.isFinite);
-      if (values.length === 0) return ownerScale;
+      if (values.length === 0) return { ...ownerScale, type: "utc" };
       return {
         ...ownerScale,
+        type: "utc",
         domain: [new Date(Math.min(...values)).toISOString(), new Date(Math.max(...values)).toISOString()],
       };
     }
@@ -2976,48 +3302,110 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       .flatMap((scale) => scale.domain as number[])
       .filter(Number.isFinite);
     if (values.length === 0) return ownerScale;
-    return { ...ownerScale, domain: [Math.min(...values), Math.max(...values)] };
+    return { ...ownerScale, type: "linear", domain: [Math.min(...values), Math.max(...values)], nice: true };
   }
 
-  function layerMembers(node: CanvasNode) {
-    if (node.compositionSpec?.type !== "layer") return [node];
+  function sharedCoordinateMembers(node: CanvasNode) {
+    if (node.compositionSpec?.type !== "layer" && node.compositionSpec?.type !== "concat") return [node];
     return node.compositionSpec.members
       .map((member) => findCanvasNode(member.nodeId))
       .filter((member): member is CanvasNode => !!member?.chartSpec);
   }
 
-  function mergedLayerScales(owner: CanvasNode) {
+  function mergedCompositionScales(owner: CanvasNode) {
     const channels = owner.coordinateSystem?.sharedChannels
       .filter((channel): channel is "x" | "y" => channel === "x" || channel === "y") ?? [];
-    const members = layerMembers(owner);
+    const members = sharedCoordinateMembers(owner);
     const result: Partial<Record<"x" | "y", ChartScaleSpec>> = {};
     channels.forEach((channel) => {
       const ownerScale = owner.chartSpec?.scales?.[channel];
-      if (!ownerScale) return;
-      const compatibleScales = members
+      const encodingType = encodingForSharedChannel(owner, channel)?.type;
+      if (!ownerScale || !encodingType) return;
+      const barCategoryScale = owner.compositionSpec?.type === "concat" && channel === "x"
+        ? members.find((member) => normalizeChartTemplate(member.chartSpec?.chartType ?? "") === "bar")
+          ?.chartSpec?.scales?.x
+        : undefined;
+      if (barCategoryScale?.type === "point") {
+        result[channel] = {
+          ...barCategoryScale,
+          domain: [...barCategoryScale.domain] as string[],
+          range: [...barCategoryScale.range] as [number, number],
+        };
+        return;
+      }
+      const availableScales = members
         .map((member) => member.chartSpec?.scales?.[channel])
-        .filter((scale): scale is ChartScaleSpec => !!scale && scale.type === ownerScale.type);
-      if (compatibleScales.length > 0) {
-        result[channel] = mergeLayerScale(compatibleScales, ownerScale);
+        .filter((scale): scale is ChartScaleSpec => !!scale);
+      if (availableScales.length > 0) {
+        result[channel] = mergeSharedScale(availableScales, ownerScale, encodingType);
       }
     });
     return Object.keys(result).length > 0 ? result : undefined;
   }
 
-  function renderLayerComposition(node: CanvasNode) {
-    const members = layerMembers(node);
-    if (members.length <= 1 || node.compositionSpec?.type !== "layer") {
+  function alignConcatSharedFrame(owner: CanvasNode, members: CanvasNode[]) {
+    const direction = owner.compositionSpec?.direction ?? "horizontal";
+    members.forEach((member) => {
+      if (member.coordinateGuide?.type !== "Cartesian" || owner.coordinateGuide?.type !== "Cartesian") return;
+      member.rotation = owner.rotation;
+      if (direction === "horizontal") {
+        member.y = owner.y;
+        member.scaleY = owner.scaleY;
+        member.coordinateGuide.origin.y = owner.coordinateGuide.origin.y;
+        member.coordinateGuide.yDirection = owner.coordinateGuide.yDirection;
+        member.coordinateGuide.yScale = owner.coordinateGuide.yScale;
+      } else {
+        member.x = owner.x;
+        member.scaleX = owner.scaleX;
+        member.coordinateGuide.origin.x = owner.coordinateGuide.origin.x;
+        member.coordinateGuide.xDirection = owner.coordinateGuide.xDirection;
+        member.coordinateGuide.xScale = owner.coordinateGuide.xScale;
+      }
+    });
+  }
+
+  function alignConcatPlotLayout(owner: CanvasNode, members: CanvasNode[]) {
+    const direction = owner.compositionSpec?.direction ?? "horizontal";
+    const orderedMembers = owner.compositionSpec?.members
+      .map((item) => members.find((member) => member.id === item.nodeId))
+      .filter((member): member is CanvasNode => !!member) ?? members;
+    const firstBounds = orderedMembers[0] ? collectNodeSelectionBounds(orderedMembers[0]) : null;
+    if (!firstBounds) return;
+    const gap = Math.max(6, Math.min(14, Math.min(firstBounds.width, firstBounds.height) * 0.025));
+    let cursor = direction === "horizontal" ? firstBounds.minX : firstBounds.minY;
+    orderedMembers.forEach((member) => {
+      const bounds = collectNodeSelectionBounds(member);
+      if (direction === "horizontal") {
+        member.x += cursor - bounds.minX;
+        cursor += bounds.width + gap;
+      } else {
+        member.y += cursor - bounds.minY;
+        cursor += bounds.height + gap;
+      }
+    });
+  }
+
+  function renderSharedCoordinateComposition(node: CanvasNode) {
+    const type = node.compositionSpec?.type;
+    const members = sharedCoordinateMembers(node);
+    if (members.length <= 1 || (type !== "layer" && type !== "concat")) {
       renderChartNode(node);
       return;
     }
-    // First render every atomic unit with its own encodings to obtain its
-    // native domain. The second pass merges only compatible shared scales.
+    const owner = members.find((member) => member.id === node.coordinateSystem?.ownerNodeId) ?? members[0]!;
+    // First obtain every unit's native domain. The second pass merges only the
+    // declared shared channels and preserves independent concat dimensions.
     members.forEach((member) => renderChartNode(member, false));
+    if (type === "concat") {
+      alignConcatSharedFrame(owner, members);
+      alignConcatPlotLayout(owner, members);
+    }
     members.forEach((member) => renderChartNode(member, true));
   }
 
   function renderChartNode(node: CanvasNode, useLayerScales = true) {
-    const coordinateOwner = useLayerScales && node.compositionSpec?.type === "layer"
+    const coordinateOwner = useLayerScales
+      && (node.compositionSpec?.type === "layer" || node.compositionSpec?.type === "concat")
       ? findCanvasNode(node.coordinateSystem?.ownerNodeId ?? "")
       : null;
     const storedChartSpec = node.chartSpec
@@ -3103,7 +3491,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         valueFields: chartSpec.valueFields,
       }
       : syncedChartSpec;
-    const ownerScales = coordinateOwner ? mergedLayerScales(coordinateOwner) : undefined;
+    const ownerScales = coordinateOwner ? mergedCompositionScales(coordinateOwner) : undefined;
     const ownerPlotArea = coordinateOwner?.chartSpec?.plotArea;
     const memberLocalOrigin = {
       x: node.kind === "leaf" ? node.contentMinX : 0,
@@ -3117,14 +3505,16 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       x: memberLocalOrigin.x - ownerLocalOrigin.x,
       y: memberLocalOrigin.y - ownerLocalOrigin.y,
     };
-    const sharedPlotArea = ownerPlotArea
+    const nativePlotArea = chartSpec.plotArea;
+    const sharedChannels = new Set(coordinateOwner?.coordinateSystem?.sharedChannels ?? []);
+    const sharedPlotArea = ownerPlotArea && nativePlotArea
       ? {
-        ...ownerPlotArea,
-        x: ownerPlotArea.x + sharedOffset.x,
-        y: ownerPlotArea.y + sharedOffset.y,
+        x: sharedChannels.has("x") ? ownerPlotArea.x + sharedOffset.x : nativePlotArea.x,
+        y: sharedChannels.has("y") ? ownerPlotArea.y + sharedOffset.y : nativePlotArea.y,
+        width: sharedChannels.has("x") ? ownerPlotArea.width : nativePlotArea.width,
+        height: sharedChannels.has("y") ? ownerPlotArea.height : nativePlotArea.height,
       }
       : undefined;
-    const sharedChannels = new Set(coordinateOwner?.coordinateSystem?.sharedChannels ?? []);
     const sharedScales = ownerScales
       ? {
         ...(sharedChannels.has("x") && ownerScales.x
@@ -3714,19 +4104,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     };
     attachPointerListeners();
   }
-  function exitGroupEditing(selectExitedGroup = true) {
-    const exitedGroupId = editingGroupPath.value.at(-1);
-    if (!exitedGroupId) return false;
-    editingGroupPath.value = editingGroupPath.value.slice(0, -1);
-    setSelection(selectExitedGroup ? [exitedGroupId] : []);
-    semanticSelection.value = null;
-    axisBindingTarget.value = null;
-    return true;
-  }
-  function onCanvasNodeDoubleClick(node: CanvasNode, event: MouseEvent) {
-    if (node.kind !== "group" || node.children.length === 0 || node.renderedContent) return;
-    event.preventDefault();
-    event.stopPropagation();
+  function enterCanvasGroup(node: CanvasGroupNode) {
     if (editingGroupPath.value.length > 0 && !getSelectionNode(node.id)) {
       editingGroupPath.value = [];
     }
@@ -3734,18 +4112,135 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       ? [node.id]
       : [...editingGroupPath.value, node.id];
     editingGroupPath.value = nextPath;
+    editingCompositionId.value = node.compositionSpec?.id ?? null;
     selectedIds.value = [];
     semanticSelection.value = null;
+    chartDrilldown.value = null;
     axisBindingTarget.value = null;
     contextMenu.value = null;
     interaction.value = null;
     detachPointerListeners();
+  }
+  function enterSelection() {
+    if (!canEnterSelection.value) return false;
+    const semantic = semanticSelection.value;
+    if (semantic && chartDrilldown.value?.nodeId === semantic.nodeId) {
+      chartDrilldown.value = { nodeId: semantic.nodeId, level: "part" };
+      semanticSelection.value = { ...semantic, level: "part" };
+      return true;
+    }
+    const node = selectedNodes.value[0];
+    if (selectedNodes.value.length === 1
+      && node?.kind === "group"
+      && node.children.length > 0
+      && !node.renderedContent) {
+      enterCanvasGroup(node);
+      return true;
+    }
+    const composition = node?.compositionSpec;
+    if (composition && editingCompositionId.value !== composition.id) {
+      editingCompositionId.value = composition.id;
+      selectedIds.value = [];
+      semanticSelection.value = null;
+      chartDrilldown.value = null;
+      axisBindingTarget.value = null;
+      return true;
+    }
+    if (selectedIds.value.length === 1 && node?.chartSpec && node.renderedContent) {
+      chartDrilldown.value = { nodeId: node.id, level: "item" };
+      semanticSelection.value = null;
+      return true;
+    }
+    return false;
+  }
+  function removeSelectionComposition() {
+    if (!canRemoveSelectionComposition.value) return false;
+    const composition = selectedNodes.value[0]?.compositionSpec;
+    if (!composition) return false;
+    const memberIds = new Set(scopedCompositionMemberIds(selectedNodes.value[0]!));
+    const members = getSelectionScopeNodes().filter((node) => memberIds.has(node.id));
+    if (members.length < 2) return false;
+
+    pushCanvasHistory();
+    dispatchRelationship({
+      type: "remove-composition",
+      compositionId: composition.id,
+      keepSharedAxes: false,
+    });
+    members.forEach((member) => {
+      member.compositionSpec = null;
+      member.coordinateSystem = standaloneCoordinateSystem(member);
+      renderChartNode(member);
+    });
+    reconcileCoordinateSystems();
+    editingCompositionId.value = null;
+    setSelection(members.map((member) => member.id));
+    axisBindingTarget.value = null;
+    semanticSelection.value = null;
+    chartDrilldown.value = null;
+    contextMenu.value = null;
+    setImportNotice("Composition removed.");
+    return true;
+  }
+  function exitGroupEditing(selectExitedGroup = true) {
+    const exitedGroupId = editingGroupPath.value.at(-1);
+    if (!exitedGroupId) return false;
+    editingGroupPath.value = editingGroupPath.value.slice(0, -1);
+    editingCompositionId.value = null;
+    setSelection(selectExitedGroup ? [exitedGroupId] : []);
+    semanticSelection.value = null;
+    chartDrilldown.value = null;
+    axisBindingTarget.value = null;
+    return true;
+  }
+  function exitSelectionHierarchy(selectParent = true) {
+    const drilldown = chartDrilldown.value;
+    if (drilldown) {
+      if (drilldown.level === "part") {
+        chartDrilldown.value = { ...drilldown, level: "item" };
+        semanticSelection.value = selectParent && semanticSelection.value
+          ? { ...semanticSelection.value, level: "item" }
+          : null;
+      } else {
+        chartDrilldown.value = null;
+        semanticSelection.value = null;
+        if (selectParent) setSelection([drilldown.nodeId]);
+      }
+      return true;
+    }
+    if (editingCompositionId.value) {
+      const compositionId = editingCompositionId.value;
+      const activeGroup = getGroupAtPath();
+      if (activeGroup?.compositionSpec?.id === compositionId) {
+        return exitGroupEditing(selectParent);
+      }
+      editingCompositionId.value = null;
+      const member = getSelectionScopeNodes().find((candidate) => candidate.compositionSpec?.id === compositionId);
+      setSelection(selectParent && member ? [member.id] : []);
+      semanticSelection.value = null;
+      axisBindingTarget.value = null;
+      return true;
+    }
+    return exitGroupEditing(selectParent);
+  }
+  function onCanvasNodeDoubleClick(node: CanvasNode, event: MouseEvent) {
+    if (node.kind !== "group" || node.children.length === 0 || node.renderedContent) return;
+    event.preventDefault();
+    event.stopPropagation();
+    enterCanvasGroup(node);
   }
   function onCanvasNodePointerDown(node: CanvasNode, event: PointerEvent) {
     if (event.button !== 0) return;
     contextMenu.value = null;
     compositionDragSourceId.value = null;
     activeDropZone.value = null;
+    if (chartDrilldown.value && chartDrilldown.value.nodeId !== node.id) {
+      chartDrilldown.value = null;
+      semanticSelection.value = null;
+    }
+    if (editingCompositionId.value && node.compositionSpec?.id !== editingCompositionId.value) {
+      editingCompositionId.value = null;
+    }
     if (node.chartSpec) dispatchRelationship({ type: "select-entity", selection: { type: "chart", id: node.id } });
     event.stopPropagation();
     if (editingGroupPath.value.length > 0 && !getSelectionNode(node.id)) {
@@ -3757,6 +4252,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (hasModifier) { toggleSelection(targetIds); return; }
     const nextSelection = selectedIds.value.includes(node.id) ? selectedIds.value : targetIds;
     setSelection(nextSelection);
+    semanticSelection.value = null;
     if (node.chartSpec) {
       const template = normalizeChartTemplate(node.chartSpec.chartType);
       axisBindingTarget.value = {
@@ -3806,7 +4302,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     }
     if (event.button !== 0 || event.target !== event.currentTarget) return;
     contextMenu.value = null;
-    if (editingGroupPath.value.length > 0) exitGroupEditing(false);
+    exitSelectionHierarchy(false);
     interaction.value = { type: "marquee", startPoint: toCanvasPoint(event.clientX, event.clientY), currentPoint: toCanvasPoint(event.clientX, event.clientY) };
     attachPointerListeners();
   }
@@ -3815,6 +4311,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     event.preventDefault();
     event.stopPropagation();
     contextMenu.value = null;
+    chartDrilldown.value = null;
+    semanticSelection.value = null;
     selectedIds.value = [];
     rotationInputVisible.value = false;
     const scopeGroupId = editingGroupPath.value.at(-1);
@@ -4206,12 +4704,24 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         return;
       }
       if (!zone.compatible) {
-        setImportNotice("That column type is not supported by this coordinate axis.");
+        setImportNotice(zone.type === "chart-body"
+          ? `No supported use of ${csvPayload.field} was found for this chart.`
+          : zone.type === "series-item"
+            ? `${csvPayload.field} is not compatible with the current ${zone.label} mode.`
+            : "That column type is not supported by this coordinate axis.");
         return;
       }
       const target = findCanvasNode(zone.targetNodeId);
       if (!target?.chartSpec) return;
       if (zone.type === "chart-body") {
+        const dataset = getDataset(target.chartSpec.datasetId);
+        const column = dataset?.columns.find((item) => item.name === csvPayload.field);
+        if (!dataset || !column) return;
+        const analysis = inferColumnIntents(dataset, target.chartSpec, column, { type: "chart-body" });
+        if (analysis.status !== "VALID" || analysis.intents.length === 0) {
+          setImportNotice(`No supported use of ${csvPayload.field} was found for this chart.`);
+          return;
+        }
         axisBindingTarget.value = {
           nodeId: target.id,
           channel: target.chartSpec.axisSwapped ? "y" : "x",
@@ -4224,7 +4734,22 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           fieldName: csvPayload.field,
           clientX: event.clientX,
           clientY: event.clientY,
+          analysis,
         };
+        return;
+      }
+      if (zone.type === "series-item") {
+        axisBindingTarget.value = {
+          nodeId: target.id,
+          channel: itemBindingAxis(target),
+          clientX: event.clientX,
+          clientY: event.clientY,
+        };
+        setSelection([target.id]);
+        const applied = addBarItemField(csvPayload.field);
+        setImportNotice(applied
+          ? `${csvPayload.field} bound to ${zone.label}.`
+          : `${csvPayload.field} cannot be bound to ${zone.label}.`);
         return;
       }
       axisBindingTarget.value = {
@@ -4237,12 +4762,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       const chartChannel: ChartEncodingChannel = zone.type === "polar-axis"
         ? zone.channel === "angle" ? "theta" : "radius"
         : logicalAxisChannel(target, zone.channel);
-      const itemBinding = zone.type === "cartesian-axis" && zone.channel === itemBindingAxis(target)
-        ? barItemAxisBinding(target)
-        : null;
-      if (itemBinding) addBarItemField(csvPayload.field);
-      else setChartEncoding(chartChannel, csvPayload.field);
-      setImportNotice(`${csvPayload.field} bound to ${itemBinding?.label ?? (zone.channel === "angle" ? "theta" : zone.channel)}.`);
+      setChartEncoding(chartChannel, csvPayload.field);
+      setImportNotice(`${csvPayload.field} bound to ${zone.channel === "angle" ? "theta" : zone.channel}.`);
       return;
     }
     const droppedFiles = Array.from(event.dataTransfer?.files ?? []);
@@ -4497,7 +5018,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function onWindowKeyDown(event: KeyboardEvent) {
     if (event.key === "Escape") {
       contextMenu.value = null;
-      if (exitGroupEditing()) event.preventDefault();
+      if (exitSelectionHierarchy()) event.preventDefault();
       return;
     }
     const target = event.target;
@@ -4601,6 +5122,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     viewPan,
     selectedIds,
     editingGroupPath,
+    selectionScopeNodes,
+    editingCompositionId,
+    chartDrilldown,
     semanticSelection,
     semanticMarkGroupConfig,
     nestedBindingTarget,
@@ -4622,6 +5146,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     coordinateGuideNodes,
     barItemAxisBinding,
     itemBindingAxis,
+    seriesItemDropFrame,
+    seriesItemDropBounds,
     interaction,
     contextMenu,
     draggedCandidateId,
@@ -4650,6 +5176,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     canCompose,
     canFacet,
     canUngroup,
+    canTransformSelection,
+    canRemoveSelectionComposition,
+    canEnterSelection,
     canMoveSelectionForward,
     canMoveSelectionBackward,
     scaleHandles,
@@ -4662,6 +5191,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     onCanvasContextMenu,
     onCanvasNodePointerDown,
     onCanvasNodeDoubleClick,
+    enterSelection,
+    removeSelectionComposition,
+    exitSelectionHierarchy,
     exitGroupEditing,
     onEditingGroupBackgroundPointerDown,
     onSemanticMarkPointerDown,
@@ -4672,6 +5204,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     applyDimensionAggregation,
     applyDimensionChartUpgrade,
     applyDimensionFacet,
+    applyInputColumnIntent,
     closeDimensionDropDecision,
     applyLlmRenderer,
     onCanvasNodeContextMenu,

@@ -20,19 +20,25 @@ Use Vue 3 Composition API, TypeScript, and two-space indentation. Use PascalCase
 
 ## CSV-Native Data Engine
 
-Raw CSV rows are the source of truth; do not recreate `CubeResult`, `CubeBinding`, or permanent dimension/measure classes. Model chart correction as enumeration of all inclusion-minimal repairs, but keep dimension overflow and dimension underflow as distinct constraint problems.
+Raw CSV rows are the source of truth; do not recreate `CubeResult`, `CubeBinding`, or permanent dimension/measure classes. The primary interaction is user-triggered inference: a user drags one CSV column into a chart, and that column becomes the explicit inference input. Keep the existing automatic-detection code available for diagnostics or explicitly requested workflows, but do not invoke it automatically on CSV import, chart creation, rendering, or background state changes.
 
-### Unified Repair Model
+### Column-Triggered Intent Inference
 
-Let `B` be the currently selected or bound fields and `U` the remaining CSV fields. A repair consists of added fields `S` and a binding from those fields to chart roles. It is valid when `ChartValid(B, S, binding)` satisfies the chart contract. Return every repair whose `S` is inclusion-minimal: no proper subset of `S` has any binding that makes the chart valid. Do not reduce this to globally minimum cardinality. Preserve distinct valid role bindings even when they use the same field set.
+The interactive engine receives the dataset, current chart contract, existing bindings `B`, one `inputColumn`, and the drop context. Treat the drag as evidence that the user wants to use that exact column. Enumerate every structurally legal intent involving `inputColumn`, such as binding it to a channel, using it as a series, faceting, aggregating, or upgrading the chart structure. Return the resulting action and complete role binding for each intent. Preserve distinct valid bindings and do not silently substitute another unused column.
 
-Each chart contract must declare required and optional roles, allowed field types per role, minimum and maximum role counts, whether one field may occupy multiple roles, relevant cardinality or structural constraints, its aggregation policy, and whether visual dimensions must functionally determine values. `ChartValid` checks the complete binding against that contract rather than applying chart-name patches in the search algorithm.
+Dropping on a specific axis or channel supplies the intended role, so validate that binding directly. Dropping on the chart body leaves the role ambiguous, so enumerate all legal interpretations for the input column and let the user choose. Do not scan unrelated columns to create unsolicited recommendations, and do not mutate the chart until an intent is confirmed.
 
-Classify the current binding as `VALID`, `DIMENSION_OVERFLOW`, `DIMENSION_UNDERFLOW`, `TYPE_MISMATCH`, or `UNRESOLVABLE`. A repair may need to address more than one failure at once.
+Each chart contract must declare required and optional roles, allowed field types per role, minimum and maximum role counts, whether one field may occupy multiple roles, relevant cardinality or structural constraints, its aggregation policy, and whether visual dimensions must functionally determine values. `ChartValid` checks the complete proposed binding rather than applying chart-name patches in the search algorithm.
+
+Classify each proposed interpretation as `VALID`, `DIMENSION_OVERFLOW`, `DIMENSION_UNDERFLOW`, `TYPE_MISMATCH`, or `UNRESOLVABLE`. One input column may produce multiple valid intents. If it cannot satisfy the selected interpretation, report that result instead of automatically choosing another field.
+
+### Optional Automatic Repair Model
+
+The existing full-dataset repair path may remain as a separate, explicitly invoked API. In that mode, let `U` be all remaining CSV fields and enumerate every inclusion-minimal repair: no proper subset of its added field set has any binding that makes the chart valid. Do not reduce this to globally minimum cardinality, and preserve distinct role bindings for the same field set. Interactive drag inference must not call this mode implicitly.
 
 ### Dimension Overflow
 
-Dimension overflow means the current dimensions `K` do not functionally determine values `V`. For data without missing values, `analyzeCsvGrain(dataset, keyFields, valueFields)` finds every inclusion-minimal supplemental dimension set as a minimal hitting-set problem:
+Dimension overflow means the current dimensions `K` do not functionally determine values `V`. For interactive inference, test whether adding `inputColumn` resolves the conflicts; do not search for a different column. The optional automatic mode may use `analyzeCsvGrain(dataset, keyFields, valueFields)` to find every inclusion-minimal supplemental dimension set as a minimal hitting-set problem:
 
 1. Group rows by the complete tuple of values in `K`.
 2. Within each group, create a conflict pair `(ri, rj)` for every pair whose complete `V` tuples differ. Ignore non-conflict pairs.
@@ -42,17 +48,17 @@ Dimension overflow means the current dimensions `K` do not functionally determin
 
 ### Dimension Underflow
 
-Dimension underflow means required chart roles or independent grouping structure are missing. It is a field-selection plus role-assignment constraint problem, not generally a conflict-pair hitting-set problem.
+Dimension underflow means required chart roles or independent grouping structure are missing. It is a role-assignment constraint problem, not generally a conflict-pair hitting-set problem. In the interactive path, enumerate compatible assignments of `inputColumn` to the available roles. The optional automatic path may enumerate assignments of fields in `U` with backtracking or another complete CSP, SAT, or ILP approach.
 
-Enumerate assignments of fields in `U` to missing roles with backtracking or another complete CSP, SAT, or ILP approach. Check role counts, type compatibility, exclusivity, maximum dimension counts, cardinality limits, and cross-field structural constraints during the search. If a chart contract requires a newly added dimension to create a real partition, require that it varies within at least one existing dimension group. Do not impose that rule for contracts that only require a syntactically filled role.
+Check role counts, type compatibility, exclusivity, maximum dimension counts, cardinality limits, and cross-field structural constraints. If a chart contract requires a newly added dimension to create a real partition, require that it varies within at least one existing dimension group. Do not impose that rule for contracts that only require a syntactically filled role.
 
 If aggregation is disabled, the completed dimension set must functionally determine the value fields, so underflow repair and overflow repair constraints must both hold. If aggregation such as `sum`, `mean`, or `count` is enabled, duplicate visual keys may be legal and `dimensions -> values` is not required unless the contract explicitly says otherwise.
 
-After enumerating valid assignments, remove field supersets for which a proper subset has any valid assignment. Return both `addedFields` and the role `binding`; a single field set may appear more than once with different bindings. If no assignment satisfies all constraints, return `UNRESOLVABLE`.
+In automatic mode, remove field supersets for which a proper subset has any valid assignment. Return both `addedFields` and the role `binding`; a single field set may appear more than once with different bindings. If no assignment satisfies all constraints, return `UNRESOLVABLE`.
 
 ### Structural Neutrality
 
-Do not rank, score, truncate, or use beam search over valid repairs. Do not add dataset names, column-name rules, chart-specific patches outside declarative contracts, fixture-tuned thresholds, or business-semantic preferences. Do not filter, penalize, down-rank, or specially recognize row numbers, UUIDs, or other identifiers. Apply type constraints only when declared by a chart role; do not infer that every numeric field is a measure. The engine can report all structurally legal minimal repairs but cannot choose the user's intended business dimension.
+Do not rank, score, truncate, or use beam search over valid intents or repairs. Do not add dataset names, column-name rules, chart-specific patches outside declarative contracts, fixture-tuned thresholds, or business-semantic preferences. Do not specially recognize row numbers, UUIDs, or other identifiers. Apply type constraints only when declared by a chart role; do not infer that every numeric field is a measure. The dragged column expresses field choice; the engine determines its structurally legal uses, not the user's business meaning.
 
 ### VisAnatomy Audit Boundaries
 
@@ -62,16 +68,17 @@ Remaining non-data issues are narrow temporal inference for formats such as `M/D
 
 ## Integration Files
 
-- `src/csvDataEngine.ts`: overflow conflict-pair construction and enumeration of all inclusion-minimal hitting sets.
-- `src/dimensionInference.ts`: unified minimal-repair search across candidate fields and role assignments.
+- `src/utils/csvDataEngine.ts`: grain validation, overflow conflict-pair construction, and optional automatic minimal hitting-set enumeration.
+- `src/utils/dimensionInference.ts`: column-triggered intent enumeration plus separately callable automatic analysis.
+- `src/utils/csvColumnDrag.ts`: carries the single `inputColumn` and dataset identity from the data panel.
 - Chart compatibility modules: declarative chart contracts and the `ChartValid` predicate, including aggregation and structural policies.
-- `src/chartDataPipeline.ts`: materializes selected wide `valueFields` into `__csv_measure__` / `__csv_value__` long rows.
-- `src/encodingConfig.ts`, `EncodingConfigPanel.vue`, and `useCanvasStore.ts`: direct CSV bindings while preserving templates and encodings.
-- `src/App.vue`: reports validation status and every minimal repair with its added fields and role binding.
+- `src/utils/chartDataPipeline.ts`: materializes selected wide `valueFields` into `__csv_measure__` / `__csv_value__` long rows.
+- `src/utils/encodingConfig.ts`, `src/components/EncodingConfigPanel.vue`, and `src/stores/useCanvasStore.ts`: direct CSV bindings while preserving templates and encodings.
+- `src/stores/useCanvasStore.ts` and `src/components/App.vue`: pass the dropped column and drop context to the engine, present every legal intent, and apply only the user's confirmed choice.
 
 ## Testing
 
-Test overflow and underflow separately and together. Cover wide and long data, repeated values, numeric categories, identifiers, multiple minimal solutions of different cardinalities, composite repairs, irrelevant non-conflict pairs, empty distinguishable-field sets, missing roles, constant fields, structurally redundant dimensions, type-incompatible assignments, multiple bindings for one field set, role-count limits, aggregation-enabled and aggregation-disabled charts, many columns, and composite existing keys. Primary coverage is in `csvDataEngine.test.ts`, `dimensionInference.test.ts`, and `chartDataPipeline.test.ts`. Before handoff run `npm test`, `npm run type-check`, `npm run build`, and `git diff --check`.
+Test drag-triggered inference independently from optional automatic detection. Cover axis drops, ambiguous chart-body drops, one input column with multiple valid intents, incompatible and constant inputs, no silent substitution of other columns, and confirmation before mutation. Retain overflow and underflow coverage for automatic analysis, including multiple inclusion-minimal solutions. Primary coverage is in `csvColumnDrag.test.ts`, `useCanvasStore.test.ts`, `csvDataEngine.test.ts`, `dimensionInference.test.ts`, and `chartDataPipeline.test.ts`. Before handoff run `npm test`, `npm run type-check`, `npm run build`, and `git diff --check`.
 
 Never run screenshots, Playwright checks, or snapshots unless requested. Use `rg`, read relevant ranges, and never send whole datasets, lockfiles, generated output, or repository dumps to a model.
 

@@ -17,6 +17,7 @@ import type {
   SeriesCandidate,
 } from "../types";
 import { analyzeCsvGrain, csvRowKey } from "./csvDataEngine";
+import type { ChartRepairStatus, ChartRoleBinding } from "./chartRepair";
 
 export type ColumnDimensionProfile = {
   field: string;
@@ -363,6 +364,233 @@ export function inferAllTemplateEncodings(dataset: Dataset): Record<ChartTemplat
   ) as Record<ChartTemplateKind, TemplateEncodingStatistics>;
 }
 
+export type InputColumnDropContext =
+  | { type: "chart-body" }
+  | { type: "channel"; channel: ChartEncodingChannel };
+
+export type InputColumnIntent = {
+  id: string;
+  kind: "bind" | "aggregate" | "facet" | "series" | "upgrade";
+  status: "VALID";
+  inputColumn: string;
+  label: string;
+  binding: ChartRoleBinding;
+  channel?: ChartEncodingChannel;
+  aggregation?: "sum" | "avg";
+  facetDirection?: "row" | "column";
+  semanticRole?: string;
+  targetChartType?: string;
+};
+
+export type InputColumnIntentAnalysis = {
+  inputColumn: string;
+  status: ChartRepairStatus;
+  intents: InputColumnIntent[];
+  warnings: string[];
+};
+
+function explicitRoleBinding(spec: ChartSpec): ChartRoleBinding {
+  const contract = getChartTemplateContract(spec.chartType);
+  if (!contract) return {};
+  const binding: ChartRoleBinding = {};
+  contract.channels.forEach((mapping) => {
+    const role = mapping.role === "series" ? "series" : mapping.channel;
+    const encodings = mapping.role === "series"
+      ? spec.seriesFields?.length
+        ? spec.seriesFields
+        : spec.series
+          ? [spec.series]
+          : spec.encodings[mapping.channel]
+            ? [spec.encodings[mapping.channel]!]
+            : []
+      : mapping.channel === "theta" && spec.angleFields?.length
+        ? spec.angleFields
+        : mapping.channel === "y" && spec.valueFields?.length
+          ? spec.valueFields
+          : spec.encodings[mapping.channel]
+            ? [spec.encodings[mapping.channel]!]
+            : [];
+    if (encodings.length) binding[role] = Array.from(new Set(encodings.map((encoding) => encoding.field)));
+  });
+  return binding;
+}
+
+function inputColumnValues(dataset: Dataset, field: string) {
+  return new Set(dataset.rows.map((row) => row[field] ?? ""));
+}
+
+function partitionsAreEquivalent(dataset: Dataset, leftField: string, rightField: string) {
+  for (let leftIndex = 0; leftIndex < dataset.rows.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < dataset.rows.length; rightIndex += 1) {
+      const left = dataset.rows[leftIndex]!;
+      const right = dataset.rows[rightIndex]!;
+      const leftEqual = (left[leftField] ?? "") === (right[leftField] ?? "");
+      const rightEqual = (left[rightField] ?? "") === (right[rightField] ?? "");
+      if (leftEqual !== rightEqual) return false;
+    }
+  }
+  return true;
+}
+
+function boundFields(spec: ChartSpec) {
+  return new Set([
+    ...Object.values(spec.encodings).flatMap((encoding) => encoding ? [encoding.field] : []),
+    ...(spec.seriesFields?.map((encoding) => encoding.field) ?? []),
+    ...(spec.series ? [spec.series.field] : []),
+    ...(spec.valueFields?.map((encoding) => encoding.field) ?? []),
+    ...(spec.angleFields?.map((encoding) => encoding.field) ?? []),
+    ...(spec.parallelFields?.map((encoding) => encoding.field) ?? []),
+    ...(spec.flattenFields ?? []),
+    ...Object.values(spec.componentRadiusFields ?? {}).map((encoding) => encoding.field),
+  ]);
+}
+
+/** Infers every legal interpretation of one user-supplied CSV column. */
+export function inferColumnIntents(
+  dataset: Dataset,
+  spec: ChartSpec,
+  inputColumn: DataColumn,
+  dropContext: InputColumnDropContext,
+): InputColumnIntentAnalysis {
+  const datasetColumn = dataset.columns.find((column) => column.name === inputColumn.name);
+  const contract = getChartTemplateContract(spec.chartType);
+  if (!datasetColumn || datasetColumn.type !== inputColumn.type) {
+    return {
+      inputColumn: inputColumn.name,
+      status: "UNRESOLVABLE",
+      intents: [],
+      warnings: [`Unknown or stale input column: ${inputColumn.name}`],
+    };
+  }
+  if (!contract) {
+    return {
+      inputColumn: inputColumn.name,
+      status: "UNRESOLVABLE",
+      intents: [],
+      warnings: [`Unknown chart type: ${spec.chartType}`],
+    };
+  }
+
+  const binding = explicitRoleBinding(spec);
+  if (dropContext.type === "channel") {
+    const mapping = contract.channels.find((channel) => channel.channel === dropContext.channel);
+    if (!mapping || !mapping.accepts.includes(inputColumn.type)) {
+      return { inputColumn: inputColumn.name, status: "TYPE_MISMATCH", intents: [], warnings: [] };
+    }
+    const role = mapping.role === "series" ? "series" : mapping.channel;
+    return {
+      inputColumn: inputColumn.name,
+      status: "VALID",
+      intents: [{
+        id: `bind:${dropContext.channel}:${inputColumn.name}`,
+        kind: "bind",
+        status: "VALID",
+        inputColumn: inputColumn.name,
+        label: `Bind to ${mapping.label}`,
+        binding: { ...binding, [role]: [inputColumn.name] },
+        channel: dropContext.channel,
+      }],
+      warnings: [],
+    };
+  }
+
+  if (boundFields(spec).has(inputColumn.name)) {
+    return { inputColumn: inputColumn.name, status: "UNRESOLVABLE", intents: [], warnings: [] };
+  }
+  if (inputColumnValues(dataset, inputColumn.name).size < 2) {
+    return { inputColumn: inputColumn.name, status: "DIMENSION_UNDERFLOW", intents: [], warnings: [] };
+  }
+
+  const intents: InputColumnIntent[] = [];
+  const dimensionTypes = new Set(contract.channels
+    .filter((mapping) => mapping.role === "dimension" || mapping.role === "series")
+    .flatMap((mapping) => mapping.accepts));
+  const dimensionFields = contract.channels
+    .filter((mapping) => mapping.role === "dimension" || mapping.role === "series")
+    .flatMap((mapping) => binding[mapping.role === "series" ? "series" : mapping.channel] ?? []);
+  const valueFields = contract.channels
+    .filter((mapping) => mapping.role === "measure")
+    .flatMap((mapping) => binding[mapping.channel] ?? []);
+  const independent = !contract.requiresIndependentDimensions
+    || dimensionFields.every((field) => !partitionsAreEquivalent(dataset, field, inputColumn.name));
+  const grain = contract.requiresFunctionalDependency
+    ? analyzeCsvGrain(dataset, dimensionFields, valueFields, { candidateFields: [inputColumn.name] })
+    : null;
+  const resolvesGrain = !grain
+    || grain.status === "unique"
+    || grain.candidates.some((candidate) => candidate.fields.length === 1
+      && candidate.fields[0] === inputColumn.name);
+  const isLegalDimension = dimensionTypes.has(inputColumn.type) && independent && resolvesGrain;
+  const quantitativeMeasures = contract.channels.filter((mapping) =>
+    mapping.role === "measure"
+    && spec.encodings[mapping.channel]?.type === "quantitative");
+  if (isLegalDimension && contract.aggregationPolicy === "allowed" && quantitativeMeasures.length > 0) {
+    (["sum", "avg"] as const).forEach((aggregation) => intents.push({
+      id: `aggregate:${aggregation}:${inputColumn.name}`,
+      kind: "aggregate",
+      status: "VALID",
+      inputColumn: inputColumn.name,
+      label: `${aggregation === "sum" ? "Sum" : "Average"} by ${inputColumn.name}`,
+      binding: { ...binding, aggregateBy: [inputColumn.name] },
+      aggregation,
+    }));
+  }
+  if (isLegalDimension && contract.unusedDimensionStrategies.includes("facet")) {
+    (["row", "column"] as const).forEach((facetDirection) => intents.push({
+      id: `facet:${facetDirection}:${inputColumn.name}`,
+      kind: "facet",
+      status: "VALID",
+      inputColumn: inputColumn.name,
+      label: `Facet ${facetDirection === "row" ? "rows" : "columns"} by ${inputColumn.name}`,
+      binding: { ...binding, facet: [inputColumn.name] },
+      facetDirection,
+    }));
+  }
+  const seriesRole = contract.channels.find((mapping) =>
+    mapping.role === "series" && mapping.configurable !== false);
+  const hasExplicitSeries = (binding.series?.length ?? 0) > 0;
+  if (isLegalDimension
+    && seriesRole
+    && !hasExplicitSeries
+    && contract.dimensionUpgrades.length === 0) {
+    const semanticRole = seriesRole.semanticLabel ?? "Series";
+    intents.push({
+      id: `series:${seriesRole.channel}:${inputColumn.name}`,
+      kind: "series",
+      status: "VALID",
+      inputColumn: inputColumn.name,
+      label: `Use as ${semanticRole}`,
+      binding: { ...binding, series: [inputColumn.name] },
+      channel: seriesRole.channel,
+      semanticRole,
+    });
+  }
+  contract.dimensionUpgrades.forEach((upgrade) => {
+    const target = getChartTemplateContract(upgrade.chartType);
+    const targetRole = target?.channels.find((mapping) => mapping.role === upgrade.role);
+    if (!isLegalDimension || !targetRole?.accepts.includes(inputColumn.type)) return;
+    intents.push({
+      id: `upgrade:${upgrade.chartType}:${inputColumn.name}`,
+      kind: "upgrade",
+      status: "VALID",
+      inputColumn: inputColumn.name,
+      label: upgrade.label,
+      binding: { ...binding, series: [inputColumn.name] },
+      targetChartType: upgrade.chartType,
+    });
+  });
+  return {
+    inputColumn: inputColumn.name,
+    status: intents.length > 0
+      ? "VALID"
+      : dimensionTypes.has(inputColumn.type)
+        ? "DIMENSION_UNDERFLOW"
+        : "TYPE_MISMATCH",
+    intents,
+    warnings: [],
+  };
+}
+
 function markKeys(dataset: Dataset, spec: ChartSpec, role: string) {
   if (role === "line") return spec.series ? uniqueValues(dataset, spec.series.field) : ["__single__"];
   if (role === "arc" && spec.angleFields?.length) {
@@ -376,6 +604,30 @@ function markKeys(dataset: Dataset, spec: ChartSpec, role: string) {
     );
   }
   return dataset.rows.map((row, index) => csvRowKey(dataset, row, index));
+}
+
+/** Builds render metadata from confirmed bindings without scanning unused columns. */
+export function materializeChartStructure(chartId: string, dataset: Dataset, input: ChartSpec): ChartSpec {
+  const templateId = normalizeChartTemplate(input.chartType);
+  if (!templateId) return input;
+  const contract = getChartTemplateContract(input.chartType)!;
+  const spec = { ...input, templateId };
+  const role = contract.markRole;
+  const existingGroup = input.markGroups?.find((item) => item.role === role);
+  return {
+    ...spec,
+    markGroups: [{
+      id: `mark-group:${chartId}:${role}`,
+      chartId,
+      role,
+      memberKeys: markKeys(dataset, spec, role),
+      seriesField: spec.series?.field,
+      sharedConfig: existingGroup?.sharedConfig ?? (role === "line"
+        ? { strokeWidth: spec.styleTokens?.lineWidth ?? 2.5, opacity: 1 }
+        : { opacity: 1 }),
+      allowOverrides: existingGroup?.allowOverrides,
+    }],
+  };
 }
 
 export function inferChartStructure(chartId: string, dataset: Dataset, input: ChartSpec): ChartSpec {

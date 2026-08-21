@@ -1,4 +1,4 @@
-import { inferChartStructure } from "./dimensionInference";
+import { materializeChartStructure } from "./dimensionInference";
 import { normalizeBarChartVariant, normalizeChartTemplate } from "./chartTemplates";
 import { inferCsvPrimaryKey } from "./csvDataEngine";
 import type { ChartEncoding, ChartSpec, Dataset } from "../types";
@@ -148,6 +148,6 @@ export function prepareChartData(
   const synchronizedSpec = synchronizeChartEncodingTypes(materialized.chartSpec, dataset);
   return {
     dataset,
-    chartSpec: inferChartStructure(chartId, dataset, synchronizedSpec),
+    chartSpec: materializeChartStructure(chartId, dataset, synchronizedSpec),
   };
 }

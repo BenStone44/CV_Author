@@ -54,6 +54,10 @@ export function boundsFromNodeFrame(
 
 export function mergeBounds(current: Bounds | null, next: Bounds): Bounds {
   if (!current) return next;
+  if (current.minX === next.minX
+    && current.minY === next.minY
+    && current.maxX === next.maxX
+    && current.maxY === next.maxY) return current;
   const minX = Math.min(current.minX, next.minX);
   const minY = Math.min(current.minY, next.minY);
   const maxX = Math.max(current.maxX, next.maxX);
@@ -298,7 +302,10 @@ export function collectNodeSelectionBounds(
     scaleY,
     node.rotation,
   );
-  if (node.kind === "group") {
+  // Configured charts can retain their original template children after the
+  // deterministic renderer takes over. Their selection is the live plotArea;
+  // stale template geometry must not replace it during multi-selection.
+  if (node.kind === "group" && !node.chartSpec) {
     let merged: Bounds | null = null;
     node.children.forEach((child) => {
       merged = mergeBounds(merged, collectNodeSelectionBounds(child, x, y, scaleX, scaleY));

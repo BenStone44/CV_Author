@@ -197,8 +197,8 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
         ? [chartSpec.encodings.color]
         : [];
   if (!xEncoding || !yEncoding) throw new Error("Line renderer requires both X and Y encodings.");
-  if (seriesEncodings.some((encoding) => encoding.type !== "nominal")) {
-    throw new Error("Line renderer series encoding must be nominal.");
+  if (seriesEncodings.some((encoding) => encoding.type !== "nominal" && encoding.type !== "temporal")) {
+    throw new Error("Line renderer series encoding must be nominal or temporal.");
   }
 
   const sourceRows = dataset.rows
@@ -326,8 +326,16 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
     if (sharedScale?.type === "point") {
       const domain = sharedScale.domain as string[];
       const scale = scalePoint<string>().domain(domain).range(sharedScale.range).padding(0.5);
+      const temporalDomain = encoding.type === "temporal"
+        ? new Map(domain.map((item) => [Date.parse(item), item]))
+        : null;
       return {
-        position: (value: ParsedAxisValue) => scale(String(value)) ?? 0,
+        position: (value: ParsedAxisValue) => {
+          const key = temporalDomain && value instanceof Date
+            ? temporalDomain.get(value.getTime())
+            : String(value);
+          return key === undefined ? 0 : scale(key) ?? 0;
+        },
         domain,
         type: "point" as const,
       };

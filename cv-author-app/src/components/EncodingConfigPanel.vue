@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { X } from "@lucide/vue";
 import EncodingChannelField from "./EncodingChannelField.vue";
 import VisualMappingEditor from "./VisualMappingEditor.vue";
 import {
   getEncodingChannelConfigsForSpec,
-  hasDerivedValueSeries,
   resolvedEncodingField,
   resolvedPolarRadiusMode,
   resolveChartEncodingIssues,
@@ -34,6 +33,11 @@ import {
   isLinearSizeMapping,
   isSeriesStyleMapping,
 } from "../utils/visualMapping";
+import {
+  csvColumnDragMime,
+  decodeCsvColumnDragPayload,
+  getActiveCsvColumnDrag,
+} from "../utils/csvColumnDrag";
 
 const props = defineProps<{
   chartName: string;
@@ -83,52 +87,41 @@ const areaRequiresSeries = computed(() => {
   return type.includes("stacked") || type.includes("stream") || type.includes("horizon");
 });
 const supportsBarValueSeries = computed(() => isGroupedBar.value || barRequiresSegments.value);
-const supportsMeasureSeries = computed(() => isExplicitMultiLine.value || areaRequiresSeries.value || supportsBarValueSeries.value);
-const usesDerivedSeries = computed(() => hasDerivedValueSeries(props.chartSpec, "y")
-  || (areaRequiresSeries.value && (props.chartSpec.valueFields?.length ?? 0) > 0));
-const usesBarValueSeries = computed(() => supportsBarValueSeries.value && (props.chartSpec.valueFields?.length ?? 0) > 0);
+const supportsSeriesItems = computed(() => template.value === "line"
+  || template.value === "area"
+  || supportsBarValueSeries.value);
+const seriesRole = computed(() => getChartTemplateContract(props.chartSpec.chartType)?.channels
+  .find((config) => config.role === "series"));
+const seriesItemsRequired = computed(() => supportsSeriesItems.value
+  && (seriesRole.value?.required === true || isExplicitMultiLine.value));
+const seriesItemLabel = computed(() => seriesRole.value?.semanticLabel ?? "Series");
 const isParallel = computed(() => template.value === "parallel");
 const standardConfigs = computed(() => configs.value.filter((config) => {
   if (isPolar.value && config.channel === "theta") return false;
   if (isPolar.value && config.channel === "radius") return false;
   if (isParallel.value && config.channel === "dimensions") return false;
-  if ((isGroupedBar.value || barRequiresSegments.value) && config.channel === "color") return false;
-  if ((config.channel === "y" && supportsBarValueSeries.value)
-    || (supportsMeasureSeries.value && config.channel === "y" && (!supportsBarValueSeries.value || usesBarValueSeries.value))
-    || (supportsMeasureSeries.value && config.channel === "color" && (!supportsBarValueSeries.value || usesBarValueSeries.value))) return false;
+  if (supportsSeriesItems.value && config.role === "series") return false;
+  if (supportsSeriesItems.value && seriesItemMode.value === "quantitative" && config.channel === "y") return false;
   return true;
 }));
-const seriesConfig = computed<EncodingChannelConfig | null>(() => isMultiLine.value && !isExplicitMultiLine.value && !usesDerivedSeries.value ? {
-  channel: "color",
-  label: "Series",
-  role: "series",
-  required: true,
-  accepts: ["nominal", "temporal"],
-  emptyLabel: "Not bound",
-} : null);
 const seriesMembers = computed(() => {
   const field = resolvedSeriesField(props.chartSpec);
   if (!field) return [];
   return Array.from(new Set(props.rows.map((row) => row[field] ?? "").filter(Boolean)))
     .map((id) => ({ id, label: id }));
 });
-const selectedValueSeriesFields = computed(() => {
-  if (supportsBarValueSeries.value) return props.chartSpec.valueFields?.map((encoding) => encoding.field) ?? [];
-  if (props.chartSpec.valueFields?.length) return props.chartSpec.valueFields.map((encoding) => encoding.field);
-  const field = resolvedEncodingField(props.chartSpec, "y");
-  return field ? [field] : [];
-});
+const selectedValueSeriesFields = computed(() => props.chartSpec.valueFields?.map((encoding) => encoding.field) ?? []);
 const selectedSeriesFields = computed(() => props.chartSpec.seriesFields?.map((encoding) => encoding.field)
   ?? (props.chartSpec.series ? [props.chartSpec.series.field] : []));
-const selectedSegmentFields = computed(() => Array.from(new Set([
-  ...selectedSeriesFields.value,
-  ...selectedValueSeriesFields.value,
-])));
-const groupItemColumns = computed(() => props.columns.filter((column) =>
+const seriesItemMode = computed<"categorical" | "quantitative" | null>(() => {
+  if (selectedSeriesFields.value.length > 0) return "categorical";
+  if (selectedValueSeriesFields.value.length > 0) return "quantitative";
+  return null;
+});
+const seriesItemColumns = computed(() => props.columns.filter((column) =>
   column.type === "nominal" || column.type === "temporal" || column.type === "quantitative"));
-const segmentColumns = computed(() => props.columns.filter((column) =>
-  column.type === "nominal" || column.type === "temporal" || column.type === "quantitative"));
-const editableSeriesMembers = computed(() => usesDerivedSeries.value
+const seriesItemDropState = ref<"idle" | "valid" | "invalid">("idle");
+const editableSeriesMembers = computed(() => seriesItemMode.value === "quantitative"
   ? selectedValueSeriesFields.value.map((field) => ({ id: field, label: field }))
   : seriesMembers.value);
 const seriesStyleMapping = computed<SeriesStyleMapping>(() => {
@@ -141,6 +134,7 @@ const seriesStyleMapping = computed<SeriesStyleMapping>(() => {
     values: Object.fromEntries(Object.entries(legacy).map(([memberId, color]) => [memberId, { color }])),
   };
 });
+const legendVisible = computed(() => props.markConfig.legendVisible === true);
 const quantitativeColumns = computed(() => props.columns.filter((column) => column.type === "quantitative"));
 const selectedAngleFields = computed(() => props.chartSpec.angleFields?.map((encoding) => encoding.field)
   ?? (props.chartSpec.encodings.theta
@@ -224,25 +218,21 @@ function updateSeriesMemberStyle(memberId: string, patch: { color?: string; stro
   });
 }
 const canConfirm = computed(() => resolveChartEncodingIssues(props.chartSpec).length === 0
-  && (!supportsMeasureSeries.value
-    || (barRequiresSegments.value
-      ? (!usesBarValueSeries.value || selectedValueSeriesFields.value.length >= 2)
-      : isGroupedBar.value
-        ? (!usesBarValueSeries.value || selectedValueSeriesFields.value.length >= 2)
-        : isExplicitMultiLine.value
-          ? selectedValueSeriesFields.value.length >= 1 || !!resolvedSeriesField(props.chartSpec)
-          : usesDerivedSeries.value || !!resolvedSeriesField(props.chartSpec)))
+  && (!seriesItemsRequired.value
+    || (seriesItemMode.value === "categorical"
+      ? selectedSeriesFields.value.length === 1 && !!resolvedEncodingField(props.chartSpec, "y")
+      : seriesItemMode.value === "quantitative"
+        ? selectedValueSeriesFields.value.length >= (supportsBarValueSeries.value ? 2 : 1)
+        : false))
   && configs.value.every((config) => {
     if (!config.required) return true;
-  if (config.channel === "y" && supportsMeasureSeries.value
-      && (!supportsBarValueSeries.value || usesBarValueSeries.value)
-      && selectedValueSeriesFields.value.length >= (supportsBarValueSeries.value ? 2 : 1)) return true;
-  if (config.channel === "dimensions") return selectedParallelFields.value.length >= 2;
-  if (config.channel === "color" && (usesDerivedSeries.value || usesBarValueSeries.value
-    || (areaRequiresSeries.value && selectedValueSeriesFields.value.length > 0)
-    || ((isGroupedBar.value || barRequiresSegments.value) && selectedSeriesFields.value.length > 0))) return true;
-  if (config.multiple) return selectedAngleFields.value.length > 0;
-  return !!resolvedEncodingField(props.chartSpec, config.channel);
+    if (supportsSeriesItems.value && config.role === "series") return seriesItemMode.value !== null;
+    if (config.channel === "y" && seriesItemMode.value === "quantitative") {
+      return selectedValueSeriesFields.value.length > 0;
+    }
+    if (config.channel === "dimensions") return selectedParallelFields.value.length >= 2;
+    if (config.multiple) return selectedAngleFields.value.length > 0;
+    return !!resolvedEncodingField(props.chartSpec, config.channel);
 }));
 
 function axisChannel(channel: ChartEncodingChannel) {
@@ -255,31 +245,58 @@ function axisConfig(config: EncodingChannelConfig) {
   return channel === config.channel ? config : { ...config, label: channel.toUpperCase() };
 }
 
-function toggleValueSeriesField(field: string) {
-  emit("valueSeriesFieldsChange", selectedValueSeriesFields.value.includes(field)
-    ? selectedValueSeriesFields.value.filter((item) => item !== field)
-    : [...selectedValueSeriesFields.value, field]);
+function isSeriesItemDisabled(field: string) {
+  const column = props.columns.find((item) => item.name === field);
+  if (!column || !seriesItemMode.value) return false;
+  if (seriesItemMode.value === "categorical") return !selectedSeriesFields.value.includes(field);
+  return column.type !== "quantitative";
 }
 
-function toggleSeriesField(field: string) {
+function toggleSeriesItemField(field: string) {
   const column = props.columns.find((item) => item.name === field);
-  if (isGroupedBar.value && column?.type === "quantitative") {
-    toggleValueSeriesField(field);
-    return;
-  }
-  emit("seriesFieldsChange", selectedSeriesFields.value.includes(field)
-    ? selectedSeriesFields.value.filter((item) => item !== field)
-    : [...selectedSeriesFields.value, field]);
-}
-
-function toggleSegmentField(field: string) {
-  const column = props.columns.find((item) => item.name === field);
-  if (!column) return;
+  if (!column || isSeriesItemDisabled(field)) return;
   if (column.type === "quantitative") {
-    toggleValueSeriesField(field);
+    emit("valueSeriesFieldsChange", selectedValueSeriesFields.value.includes(field)
+      ? selectedValueSeriesFields.value.filter((item) => item !== field)
+      : [...selectedValueSeriesFields.value, field]);
     return;
   }
-  toggleSeriesField(field);
+  emit("seriesFieldsChange", selectedSeriesFields.value.includes(field) ? [] : [field]);
+}
+
+function seriesItemDragColumn(event: DragEvent) {
+  const payload = decodeCsvColumnDragPayload(event.dataTransfer?.getData(csvColumnDragMime))
+    ?? getActiveCsvColumnDrag();
+  if (!payload || payload.datasetId !== props.chartSpec.datasetId) return null;
+  const column = props.columns.find((item) => item.name === payload.field && item.type === payload.type);
+  return column ?? null;
+}
+
+function onSeriesItemDragOver(event: DragEvent) {
+  const column = seriesItemDragColumn(event);
+  const compatible = !!column && !isSeriesItemDisabled(column.name);
+  seriesItemDropState.value = compatible ? "valid" : "invalid";
+  if (event.dataTransfer) event.dataTransfer.dropEffect = compatible ? "copy" : "none";
+}
+
+function onSeriesItemDragLeave(event: DragEvent) {
+  const current = event.currentTarget;
+  const related = event.relatedTarget;
+  if (current instanceof Element && related instanceof Node && current.contains(related)) return;
+  seriesItemDropState.value = "idle";
+}
+
+function onSeriesItemDrop(event: DragEvent) {
+  const column = seriesItemDragColumn(event);
+  seriesItemDropState.value = "idle";
+  if (!column || isSeriesItemDisabled(column.name)) return;
+  if (column.type === "quantitative") {
+    if (!selectedValueSeriesFields.value.includes(column.name)) {
+      emit("valueSeriesFieldsChange", [...selectedValueSeriesFields.value, column.name]);
+    }
+    return;
+  }
+  if (!selectedSeriesFields.value.includes(column.name)) emit("seriesFieldsChange", [column.name]);
 }
 
 function toggleAngleField(field: string) {
@@ -342,53 +359,40 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
         />
       </template>
 
-      <section v-if="isGroupedBar" class="encoding-config__angle" aria-label="Group item fields">
-        <span>Group item <abbr title="At least one required" aria-label="At least one required">*</abbr></span>
-        <label v-for="column in groupItemColumns" :key="column.name">
+      <section
+        v-if="supportsSeriesItems"
+        class="encoding-config__angle encoding-config__series-drop"
+        :class="{
+          'is-drop-active': seriesItemDropState === 'valid',
+          'is-drop-invalid': seriesItemDropState === 'invalid',
+        }"
+        :aria-label="`${seriesItemLabel} fields`"
+        @dragover.stop.prevent="onSeriesItemDragOver"
+        @dragleave.stop="onSeriesItemDragLeave"
+        @drop.stop.prevent="onSeriesItemDrop"
+      >
+        <span>
+          {{ seriesItemLabel }}
+          <abbr v-if="seriesItemsRequired" title="At least one required" aria-label="At least one required">*</abbr>
+        </span>
+        <label
+          v-for="column in seriesItemColumns"
+          :key="column.name"
+          :class="{ 'is-disabled': isSeriesItemDisabled(column.name) }"
+        >
           <input
             type="checkbox"
             :checked="selectedSeriesFields.includes(column.name) || selectedValueSeriesFields.includes(column.name)"
-            @change="toggleSeriesField(column.name)"
+            :disabled="isSeriesItemDisabled(column.name)"
+            @change="toggleSeriesItemField(column.name)"
           />
           <span>{{ column.name }}</span>
         </label>
       </section>
 
-      <section v-if="barRequiresSegments" class="encoding-config__angle" aria-label="Segment fields">
-        <span>Segment <abbr title="At least one required" aria-label="At least one required">*</abbr></span>
-        <label v-for="column in segmentColumns" :key="column.name">
-          <input
-            type="checkbox"
-            :checked="selectedSegmentFields.includes(column.name)"
-            @change="toggleSegmentField(column.name)"
-          />
-          <span>{{ column.name }}</span>
-        </label>
-      </section>
-
-      <section v-if="supportsMeasureSeries && !barRequiresSegments && !isGroupedBar" class="encoding-config__angle" aria-label="Series fields">
-        <span>{{ isExplicitMultiLine || areaRequiresSeries ? "Series" : (axisSwapped ? "X values" : "Y values") }} <abbr title="At least one required" aria-label="At least one required">*</abbr></span>
-        <label v-for="column in quantitativeColumns" :key="column.name">
-          <input
-            type="checkbox"
-            :checked="selectedValueSeriesFields.includes(column.name)"
-            @change="toggleValueSeriesField(column.name)"
-          />
-          <span>{{ column.name }}</span>
-        </label>
-      </section>
-
-      <p v-if="usesDerivedSeries" class="encoding-config__derived-series">
+      <p v-if="seriesItemMode === 'quantitative'" class="encoding-config__derived-series">
         Series: selected measure names
       </p>
-
-      <EncodingChannelField
-        v-if="seriesConfig"
-        :config="seriesConfig"
-        :columns="columns"
-        :value="resolvedSeriesField(chartSpec)"
-        @change="emit('seriesFieldChange', $event)"
-      />
 
       <section v-if="isPolar" class="encoding-config__angle" aria-label="Theta measures">
         <span>Theta <abbr title="Required" aria-label="Required">*</abbr></span>
@@ -440,6 +444,14 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
       </section>
 
       <section v-if="editableSeriesMembers.length || colorConfig || sizeConfig" class="encoding-config__appearance encoding-config__appearance--chart">
+        <label v-if="supportsSeriesItems" class="encoding-config__option">
+          <span>Show legend</span>
+          <input
+            type="checkbox"
+            :checked="legendVisible"
+            @change="emit('markConfigChange', { legendVisible: ($event.target as HTMLInputElement).checked })"
+          />
+        </label>
         <div v-if="editableSeriesMembers.length" class="encoding-config__member-styles">
           <header>
             <span>Series styles</span>
@@ -610,8 +622,12 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
 .encoding-config__angle > span { grid-column: 1 / -1; }
 .encoding-config__angle abbr { color: #b42318; text-decoration: none; }
 .encoding-config__angle label { display: flex; align-items: center; min-width: 0; gap: 6px; padding: 6px 7px; border: 1px solid rgba(24, 33, 47, 0.1); border-radius: 5px; background: #f8fafc; color: #334155; cursor: pointer; }
+.encoding-config__angle label.is-disabled { background: #f1f3f5; color: #97a1ae; cursor: not-allowed; opacity: 0.68; }
 .encoding-config__angle input { width: 14px; height: 14px; flex: 0 0 14px; margin: 0; accent-color: #1554b2; }
 .encoding-config__angle label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.encoding-config__series-drop { padding: 8px; border: 1px dashed rgba(21, 84, 178, 0.28); border-radius: 6px; transition: border-color 120ms ease, background 120ms ease; }
+.encoding-config__series-drop.is-drop-active { border-color: #1554b2; background: #edf6ff; }
+.encoding-config__series-drop.is-drop-invalid { border-color: #b42318; background: #fff1ef; }
 .encoding-config__radius, .encoding-config__appearance { display: grid; gap: 9px; padding-top: 12px; border-top: 1px solid rgba(24, 33, 47, 0.1); color: #516176; font-size: 11px; }
 .encoding-config__radius-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .encoding-config__radius-heading strong { color: #1554b2; font-size: 10px; font-weight: 700; }
