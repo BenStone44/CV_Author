@@ -138,6 +138,154 @@ describe("advanced chart cards", () => {
     }
   });
 
+  it("keeps repeated progression values in a plain area chart", () => {
+    const repeatedDataset: Dataset = {
+      id: "repeated-area",
+      name: "repeated-area.csv",
+      columns: [
+        { name: "date", type: "temporal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { date: "2026-01-01", value: "4" },
+        { date: "2026-01-01", value: "8" },
+        { date: "2026-01-02", value: "6" },
+        { date: "2026-01-02", value: "10" },
+      ],
+    };
+    const result = render("AreaChart", repeatedDataset, {
+      encodings: {
+        x: { field: "date", type: "temporal" },
+        y: { field: "value", type: "quantitative" },
+      },
+    });
+
+    expect(result.content).toContain('data-renderer="deterministic-area@1"');
+    expect(result.content).toContain('data-point-count="4"');
+    const yDomain = result.scales?.y.domain as [number, number];
+    expect(yDomain[0]).toBeLessThanOrEqual(0);
+    expect(yDomain[1]).toBeGreaterThanOrEqual(0);
+  });
+
+  it("only aggregates repeated area progression values when explicitly configured", () => {
+    const dataset: Dataset = {
+      id: "explicit-area-aggregation",
+      name: "explicit-area-aggregation.csv",
+      columns: [
+        { name: "date", type: "temporal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { date: "2026-01-01", value: "4" },
+        { date: "2026-01-01", value: "8" },
+        { date: "2026-01-02", value: "6" },
+        { date: "2026-01-02", value: "10" },
+      ],
+    };
+    const result = render("AreaChart", dataset, {
+      aggregations: { y: "sum" },
+      encodings: {
+        x: { field: "date", type: "temporal" },
+        y: { field: "value", type: "quantitative" },
+      },
+    });
+
+    expect(result.content).toContain('data-point-count="2"');
+  });
+
+  it("uses the line path for a selected stacked-area series with duplicate X values", () => {
+    const dataset: Dataset = {
+      id: "selected-stacked-series",
+      name: "selected-stacked-series.csv",
+      columns: [
+        { name: "date", type: "temporal" },
+        { name: "series", type: "nominal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { date: "2026-01-01", series: "A", value: "4" },
+        { date: "2026-01-01", series: "A", value: "8" },
+        { date: "2026-01-02", series: "A", value: "6" },
+        { date: "2026-01-02", series: "A", value: "10" },
+      ],
+    };
+    const result = render("StackedAreaChart", dataset, {
+      series: { field: "series", type: "nominal" },
+      seriesFields: [{ field: "series", type: "nominal" }],
+      encodings: {
+        x: { field: "date", type: "temporal" },
+        y: { field: "value", type: "quantitative" },
+        color: { field: "series", type: "nominal" },
+      },
+      valueFilters: { series: ["A"] },
+    });
+
+    expect(result.content).toContain('data-point-count="4"');
+    expect(result.content).not.toContain('data-point-count="2"');
+  });
+
+  it("retains repeated X transitions for multiple stacked-area series", () => {
+    const dataset: Dataset = {
+      id: "multi-stacked-repeated-x",
+      name: "multi-stacked-repeated-x.csv",
+      columns: [
+        { name: "date", type: "temporal" },
+        { name: "series", type: "nominal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { date: "2026-01-01", series: "A", value: "4" },
+        { date: "2026-01-01", series: "B", value: "3" },
+        { date: "2026-01-02", series: "A", value: "6" },
+        { date: "2026-01-02", series: "B", value: "5" },
+      ],
+    };
+    const result = render("StackedAreaChart", dataset, {
+      encodings: {
+        x: { field: "date", type: "temporal" },
+        y: { field: "value", type: "quantitative" },
+        color: { field: "series", type: "nominal" },
+      },
+      series: { field: "series", type: "nominal" },
+      seriesFields: [{ field: "series", type: "nominal" }],
+    });
+
+    expect(result.content.match(/data-mark-role="area"/g)).toHaveLength(2);
+    expect(result.content.match(/data-point-count="4"/g)).toHaveLength(2);
+  });
+
+  it("uses the same vertical progression template when plain area axes are swapped", () => {
+    const repeatedDataset: Dataset = {
+      id: "swapped-repeated-area",
+      name: "swapped-repeated-area.csv",
+      columns: [
+        { name: "date", type: "temporal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { date: "2026-01-01", value: "4" },
+        { date: "2026-01-01", value: "8" },
+        { date: "2026-01-02", value: "6" },
+        { date: "2026-01-02", value: "10" },
+      ],
+    };
+    const result = render("AreaChart", repeatedDataset, {
+      axisSwapped: true,
+      encodings: {
+        x: { field: "date", type: "temporal" },
+        y: { field: "value", type: "quantitative" },
+      },
+    });
+
+    expect(result.content).toContain('data-axis-swapped="true"');
+    expect(result.content).toContain('data-point-count="4"');
+    expect(result.scales?.x.type).toBe("linear");
+    const xDomain = result.scales?.x.domain as [number, number];
+    expect(xDomain[0]).toBeLessThanOrEqual(0);
+    expect(xDomain[1]).toBeGreaterThanOrEqual(0);
+    expect(result.scales?.y.type).toBe("utc");
+  });
+
   it("uses the gallery streamgraph offset and ordering", () => {
     const result = render("Streamgraph", seriesDataset, {
       encodings: {
@@ -148,6 +296,22 @@ describe("advanced chart cards", () => {
     });
     expect(result.content).toContain('data-stack-offset="wiggle"');
     expect(result.content).toContain('data-stack-order="inside-out"');
+  });
+
+  it.each(["StackedAreaChart", "Streamgraph"])("swaps %s like MultiLine while preserving every series", (chartType) => {
+    const result = render(chartType, seriesDataset, {
+      axisSwapped: true,
+      encodings: {
+        x: { field: "date", type: "temporal" },
+        y: { field: "value", type: "quantitative" },
+        color: { field: "series", type: "nominal" },
+      },
+    });
+
+    expect(result.content).toContain('data-axis-swapped="true"');
+    expect(result.content.match(/data-mark-role="area"/g)).toHaveLength(2);
+    expect(result.scales?.x.type).toBe("linear");
+    expect(result.scales?.y.type).toBe("utc");
   });
 
   it("renders parallel coordinates from multiple numeric dimensions", () => {

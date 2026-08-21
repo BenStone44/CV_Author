@@ -146,6 +146,7 @@ export const CartesianCoordinateSystem = defineComponent({
     applyTransform: { type: Boolean, default: true },
     bindingLabel: { type: String, default: "" },
     bindingFields: { type: Array as PropType<string[]>, default: () => [] },
+    bindingAxis: { type: String as PropType<"x" | "y">, default: "y" },
     onBindingRemove: { type: Function as PropType<(nodeId: string, field: string) => void>, default: null },
     onAxisScalePointerDown: { type: Function as PropType<(node: CanvasNode, axis: "x" | "y", event: PointerEvent) => void>, default: null },
   },
@@ -267,8 +268,13 @@ export const CartesianCoordinateSystem = defineComponent({
           const labelHeight = 18 / screenScale;
           const availableHeight = Math.max((bottom - top) - labelHeight, chipHeight);
           const rowsPerColumn = Math.max(1, Math.floor(availableHeight / (chipHeight + gap)));
-          const startX = origin.x + (guide.xDirection === 1 ? 10 / screenScale : -(chipWidth + 10 / screenScale));
-          const startY = top + 6 / screenScale;
+          const isXAxisBinding = props.bindingAxis === "x";
+          const startX = isXAxisBinding
+            ? left + 6 / screenScale
+            : origin.x + (guide.xDirection === 1 ? 10 / screenScale : -(chipWidth + 10 / screenScale));
+          const startY = isXAxisBinding
+            ? origin.y + (guide.yDirection === -1 ? 10 / screenScale : -(labelHeight + chipHeight + 10 / screenScale))
+            : top + 6 / screenScale;
           return [h("g", { class: "cartesian-axis-item-bindings" }, [
             h("text", {
               class: "cartesian-axis-item-bindings__label",

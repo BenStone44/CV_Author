@@ -97,6 +97,35 @@ describe("chart data pipeline", () => {
     expect(prepared.chartSpec.templateId).toBe("line");
   });
 
+  it("materializes multiple Stacked Area and Streamgraph value columns as series", () => {
+    const wideDataset: Dataset = {
+      id: "stacked-area-values",
+      name: "stacked-area-values.csv",
+      columns: [
+        { name: "time", type: "temporal" },
+        { name: "planned", type: "quantitative" },
+        { name: "actual", type: "quantitative" },
+      ],
+      rows: [
+        { time: "2026-01-01", planned: "4", actual: "7" },
+        { time: "2026-01-02", planned: "6", actual: "8" },
+      ],
+    };
+    for (const chartType of ["StackedAreaChart", "Streamgraph"]) {
+      const spec: ChartSpec = {
+        chartType,
+        datasetId: wideDataset.id,
+        encodings: { x: { field: "time", type: "temporal" } },
+        valueFields: ["planned", "actual"].map((field) => ({ field, type: "quantitative" as const })),
+      };
+      const result = materializeCsvValueSeries(wideDataset, spec);
+      expect(result.dataset.rows).toHaveLength(4);
+      expect(result.chartSpec.encodings.y?.field).toBe(CSV_MEASURE_VALUE_FIELD);
+      expect(result.chartSpec.encodings.color?.field).toBe(CSV_MEASURE_ID_FIELD);
+      expect(result.chartSpec.series?.field).toBe(CSV_MEASURE_ID_FIELD);
+    }
+  });
+
   it("materializes multiple Stacked Bar segment columns to the standard color channel", () => {
     const wideDataset: Dataset = {
       id: "stacked-bars",

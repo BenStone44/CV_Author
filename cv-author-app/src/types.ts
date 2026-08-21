@@ -333,6 +333,13 @@ export type ChartDropZone = {
 
 export type DataBindingDropZone =
   | {
+    type: "chart-body";
+    targetNodeId: string;
+    fieldName: string;
+    compatible: boolean;
+    bounds: Bounds;
+  }
+  | {
     type: "polar-axis";
     targetNodeId: string;
     channel: "angle" | "radius";

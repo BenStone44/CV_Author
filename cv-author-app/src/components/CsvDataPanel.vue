@@ -45,7 +45,7 @@ const isDragging = ref(false);
 const expandedWidth = ref(304);
 const canExpand = ref(false);
 const isExpanded = ref(false);
-const isTransposed = ref(false);
+const isTransposed = ref(true);
 const {
   activeDataset,
   parseError,

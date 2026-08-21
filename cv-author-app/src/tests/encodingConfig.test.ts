@@ -123,11 +123,9 @@ describe("card encoding configuration", () => {
     expect(hasRequiredChartEncodings({
       chartType: "StackedAreaChart",
       datasetId: "data",
-      encodings: {
-        x: { field: "time", type: "temporal" },
-        y: { field: "value", type: "quantitative" },
-      },
-    })).toBe(false);
+      encodings: { x: { field: "time", type: "temporal" } },
+      valueFields: [{ field: "weight", type: "quantitative" }],
+    })).toBe(true);
     const valueFields = ["weight", "water"]
       .map((field) => ({ field, type: "quantitative" as const }));
     expect(hasRequiredChartEncodings({

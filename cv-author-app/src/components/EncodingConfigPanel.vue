@@ -84,7 +84,8 @@ const areaRequiresSeries = computed(() => {
 });
 const supportsBarValueSeries = computed(() => isGroupedBar.value || barRequiresSegments.value);
 const supportsMeasureSeries = computed(() => isExplicitMultiLine.value || areaRequiresSeries.value || supportsBarValueSeries.value);
-const usesDerivedSeries = computed(() => hasDerivedValueSeries(props.chartSpec, "y"));
+const usesDerivedSeries = computed(() => hasDerivedValueSeries(props.chartSpec, "y")
+  || (areaRequiresSeries.value && (props.chartSpec.valueFields?.length ?? 0) > 0));
 const usesBarValueSeries = computed(() => supportsBarValueSeries.value && (props.chartSpec.valueFields?.length ?? 0) > 0);
 const isParallel = computed(() => template.value === "parallel");
 const standardConfigs = computed(() => configs.value.filter((config) => {
@@ -97,7 +98,7 @@ const standardConfigs = computed(() => configs.value.filter((config) => {
     || (supportsMeasureSeries.value && config.channel === "color" && (!supportsBarValueSeries.value || usesBarValueSeries.value))) return false;
   return true;
 }));
-const seriesConfig = computed<EncodingChannelConfig | null>(() => ((isMultiLine.value && !isExplicitMultiLine.value) || areaRequiresSeries.value) && !usesDerivedSeries.value ? {
+const seriesConfig = computed<EncodingChannelConfig | null>(() => isMultiLine.value && !isExplicitMultiLine.value && !usesDerivedSeries.value ? {
   channel: "color",
   label: "Series",
   role: "series",
@@ -238,6 +239,7 @@ const canConfirm = computed(() => resolveChartEncodingIssues(props.chartSpec).le
       && selectedValueSeriesFields.value.length >= (supportsBarValueSeries.value ? 2 : 1)) return true;
   if (config.channel === "dimensions") return selectedParallelFields.value.length >= 2;
   if (config.channel === "color" && (usesDerivedSeries.value || usesBarValueSeries.value
+    || (areaRequiresSeries.value && selectedValueSeriesFields.value.length > 0)
     || ((isGroupedBar.value || barRequiresSegments.value) && selectedSeriesFields.value.length > 0))) return true;
   if (config.multiple) return selectedAngleFields.value.length > 0;
   return !!resolvedEncodingField(props.chartSpec, config.channel);
@@ -365,7 +367,7 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
       </section>
 
       <section v-if="supportsMeasureSeries && !barRequiresSegments && !isGroupedBar" class="encoding-config__angle" aria-label="Series fields">
-        <span>{{ isExplicitMultiLine ? "Series" : (axisSwapped ? "X values" : "Y values") }} <abbr title="At least one required" aria-label="At least one required">*</abbr></span>
+        <span>{{ isExplicitMultiLine || areaRequiresSeries ? "Series" : (axisSwapped ? "X values" : "Y values") }} <abbr title="At least one required" aria-label="At least one required">*</abbr></span>
         <label v-for="column in quantitativeColumns" :key="column.name">
           <input
             type="checkbox"
@@ -593,9 +595,9 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
 .encoding-config__header button { display: inline-grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 6px; background: transparent; color: #5b6a80; cursor: pointer; }
 .encoding-config__header button:hover { background: #edf5fc; color: #1554b2; }
 .encoding-config__channels { display: grid; gap: 12px; }
-.encoding-config__columns { display: grid; grid-template-columns: repeat(3, minmax(220px, 1fr)); gap: 10px; align-items: stretch; overflow-x: auto; padding-bottom: 3px; }
+.encoding-config__columns { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-items: stretch; padding-bottom: 3px; }
 .encoding-config__column { display: grid; min-width: 0; align-content: start; gap: 10px; padding: 10px; border: 1px solid rgba(24, 33, 47, 0.1); border-radius: 6px; background: #fbfcfe; }
-.encoding-config__column--composition { grid-column: 2; background: #f8fbff; }
+.encoding-config__column--composition { background: #f8fbff; }
 .encoding-config__column-heading { display: grid; gap: 2px; padding-bottom: 2px; border-bottom: 1px solid rgba(24, 33, 47, 0.09); }
 .encoding-config__column-heading strong { color: #263548; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
 .encoding-config__column-heading span, .encoding-config__column-empty { color: #718096; font-size: 10px; line-height: 1.35; }

@@ -30,6 +30,7 @@ import {
   coordinateOptions,
   compositionOptions,
   getFilterIconSvg,
+  getDimensionChartUpgradeOptions,
 } from "../stores/useCanvasStore";
 import { useDatasetStore } from "../stores/useDatasetStore";
 import { useLlmRenderer } from "../stores/useLlmRenderer";
@@ -69,10 +70,12 @@ const {
   axisBindingRendererError,
   coordinateGuideNodes,
   barItemAxisBinding,
+  itemBindingAxis,
   contextMenu,
   draggedCandidateId,
   activeDropZone,
   activeDataBindingDropZone,
+  dimensionDropTarget,
   interaction,
   loadingDrop,
   importNotice,
@@ -147,6 +150,10 @@ const {
   confirmNestedBinding,
   closeNestedBinding,
   applyLlmRenderer,
+  applyDimensionAggregation,
+  applyDimensionFacet,
+  applyDimensionChartUpgrade,
+  closeDimensionDropDecision,
   reorderSelectedNodes,
   alignSelection,
   resetCanvasZoom,
@@ -213,9 +220,16 @@ const csvEncodingBindings = computed<Record<string, string[]>>(() => {
   const template = normalizeChartTemplate(spec.chartType);
   const barVariant = template === "bar" ? normalizeBarChartVariant(spec.chartType) : null;
   const isBarItemChart = barVariant === "grouped" || barVariant === "stacked" || barVariant === "divergent-stacked";
-  const isMultiLine = template === "line" && spec.chartType.replace(/[\s_-]/g, "").toLowerCase() === "multilinechart";
-  const isMeasureSeriesChart = isBarItemChart || isMultiLine;
-  const itemLabel = isMultiLine ? "Series" : barVariant === "grouped" ? "Group item" : "Segment item";
+  const normalizedChartType = spec.chartType.replace(/[\s_-]/g, "").toLowerCase();
+  const isMultiLine = template === "line" && normalizedChartType === "multilinechart";
+  const isAreaValueSeries = template === "area"
+    && (normalizedChartType.includes("stacked")
+      || normalizedChartType.includes("stream")
+      || normalizedChartType.includes("horizon"));
+  const isMeasureSeriesChart = isBarItemChart || isMultiLine || isAreaValueSeries;
+  const itemLabel = isMultiLine || isAreaValueSeries
+    ? "Series"
+    : barVariant === "grouped" ? "Group item" : "Segment item";
 
   Object.entries(spec.encodings).forEach(([channel, encoding]) => {
     if (!encoding) return;
@@ -238,7 +252,7 @@ const csvEncodingBindings = computed<Record<string, string[]>>(() => {
   const seriesFields = spec.seriesFields?.map((encoding) => encoding.field)
     ?? (spec.series ? [spec.series.field] : []);
   if (isMeasureSeriesChart) {
-    if (isMultiLine && !spec.valueFields?.length && spec.encodings.y) {
+    if ((isMultiLine || isAreaValueSeries) && !spec.valueFields?.length && spec.encodings.y) {
       add(spec.encodings.y.field, itemLabel);
     }
     seriesFields.forEach((field) => {
@@ -430,6 +444,23 @@ const encodingTargetNode = computed(() =>
   ?? axisBindingNode.value,
 );
 const canToggleEncodingInspector = computed(() => !!encodingTargetNode.value);
+const dimensionDropNode = computed(() => dimensionDropTarget.value
+  ? selectedNodes.value.find((node) => node.id === dimensionDropTarget.value?.nodeId) ?? null
+  : null);
+const dimensionUpgradeOptions = computed(() => getDimensionChartUpgradeOptions(
+  dimensionDropNode.value?.chartSpec?.chartType ?? "",
+));
+const dimensionDropField = computed(() => dimensionDropTarget.value?.fieldName ?? "");
+function applyDimensionDecision(strategy: "sum" | "avg" | "facet" | string) {
+  const field = dimensionDropField.value;
+  if (!field) return;
+  const applied = strategy === "facet"
+    ? applyDimensionFacet(field, "column")
+    : strategy === "sum" || strategy === "avg"
+      ? applyDimensionAggregation(field, strategy)
+      : applyDimensionChartUpgrade(field, strategy);
+  if (applied) closeDimensionDropDecision();
+}
 
 function defaultEncodingChannel(node: CanvasNode): CoordinateChannel {
   return isPolarChartType(node.chartSpec?.chartType ?? "") ? "angle" : "x";
@@ -1025,6 +1056,76 @@ onBeforeUnmount(() => {
             />
           </aside>
 
+          <div
+            v-if="dimensionDropTarget"
+            class="recommendation-popup-backdrop"
+            @click="closeDimensionDropDecision"
+          />
+          <aside
+            v-if="dimensionDropTarget"
+            class="recommendation-popup dimension-drop-popup"
+            role="dialog"
+            aria-modal="true"
+            :aria-label="`Choose how to use ${dimensionDropField}`"
+            @click.stop
+            @pointerdown.stop
+          >
+            <header class="recommendation-popup__header">
+              <div>
+                <strong>Use {{ dimensionDropField }}</strong>
+                <span>{{ dimensionDropNode?.chartSpec?.chartType }}</span>
+              </div>
+              <button
+                class="recommendation-popup__close"
+                type="button"
+                title="Close"
+                aria-label="Close dimension options"
+                @click="closeDimensionDropDecision"
+              >
+                <X :size="17" :stroke-width="1.7" aria-hidden="true" />
+              </button>
+            </header>
+            <div class="recommendation-popup__options dimension-drop-popup__options">
+              <article class="recommendation-option-card">
+                <span class="recommendation-option-card__strategy">Aggregate</span>
+                <strong>Aggregate by {{ dimensionDropField }}</strong>
+                <span>Reduce repeated visual keys with an explicit operation.</span>
+                <div class="dimension-drop-popup__actions">
+                  <button type="button" @click="applyDimensionDecision('sum')">Sum</button>
+                  <button type="button" @click="applyDimensionDecision('avg')">Average</button>
+                </div>
+              </article>
+              <article class="recommendation-option-card">
+                <span class="recommendation-option-card__strategy">Facet</span>
+                <strong>Facet by {{ dimensionDropField }}</strong>
+                <span>Create one independent chart for each field value.</span>
+                <div class="dimension-drop-popup__actions">
+                  <button type="button" @click="applyDimensionFacet(dimensionDropField, 'row') && closeDimensionDropDecision()">Rows</button>
+                  <button type="button" @click="applyDimensionDecision('facet')">Columns</button>
+                </div>
+              </article>
+              <article
+                v-for="option in dimensionUpgradeOptions"
+                :key="option.chartType"
+                class="recommendation-option-card"
+              >
+                <span class="recommendation-option-card__strategy">Upgrade</span>
+                <strong>{{ option.label }}</strong>
+                <span>Add {{ dimensionDropField }} as the chart's next visual dimension.</span>
+                <button type="button" @click="applyDimensionDecision(option.chartType)">Apply</button>
+              </article>
+              <article
+                v-if="dimensionUpgradeOptions.length === 0"
+                class="recommendation-option-card recommendation-option-card--disabled"
+              >
+                <span class="recommendation-option-card__strategy">Upgrade</span>
+                <strong>Chart upgrade</strong>
+                <span>This chart is already at its supported dimensionality.</span>
+                <button type="button" disabled>Unavailable</button>
+              </article>
+            </div>
+          </aside>
+
           <aside
             v-if="nestedBindingTarget"
             ref="nestedBindingPopupRef"
@@ -1368,6 +1469,15 @@ onBeforeUnmount(() => {
                   :y="activeDataBindingDropZone.labelPosition.y"
                   text-anchor="middle"
                 >{{ activeDataBindingDropZone.channel === 'angle' ? 'Theta' : 'R' }}</text>
+                <rect
+                  v-else-if="activeDataBindingDropZone.type === 'chart-body'"
+                  class="data-binding-chart-drop-zone"
+                  :x="activeDataBindingDropZone.bounds.minX"
+                  :y="activeDataBindingDropZone.bounds.minY"
+                  :width="activeDataBindingDropZone.bounds.width"
+                  :height="activeDataBindingDropZone.bounds.height"
+                  vector-effect="non-scaling-stroke"
+                />
                 <ellipse
                   v-else-if="activeDataBindingDropZone.type === 'polar-slice'"
                   class="data-binding-drop-zone"
@@ -1453,6 +1563,7 @@ onBeforeUnmount(() => {
                 :interactive="true"
                 :binding-label="barItemAxisBinding(node)?.label ?? ''"
                 :binding-fields="barItemAxisBinding(node)?.fields ?? []"
+                :binding-axis="itemBindingAxis(node)"
                 :on-binding-remove="removeBarItemField"
                 :on-axis-scale-pointer-down="onCoordinateAxisScalePointerDown"
               />
@@ -2127,7 +2238,7 @@ onBeforeUnmount(() => {
   top: 58px;
   right: 264px;
   z-index: 5;
-  width: min(760px, calc(100% - 24px));
+  width: min(420px, calc(100% - 24px));
   max-height: calc(100% - 24px);
   min-width: 220px;
   box-sizing: border-box;
@@ -2417,6 +2528,15 @@ onBeforeUnmount(() => {
   cursor: not-allowed;
   transform: none;
 }
+.recommendation-option-card--disabled {
+  opacity: 0.56;
+  cursor: default;
+}
+.recommendation-option-card--disabled:hover {
+  border-color: rgba(24, 33, 47, 0.12);
+  box-shadow: none;
+  transform: none;
+}
 .recommendation-option-card select {
   width: 100%;
   height: 34px;
@@ -2435,6 +2555,30 @@ onBeforeUnmount(() => {
   color: #fff;
   font: inherit;
   cursor: pointer;
+}
+.dimension-drop-popup {
+  width: min(720px, calc(100% - 48px));
+  max-height: min(520px, calc(100% - 48px));
+}
+.dimension-drop-popup__options {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.dimension-drop-popup__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.dimension-drop-popup__actions button {
+  min-height: 34px;
+  border: 1px solid #2563eb;
+  border-radius: 5px;
+  background: #fff;
+  color: #1d4ed8;
+  font: inherit;
+  cursor: pointer;
+}
+.dimension-drop-popup__actions button:hover {
+  background: #eff6ff;
 }
 .facet-direction-control {
   display: grid;
@@ -2749,6 +2893,12 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0;
+}
+.data-binding-chart-drop-zone {
+  fill: rgba(37, 99, 235, 0.08);
+  stroke: #2563eb;
+  stroke-width: 2;
+  stroke-dasharray: 8 6;
 }
 .data-binding-axis-drop-zone {
   stroke: #1c7ed6;
@@ -3213,6 +3363,9 @@ onBeforeUnmount(() => {
     right: 12px;
     width: min(420px, calc(100% - 24px));
     min-width: 0;
+  }
+  .dimension-drop-popup__options {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 @media (max-width: 760px) {

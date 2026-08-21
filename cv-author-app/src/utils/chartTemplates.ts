@@ -182,7 +182,7 @@ const requiredEncodingFallbacks: Record<
   },
   area: {
     y: (spec) => !!spec.valueFields?.length,
-    color: (spec) => (spec.valueFields?.length ?? 0) > 1,
+    color: (spec) => (spec.valueFields?.length ?? 0) > 0,
   },
   matrix: {
     x: (spec) => !!spec.encodings.column,

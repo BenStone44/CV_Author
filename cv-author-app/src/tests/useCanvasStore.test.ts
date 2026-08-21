@@ -237,7 +237,7 @@ describe("implemented chart template cards", () => {
     expect(chart.content).toContain(candidate!.src);
 
     store.setChartEncoding("y", "weight_kg");
-    expect(chart.renderedContent).toContain('data-renderer="observable-area@2"');
+    expect(chart.renderedContent).toContain('data-renderer="deterministic-area@1"');
     expect(chart.renderedContent).not.toContain(candidate!.src);
   });
 
@@ -1050,6 +1050,10 @@ describe("CSV field binding", () => {
     expect(getDimensionChartUpgradeOptions("GroupedBarChart")).toEqual([]);
     expect(getDimensionChartUpgradeOptions("StackedBarChart")).toEqual([]);
     expect(getDimensionChartUpgradeOptions("MultiLineChart")).toEqual([]);
+    expect(getDimensionChartUpgradeOptions("AreaChart")).toEqual([
+      { chartType: "StackedAreaChart", label: "Stacked area" },
+    ]);
+    expect(getDimensionChartUpgradeOptions("StackedAreaChart")).toEqual([]);
 
     const dataset: Dataset = {
       id: "stacked-upgrade-dataset",
@@ -1529,6 +1533,101 @@ describe("CSV column axis drag binding", () => {
     expect(store.activeDataBindingDropZone.value).toBeNull();
   });
 
+  it("opens dimension choices when an unused column is dropped inside a configured chart", async () => {
+    const dataset: Dataset = {
+      id: "chart-body-dimension",
+      name: "chart-body-dimension.csv",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "time", type: "temporal" },
+        { name: "weight", type: "quantitative" },
+      ],
+      rows: [
+        { person: "A", time: "2026-01", weight: "80" },
+        { person: "A", time: "2026-02", weight: "79" },
+        { person: "B", time: "2026-01", weight: "76" },
+        { person: "B", time: "2026-02", weight: "75" },
+      ],
+    };
+    const chart = lineChart("chart-body-target", 100, false);
+    chart.chartSpec = {
+      chartType: "SingleBarChart",
+      datasetId: dataset.id,
+      encodings: {
+        x: { field: "person", type: "nominal" },
+        y: { field: "weight", type: "quantitative" },
+      },
+    };
+    const store = useCanvasStore(dragCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [chart];
+    const event = columnDragEvent(dataset.id, "time", "temporal", 500, 300);
+
+    store.onCanvasDragOver(event);
+    expect(store.activeDataBindingDropZone.value).toMatchObject({
+      type: "chart-body",
+      targetNodeId: chart.id,
+      fieldName: "time",
+      compatible: true,
+    });
+    expect(event.dataTransfer?.dropEffect).toBe("copy");
+
+    await store.onCanvasDrop(event);
+    expect(store.dimensionDropTarget.value).toMatchObject({
+      nodeId: chart.id,
+      fieldName: "time",
+    });
+    expect(chart.chartSpec?.encodings).toEqual({
+      x: { field: "person", type: "nominal" },
+      y: { field: "weight", type: "quantitative" },
+    });
+
+    expect(store.applyDimensionAggregation("time", "avg")).toBe(true);
+    expect(chart.chartSpec?.aggregations?.y).toBe("avg");
+    expect(chart.chartSpec?.dimensionAggregations?.time).toBe("avg");
+    expect(chart.chartSpec?.dimensionDecisions?.time).toBe("aggregate");
+    store.closeDimensionDropDecision();
+    expect(store.dimensionDropTarget.value).toBeNull();
+  });
+
+  it("upgrades a single bar from a chart-body dimension drop", async () => {
+    const dataset: Dataset = {
+      id: "chart-body-upgrade",
+      name: "chart-body-upgrade.csv",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "time", type: "temporal" },
+        { name: "weight", type: "quantitative" },
+      ],
+      rows: [
+        { person: "A", time: "2026-01", weight: "80" },
+        { person: "A", time: "2026-02", weight: "79" },
+        { person: "B", time: "2026-01", weight: "76" },
+        { person: "B", time: "2026-02", weight: "75" },
+      ],
+    };
+    const chart = lineChart("chart-body-upgrade-target", 100, false);
+    chart.chartSpec = {
+      chartType: "SingleBarChart",
+      datasetId: dataset.id,
+      encodings: {
+        x: { field: "person", type: "nominal" },
+        y: { field: "weight", type: "quantitative" },
+      },
+    };
+    const store = useCanvasStore(dragCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [chart];
+
+    await store.onCanvasDrop(columnDragEvent(dataset.id, "time", "temporal", 500, 300));
+    expect(store.applyDimensionChartUpgrade("time", "StackedBarChart")).toBe(true);
+    expect(chart.chartSpec?.chartType).toBe("StackedBarChart");
+    expect(chart.chartSpec?.encodings.color).toEqual({ field: "time", type: "temporal" });
+    expect(chart.renderedContent).toContain('data-bar-variant="stacked"');
+  });
+
   it("shows an incompatible axis and leaves its binding unchanged", async () => {
     const chart = lineChart("column-drag-incompatible", 100, false);
     const store = useCanvasStore(dragCanvasRef());
@@ -1616,4 +1715,77 @@ describe("CSV column axis drag binding", () => {
       values: { fat: { color: "#ef4444", strokeWidth: 4, shape: "dashed" } },
     });
   });
+
+  it.each(["StackedAreaChart", "Streamgraph"])(
+    "accumulates %s Series fields on its physical value axis and follows XY swap",
+    async (chartType) => {
+      const dataset: Dataset = {
+        id: `drag-${chartType}`,
+        name: `${chartType}.csv`,
+        columns: [
+          { name: "time", type: "temporal" },
+          { name: "alpha", type: "quantitative" },
+          { name: "beta", type: "quantitative" },
+          { name: "label", type: "nominal" },
+        ],
+        rows: [
+          { time: "2026-01-01", alpha: "4", beta: "2", label: "A" },
+          { time: "2026-01-08", alpha: "6", beta: "3", label: "B" },
+        ],
+      };
+      const chart = lineChart(`column-drag-${chartType}`, 100, false);
+      chart.chartSpec = {
+        chartType,
+        datasetId: dataset.id,
+        encodings: { x: { field: "time", type: "temporal" }, y: { field: "alpha", type: "quantitative" } },
+      };
+      const store = useCanvasStore(dragCanvasRef());
+      store.relationshipStore.dispatch({ type: "clear" });
+      useDatasetStore().datasets.value = [dataset];
+      store.canvasNodes.value = [chart];
+      const xAxisEvent = (field: string) => columnDragEvent(
+        dataset.id,
+        field,
+        "quantitative",
+        chart.x + (chart.chartSpec?.plotArea?.x ?? 0) + (chart.chartSpec?.plotArea?.width ?? chart.width) / 2,
+        chart.y + (chart.chartSpec?.plotArea?.y ?? 0) + (chart.chartSpec?.plotArea?.height ?? chart.height),
+      );
+      const yAxisEvent = (field: string) => columnDragEvent(
+        dataset.id,
+        field,
+        "quantitative",
+        chart.x + (chart.chartSpec?.plotArea?.x ?? 0),
+        chart.y + (chart.chartSpec?.plotArea?.y ?? 0) + (chart.chartSpec?.plotArea?.height ?? chart.height) / 2,
+      );
+
+      await store.onCanvasDrop(yAxisEvent("alpha"));
+      await store.onCanvasDrop(yAxisEvent("beta"));
+      expect(store.barItemAxisBinding(chart)).toEqual({ label: "Series", fields: ["alpha", "beta"] });
+      expect(chart.chartSpec?.valueFields?.map((encoding) => encoding.field)).toEqual(["alpha", "beta"]);
+
+      store.setAxisSwap(true);
+      await store.onCanvasDrop(columnDragEvent(
+        dataset.id,
+        "time",
+        "temporal",
+        chart.x + (chart.chartSpec?.plotArea?.x ?? 0),
+        chart.y + (chart.chartSpec?.plotArea?.y ?? 0) + (chart.chartSpec?.plotArea?.height ?? chart.height) / 2,
+      ));
+      expect(chart.chartSpec?.encodings.x).toEqual({ field: "time", type: "temporal" });
+      await store.onCanvasDrop(xAxisEvent("alpha"));
+      expect(chart.chartSpec?.valueFields?.map((encoding) => encoding.field)).toEqual(["alpha", "beta"]);
+      expect(store.itemBindingAxis(chart)).toBe("x");
+
+      const incompatible = columnDragEvent(
+        dataset.id,
+        "label",
+        "nominal",
+        chart.x + (chart.chartSpec?.plotArea?.x ?? 0) + (chart.chartSpec?.plotArea?.width ?? chart.width) / 2,
+        chart.y + (chart.chartSpec?.plotArea?.y ?? 0) + (chart.chartSpec?.plotArea?.height ?? chart.height),
+      );
+      store.onCanvasDragOver(incompatible);
+      expect(store.activeDataBindingDropZone.value).toMatchObject({ channel: "x", compatible: false });
+      expect(incompatible.dataTransfer?.dropEffect).toBe("none");
+    },
+  );
 });

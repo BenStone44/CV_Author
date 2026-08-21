@@ -141,7 +141,7 @@ export const chartEncodingSchemas = {
     { channel: "y", label: "Y", role: "dimension", required: true, accepts: ["nominal", "temporal"], emptyLabel: "Not bound" },
     { channel: "color", label: "Color", role: "measure", required: false, accepts: ["quantitative", "nominal"], emptyLabel: "Static" },
   ]),
-  AreaChart: defineSchema("AreaChart", "Area Chart", "area", areaChannels(false)),
+  AreaChart: defineSchema("AreaChart", "Area Chart", "area", areaChannels(false), { aggregationPolicy: "forbidden", requiresFunctionalDependency: true }),
   StackedAreaChart: defineSchema("StackedAreaChart", "Stacked Area", "area", areaChannels(true)),
   Streamgraph: defineSchema("Streamgraph", "Streamgraph", "area", areaChannels(true)),
   HorizonChart: defineSchema("HorizonChart", "Horizon Chart", "area", areaChannels(true), { coordinateSystem: "CoordinateFree", shareableChannels: [] }),

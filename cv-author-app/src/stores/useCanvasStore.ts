@@ -202,6 +202,11 @@ export function getDimensionChartUpgradeOptions(chartType: string): DimensionCha
       ? []
       : [{ chartType: "MultiLineChart", label: "Multi-line" }];
   }
+  if (template === "area") {
+    return normalized === "areachart"
+      ? [{ chartType: "StackedAreaChart", label: "Stacked area" }]
+      : [];
+  }
   if (template !== "bar") return [];
   const variant = normalizeBarChartVariant(chartType) ?? "single";
   if (variant === "single") {
@@ -312,6 +317,12 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const activeDropZone = ref<ChartDropZone | null>(null);
   const compositionDragSourceId = ref<string | null>(null);
   const activeDataBindingDropZone = ref<DataBindingDropZone | null>(null);
+  const dimensionDropTarget = ref<{
+    nodeId: string;
+    fieldName: string;
+    clientX: number;
+    clientY: number;
+  } | null>(null);
   const nestedBindingTarget = ref<NestedBindingTarget | null>(null);
   const loadingDrop = ref(false);
   const importNotice = ref<string | null>(null);
@@ -861,9 +872,10 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         spec.datasetId === payload.datasetId
         && !!column
         && column.type === payload.type
-        && (channel === "y" && barItemAxisBinding(node)
+        && (channel === itemBindingAxis(node) && barItemAxisBinding(node)
           ? (barItemAxisBinding(node)?.label !== "Series" || column.type === "quantitative")
-          : getEncodingChannelConfigsForSpec(spec).some((config) => config.channel === channel && config.accepts.includes(column.type)));
+          : getEncodingChannelConfigsForSpec(spec).some((config) => config.channel === logicalAxisChannel(node, channel)
+            && config.accepts.includes(column.type)));
       if (guide.type === "Cartesian") {
         const model = createCartesianAxisModel(node);
         const minX = node.kind === "leaf" ? node.contentMinX : 0;
@@ -936,7 +948,34 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         }
       }
     });
-    return nearestZone;
+    if (nearestZone) return nearestZone;
+    const bodyTarget = [...getSelectionScopeNodes()].reverse().find((node) => {
+      const spec = node.chartSpec;
+      if (!spec || spec.datasetId !== payload.datasetId || !hasRequiredChartEncodings(spec)) return false;
+      const template = normalizeChartTemplate(spec.chartType);
+      if (template !== "bar" && template !== "line" && template !== "area") return false;
+      const dataset = getDataset(spec.datasetId);
+      const column = dataset?.columns.find((item) => item.name === payload.field);
+      if (!column || column.type !== payload.type) return false;
+      const boundFields = new Set([
+        ...Object.values(spec.encodings).flatMap((encoding) => encoding ? [encoding.field] : []),
+        ...(spec.seriesFields?.map((encoding) => encoding.field) ?? []),
+        ...(spec.valueFields?.map((encoding) => encoding.field) ?? []),
+      ]);
+      if (boundFields.has(payload.field)) return false;
+      const local = toNodeLocalPoint(node, point);
+      const minX = node.kind === "leaf" ? node.contentMinX : 0;
+      const minY = node.kind === "leaf" ? node.contentMinY : 0;
+      return local.x >= minX && local.x <= minX + node.width
+        && local.y >= minY && local.y <= minY + node.height;
+    });
+    return bodyTarget ? {
+      type: "chart-body",
+      targetNodeId: bodyTarget.id,
+      fieldName: payload.field,
+      compatible: true,
+      bounds: collectNodeSelectionBounds(bodyTarget),
+    } : null;
   }
   function mappedEncodingChannel(node: CanvasNode, channel: CoordinateChannel): ChartEncodingChannel {
     const template = normalizeChartTemplate(node.chartSpec?.chartType ?? "");
@@ -1059,21 +1098,33 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       return true;
     });
   });
+  function itemBindingAxis(node: CanvasNode): "x" | "y" {
+    return node.chartSpec?.axisSwapped === true ? "x" : "y";
+  }
+  function logicalAxisChannel(node: CanvasNode, channel: ChartEncodingChannel): ChartEncodingChannel {
+    if (node.chartSpec?.axisSwapped !== true || (channel !== "x" && channel !== "y")) return channel;
+    return channel === "x" ? "y" : "x";
+  }
   function barItemAxisBinding(node: CanvasNode) {
     const variant = normalizeBarChartVariant(node.chartSpec?.chartType ?? "");
     const isMultiLine = normalizeChartTemplate(node.chartSpec?.chartType ?? "") === "line"
       && node.chartSpec?.chartType.replace(/[\s_-]/g, "").toLowerCase() === "multilinechart";
+    const normalized = node.chartSpec?.chartType.replace(/[\s_-]/g, "").toLowerCase() ?? "";
+    const template = normalizeChartTemplate(node.chartSpec?.chartType ?? "");
+    const isAreaValueSeries = template === "area"
+      && (normalized.includes("stacked") || normalized.includes("stream"));
     if (!node.chartSpec || (!isMultiLine
+      && !isAreaValueSeries
       && variant !== "grouped" && variant !== "stacked" && variant !== "divergent-stacked")) {
       return null;
     }
     return {
-      label: isMultiLine ? "Series" : variant === "grouped" ? "Group item" : "Segment item",
+      label: isMultiLine || isAreaValueSeries ? "Series" : variant === "grouped" ? "Group item" : "Segment item",
       fields: Array.from(new Set([
-        ...(isMultiLine ? [] : (node.chartSpec.seriesFields?.map((encoding) => encoding.field)
+        ...((isMultiLine || isAreaValueSeries) ? [] : (node.chartSpec.seriesFields?.map((encoding) => encoding.field)
           ?? (node.chartSpec.series ? [node.chartSpec.series.field] : []))),
         ...(node.chartSpec.valueFields?.map((encoding) => encoding.field) ?? []),
-        ...(isMultiLine && !node.chartSpec.valueFields?.length && node.chartSpec.encodings.y
+        ...((isMultiLine || isAreaValueSeries) && !node.chartSpec.valueFields?.length && node.chartSpec.encodings.y
           ? [node.chartSpec.encodings.y.field]
           : []),
       ])),
@@ -1557,15 +1608,17 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       if (!member.chartSpec) return;
       const template = normalizeChartTemplate(member.chartSpec.chartType);
       member.llmRenderer = null;
-      if (template === "line") {
+      if (template === "line" || template === "area") {
         const seriesEncoding = { field: column.name, type: "nominal" as const };
         const valueFilters = { ...member.chartSpec.valueFilters };
         delete valueFilters[column.name];
         member.chartSpec = {
           ...member.chartSpec,
           chartType: targetChartType,
-          templateId: "line",
-          encodings: lineDataEncodings(member.chartSpec.encodings),
+          templateId: template,
+          encodings: template === "line"
+            ? lineDataEncodings(member.chartSpec.encodings)
+            : { ...member.chartSpec.encodings, color: seriesEncoding },
           series: member.chartSpec.series ?? seriesEncoding,
           seriesFields: Array.from(new Map([
             ...(member.chartSpec.seriesFields ?? (member.chartSpec.series ? [member.chartSpec.series] : [])),
@@ -1752,6 +1805,10 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       label: `Facet by ${fieldName}`,
     };
     return applyDimensionRecommendation(recommendation.id, direction, recommendation);
+  }
+
+  function closeDimensionDropDecision() {
+    dimensionDropTarget.value = null;
   }
 
   function createLayer(recordHistory = true) {
@@ -2870,7 +2927,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function removeBarItemField(nodeId: string, fieldName: string) {
     const node = findCanvasNode(nodeId);
     if (!node?.chartSpec || !barItemAxisBinding(node)) return;
-    axisBindingTarget.value = { nodeId, channel: "y" };
+    axisBindingTarget.value = { nodeId, channel: itemBindingAxis(node) };
     const valueFields = node.chartSpec.valueFields?.map((encoding) => encoding.field) ?? [];
     if (valueFields.includes(fieldName)) {
       setValueSeriesFields(valueFields.filter((field) => field !== fieldName));
@@ -4099,6 +4156,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function onCandidateDragStart(candidate: SvgCandidate, event: DragEvent) {
     draggedCandidateId.value = candidate.id;
     activeDataBindingDropZone.value = null;
+    dimensionDropTarget.value = null;
     event.dataTransfer?.setData("application/x-svg-candidate", candidate.id);
     event.dataTransfer?.setData("text/plain", candidate.id);
     if (event.dataTransfer) event.dataTransfer.effectAllowed = "copy";
@@ -4142,6 +4200,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       activeDataBindingDropZone.value = null;
       activeDropZone.value = null;
       endCsvColumnDrag();
+      dimensionDropTarget.value = null;
       if (!zone) {
         setImportNotice("Drop a column on a visible coordinate axis.");
         return;
@@ -4152,6 +4211,22 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       }
       const target = findCanvasNode(zone.targetNodeId);
       if (!target?.chartSpec) return;
+      if (zone.type === "chart-body") {
+        axisBindingTarget.value = {
+          nodeId: target.id,
+          channel: target.chartSpec.axisSwapped ? "y" : "x",
+          clientX: event.clientX,
+          clientY: event.clientY,
+        };
+        setSelection([target.id]);
+        dimensionDropTarget.value = {
+          nodeId: target.id,
+          fieldName: csvPayload.field,
+          clientX: event.clientX,
+          clientY: event.clientY,
+        };
+        return;
+      }
       axisBindingTarget.value = {
         nodeId: target.id,
         channel: zone.channel,
@@ -4161,8 +4236,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       setSelection([target.id]);
       const chartChannel: ChartEncodingChannel = zone.type === "polar-axis"
         ? zone.channel === "angle" ? "theta" : "radius"
-        : zone.channel;
-      const itemBinding = zone.type === "cartesian-axis" && zone.channel === "y"
+        : logicalAxisChannel(target, zone.channel);
+      const itemBinding = zone.type === "cartesian-axis" && zone.channel === itemBindingAxis(target)
         ? barItemAxisBinding(target)
         : null;
       if (itemBinding) addBarItemField(csvPayload.field);
@@ -4546,11 +4621,13 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     axisBindingRelatedCharts,
     coordinateGuideNodes,
     barItemAxisBinding,
+    itemBindingAxis,
     interaction,
     contextMenu,
     draggedCandidateId,
     activeDropZone,
     activeDataBindingDropZone,
+    dimensionDropTarget,
     loadingDrop,
     importNotice,
     selectedNodes,
@@ -4595,6 +4672,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     applyDimensionAggregation,
     applyDimensionChartUpgrade,
     applyDimensionFacet,
+    closeDimensionDropDecision,
     applyLlmRenderer,
     onCanvasNodeContextMenu,
     onScaleHandlePointerDown,

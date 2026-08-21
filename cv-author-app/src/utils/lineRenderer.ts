@@ -48,6 +48,15 @@ export type LineRenderResult = {
   content: string;
   plotArea: ChartPlotArea;
   scales: { x: ChartScaleSpec; y: ChartScaleSpec };
+  series: LineSeriesGeometry[];
+};
+
+export type LineSeriesGeometry = {
+  key: string;
+  points: Array<{ x: number; y: number; rowKeys: string[] }>;
+  color: string;
+  lineWidth: number;
+  lineStyle: string;
 };
 
 export type LineRenderInput = {
@@ -61,6 +70,7 @@ export type LineRenderInput = {
   dataset: Dataset;
   sharedPlotArea?: ChartPlotArea;
   sharedScales?: Partial<{ x: ChartScaleSpec; y: ChartScaleSpec }>;
+  includeZeroValueDomain?: boolean;
 };
 
 export function isLineChartType(chartType: string) {
@@ -219,7 +229,11 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
     && chartSpec.series?.field === CSV_MEASURE_ID_FIELD
     && chartSpec.seriesFields?.every((encoding) => encoding.field === CSV_MEASURE_ID_FIELD) === true
     && !hasExplicitAggregation;
-  const preserveDuplicateXRows = preserveSingleMeasureRows || preserveMaterializedMeasureRows;
+  // Line and plain-area charts preserve source rows by default.  Reduction is
+  // opt-in through an explicit y or dimension aggregation configuration.
+  const preserveDuplicateXRows = !hasExplicitAggregation
+    || preserveSingleMeasureRows
+    || preserveMaterializedMeasureRows;
   const dimensionAggregations = Object.entries(chartSpec.dimensionAggregations ?? {});
   const aggregateGroups = (groups: LineDatum[][], operation: "sum" | "avg") => groups.map((values): LineDatum => {
     const first = values[0]!;
@@ -249,13 +263,13 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
       operation,
     );
   });
-  const yAggregation = chartSpec.aggregations?.y ?? "avg";
+  const yAggregation = chartSpec.aggregations?.y;
   const rows = preserveDuplicateXRows
     ? reducedRows
     : aggregateGroups(
       Array.from(group(reducedRows, (datum) => datum.series, (datum) => String(progressionValue(datum))).values())
         .flatMap((xGroups) => Array.from(xGroups.values())),
-      dimensionAggregations.length > 0 ? "avg" : yAggregation,
+      dimensionAggregations.length > 0 ? "avg" : yAggregation!,
     );
   const groupedRows = Array.from(group(rows, (datum) => datum.series).entries())
     .sort(([left], [right]) => left.localeCompare(right, "en", { numeric: true }));
@@ -368,8 +382,14 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
       type: "linear" as const,
     };
   };
-  const xAxisScale = makeScale(xEncoding, rows.map((datum) => datum.x), xRange, input.sharedScales?.x);
-  const yAxisScale = makeScale(yEncoding, rows.map((datum) => datum.y), yRange, input.sharedScales?.y);
+  const xValues = rows.map((datum) => datum.x);
+  const yValues = rows.map((datum) => datum.y);
+  if (input.includeZeroValueDomain) {
+    if (chartSpec.axisSwapped && xEncoding.type === "quantitative") xValues.push(0);
+    if (!chartSpec.axisSwapped && yEncoding.type === "quantitative") yValues.push(0);
+  }
+  const xAxisScale = makeScale(xEncoding, xValues, xRange, input.sharedScales?.x);
+  const yAxisScale = makeScale(yEncoding, yValues, yRange, input.sharedScales?.y);
   const clipId = `line-plot-${chartId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 
   const pathGenerator = line<LineDatum>()
@@ -394,6 +414,7 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
   const legacySeriesColors = isCategoricalColorMapping(lineConfig?.seriesColorMapping)
     ? lineConfig.seriesColorMapping.values
     : {};
+  const series: LineSeriesGeometry[] = [];
   const seriesMarkup = groupedRows.map(([seriesKey, values], index) => {
     const ordered = progressionEncoding.type === "nominal"
       ? [...values]
@@ -417,6 +438,17 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
       : lineStyle === "dotted" ? `${lineWidth} ${lineWidth * 1.8}` : "none";
     maximumLineWidth = Math.max(maximumLineWidth, lineWidth);
     const keys = ordered.flatMap((datum) => datum.sourceRows.map((row) => rowKey(dataset, row))).filter(Boolean);
+    series.push({
+      key: seriesKey,
+      points: ordered.map((datum) => ({
+        x: xAxisScale.position(datum.x),
+        y: yAxisScale.position(datum.y),
+        rowKeys: datum.sourceRows.map((row) => rowKey(dataset, row)).filter(Boolean),
+      })),
+      color,
+      lineWidth,
+      lineStyle,
+    });
     return `<g data-chart-id="${escapeXml(chartId)}" data-mark-role="line" data-mark-group-id="mark-group:${escapeXml(chartId)}:line" data-series-key="${escapeXml(seriesKey)}" data-line-style="${lineStyle}" data-point-count="${ordered.length}" data-row-keys="${escapeXml(keys.join(","))}" opacity="${Number(lineConfig?.opacity ?? 1)}"><path d="${path}" fill="none" stroke="${escapeXml(color)}" stroke-width="${lineWidth}" stroke-dasharray="${dasharray}" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" style="stroke: ${escapeXml(color)}; stroke-width: ${lineWidth}px; stroke-dasharray: ${dasharray}; stroke-linecap: round; stroke-linejoin: round; fill: none;"/></g>`;
   }).join("");
   const clipPadding = Math.max(3, maximumLineWidth * 2);
@@ -439,5 +471,6 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
         nice: yAxisScale.type === "linear" || undefined,
       },
     },
+    series,
   };
 }

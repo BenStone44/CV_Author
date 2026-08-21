@@ -73,6 +73,19 @@ describe("semantic Case 1 renderers", () => {
 
     expect(single.content).toContain('data-bar-variant="single"');
     expect(single.content.match(/data-mark-role="bar"/g)).toHaveLength(4);
+    const categoryABars = Array.from(single.content.matchAll(
+      /<rect[^>]*data-category-key="A"[^>]*x="([^"]+)" y="([^"]+)" width="([^"]+)" height="([^"]+)"/g,
+    ));
+    expect(categoryABars).toHaveLength(2);
+    expect(categoryABars[0]?.[1]).toBe(categoryABars[1]?.[1]);
+    expect(categoryABars[0]?.[3]).toBe(categoryABars[1]?.[3]);
+    const categoryAValues = categoryABars.map((match) => Number(match[0]?.match(/data-value="([^"]+)"/)?.[1] ?? "NaN"));
+    const zeroPositions = categoryABars.map((match, index) => {
+      const y = Number(match[2]);
+      const height = Number(match[4]);
+      return categoryAValues[index]! >= 0 ? y + height : y;
+    });
+    expect(zeroPositions[0]).toBeCloseTo(zeroPositions[1]!);
     expect(grouped.content).toContain('data-bar-variant="grouped"');
     expect(grouped.content.match(/data-mark-role="bar"/g)).toHaveLength(4);
     expect(stacked.content).toContain('data-bar-variant="stacked"');

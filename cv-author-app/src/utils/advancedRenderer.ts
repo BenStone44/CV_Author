@@ -56,6 +56,7 @@ import {
 } from "d3-sankey";
 import type { ChartEncoding, ChartPlotArea, ChartScaleSpec, Dataset } from "../types";
 import type { GenericRenderInput } from "./semanticRenderer";
+import { renderLineChart } from "./lineRenderer";
 import { csvRowKey } from "./csvDataEngine";
 import { cartesianAxisEncoding } from "./chartTemplates";
 
@@ -134,18 +135,83 @@ function scaleForEncoding(rows: Dataset["rows"], encoding: ChartEncoding, range:
   };
 }
 
+function areaValuePosition(spec: ChartScaleSpec, value: number) {
+  if (spec.type !== "linear") return spec.range[0] ?? 0;
+  return scaleLinear().domain(spec.domain as [number, number]).range(spec.range)(value);
+}
+
+function areaAxisPosition(spec: ChartScaleSpec, value: string) {
+  if (spec.type === "utc") {
+    return scaleUtc()
+      .domain((spec.domain as [string, string]).map((item) => new Date(item)) as [Date, Date])
+      .range(spec.range)(new Date(value));
+  }
+  if (spec.type === "point") {
+    return scalePoint<string>()
+      .domain(spec.domain as string[])
+      .range(spec.range)
+      .padding(0.5)(value) ?? 0;
+  }
+  return scaleLinear().domain(spec.domain as [number, number]).range(spec.range)(Number(value));
+}
+
+function areaPath(
+  points: Array<{ x: number; y: number }>,
+  axisSwapped: boolean,
+  baseline: number,
+) {
+  if (points.length === 0) return "";
+  const first = points[0]!;
+  const last = points[points.length - 1]!;
+  const coordinates = points.slice(1).map((point) => `L ${point.x} ${point.y}`).join(" ");
+  return axisSwapped
+    ? `M ${baseline} ${first.y} L ${first.x} ${first.y} ${coordinates} L ${baseline} ${last.y} Z`
+    : `M ${first.x} ${baseline} L ${first.x} ${first.y} ${coordinates} L ${last.x} ${baseline} Z`;
+}
+
 function formatTick(value: number) {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2, notation: Math.abs(value) >= 10000 ? "compact" : "standard" }).format(value);
 }
 
 function renderArea(input: GenericRenderInput) {
-  const xEncoding = cartesianAxisEncoding(input.chartSpec, "x");
-  const yEncoding = cartesianAxisEncoding(input.chartSpec, "y");
-  if (!xEncoding || !yEncoding) throw new Error("Area renderer requires X and Y encodings.");
   const type = normalizedType(input.chartSpec.chartType);
+  if (type === "areachart") {
+    if (input.coordinateGuide?.type !== "Cartesian") {
+      throw new Error("Area Chart requires a Cartesian coordinate guide.");
+    }
+    const lineResult = renderLineChart({
+      ...input,
+      coordinateGuide: input.coordinateGuide,
+      chartSpec: { ...input.chartSpec, chartType: "LineGraph" },
+      includeZeroValueDomain: true,
+    });
+    const axisSwapped = input.chartSpec.axisSwapped === true;
+    const valueScale = axisSwapped ? lineResult.scales.x : lineResult.scales.y;
+    const baseline = areaValuePosition(valueScale, 0);
+    const opacity = Number(sharedConfig(input, "area").opacity ?? 0.42);
+    const marks = lineResult.series.map((series) => {
+      const points = series.points.map(({ x, y }) => ({ x, y }));
+      const path = areaPath(points, axisSwapped, baseline);
+      if (!path) return "";
+      const rowKeys = series.points.flatMap((point) => point.rowKeys);
+      return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series.key)}" data-point-count="${points.length}" data-row-keys="${esc(rowKeys.join(","))}" d="${path}" fill="${esc(series.color)}" fill-opacity="${opacity}" stroke="${esc(series.color)}" stroke-width="${series.lineWidth}" stroke-linejoin="round" vector-effect="non-scaling-stroke"><title>${esc(series.key === "__single__" ? (cartesianAxisEncoding(input.chartSpec, "y")?.field ?? "") : series.key)}</title></path>`;
+    }).join("");
+    return {
+      content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="area" data-axis-swapped="${axisSwapped}" data-renderer="deterministic-area@1">${marks}</g>`,
+      plotArea: lineResult.plotArea,
+      scales: lineResult.scales,
+    };
+  }
+  const xEncoding = input.chartSpec.encodings.x;
+  const yEncoding = input.chartSpec.encodings.y;
+  if (!xEncoding || !yEncoding) throw new Error("Area renderer requires X and Y encodings.");
   const isHorizon = type.includes("horizon");
+  const isStacked = type.includes("stacked") || type.includes("stream");
+  const isStream = type.includes("stream");
   const seriesEncoding = input.chartSpec.encodings.color;
   const rows = input.dataset.rows.filter((row) => Number.isFinite(numeric(row, yEncoding)) && (row[xEncoding.field] ?? "") !== "");
+  const hasExplicitAggregation = input.chartSpec.aggregations?.y !== undefined
+    || Object.keys(input.chartSpec.dimensionAggregations ?? {}).length > 0;
   const seriesValues = seriesEncoding
     ? Array.from(new Set(rows.map((row) => row[seriesEncoding.field] ?? "")))
     : ["__single__"];
@@ -154,17 +220,38 @@ function renderArea(input: GenericRenderInput) {
     if (xEncoding.type === "quantitative") return Number(left) - Number(right);
     return left.localeCompare(right, "en", { numeric: true });
   });
-  const valueBySeries = new Map(seriesValues.map((series) => [series, new Map<string, number>()]));
-  rows.forEach((row) => {
-    const series = seriesEncoding ? row[seriesEncoding.field] ?? "" : "__single__";
-    const xValue = row[xEncoding.field] ?? "";
-    const values = valueBySeries.get(series);
-    if (values) values.set(xValue, (values.get(xValue) ?? 0) + numeric(row, yEncoding, 0));
+  const orderedRows = [...rows].sort((left, right) => {
+    const leftValue = left[xEncoding.field] ?? "";
+    const rightValue = right[xEncoding.field] ?? "";
+    if (xEncoding.type === "temporal") return Date.parse(leftValue) - Date.parse(rightValue);
+    if (xEncoding.type === "quantitative") return Number(leftValue) - Number(rightValue);
+    return leftValue.localeCompare(rightValue, "en", { numeric: true });
   });
-  const table = xValues.map((xValue) => Object.fromEntries([
-    ["x", xValue],
-    ...seriesValues.map((series) => [series, valueBySeries.get(series)?.get(xValue) ?? 0]),
-  ])) as Array<Record<string, string | number>>;
+  // Explicit aggregation and horizon bands use one column per X. Stacked and
+  // stream areas otherwise retain every source row: repeated X coordinates are
+  // intentional and produce the vertical transitions of the source series.
+  const table = hasExplicitAggregation || isHorizon
+    ? (() => {
+      const valueBySeries = new Map(seriesValues.map((series) => [series, new Map<string, number>()]));
+      rows.forEach((row) => {
+        const series = seriesEncoding ? row[seriesEncoding.field] ?? "" : "__single__";
+        const xValue = row[xEncoding.field] ?? "";
+        const values = valueBySeries.get(series);
+        if (values) values.set(xValue, (values.get(xValue) ?? 0) + numeric(row, yEncoding, 0));
+      });
+      return xValues.map((xValue) => Object.fromEntries([
+        ["x", xValue],
+        ...seriesValues.map((series) => [series, valueBySeries.get(series)?.get(xValue) ?? 0]),
+      ])) as Array<Record<string, string | number>>;
+    })()
+    : orderedRows.map((row) => {
+      const series = seriesEncoding ? row[seriesEncoding.field] ?? "" : "__single__";
+      const xValue = row[xEncoding.field] ?? "";
+      return Object.fromEntries([
+        ["x", xValue],
+        ...seriesValues.map((candidate) => [candidate, candidate === series ? numeric(row, yEncoding, 0) : 0]),
+      ]) as Record<string, string | number>;
+    });
 
   if (isHorizon) {
     const marginTop = 30;
@@ -210,10 +297,40 @@ function renderArea(input: GenericRenderInput) {
     };
   }
 
-  const areaPlot = input.sharedPlotArea ?? plotArea(input, 30);
-  const x = scaleForEncoding(rows, xEncoding, [areaPlot.x, areaPlot.x + areaPlot.width]);
-  const isStacked = type.includes("stacked") || type.includes("stream");
-  const isStream = type.includes("stream");
+  if (input.coordinateGuide?.type !== "Cartesian") {
+    throw new Error("Stacked Area and Streamgraph require a Cartesian coordinate guide.");
+  }
+  const lineResult = renderLineChart({
+    ...input,
+    coordinateGuide: input.coordinateGuide,
+    chartSpec: { ...input.chartSpec, chartType: "MultiLineChart" },
+    includeZeroValueDomain: true,
+  });
+  // With one selected series, stacked area is the same visual contract as a
+  // line with a filled baseline. Reuse the line's ordered points so duplicate
+  // X rows follow the same path instead of entering d3.stack as duplicate
+  // columns.
+  if (seriesValues.length === 1) {
+    const axisSwapped = input.chartSpec.axisSwapped === true;
+    const valueScale = axisSwapped ? lineResult.scales.x : lineResult.scales.y;
+    const baseline = areaValuePosition(valueScale, 0);
+    const series = lineResult.series[0];
+    if (series) {
+      const path = areaPath(series.points.map(({ x, y }) => ({ x, y })), axisSwapped, baseline);
+      const rowKeys = series.points.flatMap((point) => point.rowKeys);
+      const opacity = Number(sharedConfig(input, "area").opacity ?? 0.42);
+      const mark = `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series.key)}" data-point-count="${series.points.length}" data-row-keys="${esc(rowKeys.join(","))}" d="${path}" fill="${esc(series.color)}" fill-opacity="${opacity}" stroke="${esc(series.color)}" stroke-width="${series.lineWidth}" stroke-linejoin="round" vector-effect="non-scaling-stroke"><title>${esc(series.key === "__single__" ? yEncoding.field : series.key)}</title></path>`;
+      return {
+        content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="${isStream ? "streamgraph" : isStacked ? "stacked" : "area"}" data-axis-swapped="${axisSwapped}" data-stack-offset="${isStream ? "wiggle" : "zero"}" data-stack-order="${isStream ? "inside-out" : "none"}" data-renderer="observable-area@3">${mark}</g>`,
+        plotArea: lineResult.plotArea,
+        scales: lineResult.scales,
+      };
+    }
+  }
+  const areaPlot = lineResult.plotArea;
+  const axisSwapped = input.chartSpec.axisSwapped === true;
+  const progressionScale = axisSwapped ? lineResult.scales.y : lineResult.scales.x;
+  const progressionPosition = (value: string) => areaAxisPosition(progressionScale, value);
   const stackGenerator = stack<Record<string, string | number>>().keys(seriesValues);
   if (isStream) stackGenerator.offset(stackOffsetWiggle).order(stackOrderInsideOut);
   const layers = isStacked
@@ -223,19 +340,31 @@ function renderArea(input: GenericRenderInput) {
   const yDomain: [number, number] = isStream
     ? finiteDomain(stackedValues)
     : [0, Math.max(1, ...stackedValues)];
-  const y = scaleLinear().domain(yDomain).range([areaPlot.y + areaPlot.height, areaPlot.y]);
-  const area = d3Area<[number, number]>()
-    .x((_, index) => x.scale(xValues[index] ?? ""))
-    .y0((point) => y(point[0]))
-    .y1((point) => y(point[1]));
+  const sharedValueScale = axisSwapped ? input.sharedScales?.x : input.sharedScales?.y;
+  const valueRange = axisSwapped ? lineResult.scales.x.range : lineResult.scales.y.range;
+  const valueScale: ChartScaleSpec = sharedValueScale?.type === "linear"
+    ? sharedValueScale
+    : { type: "linear", domain: yDomain, range: valueRange };
+  const valuePosition = (value: number) => areaValuePosition(valueScale, value);
+  const area = axisSwapped
+    ? d3Area<[number, number]>()
+      .y((_, index) => progressionPosition(String(table[index]?.x ?? "")))
+      .x0((point) => valuePosition(point[0]))
+      .x1((point) => valuePosition(point[1]))
+    : d3Area<[number, number]>()
+      .x((_, index) => progressionPosition(String(table[index]?.x ?? "")))
+      .y0((point) => valuePosition(point[0]))
+      .y1((point) => valuePosition(point[1]));
   const marks = layers.map((layer, index) => {
     const color = !isStacked && seriesValues.length === 1 ? "steelblue" : tableau[index % tableau.length]!;
-    return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(seriesValues[index] ?? "")}" d="${area(layer as Array<[number, number]>) ?? ""}" fill="${color}"><title>${esc(seriesValues[index] === "__single__" ? yEncoding.field : seriesValues[index] ?? "")}</title></path>`;
+    return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(seriesValues[index] ?? "")}" data-point-count="${layer.length}" d="${area(layer as Array<[number, number]>) ?? ""}" fill="${color}"><title>${esc(seriesValues[index] === "__single__" ? yEncoding.field : seriesValues[index] ?? "")}</title></path>`;
   }).join("");
   return {
-    content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="${isStream ? "streamgraph" : isStacked ? "stacked" : "area"}" data-stack-offset="${isStream ? "wiggle" : "zero"}" data-stack-order="${isStream ? "inside-out" : "none"}" data-renderer="observable-area@2">${marks}</g>`,
+    content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="${isStream ? "streamgraph" : isStacked ? "stacked" : "area"}" data-axis-swapped="${axisSwapped}" data-stack-offset="${isStream ? "wiggle" : "zero"}" data-stack-order="${isStream ? "inside-out" : "none"}" data-renderer="observable-area@3">${marks}</g>`,
     plotArea: areaPlot,
-    scales: { x: x.spec as ChartScaleSpec, y: { type: "linear", domain: yDomain, range: [areaPlot.y + areaPlot.height, areaPlot.y] } },
+    scales: axisSwapped
+      ? { x: valueScale, y: progressionScale }
+      : { x: progressionScale, y: valueScale },
   };
 }
 
