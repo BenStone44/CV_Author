@@ -78,7 +78,9 @@ Remaining non-data issues are narrow temporal inference for formats such as `M/D
 
 ## Testing
 
-Test drag-triggered inference independently from optional automatic detection. Cover axis drops, ambiguous chart-body drops, one input column with multiple valid intents, incompatible and constant inputs, no silent substitution of other columns, and confirmation before mutation. Retain overflow and underflow coverage for automatic analysis, including multiple inclusion-minimal solutions. Primary coverage is in `csvColumnDrag.test.ts`, `useCanvasStore.test.ts`, `csvDataEngine.test.ts`, `dimensionInference.test.ts`, and `chartDataPipeline.test.ts`. Before handoff run `npm test`, `npm run type-check`, `npm run build`, and `git diff --check`.
+Test drag-triggered inference independently from optional automatic detection. Cover axis drops, ambiguous chart-body drops, one input column with multiple valid intents, incompatible and constant inputs, no silent substitution of other columns, and confirmation before mutation. Retain overflow and underflow coverage for automatic analysis, including multiple inclusion-minimal solutions. Primary coverage is in `csvColumnDrag.test.ts`, `useCanvasStore.test.ts`, `csvDataEngine.test.ts`, `dimensionInference.test.ts`, and `chartDataPipeline.test.ts`. The user performs verification; do not run tests, type-check, build, code-level diff checks, or `git diff --check` unless explicitly requested.
+
+Do not start a development server or choose a new port. The user starts the server before coding work and provides the port to use.
 
 Never run screenshots, Playwright checks, or snapshots unless requested. Use `rg`, read relevant ranges, and never send whole datasets, lockfiles, generated output, or repository dumps to a model.
 
