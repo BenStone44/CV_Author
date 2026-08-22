@@ -347,6 +347,7 @@ export const CanvasCoordinateSystemLayer: any = defineComponent({
   name: "CanvasCoordinateSystemLayer",
   props: {
     node: { type: Object as PropType<CanvasNode>, required: true },
+    draggingNodeId: { type: String as PropType<string | null>, default: null },
   },
   setup(props) {
     return () => {
@@ -354,7 +355,11 @@ export const CanvasCoordinateSystemLayer: any = defineComponent({
       const channels = getCartesianAxisChannels(node, "static");
       if (node.compositionSpec?.type === "layer" && channels.length === 0) return null;
       const children = node.kind === "group"
-        ? node.children.map((child) => h(CanvasCoordinateSystemLayer, { key: child.id, node: child }))
+        ? node.children.map((child) => h(CanvasCoordinateSystemLayer, {
+          key: child.id,
+          node: child,
+          draggingNodeId: props.draggingNodeId,
+        }))
         : [];
       const axis = node.coordinateGuide?.type === "Cartesian" && channels.length > 0
         ? h(CartesianCoordinateSystem, {
@@ -367,7 +372,10 @@ export const CanvasCoordinateSystemLayer: any = defineComponent({
         : null;
       if (!axis && children.length === 0) return null;
       return h("g", {
-        class: "canvas-coordinate-system-node",
+        class: [
+          "canvas-coordinate-system-node",
+          props.draggingNodeId === node.id ? "canvas-coordinate-system-node--drag-source" : "",
+        ],
         transform: node.kind === "leaf" ? getLeafNodeTransform(node) : getNodeTransform(node),
         "pointer-events": "none",
       }, [...(axis ? [axis] : []), ...children]);

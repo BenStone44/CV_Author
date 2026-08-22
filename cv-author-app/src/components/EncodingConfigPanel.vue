@@ -88,6 +88,7 @@ const areaRequiresSeries = computed(() => {
 });
 const supportsBarValueSeries = computed(() => isGroupedBar.value || barRequiresSegments.value);
 const supportsSeriesItems = computed(() => template.value === "line"
+  || template.value === "scatter"
   || template.value === "area"
   || supportsBarValueSeries.value);
 const seriesRole = computed(() => getChartTemplateContract(props.chartSpec.chartType)?.channels
@@ -105,21 +106,27 @@ const standardConfigs = computed(() => configs.value.filter((config) => {
   return true;
 }));
 const seriesMembers = computed(() => {
-  const field = resolvedSeriesField(props.chartSpec);
+  const field = selectedSeriesFields.value[0] ?? resolvedSeriesField(props.chartSpec);
   if (!field) return [];
   return Array.from(new Set(props.rows.map((row) => row[field] ?? "").filter(Boolean)))
     .map((id) => ({ id, label: id }));
 });
 const selectedValueSeriesFields = computed(() => props.chartSpec.valueFields?.map((encoding) => encoding.field) ?? []);
 const selectedSeriesFields = computed(() => props.chartSpec.seriesFields?.map((encoding) => encoding.field)
-  ?? (props.chartSpec.series ? [props.chartSpec.series.field] : []));
+  ?? (props.chartSpec.series
+    ? [props.chartSpec.series.field]
+    : template.value === "scatter"
+      && (props.chartSpec.encodings.color?.type === "nominal" || props.chartSpec.encodings.color?.type === "temporal")
+      ? [props.chartSpec.encodings.color.field]
+      : []));
 const seriesItemMode = computed<"categorical" | "quantitative" | null>(() => {
   if (selectedSeriesFields.value.length > 0) return "categorical";
   if (selectedValueSeriesFields.value.length > 0) return "quantitative";
   return null;
 });
-const seriesItemColumns = computed(() => props.columns.filter((column) =>
-  column.type === "nominal" || column.type === "temporal" || column.type === "quantitative"));
+const seriesItemColumns = computed(() => props.columns.filter((column) => template.value === "scatter"
+  ? column.type === "nominal" || column.type === "temporal"
+  : column.type === "nominal" || column.type === "temporal" || column.type === "quantitative"));
 const seriesItemDropState = ref<"idle" | "valid" | "invalid">("idle");
 const editableSeriesMembers = computed(() => seriesItemMode.value === "quantitative"
   ? selectedValueSeriesFields.value.map((field) => ({ id: field, label: field }))
@@ -152,6 +159,8 @@ const sizeConfig = computed(() => configs.value.find((config) => config.channel 
 const colorField = computed(() => resolvedEncodingField(props.chartSpec, "color"));
 const sizeField = computed(() => resolvedEncodingField(props.chartSpec, "size"));
 const colorColumn = computed(() => props.columns.find((column) => column.name === colorField.value));
+const supportsLegend = computed(() => supportsSeriesItems.value
+  || (template.value === "scatter" && colorColumn.value?.type === "nominal"));
 const showColorMapping = computed(() => !!colorColumn.value && colorColumn.value.type !== "nominal");
 const showSizeMapping = computed(() => !!sizeField.value);
 const staticColor = computed(() => typeof props.markConfig.color === "string" ? props.markConfig.color : "#2563eb");
@@ -444,7 +453,7 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
       </section>
 
       <section v-if="editableSeriesMembers.length || colorConfig || sizeConfig" class="encoding-config__appearance encoding-config__appearance--chart">
-        <label v-if="supportsSeriesItems" class="encoding-config__option">
+        <label v-if="supportsLegend" class="encoding-config__option">
           <span>Show legend</span>
           <input
             type="checkbox"

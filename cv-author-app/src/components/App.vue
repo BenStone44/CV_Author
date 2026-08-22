@@ -7,7 +7,7 @@ import {
   ref,
   watch,
 } from "vue";
-import { ChevronDown, SlidersHorizontal, Ungroup, X } from "@lucide/vue";
+import { ArrowUp, ChevronDown, SlidersHorizontal, Ungroup, X } from "@lucide/vue";
 import { CanvasNodeView } from "./CanvasNodeView";
 import {
   CanvasCoordinateSystemLayer,
@@ -58,6 +58,7 @@ const {
   viewPan,
   selectedIds,
   editingGroupPath,
+  editingCompositionId,
   selectionScopeNodes,
   chartDrilldown,
   semanticSelection,
@@ -74,6 +75,7 @@ const {
   seriesItemDropFrame,
   contextMenu,
   draggedCandidateId,
+  compositionDragSourceId,
   activeDropZone,
   activeDataBindingDropZone,
   dimensionDropTarget,
@@ -116,6 +118,7 @@ const {
   onCanvasNodePointerDown,
   onCanvasNodeDoubleClick,
   enterSelection,
+  exitSelectionHierarchy,
   removeSelectionComposition,
   onEditingGroupBackgroundPointerDown,
   onSemanticMarkPointerDown,
@@ -169,6 +172,9 @@ const implementedTemplateCategories = computed(() =>
       || selectedCoordinateSystems.value.has(candidate.coordinateSystem),
   )),
 );
+const hierarchyNavigationActive = computed(() =>
+  editingGroupPath.value.length > 0 || !!chartDrilldown.value || !!editingCompositionId.value,
+);
 const activeTemplateCategory = computed(() =>
   implementedTemplateCategories.value.find((category) => category.id === activeTemplateCategoryId.value) ?? null,
 );
@@ -178,6 +184,19 @@ const templateCategoryMenuStyle = computed(() => ({
   width: `${templateCategoryMenuPosition.value.width}px`,
   maxHeight: `${Math.max(180, window.innerHeight - templateCategoryMenuPosition.value.top - 16)}px`,
 }));
+
+function selectionUncomposePath(radius: number) {
+  const innerRadius = radius / 2;
+  const outerOffset = radius * Math.SQRT1_2;
+  const innerOffset = innerRadius * Math.SQRT1_2;
+  return [
+    `M ${-outerOffset} ${-outerOffset}`,
+    `A ${radius} ${radius} 0 0 1 ${outerOffset} ${-outerOffset}`,
+    `L ${innerOffset} ${-innerOffset}`,
+    `A ${innerRadius} ${innerRadius} 0 0 0 ${-innerOffset} ${-innerOffset}`,
+    "Z",
+  ].join(" ");
+}
 
 function closeTemplateCategoryMenu() {
   activeTemplateCategoryId.value = null;
@@ -253,11 +272,21 @@ const csvEncodingBindings = computed<Record<string, string[]>>(() => {
 });
 function createSeriesItemPresentation(node: CanvasNode) {
   const spec = node?.chartSpec;
-  const binding = node ? barItemAxisBinding(node) : null;
+  const itemBinding = node ? barItemAxisBinding(node) : null;
+  const scatterColor = spec && isScatterChartType(spec.chartType)
+    && (spec.encodings.color?.type === "nominal" || spec.encodings.color?.type === "temporal")
+    ? spec.encodings.color
+    : null;
+  const binding = itemBinding ?? (scatterColor
+    ? { label: "Point type", fields: [scatterColor.field] }
+    : null);
   if (!node || !spec || !binding) return null;
   const rows = getDataset(spec.datasetId)?.rows ?? [];
-  const categoricalFields = new Set(spec.seriesFields?.map((encoding) => encoding.field)
-    ?? (spec.series ? [spec.series.field] : []));
+  const categoricalFields = new Set([
+    ...(spec.seriesFields?.map((encoding) => encoding.field)
+      ?? (spec.series ? [spec.series.field] : [])),
+    ...(scatterColor ? [scatterColor.field] : []),
+  ]);
   const markConfig = spec.markGroups?.[0]?.sharedConfig ?? {};
   const mappedStyles = isSeriesStyleMapping(markConfig.seriesStyleMapping)
     ? markConfig.seriesStyleMapping.values
@@ -290,6 +319,7 @@ function createSeriesItemPresentation(node: CanvasNode) {
     fields: binding.fields,
     members,
     legendVisible: markConfig.legendVisible === true,
+    itemEditable: itemBinding !== null,
     frame: seriesItemDropFrame(node),
   };
 }
@@ -299,7 +329,8 @@ const seriesItemPresentations = computed(() => selectionScopeNodes.value.flatMap
 }));
 const seriesItemOverlay = computed(() => {
   if (selectedIds.value.length !== 1) return null;
-  return seriesItemPresentations.value.find((item) => item.node.id === selectedIds.value[0]) ?? null;
+  return seriesItemPresentations.value.find((item) =>
+    item.itemEditable && item.node.id === selectedIds.value[0]) ?? null;
 });
 const seriesItemLegends = computed(() => seriesItemPresentations.value.flatMap((item) => {
   if (!item.legendVisible || item.node.id === seriesItemOverlay.value?.node.id || item.members.length === 0) return [];
@@ -786,6 +817,16 @@ onBeforeUnmount(() => {
           >
             <SlidersHorizontal :size="15" :stroke-width="1.7" aria-hidden="true" />
             <span>Encoding</span>
+          </button>
+          <button
+            v-if="hierarchyNavigationActive"
+            class="hierarchy-back-button"
+            type="button"
+            title="Return to parent"
+            aria-label="Return to parent"
+            @click.stop="exitSelectionHierarchy"
+          >
+            <ArrowUp :size="18" :stroke-width="1.9" aria-hidden="true" />
           </button>
           <div class="toolbar toolbar--floating">
             <div class="icon-tools" role="group" aria-label="History">
@@ -1383,6 +1424,7 @@ onBeforeUnmount(() => {
                 :interactive="true"
                 :editing-group-path="editingGroupPath"
                 :editing-chart-id="chartDrilldown?.nodeId ?? null"
+                :dragging-node-id="compositionDragSourceId"
                 :selected-ids="selectedIds"
                 :on-node-pointer-down="onCanvasNodePointerDown"
                 :on-node-double-click="onCanvasNodeDoubleClick"
@@ -1394,6 +1436,7 @@ onBeforeUnmount(() => {
                 v-for="node in canvasNodes"
                 :key="`coordinate-system-${node.id}`"
                 :node="node"
+                :dragging-node-id="compositionDragSourceId"
               />
               <g v-if="activeDropZone" :transform="editingGroupTransform" class="composition-drop-zone-layer">
                 <component
@@ -1407,6 +1450,7 @@ onBeforeUnmount(() => {
                     'composition-drop-zone--before': activeDropZone.concatPosition === 'before',
                     'composition-drop-zone--after': activeDropZone.concatPosition === 'after',
                     'composition-drop-zone--nested': activeDropZone.type === 'nested',
+                    'composition-drop-zone--enter': activeDropZone.nestedAction === 'enter',
                     'composition-drop-zone--invalid': !activeDropZone.compatible,
                   }"
                   :x="activeDropZone.bounds.minX"
@@ -1416,6 +1460,22 @@ onBeforeUnmount(() => {
                   :points="activeDropZone.outline?.map((point) => `${point.x},${point.y}`).join(' ')"
                   vector-effect="non-scaling-stroke"
                 />
+                <g
+                  v-if="activeDropZone.type === 'nested' && activeDropZone.enterBounds"
+                  class="composition-enter-zone"
+                  :class="{ 'composition-enter-zone--active': activeDropZone.nestedAction === 'enter' }"
+                  :transform="`translate(${activeDropZone.enterBounds.minX + activeDropZone.enterBounds.width / 2} ${activeDropZone.enterBounds.minY + activeDropZone.enterBounds.height / 2})`"
+                >
+                  <circle
+                    :r="activeDropZone.enterBounds.width / 2"
+                    vector-effect="non-scaling-stroke"
+                  />
+                  <text
+                    text-anchor="middle"
+                    dominant-baseline="middle"
+                    :font-size="12 / selectionOverlayZoom"
+                  >Enter</text>
+                </g>
               </g>
               <g
                 v-for="legend in seriesItemLegends"
@@ -1662,6 +1722,26 @@ onBeforeUnmount(() => {
                     @pointerdown="onRotateHandlePointerDown"
                   />
                   <g
+                    v-if="canEnterSelection"
+                    class="selection-enter"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Enter selection"
+                    :transform="`translate(${selectionFrame.x + selectionFrame.width / 2} ${selectionFrame.y + selectionFrame.height / 2})`"
+                    @pointerdown.stop.prevent="enterSelection"
+                    @keydown.enter.stop.prevent="enterSelection"
+                  >
+                    <circle
+                      :r="Math.min(selectionFrame.width, selectionFrame.height) / 4"
+                      vector-effect="non-scaling-stroke"
+                    />
+                    <text
+                      text-anchor="middle"
+                      dominant-baseline="middle"
+                      :font-size="13 / selectionOverlayZoom"
+                    >Enter</text>
+                  </g>
+                  <g
                     v-if="canRemoveSelectionComposition"
                     class="selection-uncompose"
                     role="button"
@@ -1673,40 +1753,20 @@ onBeforeUnmount(() => {
                     @keydown.space.stop.prevent="removeSelectionComposition"
                   >
                     <title>Remove composition</title>
-                    <circle
-                      :r="Math.min(selectionFrame.width, selectionFrame.height) / 6"
-                      :stroke-width="Math.min(selectionFrame.width, selectionFrame.height) / 6"
+                    <path
+                      :d="selectionUncomposePath(Math.min(selectionFrame.width, selectionFrame.height) / 4)"
+                      vector-effect="non-scaling-stroke"
                     />
                     <g
                       class="selection-uncompose__icon"
-                      :transform="`translate(${-7 / selectionOverlayZoom} ${-Math.min(selectionFrame.width, selectionFrame.height) / 6 - 7 / selectionOverlayZoom})`"
+                      :transform="`translate(${-5 / selectionOverlayZoom} ${-Math.min(selectionFrame.width, selectionFrame.height) * 0.175 - 5 / selectionOverlayZoom})`"
                     >
                       <Ungroup
-                        :size="14 / selectionOverlayZoom"
+                        :size="10 / selectionOverlayZoom"
                         :stroke-width="2.2"
                         aria-hidden="true"
                       />
                     </g>
-                  </g>
-                  <g
-                    v-if="canEnterSelection"
-                    class="selection-enter"
-                    role="button"
-                    tabindex="0"
-                    aria-label="Enter selection"
-                    :transform="`translate(${selectionFrame.x + selectionFrame.width / 2} ${selectionFrame.y + selectionFrame.height / 2})`"
-                    @pointerdown.stop.prevent="enterSelection"
-                    @keydown.enter.stop.prevent="enterSelection"
-                  >
-                    <circle
-                      :r="Math.min(selectionFrame.width, selectionFrame.height) / (canRemoveSelectionComposition ? 12 : 4)"
-                      vector-effect="non-scaling-stroke"
-                    />
-                    <text
-                      text-anchor="middle"
-                      dominant-baseline="middle"
-                      :font-size="13 / selectionOverlayZoom"
-                    >Enter</text>
                   </g>
                 </g>
               </g>
@@ -1718,6 +1778,7 @@ onBeforeUnmount(() => {
                 :channels="getCartesianAxisChannels(node, 'interactive')"
                 :show-axis="false"
                 :interactive="true"
+                :class="{ 'coordinate-control--drag-source': compositionDragSourceId === node.id }"
                 :on-axis-scale-pointer-down="onCoordinateAxisScalePointerDown"
               />
               <PolarCoordinateSystem
@@ -1725,6 +1786,7 @@ onBeforeUnmount(() => {
                 :key="`coordinate-guide-${node.id}`"
                 :node="node"
                 :view-zoom="selectionOverlayZoom"
+                :class="{ 'coordinate-control--drag-source': compositionDragSourceId === node.id }"
                 :on-angle-pointer-down="onPolarAnglePointerDown"
               />
               </g>
@@ -2349,6 +2411,28 @@ onBeforeUnmount(() => {
   background: rgba(255, 255, 255, 0.82);
   backdrop-filter: blur(12px);
   box-shadow: 0 14px 32px rgba(45, 89, 126, 0.12);
+}
+.hierarchy-back-button {
+  position: absolute;
+  top: 16px;
+  right: 380px;
+  z-index: 6;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid rgba(24, 33, 47, 0.16);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.94);
+  color: #223041;
+  box-shadow: 0 8px 22px rgba(45, 89, 126, 0.16);
+  cursor: pointer;
+}
+.hierarchy-back-button:hover {
+  border-color: rgba(28, 126, 214, 0.42);
+  background: #edf5fc;
+  color: #1554b2;
 }
 .ghost-button {
   width: 100%;
@@ -3255,6 +3339,28 @@ onBeforeUnmount(() => {
   fill: rgba(217, 119, 6, 0.16);
   stroke: #d97706;
 }
+.composition-drop-zone--enter {
+  fill: rgba(217, 119, 6, 0.08);
+}
+.composition-enter-zone {
+  pointer-events: none;
+}
+.composition-enter-zone circle {
+  fill: rgba(255, 255, 255, 0.94);
+  stroke: #d97706;
+  stroke-width: 2;
+}
+.composition-enter-zone text {
+  fill: #9a5200;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+.composition-enter-zone--active circle {
+  fill: #d97706;
+}
+.composition-enter-zone--active text {
+  fill: #fff;
+}
 .composition-drop-zone--concat {
   fill: rgba(5, 150, 105, 0.18);
   stroke: #059669;
@@ -3309,6 +3415,14 @@ onBeforeUnmount(() => {
   cursor: move;
   user-select: none;
   touch-action: none;
+  transition: opacity 120ms ease;
+}
+.canvas-object--composition-drag-source {
+  opacity: 0.28;
+}
+.canvas-coordinate-system-node--drag-source,
+.coordinate-control--drag-source {
+  opacity: 0.28;
 }
 .canvas-object--interactive {
   /* Let the explicit frame-sized hit target below receive events. The default
@@ -3628,10 +3742,11 @@ onBeforeUnmount(() => {
   outline: none;
   transition: opacity 140ms ease;
 }
-.selection-uncompose > circle {
-  fill: none;
-  stroke: #b42318;
-  pointer-events: stroke;
+.selection-uncompose > path {
+  fill: #8f1d14;
+  stroke: #fff;
+  stroke-width: 1.5;
+  pointer-events: all;
   filter: drop-shadow(0 3px 7px rgba(77, 18, 14, 0.28));
 }
 .selection-uncompose__icon {
@@ -3733,6 +3848,10 @@ onBeforeUnmount(() => {
     top: 12px;
     right: 244px;
   }
+  .hierarchy-back-button {
+    top: 12px;
+    right: 360px;
+  }
   .composition-popover {
     top: 256px;
     right: 12px;
@@ -3758,6 +3877,11 @@ onBeforeUnmount(() => {
   .workbench {
     flex-direction: column;
     overflow: visible;
+  }
+  .hierarchy-back-button {
+    top: 58px;
+    right: auto;
+    left: 12px;
   }
 }
 </style>

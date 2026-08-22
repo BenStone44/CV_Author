@@ -328,6 +328,19 @@ export type ChartDropZone = {
   outline?: Point[];
   compatible: boolean;
   targetRowKey?: string;
+  targetElementId?: string;
+  targetMarkGroupId?: string;
+  targetDataKey?: string;
+  nestedAction?: "embed" | "enter";
+  enterBounds?: Bounds;
+  targetChildMarkIndexes?: number[];
+  nestedTargets?: Array<{
+    elementId: string;
+    markGroupId?: string;
+    dataKey: string;
+    rowKey?: string;
+    bounds: Bounds;
+  }>;
   direction?: "horizontal" | "vertical";
   concatPosition?: "before" | "after";
 };
@@ -498,6 +511,16 @@ export type RelativeNestedParameters = {
   offset: Point;
   scale: Point;
   rotation: number;
+  batchId?: string;
+  sourceChildId?: string;
+  sourceChildName?: string;
+  sourceFrame?: {
+    x: number;
+    y: number;
+    scaleX: number;
+    scaleY: number;
+    rotation: number;
+  };
 };
 
 export type NestedRelationParameters = RelativeNestedParameters | Record<string, unknown>;

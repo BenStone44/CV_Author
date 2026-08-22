@@ -126,7 +126,7 @@ export const chartEncodingSchemas = {
   Scatterplot: defineSchema("Scatterplot", "Scatterplot", "scatter", [
     xAny,
     { ...yMeasure, accepts: ["quantitative", "temporal", "nominal"] },
-    { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "temporal", "quantitative"], emptyLabel: "Static" },
+    { ...lineSeries, semanticLabel: "Point type" },
     lineSize,
     lineShape,
   ]),

@@ -3,6 +3,7 @@ import { advancedTemplateDefinitions } from "../utils/advancedChartCards";
 import { getChartTemplateContract, normalizeChartTemplate } from "../utils/chartTemplates";
 import { getEncodingChannelConfigs } from "../utils/encodingConfig";
 import { renderDeterministicChart } from "../utils/semanticRenderer";
+import { prepareChartData } from "../utils/chartDataPipeline";
 import type { ChartSpec, CoordinateGuide, Dataset } from "../types";
 
 const cartesian: CoordinateGuide = {
@@ -224,34 +225,80 @@ describe("advanced chart cards", () => {
     expect(result.content).not.toContain('data-point-count="2"');
   });
 
-  it("retains repeated X transitions for multiple stacked-area series", () => {
+  it("aligns multiple stacked-area series by X", () => {
     const dataset: Dataset = {
-      id: "multi-stacked-repeated-x",
-      name: "multi-stacked-repeated-x.csv",
+      id: "person-weight-by-time",
+      name: "person-weight-by-time.csv",
       columns: [
-        { name: "date", type: "temporal" },
-        { name: "series", type: "nominal" },
-        { name: "value", type: "quantitative" },
+        { name: "time", type: "temporal" },
+        { name: "person", type: "nominal" },
+        { name: "weight_kg", type: "quantitative" },
       ],
       rows: [
-        { date: "2026-01-01", series: "A", value: "4" },
-        { date: "2026-01-01", series: "B", value: "3" },
-        { date: "2026-01-02", series: "A", value: "6" },
-        { date: "2026-01-02", series: "B", value: "5" },
+        { time: "2026-01-01", person: "A", weight_kg: "88" },
+        { time: "2026-01-01", person: "B", weight_kg: "95" },
+        { time: "2026-02-01", person: "A", weight_kg: "84" },
+        { time: "2026-02-01", person: "B", weight_kg: "102" },
       ],
     };
     const result = render("StackedAreaChart", dataset, {
       encodings: {
-        x: { field: "date", type: "temporal" },
-        y: { field: "value", type: "quantitative" },
-        color: { field: "series", type: "nominal" },
+        x: { field: "time", type: "temporal" },
+        y: { field: "weight_kg", type: "quantitative" },
+        color: { field: "person", type: "nominal" },
       },
-      series: { field: "series", type: "nominal" },
-      seriesFields: [{ field: "series", type: "nominal" }],
+      series: { field: "person", type: "nominal" },
+      seriesFields: [{ field: "person", type: "nominal" }],
     });
 
     expect(result.content.match(/data-mark-role="area"/g)).toHaveLength(2);
-    expect(result.content.match(/data-point-count="4"/g)).toHaveLength(2);
+    expect(result.content.match(/data-point-count="2"/g)).toHaveLength(2);
+  });
+
+  it("aligns filtered wide value fields before stacking area layers", () => {
+    const dataset: Dataset = {
+      id: "faceted-body-composition",
+      name: "faceted-body-composition.csv",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "time", type: "temporal" },
+        { name: "water", type: "quantitative" },
+        { name: "fat", type: "quantitative" },
+        { name: "muscle", type: "quantitative" },
+        { name: "minerals", type: "quantitative" },
+      ],
+      rows: [
+        { person: "A", time: "2026-01-01", water: "40", fat: "18", muscle: "30", minerals: "3" },
+        { person: "A", time: "2026-02-01", water: "42", fat: "17", muscle: "31", minerals: "4" },
+        { person: "B", time: "2026-01-01", water: "45", fat: "15", muscle: "34", minerals: "4" },
+      ],
+      primaryKey: ["person", "time"],
+    };
+    const chartSpec: ChartSpec = {
+      chartType: "StackedAreaChart",
+      datasetId: dataset.id,
+      filters: { person: "A" },
+      encodings: { x: { field: "time", type: "temporal" } },
+      valueFields: ["water", "fat", "muscle", "minerals"].map((field) => ({
+        field,
+        type: "quantitative" as const,
+      })),
+    };
+    const prepared = prepareChartData("faceted-stacked-area", dataset, chartSpec);
+    const result = renderDeterministicChart({
+      chartId: "faceted-stacked-area",
+      width: 500,
+      height: 300,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: cartesian,
+      chartSpec: prepared.chartSpec,
+      dataset: prepared.dataset,
+    });
+
+    expect(prepared.dataset.rows).toHaveLength(8);
+    expect(result.content.match(/data-mark-role="area"/g)).toHaveLength(4);
+    expect(result.content.match(/data-point-count="2"/g)).toHaveLength(4);
   });
 
   it("uses the same vertical progression template when plain area axes are swapped", () => {

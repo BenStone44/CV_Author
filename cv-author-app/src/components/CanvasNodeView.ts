@@ -187,6 +187,7 @@ export const CanvasNodeView: any = defineComponent({
     selected: { type: Boolean, default: false },
     editingGroupPath: { type: Array as PropType<string[]>, default: () => [] },
     editingChartId: { type: String as PropType<string | null>, default: null },
+    draggingNodeId: { type: String as PropType<string | null>, default: null },
     selectedIds: { type: Array as PropType<string[]>, default: () => [] },
     onNodePointerDown: { type: Function as PropType<(node: CanvasNode, event: PointerEvent) => void>, default: null },
     onNodeDoubleClick: { type: Function as PropType<(node: CanvasNode, event: MouseEvent) => void>, default: null },
@@ -208,6 +209,7 @@ export const CanvasNodeView: any = defineComponent({
           nodeInteractive ? "canvas-object--interactive" : "",
           isActiveEditingGroup ? "canvas-object--editing-group" : "",
           props.selected ? "canvas-object--selected" : "",
+          props.draggingNodeId === props.node.id ? "canvas-object--composition-drag-source" : "",
         ],
         "data-node-id": props.node.id,
         transform: props.node.kind === "leaf"
@@ -336,6 +338,7 @@ export const CanvasNodeView: any = defineComponent({
               ? editingPath.slice(1)
               : [],
             editingChartId: props.editingChartId,
+            draggingNodeId: props.draggingNodeId,
             selectedIds: props.selectedIds,
             onNodePointerDown: props.onNodePointerDown,
             onNodeDoubleClick: props.onNodeDoubleClick,

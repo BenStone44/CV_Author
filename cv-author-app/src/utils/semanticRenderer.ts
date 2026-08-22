@@ -7,8 +7,10 @@ import { cartesianAxisEncoding, normalizeBarChartVariant, normalizeChartTemplate
 import { getChartEncodingSchema, type ChartRendererKey } from "./chartEncodingSchemas";
 import { resolvedPolarRadiusMode } from "./encodingConfig";
 import {
+  isCategoricalColorMapping,
   isLinearColorMapping,
   isLinearSizeMapping,
+  isSeriesStyleMapping,
   mapColorValue,
   mapSizeValue,
   parseVisualValue,
@@ -104,13 +106,21 @@ function renderScatterChart(input: LineRenderInput) {
   const sizeEncoding = input.chartSpec.encodings.size;
   const colorField = colorEncoding?.field;
   const sizeField = sizeEncoding?.field;
-  const colorValues = colorField ? Array.from(new Set(input.dataset.rows.map((row) => row[colorField] ?? ""))) : [];
+  const colorValues = colorField
+    ? Array.from(new Set(input.dataset.rows.map((row) => row[colorField] ?? "").filter(Boolean)))
+    : [];
   const sizeValues = sizeField ? input.dataset.rows.map((row) => Number(row[sizeField] ?? "")).filter(Number.isFinite) : [];
   const sizeDomain = extent(sizeValues) as [number | undefined, number | undefined];
   const sizeScale = sizeDomain[0] === undefined || sizeDomain[1] === undefined
     ? () => 4
     : scaleLinear().domain(sizeDomain[0] === sizeDomain[1] ? [sizeDomain[0] - 1, sizeDomain[1] + 1] : sizeDomain as [number, number]).range([3, 9]);
   const config = groupConfig(input.chartSpec, "point");
+  const seriesStyles = isSeriesStyleMapping(config.seriesStyleMapping)
+    ? config.seriesStyleMapping.values
+    : {};
+  const legacySeriesColors = isCategoricalColorMapping(config.seriesColorMapping)
+    ? config.seriesColorMapping.values
+    : {};
   const colorDomain = visualDomain(input.dataset.rows, colorEncoding);
   const mappedSizeDomain = visualDomain(input.dataset.rows, sizeEncoding);
   const marks = input.dataset.rows.map((row, index) => {
@@ -120,7 +130,8 @@ function renderScatterChart(input: LineRenderInput) {
     const cy = yPosition(yv);
     if (!Number.isFinite(cx) || !Number.isFinite(cy)) return "";
     const rowKey = key(input.dataset, row) || String(index);
-    const colorIndex = colorField ? Math.max(0, colorValues.indexOf(row[colorField] ?? "")) : 0;
+    const seriesKey = colorField ? row[colorField] ?? "" : input.chartSpec.series ? row[input.chartSpec.series.field] ?? "" : "";
+    const colorIndex = colorField ? Math.max(0, colorValues.indexOf(seriesKey)) : 0;
     const radius = visualSize(
       row,
       sizeEncoding,
@@ -128,8 +139,12 @@ function renderScatterChart(input: LineRenderInput) {
       config,
       sizeField ? sizeScale(Number(row[sizeField] ?? "")) : 4,
     );
-    const color = visualColor(row, colorEncoding, colorDomain, config, palette[colorIndex % palette.length]!);
-    return `<circle data-chart-id="${esc(input.chartId)}" data-mark-role="point" data-mark-group-id="mark-group:${esc(input.chartId)}:point" data-row-key="${esc(rowKey)}" data-series-key="${esc(input.chartSpec.series ? row[input.chartSpec.series.field] ?? "" : "")}" cx="${cx}" cy="${cy}" r="${radius}" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 0.88)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
+    const color = seriesStyles[seriesKey]?.color
+      ?? legacySeriesColors[seriesKey]
+      ?? (colorEncoding?.type === "nominal" || colorEncoding?.type === "temporal"
+        ? palette[colorIndex % palette.length]!
+        : visualColor(row, colorEncoding, colorDomain, config, palette[colorIndex % palette.length]!));
+    return `<circle data-chart-id="${esc(input.chartId)}" data-mark-role="point" data-mark-group-id="mark-group:${esc(input.chartId)}:point" data-row-key="${esc(rowKey)}" data-series-key="${esc(seriesKey)}" cx="${cx}" cy="${cy}" r="${radius}" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 0.88)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
   }).join("");
   const content = `<g data-chart-id="${esc(input.chartId)}" data-chart-type="scatter" data-renderer="deterministic-scatter-marks@1">${marks}</g>`;
   return { ...base, content };

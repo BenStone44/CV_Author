@@ -227,10 +227,9 @@ function renderArea(input: GenericRenderInput) {
     if (xEncoding.type === "quantitative") return Number(leftValue) - Number(rightValue);
     return leftValue.localeCompare(rightValue, "en", { numeric: true });
   });
-  // Explicit aggregation and horizon bands use one column per X. Stacked and
-  // stream areas otherwise retain every source row: repeated X coordinates are
-  // intentional and produce the vertical transitions of the source series.
-  const table = hasExplicitAggregation || isHorizon
+  // Multi-series stacks require one aligned column per X. Summing repeated
+  // X-series cells follows the area contract's allowed aggregation policy.
+  const table = hasExplicitAggregation || isHorizon || isStacked
     ? (() => {
       const valueBySeries = new Map(seriesValues.map((series) => [series, new Map<string, number>()]));
       rows.forEach((row) => {
