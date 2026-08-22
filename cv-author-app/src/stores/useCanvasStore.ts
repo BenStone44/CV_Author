@@ -1419,6 +1419,15 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     return memberIds.length > 1
       && memberIds.every((id) => selectedIds.value.includes(id));
   });
+  const canConfigureSelectionComposition = computed(() => {
+    if (semanticSelection.value || selectedNodes.value.length === 0) return false;
+    if (selectedNestedRelationship()) return true;
+    const composition = selectedNodes.value[0]?.compositionSpec;
+    if (!composition || editingCompositionId.value === composition.id) return false;
+    const memberIds = scopedCompositionMemberIds(selectedNodes.value[0]!);
+    return memberIds.length > 1
+      && memberIds.every((id) => selectedIds.value.includes(id));
+  });
   const canEnterSelection = computed(() => {
     const semantic = semanticSelection.value;
     if (semantic) {
@@ -4755,6 +4764,21 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     setImportNotice("Composition removed.");
     return true;
   }
+
+  function configureSelectionComposition() {
+    if (!canConfigureSelectionComposition.value) return false;
+    const nestedRelationship = selectedNestedRelationship();
+    if (!nestedRelationship) return false;
+    const metadata = nestedBatchMetadata(nestedRelationship);
+    const relationships = metadata
+      ? Object.values(chartRelationships.value.nestedRelationships).filter((candidate) =>
+        candidate.status === "active"
+          && nestedBatchMetadata(candidate)?.batchId === metadata.batchId,
+      )
+      : [nestedRelationship];
+    openNestedPositionEditor(relationships.map((relationship) => relationship.id));
+    return nestedPositionEditor.value !== null;
+  }
   function exitGroupEditing(selectExitedGroup = true) {
     const exitedGroupId = editingGroupPath.value.at(-1);
     if (!exitedGroupId) return false;
@@ -5839,6 +5863,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     canUngroup,
     canTransformSelection,
     canRemoveSelectionComposition,
+    canConfigureSelectionComposition,
     canEnterSelection,
     canMoveSelectionForward,
     canMoveSelectionBackward,
@@ -5853,6 +5878,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     onCanvasNodePointerDown,
     onCanvasNodeDoubleClick,
     enterSelection,
+    configureSelectionComposition,
     removeSelectionComposition,
     exitSelectionHierarchy,
     exitGroupEditing,

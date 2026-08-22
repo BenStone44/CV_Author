@@ -7,7 +7,7 @@ import {
   ref,
   watch,
 } from "vue";
-import { ArrowUp, Check, ChevronDown, Move, RotateCcw, SlidersHorizontal, Ungroup, X } from "@lucide/vue";
+import { ArrowUp, Check, ChevronDown, Move, RotateCcw, SlidersHorizontal, X } from "@lucide/vue";
 import { CanvasNodeView } from "./CanvasNodeView";
 import AlignmentToolbar from "./AlignmentToolbar.vue";
 import {
@@ -108,6 +108,7 @@ const {
   canUngroup,
   canTransformSelection,
   canRemoveSelectionComposition,
+  canConfigureSelectionComposition,
   canEnterSelection,
   canMoveSelectionForward,
   canMoveSelectionBackward,
@@ -122,6 +123,7 @@ const {
   onCanvasNodePointerDown,
   onCanvasNodeDoubleClick,
   enterSelection,
+  configureSelectionComposition,
   exitSelectionHierarchy,
   removeSelectionComposition,
   onEditingGroupBackgroundPointerDown,
@@ -195,10 +197,19 @@ const templateCategoryMenuStyle = computed(() => ({
   maxHeight: `${Math.max(180, window.innerHeight - templateCategoryMenuPosition.value.top - 16)}px`,
 }));
 
-function selectionActionPath(radius: number, position: "top" | "bottom") {
+function selectionActionPath(radius: number, position: "top" | "bottom" | "left") {
   const innerRadius = radius / 2;
   const outerOffset = radius * Math.SQRT1_2;
   const innerOffset = innerRadius * Math.SQRT1_2;
+  if (position === "left") {
+    return [
+      `M ${-outerOffset} ${outerOffset}`,
+      `A ${radius} ${radius} 0 0 1 ${-outerOffset} ${-outerOffset}`,
+      `L ${-innerOffset} ${-innerOffset}`,
+      `A ${innerRadius} ${innerRadius} 0 0 0 ${-innerOffset} ${innerOffset}`,
+      "Z",
+    ].join(" ");
+  }
   const direction = position === "top" ? -1 : 1;
   const outerSweep = position === "top" ? 1 : 0;
   const innerSweep = position === "top" ? 0 : 1;
@@ -1996,6 +2007,29 @@ onBeforeUnmount(() => {
                     @pointerdown="onRotateHandlePointerDown"
                   />
                   <g
+                    v-if="canConfigureSelectionComposition"
+                    class="selection-configure"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Configure composition"
+                    :transform="`translate(${selectionFrame.x + selectionFrame.width / 2} ${selectionFrame.y + selectionFrame.height / 2})`"
+                    @pointerdown.stop.prevent="configureSelectionComposition"
+                    @keydown.enter.stop.prevent="configureSelectionComposition"
+                    @keydown.space.stop.prevent="configureSelectionComposition"
+                  >
+                    <title>Configure composition</title>
+                    <path
+                      :d="selectionActionPath(Math.min(selectionFrame.width, selectionFrame.height) / 4, 'left')"
+                      vector-effect="non-scaling-stroke"
+                    />
+                    <text
+                      text-anchor="middle"
+                      dominant-baseline="middle"
+                      :transform="`translate(${-Math.min(selectionFrame.width, selectionFrame.height) * 0.175} 0) rotate(-90)`"
+                      :font-size="10 / selectionOverlayZoom"
+                    >Config</text>
+                  </g>
+                  <g
                     v-if="canEnterSelection"
                     class="selection-enter"
                     role="button"
@@ -2023,27 +2057,23 @@ onBeforeUnmount(() => {
                     class="selection-uncompose"
                     role="button"
                     tabindex="0"
-                    aria-label="Remove composition"
+                    aria-label="Split selection"
                     :transform="`translate(${selectionFrame.x + selectionFrame.width / 2} ${selectionFrame.y + selectionFrame.height / 2})`"
                     @pointerdown.stop.prevent="removeSelectionComposition"
                     @keydown.enter.stop.prevent="removeSelectionComposition"
                     @keydown.space.stop.prevent="removeSelectionComposition"
                   >
-                    <title>Remove composition</title>
+                    <title>Split selection</title>
                     <path
                       :d="selectionActionPath(Math.min(selectionFrame.width, selectionFrame.height) / 4, 'bottom')"
                       vector-effect="non-scaling-stroke"
                     />
-                    <g
-                      class="selection-uncompose__icon"
-                      :transform="`translate(${-5 / selectionOverlayZoom} ${Math.min(selectionFrame.width, selectionFrame.height) * 0.175 - 5 / selectionOverlayZoom})`"
-                    >
-                      <Ungroup
-                        :size="10 / selectionOverlayZoom"
-                        :stroke-width="2.2"
-                        aria-hidden="true"
-                      />
-                    </g>
+                    <text
+                      text-anchor="middle"
+                      dominant-baseline="middle"
+                      :y="Math.min(selectionFrame.width, selectionFrame.height) * 0.175"
+                      :font-size="10 / selectionOverlayZoom"
+                    >Split</text>
                   </g>
                 </g>
               </g>
@@ -4293,6 +4323,32 @@ onBeforeUnmount(() => {
   fill: rgba(21, 84, 178, 0.1);
   stroke-dasharray: none;
 }
+.selection-configure {
+  opacity: 0.32;
+  pointer-events: all;
+  cursor: pointer;
+  outline: none;
+  transition: opacity 140ms ease;
+}
+.selection-configure > path {
+  fill: #475569;
+  stroke: #fff;
+  stroke-width: 1.5;
+  pointer-events: all;
+  filter: drop-shadow(0 3px 7px rgba(30, 41, 59, 0.28));
+}
+.selection-configure text {
+  fill: #fff;
+  font-family: inherit;
+  font-weight: 700;
+  letter-spacing: 0;
+  pointer-events: none;
+  user-select: none;
+}
+.selection-configure:hover,
+.selection-configure:focus {
+  opacity: 0.86;
+}
 .selection-enter {
   opacity: 0.32;
   pointer-events: all;
@@ -4301,11 +4357,11 @@ onBeforeUnmount(() => {
   transition: opacity 140ms ease;
 }
 .selection-enter > path {
-  fill: #b42318;
+  fill: #2563eb;
   stroke: #fff;
   stroke-width: 1.5;
   pointer-events: all;
-  filter: drop-shadow(0 3px 7px rgba(77, 18, 14, 0.28));
+  filter: drop-shadow(0 3px 7px rgba(30, 64, 175, 0.28));
 }
 .selection-enter text {
   fill: #fff;
@@ -4333,9 +4389,13 @@ onBeforeUnmount(() => {
   pointer-events: all;
   filter: drop-shadow(0 3px 7px rgba(77, 18, 14, 0.28));
 }
-.selection-uncompose__icon {
-  color: #fff;
+.selection-uncompose text {
+  fill: #fff;
+  font-family: inherit;
+  font-weight: 700;
+  letter-spacing: 0;
   pointer-events: none;
+  user-select: none;
 }
 .selection-uncompose:hover,
 .selection-uncompose:focus {

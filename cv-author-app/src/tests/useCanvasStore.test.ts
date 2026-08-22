@@ -761,6 +761,9 @@ describe("composition selection hierarchy", () => {
     listeners.get("pointerup")?.(pointerEvent(190, 180));
     expect([first.x, first.y, second.x, second.y]).toEqual([150, 140, 1000, 140]);
 
+    expect(store.canConfigureSelectionComposition.value).toBe(true);
+    expect(store.configureSelectionComposition()).toBe(false);
+    expect(store.nestedPositionEditor.value).toBeNull();
     expect(store.canEnterSelection.value).toBe(true);
     expect(store.enterSelection()).toBe(true);
     expect(store.editingCompositionId.value).toBe(composition.id);
@@ -810,6 +813,48 @@ describe("composition selection hierarchy", () => {
 
     store.undoCanvasChange();
     expect(store.canvasNodes.value.every((node) => node.compositionSpec?.id === composition.id)).toBe(true);
+  });
+
+  it("opens the position editor when configuring a Nested composition", async () => {
+    const store = useCanvasStore(ref(null));
+    store.relationshipStore.dispatch({ type: "clear" });
+    const parent = lineChart("nested-parent", 100, false);
+    const child = lineChart("nested-child", 950, false);
+    store.canvasNodes.value = [parent, child];
+    [parent, child].forEach((node, index) => {
+      store.relationshipStore.dispatch({
+        type: "register-chart",
+        chart: {
+          id: node.id,
+          nodeId: node.id,
+          chartType: node.chartSpec!.chartType,
+          datasetId: node.chartSpec!.datasetId,
+          instanceKind: index === 0 ? "canvas" : "nested-child",
+        },
+      });
+    });
+    store.relationshipStore.dispatch({
+      type: "begin-nested",
+      relationship: {
+        id: "nested:configure",
+        parentChartId: parent.id,
+        parentElementId: "mark:nested-parent:point:1",
+        childChartId: child.id,
+        relationType: "relative-position",
+        parameters: store.relationshipStore.defaultRelativeParameters(),
+        resolverVersion: 1,
+      },
+    });
+    store.relationshipStore.dispatch({ type: "commit-nested", relationshipId: "nested:configure" });
+    await nextTick();
+
+    store.onCanvasNodePointerDown(child, pointerEvent(990, 140));
+    listeners.get("pointerup")?.(pointerEvent(990, 140));
+
+    expect(store.canConfigureSelectionComposition.value).toBe(true);
+    expect(store.nestedPositionEditor.value).toBeNull();
+    expect(store.configureSelectionComposition()).toBe(true);
+    expect(store.nestedPositionEditor.value?.relationshipIds).toEqual(["nested:configure"]);
   });
 });
 
