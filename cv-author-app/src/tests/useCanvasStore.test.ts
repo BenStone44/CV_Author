@@ -1826,6 +1826,84 @@ describe("composition coordinate editing", () => {
     }
   });
 
+  it("adds a Cartesian chart to an existing layer through another interior drop", async () => {
+    const first = cartesianChart("repeat-layer-first", 100, "AreaChart");
+    const second = cartesianChart("repeat-layer-second", 800, "LineGraph");
+    const third = cartesianChart("repeat-layer-third", 1500, "SingleBarChart");
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    store.canvasNodes.value = [first, second, third];
+    store.selectedIds.value = [first.id, second.id];
+
+    expect(store.executeComposition("layer", true, ["x", "y"])).toBe(true);
+    const compositionId = first.compositionSpec?.id;
+    const dropPoint = {
+      x: first.x + first.chartSpec!.plotArea!.x + first.chartSpec!.plotArea!.width / 2,
+      y: first.y + first.chartSpec!.plotArea!.y + first.chartSpec!.plotArea!.height / 2,
+    };
+    store.onCanvasNodePointerDown(third, pointerEvent(third.x + 20, third.y + 20));
+    listeners.get("pointermove")?.(pointerEvent(dropPoint.x, dropPoint.y));
+
+    expect(store.activeDropZone.value).toMatchObject({
+      type: "layer",
+      sharedChannels: ["x", "y"],
+      compatible: true,
+    });
+    listeners.get("pointerup")?.(pointerEvent(dropPoint.x, dropPoint.y));
+    await nextTick();
+
+    expect(store.canvasNodes.value).toHaveLength(3);
+    expect(store.canvasNodes.value.every((node) => node.compositionSpec?.id === compositionId)).toBe(true);
+    expect(first.compositionSpec?.members.map((member) => member.nodeId)).toEqual([
+      first.id,
+      second.id,
+      third.id,
+    ]);
+    expect(worldPlotArea(first)).toEqual(worldPlotArea(third));
+  });
+
+  it("adds a Cartesian chart to an existing concat at its outer boundary", async () => {
+    const first = cartesianChart("repeat-concat-first", 100, "LineGraph");
+    const second = cartesianChart("repeat-concat-second", 800, "SingleBarChart");
+    const third = cartesianChart("repeat-concat-third", 1500, "AreaChart");
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    store.canvasNodes.value = [first, second, third];
+    store.selectedIds.value = [first.id, second.id];
+
+    expect(store.executeComposition("concat", true, ["y"], "horizontal")).toBe(true);
+    const compositionId = first.compositionSpec?.id;
+    const plotArea = second.chartSpec!.plotArea!;
+    const dropPoint = {
+      x: second.x + plotArea.x + plotArea.width - 2,
+      y: second.y + plotArea.y + plotArea.height / 2,
+    };
+    store.onCanvasNodePointerDown(third, pointerEvent(third.x + 20, third.y + 20));
+    listeners.get("pointermove")?.(pointerEvent(dropPoint.x, dropPoint.y));
+
+    expect(store.activeDropZone.value).toMatchObject({
+      type: "concat",
+      direction: "horizontal",
+      concatPosition: "after",
+      sharedChannels: ["y"],
+      compatible: true,
+    });
+    listeners.get("pointerup")?.(pointerEvent(dropPoint.x, dropPoint.y));
+    await nextTick();
+
+    expect(store.canvasNodes.value).toHaveLength(3);
+    expect(store.canvasNodes.value.every((node) => node.compositionSpec?.id === compositionId)).toBe(true);
+    expect(first.compositionSpec?.members.map((member) => member.nodeId)).toEqual([
+      first.id,
+      second.id,
+      third.id,
+    ]);
+    expect(first.x).toBeLessThan(second.x);
+    expect(second.x).toBeLessThan(third.x);
+  });
+
   it("offers Polar radial, angular, and layer drop zones", () => {
     const source = polarChart("drag-polar-source", 100);
     const target = polarChart("drag-polar-target", 800);
@@ -1882,6 +1960,73 @@ describe("composition coordinate editing", () => {
     const angularMembers = store.canvasNodes.value;
     expect(angularMembers[0]?.coordinateGuide?.origin).toEqual(angularMembers[1]?.coordinateGuide?.origin);
     expect(angularMembers.map((node) => [node.coordinateGuide?.angleOffset, node.coordinateGuide?.angleSpan])).toEqual([[0, 60], [60, 60]]);
+  });
+
+  it("extends Polar layer and concat compositions without replacing their members", () => {
+    const layerFirst = polarChart("repeat-polar-layer-first", 100);
+    const layerSecond = polarChart("repeat-polar-layer-second", 800);
+    const layerThird = polarChart("repeat-polar-layer-third", 1500);
+    const layerStore = useCanvasStore(coordinateCanvasRef());
+    layerStore.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    layerStore.canvasNodes.value = [layerFirst, layerSecond, layerThird];
+    layerStore.selectedIds.value = [layerFirst.id, layerSecond.id];
+    expect(layerStore.executeComposition("layer", true, ["angle", "radius"])).toBe(true);
+    const layerCompositionId = layerFirst.compositionSpec?.id;
+    layerStore.selectedIds.value = [layerFirst.id, layerThird.id];
+    expect(layerStore.executeComposition("layer", true, ["angle", "radius"])).toBe(true);
+    expect(layerStore.canvasNodes.value).toHaveLength(3);
+    expect(layerStore.canvasNodes.value.every((node) => node.compositionSpec?.id === layerCompositionId)).toBe(true);
+    expect(layerFirst.compositionSpec?.members).toHaveLength(3);
+
+    const concatFirst = polarChart("repeat-polar-concat-first", 100, 120);
+    const concatSecond = polarChart("repeat-polar-concat-second", 800, 120);
+    const concatThird = polarChart("repeat-polar-concat-third", 1500, 120);
+    const concatStore = useCanvasStore(coordinateCanvasRef());
+    concatStore.relationshipStore.dispatch({ type: "clear" });
+    concatStore.canvasNodes.value = [concatFirst, concatSecond, concatThird];
+    concatStore.selectedIds.value = [concatFirst.id, concatSecond.id];
+    expect(concatStore.executeComposition("concat", true, ["angle"], "radial")).toBe(true);
+    const concatCompositionId = concatFirst.compositionSpec?.id;
+    concatStore.selectedIds.value = [concatFirst.id, concatThird.id];
+    expect(concatStore.executeComposition(
+      "concat",
+      true,
+      ["angle"],
+      "radial",
+      "after",
+      concatFirst.id,
+      concatThird.id,
+    )).toBe(true);
+    expect(concatStore.canvasNodes.value).toHaveLength(3);
+    expect(concatStore.canvasNodes.value.every((node) => node.compositionSpec?.id === concatCompositionId)).toBe(true);
+    expect(concatStore.canvasNodes.value.map((node) => [
+      node.coordinateGuide?.innerRadiusRatio,
+      node.coordinateGuide?.outerRadiusRatio,
+    ])).toEqual([[0, 1 / 3], [1 / 3, 2 / 3], [2 / 3, 1]]);
+
+    const angularFirst = polarChart("repeat-polar-angular-first", 100, 120);
+    const angularSecond = polarChart("repeat-polar-angular-second", 800, 120);
+    const angularThird = polarChart("repeat-polar-angular-third", 1500, 120);
+    const angularStore = useCanvasStore(coordinateCanvasRef());
+    angularStore.relationshipStore.dispatch({ type: "clear" });
+    angularStore.canvasNodes.value = [angularFirst, angularSecond, angularThird];
+    angularStore.selectedIds.value = [angularFirst.id, angularSecond.id];
+    expect(angularStore.executeComposition("concat", true, ["radius"], "angular")).toBe(true);
+    angularStore.selectedIds.value = [angularFirst.id, angularThird.id];
+    expect(angularStore.executeComposition(
+      "concat",
+      true,
+      ["radius"],
+      "angular",
+      "after",
+      angularFirst.id,
+      angularThird.id,
+    )).toBe(true);
+    expect(angularStore.canvasNodes.value.map((node) => [
+      node.coordinateGuide?.angleOffset,
+      node.coordinateGuide?.angleSpan,
+    ])).toEqual([[0, 40], [40, 40], [80, 40]]);
   });
 
   it("nests a configured pie block when it is dragged onto a scatter mark", async () => {

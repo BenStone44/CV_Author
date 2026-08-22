@@ -1172,21 +1172,19 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
 
   const cartesianCompositionFamilies = new Set(["area", "line", "bar"]);
 
-  function isStandaloneCartesianCompositionChart(node: CanvasNode) {
+  function isCartesianCompositionChart(node: CanvasNode) {
     const family = normalizeChartTemplate(node.chartSpec?.chartType ?? "");
     const contract = node.chartSpec ? getChartTemplateContract(node.chartSpec.chartType) : null;
-    return !node.compositionSpec
-      && node.coordinateGuide?.type === "Cartesian"
+    return node.coordinateGuide?.type === "Cartesian"
       && contract?.coordinateSystem === "Cartesian"
       && !!family
       && cartesianCompositionFamilies.has(family)
       && isAtomicChartReady(node);
   }
 
-  function isStandalonePolarCompositionChart(node: CanvasNode) {
+  function isPolarCompositionChart(node: CanvasNode) {
     const contract = node.chartSpec ? getChartTemplateContract(node.chartSpec.chartType) : null;
-    return !node.compositionSpec
-      && node.coordinateGuide?.type === "Polar"
+    return node.coordinateGuide?.type === "Polar"
       && contract?.coordinateSystem === "Polar"
       && isAtomicChartReady(node);
   }
@@ -1212,6 +1210,107 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (encodings.some((encoding) => !encoding)) return false;
     const firstType = encodings[0]!.type;
     return encodings.every((encoding) => encoding!.type === firstType);
+  }
+
+  type RepeatableCompositionType = "layer" | "concat";
+
+  function repeatableCompositionMembers(
+    node: CanvasNode,
+    type: RepeatableCompositionType,
+    direction?: NonNullable<NonNullable<CanvasNode["compositionSpec"]>["direction"]>,
+  ): CanvasNode[] | null {
+    const composition = node.compositionSpec;
+    if (!composition) return [node];
+    if (editingCompositionId.value === composition.id || composition.type !== type) return null;
+    if (type === "concat" && direction && composition.direction !== direction) return null;
+    const members = composition.members
+      .map((member) => getSelectionNode(member.nodeId))
+      .filter((member): member is CanvasNode => !!member);
+    return members.length === composition.members.length ? members : null;
+  }
+
+  function repeatableCompositionNodes(
+    nodes: CanvasNode[],
+    type: RepeatableCompositionType,
+    direction?: NonNullable<NonNullable<CanvasNode["compositionSpec"]>["direction"]>,
+  ) {
+    const expanded: CanvasNode[] = [];
+    const seen = new Set<string>();
+    for (const node of nodes) {
+      const members = repeatableCompositionMembers(node, type, direction);
+      if (!members) return null;
+      members.forEach((member) => {
+        if (seen.has(member.id)) return;
+        seen.add(member.id);
+        expanded.push(member);
+      });
+    }
+    return expanded;
+  }
+
+  function repeatableCompositionPairNodes(
+    source: CanvasNode,
+    target: CanvasNode,
+    type: RepeatableCompositionType,
+    direction?: NonNullable<NonNullable<CanvasNode["compositionSpec"]>["direction"]>,
+  ) {
+    const sourceMembers = repeatableCompositionMembers(source, type, direction);
+    const targetMembers = repeatableCompositionMembers(target, type, direction);
+    if (!sourceMembers || !targetMembers) return null;
+    if (sourceMembers.some((member) => targetMembers.some((targetMember) => targetMember.id === member.id))) return null;
+    return repeatableCompositionNodes([...targetMembers, ...sourceMembers], type, direction);
+  }
+
+  function sameChannels(left: CoordinateChannel[], right: CoordinateChannel[]) {
+    return left.length === right.length && left.every((channel) => right.includes(channel));
+  }
+
+  function existingRepeatableCompositions(nodes: CanvasNode[], type: RepeatableCompositionType) {
+    const specs = new Map<string, NonNullable<CanvasNode["compositionSpec"]>>();
+    nodes.forEach((node) => {
+      const spec = node.compositionSpec;
+      if (spec?.type === type) specs.set(spec.id, spec);
+    });
+    return Array.from(specs.values());
+  }
+
+  function layerChannelsForNodes(nodes: CanvasNode[]) {
+    const contracts = nodes.map((node) => node.chartSpec ? getChartTemplateContract(node.chartSpec.chartType) : null);
+    if (contracts.some((contract) => !contract)) return null;
+    const compatible = contracts[0]!.shareableChannels.filter((channel) =>
+      contracts.every((contract) => contract!.shareableChannels.includes(channel))
+      && sharedChannelEncodingsAreCompatible(nodes, channel),
+    );
+    const existing = existingRepeatableCompositions(nodes, "layer");
+    if (existing.length === 0) return compatible;
+    const channels = existing[0]!.sharedChannels;
+    if (!existing.every((spec) => sameChannels(spec.sharedChannels, channels))) return null;
+    return channels.every((channel) => compatible.includes(channel)) ? [...channels] : null;
+  }
+
+  function concatNodesAreCompatible(
+    nodes: CanvasNode[],
+    direction: "horizontal" | "vertical" | "radial" | "angular",
+    channel: CoordinateChannel,
+  ) {
+    return existingRepeatableCompositions(nodes, "concat").every((composition) =>
+      composition.direction === direction && sameChannels(composition.sharedChannels, [channel]))
+      && nodes.every((node) => getChartTemplateContract(node.chartSpec!.chartType)?.shareableChannels.includes(channel))
+      && sharedChannelEncodingsAreCompatible(nodes, channel);
+  }
+
+  function retireMergedCompositions(
+    compositions: NonNullable<CanvasNode["compositionSpec"]>[],
+    retainedId: string,
+  ) {
+    compositions.forEach((composition) => {
+      if (composition.id === retainedId) return;
+      dispatchRelationship({
+        type: "remove-composition",
+        compositionId: composition.id,
+        keepSharedAxes: true,
+      });
+    });
   }
 
   // --- computed ---
@@ -2299,19 +2398,21 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     return applied;
   }
 
-  function createLayer(recordHistory = true, requestedChannels?: CoordinateChannel[]) {
-    const nodes = selectedNodes.value.filter((node) => node.chartSpec && node.coordinateGuide);
+  function createLayer(recordHistory = true, requestedChannels?: CoordinateChannel[], targetNodeId?: string) {
+    const nodes = repeatableCompositionNodes(selectedNodes.value, "layer")
+      ?.filter((node) => node.chartSpec && node.coordinateGuide) ?? [];
     if (nodes.length < 2 || !nodes.every(isAtomicChartReady)) return false;
     const contracts = nodes.map((node) => getChartTemplateContract(node.chartSpec!.chartType));
     if (contracts.some((contract) => !contract)) return false;
     const coordinateType = contracts[0]!.coordinateSystem;
     if (coordinateType === "CoordinateFree" || !nodes.every((node) => node.coordinateGuide?.type === coordinateType)) return false;
-    const compatibleChannels = contracts[0]!.shareableChannels.filter((channel) =>
-      contracts.every((contract) => contract!.shareableChannels.includes(channel))
-      && sharedChannelEncodingsAreCompatible(nodes, channel),
-    );
+    const compatibleChannels = layerChannelsForNodes(nodes);
+    if (!compatibleChannels) return false;
     const sharedChannels = requestedChannels ?? compatibleChannels;
-    if (sharedChannels.length === 0 || !sharedChannels.every((channel) => compatibleChannels.includes(channel))) return false;
+    const existingCompositions = existingRepeatableCompositions(nodes, "layer");
+    if (sharedChannels.length === 0
+      || !sharedChannels.every((channel) => compatibleChannels.includes(channel))
+      || (existingCompositions.length > 0 && !sameChannels(sharedChannels, compatibleChannels))) return false;
     const datasetId = nodes[0]!.chartSpec!.datasetId;
     const filterKey = JSON.stringify({
       single: Object.entries(nodes[0]!.chartSpec!.filters ?? {}).sort(),
@@ -2325,34 +2426,48 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       }) === filterKey,
     )) return false;
 
-    const owner = [...nodes].sort((left, right) => {
-      const score = (node: CanvasNode) => sharedChannels.reduce(
-        (count, channel) => count + (node.chartSpec?.encodings[channel] ? 1 : 0),
-        0,
-      );
-      return score(right) - score(left);
-    })[0]!;
+    const retainedComposition = existingCompositions[0];
+    const retainedOwnerId = retainedComposition
+      ? nodes.find((node) => node.compositionSpec?.id === retainedComposition.id)?.coordinateSystem?.ownerNodeId
+      : undefined;
+    const targetNode = targetNodeId ? findCanvasNode(targetNodeId) : null;
+    const targetOwnerId = targetNode?.compositionSpec?.type === "layer"
+      ? targetNode.coordinateSystem?.ownerNodeId
+      : targetNode?.id;
+    const owner = nodes.find((node) => node.id === targetOwnerId)
+      ?? nodes.find((node) => node.id === retainedOwnerId)
+      ?? [...nodes].sort((left, right) => {
+        const score = (node: CanvasNode) => sharedChannels.reduce(
+          (count, channel) => count + (node.chartSpec?.encodings[channel] ? 1 : 0),
+          0,
+        );
+        return score(right) - score(left);
+      })[0]!;
     const layerNodes = [owner, ...nodes.filter((node) => node.id !== owner.id)];
     const layerId = crypto.randomUUID();
+    const compositionId = retainedComposition?.id ?? `composition:${layerId}`;
+    const coordinateSystemId = nodes.find((node) => node.compositionSpec?.id === retainedComposition?.id)
+      ?.coordinateSystem?.id ?? `coordinate:${layerId}`;
     const system: CoordinateSystemSpec = {
-      id: `coordinate:${layerId}`,
+      id: coordinateSystemId,
       type: coordinateType,
       ownerNodeId: owner.id,
       sharedChannels,
       members: layerNodes.map((node) => ({ nodeId: node.id, channels: [...sharedChannels] })),
     };
     const compositionSpec: NonNullable<CanvasNode["compositionSpec"]> = {
-      id: `composition:${layerId}`,
+      id: compositionId,
       type: "layer",
       sharedChannels,
       members: layerNodes.map((node) => ({
         nodeId: node.id,
-        sourceNodeId: node.id,
+        sourceNodeId: node.compositionSpec?.members.find((member) => member.nodeId === node.id)?.sourceNodeId ?? node.id,
         chartType: node.chartSpec?.chartType,
         sharedChannels: [...sharedChannels],
       })),
     };
     if (recordHistory) pushCanvasHistory();
+    retireMergedCompositions(existingCompositions, compositionId);
     const frame = {
       x: owner.x,
       y: owner.y,
@@ -2377,8 +2492,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       node.layerSpec = null;
     });
     renderSharedCoordinateComposition(owner);
+    const layerNodeIds = new Set(layerNodes.map((node) => node.id));
     replaceSelectionScopeNodes([
-      ...getSelectionScopeNodes().filter((node) => !selectedIds.value.includes(node.id)),
+      ...getSelectionScopeNodes().filter((node) => !layerNodeIds.has(node.id)),
       ...layerNodes,
     ]);
     reconcileCoordinateSystems();
@@ -2387,35 +2503,68 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     return true;
   }
 
-  function createStructuralComposition(type: "concat" | "facet" | "nested", recordHistory = true, requestedChannels?: CoordinateChannel[], concatDirection?: "horizontal" | "vertical" | "radial" | "angular", concatPosition?: "before" | "after") {
-    const sourceNodes = [...selectedNodes.value];
-    const bounds = selectionBounds.value;
+  function createStructuralComposition(
+    type: "concat" | "facet" | "nested",
+    recordHistory = true,
+    requestedChannels?: CoordinateChannel[],
+    concatDirection?: "horizontal" | "vertical" | "radial" | "angular",
+    concatPosition?: "before" | "after",
+    targetNodeId?: string,
+    sourceNodeId?: string,
+  ) {
+    const direction = concatDirection ?? "horizontal";
+    const anchoredTarget = targetNodeId ? findCanvasNode(targetNodeId) : null;
+    const anchoredSource = sourceNodeId ? findCanvasNode(sourceNodeId) : null;
+    const anchoredTargetNodes = type === "concat" && anchoredTarget
+      ? repeatableCompositionMembers(anchoredTarget, "concat", direction)
+      : null;
+    const anchoredSourceNodes = type === "concat" && anchoredSource
+      ? repeatableCompositionMembers(anchoredSource, "concat", direction)
+      : null;
+    const sourceNodes = type === "concat"
+      ? targetNodeId && sourceNodeId
+        ? anchoredTargetNodes && anchoredSourceNodes
+          ? repeatableCompositionNodes([...anchoredTargetNodes, ...anchoredSourceNodes], "concat", direction) ?? []
+          : []
+        : repeatableCompositionNodes(selectedNodes.value, "concat", direction) ?? []
+      : [...selectedNodes.value];
+    const bounds = type === "concat"
+      ? sourceNodes.reduce<Bounds | null>((current, node) => mergeBounds(current, collectNodeSelectionBounds(node)), null)
+      : selectionBounds.value;
     if (!bounds
       || sourceNodes.length === 0
       || !sourceNodes.every(isAtomicChartReady)
       || (type === "concat" && sourceNodes.length < 2)) return false;
     if (type === "concat") {
-      const direction = concatDirection ?? "horizontal";
       const sharedChannel: CoordinateChannel = direction === "horizontal"
         ? "y"
         : direction === "vertical"
           ? "x"
           : direction === "radial" ? "angle" : "radius";
       const sharedChannels = requestedChannels ?? [sharedChannel];
-      const polar = sourceNodes.every(isStandalonePolarCompositionChart);
-      const cartesian = sourceNodes.every(isStandaloneCartesianCompositionChart);
+      const existingCompositions = existingRepeatableCompositions(sourceNodes, "concat");
+      const polar = sourceNodes.every(isPolarCompositionChart);
+      const cartesian = sourceNodes.every(isCartesianCompositionChart);
       if ((!polar && !cartesian)
         || sharedChannels.length !== 1
         || sharedChannels[0] !== sharedChannel
+        || !existingCompositions.every((composition) =>
+          composition.direction === direction && sameChannels(composition.sharedChannels, sharedChannels))
         || !sharedChannelEncodingsAreCompatible(sourceNodes, sharedChannel)
         || (polar && direction !== "radial" && direction !== "angular")
         || (cartesian && (direction === "radial" || direction === "angular"))) return false;
     }
     const compositionId = crypto.randomUUID();
+    const existingConcatCompositions = type === "concat"
+      ? existingRepeatableCompositions(sourceNodes, "concat")
+      : [];
+    const retainedConcatComposition = existingConcatCompositions[0];
+    const compositionSpecId = retainedConcatComposition?.id ?? `composition:${compositionId}`;
     const gap = type === "facet"
       ? 4
       : Math.max(6, Math.min(14, Math.min(bounds.width, bounds.height) * 0.025));
     if (recordHistory) pushCanvasHistory();
+    retireMergedCompositions(existingConcatCompositions, compositionSpecId);
     let children: CanvasNode[] = [];
     let facetField: string | undefined;
     let facetValues: string[] | undefined;
@@ -2479,10 +2628,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         });
       }
     } else {
-      const direction = concatDirection ?? "horizontal";
       let cursor = 0;
-      const orderedNodes = concatPosition === "before" && sourceNodes.length > 1
-        ? [sourceNodes[1]!, sourceNodes[0]!, ...sourceNodes.slice(2)]
+      const orderedNodes = anchoredTargetNodes && anchoredSourceNodes
+        ? concatPosition === "before"
+          ? [...anchoredSourceNodes, ...anchoredTargetNodes]
+          : [...anchoredTargetNodes, ...anchoredSourceNodes]
         : sourceNodes;
       children = orderedNodes.map((node) => {
         const plotBounds = collectNodeSelectionBounds(node);
@@ -2502,7 +2652,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     }
     const childBounds = getCanvasNodeListBounds(children);
     if (!childBounds) return false;
-    const compositionDirection = concatDirection ?? "horizontal";
+    const compositionDirection = direction;
     const sharedChannels: CoordinateChannel[] = type === "facet"
       ? []
       : type === "concat"
@@ -2512,13 +2662,16 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
             : compositionDirection === "angular" ? "radius" : "y",
       ]
       : [...(getChartTemplateContract(children[0]?.chartSpec?.chartType ?? "")?.shareableChannels ?? [])];
+    const retainedCoordinateSystem = sourceNodes.find((node) =>
+      node.compositionSpec?.id === retainedConcatComposition?.id,
+    )?.coordinateSystem;
     const coordinateSystem: CoordinateSystemSpec | null = sharedChannels.length > 0 ? {
-      id: `coordinate:${compositionId}`,
+      id: retainedCoordinateSystem?.id ?? `coordinate:${compositionId}`,
       type: children[0]?.coordinateGuide?.type ?? "CoordinateFree",
       ownerNodeId: type === "nested"
         ? compositionId
         : type === "concat"
-          ? sourceNodes[0]!.id
+          ? retainedCoordinateSystem?.ownerNodeId ?? sourceNodes[0]!.id
           : children[0]!.id,
       members: children.map((node) => ({
         nodeId: node.id,
@@ -2532,23 +2685,28 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         : coordinateSystem;
     });
     const compositionSpec: NonNullable<CanvasNode["compositionSpec"]> = {
-      id: `composition:${compositionId}`,
+      id: compositionSpecId,
       type,
       direction: type === "concat" ? compositionDirection : undefined,
       polarAngleSpan: type === "concat" && children[0]?.coordinateGuide?.type === "Polar"
-        ? Math.max(1, Math.min(children[0].coordinateGuide.angleSpan ?? 360, 360))
+        ? Math.max(1, Math.min(
+          retainedConcatComposition?.polarAngleSpan ?? children[0].coordinateGuide.angleSpan ?? 360,
+          360,
+        ))
         : undefined,
       polarAngleOffset: type === "concat" && children[0]?.coordinateGuide?.type === "Polar"
-        ? children[0].coordinateGuide.angleOffset ?? 0
+        ? retainedConcatComposition?.polarAngleOffset ?? children[0].coordinateGuide.angleOffset ?? 0
         : undefined,
       sharedChannels,
       facetField,
       facetValues,
       facetDirection,
       facetGrid,
-      members: children.map((node, index) => ({
+      members: children.map((node) => ({
         nodeId: node.id,
-        sourceNodeId: type !== "concat" ? sourceNodes[0]!.id : node.id,
+        sourceNodeId: type !== "concat"
+          ? sourceNodes[0]!.id
+          : node.compositionSpec?.members.find((member) => member.nodeId === node.id)?.sourceNodeId ?? node.id,
         chartType: node.chartSpec?.chartType,
         sharedChannels,
       })),
@@ -2556,8 +2714,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (type !== "nested") {
       children.forEach((node) => { node.compositionSpec = compositionSpec; });
       if (type === "concat") renderSharedCoordinateComposition(children[0]!);
+      const replacedIds = new Set(type === "concat"
+        ? children.map((node) => node.id)
+        : selectedIds.value);
       replaceSelectionScopeNodes([
-        ...getSelectionScopeNodes().filter((node) => !selectedIds.value.includes(node.id)),
+        ...getSelectionScopeNodes().filter((node) => !replacedIds.has(node.id)),
         ...children,
       ]);
       reconcileCoordinateSystems();
@@ -2587,10 +2748,26 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     return true;
   }
 
-  function executeComposition(type: "layer" | "concat" | "facet", recordHistory = true, requestedChannels?: CoordinateChannel[], concatDirection?: "horizontal" | "vertical" | "radial" | "angular", concatPosition?: "before" | "after") {
+  function executeComposition(
+    type: "layer" | "concat" | "facet",
+    recordHistory = true,
+    requestedChannels?: CoordinateChannel[],
+    concatDirection?: "horizontal" | "vertical" | "radial" | "angular",
+    concatPosition?: "before" | "after",
+    targetNodeId?: string,
+    sourceNodeId?: string,
+  ) {
     const created = type === "layer"
-      ? createLayer(recordHistory, requestedChannels)
-      : createStructuralComposition(type, recordHistory, requestedChannels, concatDirection, concatPosition);
+      ? createLayer(recordHistory, requestedChannels, targetNodeId)
+      : createStructuralComposition(
+        type,
+        recordHistory,
+        requestedChannels,
+        concatDirection,
+        concatPosition,
+        targetNodeId,
+        sourceNodeId,
+      );
     setImportNotice(created
       ? `${type[0]!.toUpperCase()}${type.slice(1)} composition created.`
       : `${type[0]!.toUpperCase()}${type.slice(1)} requires compatible selected charts.`);
@@ -3146,18 +3323,16 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (target.coordinateGuide?.type !== "Polar" || !target.chartSpec || !source.chartSpec) return null;
     const model = createPolarCoordinateSystemModel(target, viewZoom.value);
     if (!model) return null;
-    const sourcePolar = isStandalonePolarCompositionChart(source);
-    const targetPolar = isStandalonePolarCompositionChart(target);
-    const contracts = [getChartTemplateContract(source.chartSpec.chartType), getChartTemplateContract(target.chartSpec.chartType)];
-    const compatiblePolar = sourcePolar && targetPolar && contracts.every((contract) => contract?.coordinateSystem === "Polar");
-    if (!compatiblePolar) return null;
     const localPoint = toNodeLocalPoint(target, point);
     const dx = localPoint.x - model.origin.x;
     const dy = model.origin.y - localPoint.y;
     const distance = Math.hypot(dx, dy);
     const rawDegrees = (Math.atan2(-dy, dx) * 180 / Math.PI + 360) % 360;
     const degrees = rawDegrees < 0.001 ? 0 : 360 - rawDegrees;
-    const angleSpan = model.angleSpan;
+    const angleSpan = target.compositionSpec?.type === "concat"
+      && target.compositionSpec.direction === "angular"
+      ? target.compositionSpec.polarAngleSpan ?? model.angleSpan
+      : model.angleSpan;
     const plotArea = target.chartSpec.plotArea;
     const chartRadius = plotArea
       ? Math.max(8, Math.min(plotArea.width, plotArea.height) / 2)
@@ -3175,13 +3350,21 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const after = angleSpan >= 359.999
       ? degrees >= 360 - edgeAngle
       : degrees >= Math.max(0, angleSpan - edgeAngle) && degrees <= angleSpan;
-    const sourceContract = contracts[0];
-    const targetContract = contracts[1];
-    const sharedChannelCompatible = (channel: CoordinateChannel) =>
-      !!sourceContract?.shareableChannels.includes(channel)
-      && !!targetContract?.shareableChannels.includes(channel)
-      && sharedChannelEncodingsAreCompatible([source, target], channel);
+    const polarNodesFor = (type: RepeatableCompositionType, direction?: "radial" | "angular") => {
+      const nodes = repeatableCompositionPairNodes(source, target, type, direction);
+      return nodes?.length
+        && nodes.every(isPolarCompositionChart)
+        && nodes.every((node) => getChartTemplateContract(node.chartSpec!.chartType)?.coordinateSystem === "Polar")
+        ? nodes
+        : null;
+    };
+    const sharedChannelCompatible = (
+      nodes: CanvasNode[] | null,
+      direction: "radial" | "angular",
+      channel: CoordinateChannel,
+    ) => !!nodes && concatNodesAreCompatible(nodes, direction, channel);
     if (inRadialZone) {
+      const nodes = polarNodesFor("concat", "radial");
       const geometry = polarSectorGeometry(target, model, radialInner, radialOuter, 0, -angleSpan);
       if (!geometry) return null;
       return {
@@ -3189,12 +3372,13 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         type: "concat",
         sharedChannels: ["angle"],
         ...geometry,
-        compatible: sharedChannelCompatible("angle"),
+        compatible: sharedChannelCompatible(nodes, "radial", "angle"),
         direction: "radial",
         concatPosition: "after",
       };
     }
     if (distance <= chartRadius && inAngle && (before || after)) {
+      const nodes = polarNodesFor("concat", "angular");
       const isBefore = before && !after;
       const start = isBefore ? 0 : -Math.max(0, angleSpan - edgeAngle);
       const end = isBefore ? -edgeAngle : -angleSpan;
@@ -3205,17 +3389,16 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         type: "concat",
         sharedChannels: ["radius"],
         ...geometry,
-        compatible: sharedChannelCompatible("radius"),
+        compatible: sharedChannelCompatible(nodes, "angular", "radius"),
         direction: "angular",
         concatPosition: isBefore ? "before" : "after",
       };
     }
     if (distance <= chartRadius && inAngle) {
+      const nodes = polarNodesFor("layer");
       const geometry = polarSectorGeometry(target, model, 0, chartRadius, 0, -angleSpan);
       if (!geometry) return null;
-      const sharedChannels = ["angle", "radius"].filter((channel): channel is CoordinateChannel =>
-        sharedChannelCompatible(channel),
-      );
+      const sharedChannels = nodes ? layerChannelsForNodes(nodes) ?? [] : [];
       return {
         targetNodeId: target.id,
         type: "layer",
@@ -3230,8 +3413,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function compositionDropZoneAtPoint(point: Point, sourceNodeId: string): ChartDropZone | null {
     const source = findCanvasNode(sourceNodeId);
     if (!source?.chartSpec) return null;
+    const sourceCompositionMemberIds = new Set(
+      source.compositionSpec?.members.map((member) => member.nodeId) ?? [sourceNodeId],
+    );
     const chartTargets = getSelectionScopeNodes().filter((node) =>
-      node.id !== sourceNodeId
+      !sourceCompositionMemberIds.has(node.id)
       && !!node.chartSpec
     );
     for (const target of [...chartTargets].reverse()) {
@@ -3241,7 +3427,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     }
     const targets = chartTargets.filter((node) =>
       !!node.coordinateGuide
-      && !node.compositionSpec
       && !(chartDrilldown.value?.nodeId === node.id && chartDrilldown.value.level === "part"),
     );
     for (const target of targets) {
@@ -3294,14 +3479,10 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         const direction = horizontal ? "horizontal" : "vertical";
         const sharedChannel: CoordinateChannel = horizontal ? "y" : "x";
         const before = horizontal ? left <= right : top <= bottom;
-        const sourceContract = getChartTemplateContract(source.chartSpec.chartType);
-        const targetContract = getChartTemplateContract(target.chartSpec!.chartType);
-        const compatible = isStandaloneCartesianCompositionChart(source)
-          && isStandaloneCartesianCompositionChart(target)
-          && sourceContract?.coordinateSystem === targetContract?.coordinateSystem
-          && !!sourceContract?.shareableChannels.includes(sharedChannel)
-          && !!targetContract?.shareableChannels.includes(sharedChannel)
-          && sharedChannelEncodingsAreCompatible([source, target], sharedChannel);
+        const compositionNodes = repeatableCompositionPairNodes(source, target, "concat", direction);
+        const compatible = !!compositionNodes
+          && compositionNodes.every(isCartesianCompositionChart)
+          && concatNodesAreCompatible(compositionNodes, direction, sharedChannel);
         const localZone: ChartPlotArea = horizontal
           ? {
             x: left <= right ? plotArea.x : plotArea.x + plotArea.width - edgeSizeX,
@@ -3327,10 +3508,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         };
       }
 
-      const sharedChannels: CoordinateChannel[] = ["x", "y"];
-      const compatible = isStandaloneCartesianCompositionChart(source)
-        && isStandaloneCartesianCompositionChart(target)
-        && sharedChannels.every((channel) => sharedChannelEncodingsAreCompatible([source, target], channel));
+      const compositionNodes = repeatableCompositionPairNodes(source, target, "layer");
+      const sharedChannels = compositionNodes ? layerChannelsForNodes(compositionNodes) ?? [] : [];
+      const compatible = !!compositionNodes
+        && compositionNodes.every(isCartesianCompositionChart)
+        && sharedChannels.length > 0;
       const layerArea = {
         x: plotArea.x + edgeSizeX,
         y: plotArea.y + edgeSizeY,
@@ -3455,7 +3637,15 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     // Selection normalization follows canvas z-order, but concat ordering must
     // preserve the semantic target/source order supplied by the drop gesture.
     selectedIds.value = [target.id, source.id];
-    const created = executeComposition(zone.type, false, zone.sharedChannels, zone.direction, zone.concatPosition);
+    const created = executeComposition(
+      zone.type,
+      false,
+      zone.sharedChannels,
+      zone.direction,
+      zone.concatPosition,
+      target.id,
+      source.id,
+    );
     if (created) axisBindingTarget.value = null;
     return created;
   }
@@ -5118,7 +5308,16 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       };
     }
     startMove(nextSelection, event);
-    if (node.chartSpec && nextSelection.length === 1) compositionDragSourceId.value = node.id;
+    const repeatableComposition = node.compositionSpec?.type === "layer" || node.compositionSpec?.type === "concat"
+      ? node.compositionSpec
+      : null;
+    const draggingWholeComposition = !!repeatableComposition
+      && editingCompositionId.value !== repeatableComposition.id
+      && repeatableComposition.members.length === nextSelection.length
+      && repeatableComposition.members.every((member) => nextSelection.includes(member.nodeId));
+    if (node.chartSpec && (nextSelection.length === 1 || draggingWholeComposition)) {
+      compositionDragSourceId.value = node.id;
+    }
   }
   function openContextMenu(event: MouseEvent) {
     if (!canvasRef.value) return;
@@ -5724,7 +5923,15 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       const dropped = created?.[0];
       if (dropped) {
         setSelection([target.id, dropped.id]);
-        executeComposition(zone.type, false, zone.sharedChannels, zone.direction, zone.concatPosition);
+        executeComposition(
+          zone.type,
+          false,
+          zone.sharedChannels,
+          zone.direction,
+          zone.concatPosition,
+          target.id,
+          dropped.id,
+        );
       }
       draggedCandidateId.value = null;
       return;
