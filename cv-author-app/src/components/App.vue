@@ -185,15 +185,18 @@ const templateCategoryMenuStyle = computed(() => ({
   maxHeight: `${Math.max(180, window.innerHeight - templateCategoryMenuPosition.value.top - 16)}px`,
 }));
 
-function selectionUncomposePath(radius: number) {
+function selectionActionPath(radius: number, position: "top" | "bottom") {
   const innerRadius = radius / 2;
   const outerOffset = radius * Math.SQRT1_2;
   const innerOffset = innerRadius * Math.SQRT1_2;
+  const direction = position === "top" ? -1 : 1;
+  const outerSweep = position === "top" ? 1 : 0;
+  const innerSweep = position === "top" ? 0 : 1;
   return [
-    `M ${-outerOffset} ${-outerOffset}`,
-    `A ${radius} ${radius} 0 0 1 ${outerOffset} ${-outerOffset}`,
-    `L ${innerOffset} ${-innerOffset}`,
-    `A ${innerRadius} ${innerRadius} 0 0 0 ${-innerOffset} ${-innerOffset}`,
+    `M ${-outerOffset} ${direction * outerOffset}`,
+    `A ${radius} ${radius} 0 0 ${outerSweep} ${outerOffset} ${direction * outerOffset}`,
+    `L ${innerOffset} ${direction * innerOffset}`,
+    `A ${innerRadius} ${innerRadius} 0 0 ${innerSweep} ${-innerOffset} ${direction * innerOffset}`,
     "Z",
   ].join(" ");
 }
@@ -1730,15 +1733,18 @@ onBeforeUnmount(() => {
                     :transform="`translate(${selectionFrame.x + selectionFrame.width / 2} ${selectionFrame.y + selectionFrame.height / 2})`"
                     @pointerdown.stop.prevent="enterSelection"
                     @keydown.enter.stop.prevent="enterSelection"
+                    @keydown.space.stop.prevent="enterSelection"
                   >
-                    <circle
-                      :r="Math.min(selectionFrame.width, selectionFrame.height) / 4"
+                    <title>Enter selection</title>
+                    <path
+                      :d="selectionActionPath(Math.min(selectionFrame.width, selectionFrame.height) / 4, 'top')"
                       vector-effect="non-scaling-stroke"
                     />
                     <text
                       text-anchor="middle"
                       dominant-baseline="middle"
-                      :font-size="13 / selectionOverlayZoom"
+                      :y="-Math.min(selectionFrame.width, selectionFrame.height) * 0.175"
+                      :font-size="10 / selectionOverlayZoom"
                     >Enter</text>
                   </g>
                   <g
@@ -1754,12 +1760,12 @@ onBeforeUnmount(() => {
                   >
                     <title>Remove composition</title>
                     <path
-                      :d="selectionUncomposePath(Math.min(selectionFrame.width, selectionFrame.height) / 4)"
+                      :d="selectionActionPath(Math.min(selectionFrame.width, selectionFrame.height) / 4, 'bottom')"
                       vector-effect="non-scaling-stroke"
                     />
                     <g
                       class="selection-uncompose__icon"
-                      :transform="`translate(${-5 / selectionOverlayZoom} ${-Math.min(selectionFrame.width, selectionFrame.height) * 0.175 - 5 / selectionOverlayZoom})`"
+                      :transform="`translate(${-5 / selectionOverlayZoom} ${Math.min(selectionFrame.width, selectionFrame.height) * 0.175 - 5 / selectionOverlayZoom})`"
                     >
                       <Ungroup
                         :size="10 / selectionOverlayZoom"
@@ -3711,17 +3717,18 @@ onBeforeUnmount(() => {
   stroke-dasharray: none;
 }
 .selection-enter {
-  opacity: 0.46;
+  opacity: 0.32;
   pointer-events: all;
   cursor: pointer;
   outline: none;
   transition: opacity 140ms ease;
 }
-.selection-enter circle {
+.selection-enter > path {
   fill: #b42318;
   stroke: #fff;
-  stroke-width: 2.5;
-  filter: drop-shadow(0 3px 7px rgba(77, 18, 14, 0.38));
+  stroke-width: 1.5;
+  pointer-events: all;
+  filter: drop-shadow(0 3px 7px rgba(77, 18, 14, 0.28));
 }
 .selection-enter text {
   fill: #fff;
@@ -3733,7 +3740,7 @@ onBeforeUnmount(() => {
 }
 .selection-enter:hover,
 .selection-enter:focus {
-  opacity: 1;
+  opacity: 0.86;
 }
 .selection-uncompose {
   opacity: 0.32;
