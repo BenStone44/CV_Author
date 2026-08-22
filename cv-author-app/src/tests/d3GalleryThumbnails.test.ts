@@ -27,4 +27,17 @@ describe("D3 Gallery thumbnails", () => {
     const candidate = { id: "future", name: "Future", chartType: "Future", coordinateSystem: "CoordinateFree" as const, src: "preview" };
     expect(withD3GalleryThumbnail(candidate)).toBe(candidate);
   });
+
+  it("preserves the local rect-grid SVG for Matrix", () => {
+    const candidate = {
+      id: "matrix",
+      name: "Matrix",
+      chartType: "MatrixDiagram",
+      coordinateSystem: "Cartesian" as const,
+      src: "data:image/svg+xml,matrix-grid",
+      svgMarkup: "<svg><rect/></svg>",
+    };
+    expect(d3GalleryThumbnailUrl("MatrixDiagram")).toBeNull();
+    expect(withD3GalleryThumbnail(candidate)).toBe(candidate);
+  });
 });

@@ -364,14 +364,23 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
   const staticRadiusRatio = typeof config.outerRadius === "number"
     ? Math.max(0.15, Math.min(config.outerRadius, 1))
     : 1;
-  const outerRadius = Math.max(8, Math.min(input.width, input.height) * 0.38
+  const baseOuterRadius = Math.max(8, Math.min(input.width, input.height) * 0.38
     * (input.coordinateGuide?.type === "Polar" ? input.coordinateGuide.radiusScale ?? 1 : 1)
     * staticRadiusRatio);
+  const innerRadiusRatio = input.coordinateGuide?.type === "Polar"
+    ? Math.max(0, Math.min(input.coordinateGuide.innerRadiusRatio ?? 0, 0.98))
+    : 0;
+  const outerRadiusRatio = input.coordinateGuide?.type === "Polar"
+    ? Math.max(innerRadiusRatio + 0.01, Math.min(input.coordinateGuide.outerRadiusRatio ?? 1, 1))
+    : 1;
+  const innerRadius = baseOuterRadius * innerRadiusRatio;
+  const outerRadius = baseOuterRadius * outerRadiusRatio;
   const colorDomain = visualDomain(input.dataset.rows, category);
   const angleSpan = input.coordinateGuide?.type === "Polar"
     ? Math.max(1, Math.min(input.coordinateGuide.angleSpan ?? 360, 360))
     : 360;
-  const layoutStartAngle = -270 * Math.PI / 180;
+  const angleOffset = input.coordinateGuide?.type === "Polar" ? input.coordinateGuide.angleOffset ?? 0 : 0;
+  const layoutStartAngle = (-270 + angleOffset) * Math.PI / 180;
   const layoutEndAngle = layoutStartAngle + angleSpan * Math.PI / 180;
   if (angleFields.length > 0) {
     const flattenFields = (input.chartSpec.flattenFields ?? []).filter((field) =>
@@ -416,14 +425,17 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
     const radiusDomain = extent(radiusDomainValues) as [number | undefined, number | undefined];
     const radiusScale = radiusDomain[0] === undefined || radiusDomain[1] === undefined || radiusDomain[0] === radiusDomain[1]
       ? () => outerRadius
-      : scaleLinear().domain(radiusDomain as [number, number]).range([outerRadius * 0.42, outerRadius]);
+      : scaleLinear().domain(radiusDomain as [number, number]).range([
+        innerRadius + (outerRadius - innerRadius) * 0.42,
+        outerRadius,
+      ]);
     const arcs = layout.map((datum, index) => {
       const component = components[index];
       const field = component?.field ?? String(index + 1);
       const categoryKey = [...(component?.flattenValues ?? []), field].join(" / ");
       const radiusValue = componentRadiusValues[index] ?? Number.NaN;
       const componentOuterRadius = Number.isFinite(radiusValue) ? radiusScale(radiusValue) : outerRadius;
-      const path = arc<any>().innerRadius(0).outerRadius(componentOuterRadius);
+      const path = arc<any>().innerRadius(innerRadius).outerRadius(componentOuterRadius);
       const representativeRow = component?.rows[0] ?? input.dataset.rows[index] ?? {};
       const color = visualColor(representativeRow, category, colorDomain, config, palette[index % palette.length]!);
       return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="arc" data-mark-group-id="mark-group:${esc(input.chartId)}:arc" data-category-key="${esc(categoryKey)}" data-theta-field="${esc(field)}" data-theta-value="${componentValues[index] ?? 0}" data-angle-field="${esc(field)}" data-angle-value="${componentValues[index] ?? 0}" data-flatten-fields="${esc(flattenFields.join("|"))}" data-flatten-values="${esc((component?.flattenValues ?? []).join("|"))}" data-radius-mode="${radiusMode}" data-radius-field="${esc(radius?.field ?? "")}" data-radius-value="${Number.isFinite(radiusValue) ? radiusValue : ""}" d="${path(datum) ?? ""}" transform="translate(${cx} ${cy})" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 1)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
@@ -436,7 +448,8 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
   }
   if (!value) throw new Error(`${donut ? "Donut" : "Pie"} renderer requires an angle/value encoding.`);
   const ringValues = ring ? Array.from(new Set(input.dataset.rows.map((row) => row[ring.field] ?? ""))).filter(Boolean) : ["__single__"];
-  const ringWidth = outerRadius / Math.max(ringValues.length + (donut ? 1 : 0), 1) * (input.coordinateGuide?.type === "Polar" ? input.coordinateGuide.ringScale ?? 1 : 1);
+  const availableRadius = Math.max(outerRadius - innerRadius, 1);
+  const ringWidth = availableRadius / Math.max(ringValues.length + (donut ? 1 : 0), 1) * (input.coordinateGuide?.type === "Polar" ? input.coordinateGuide.ringScale ?? 1 : 1);
   const arcs = ringValues.map((ringKey, ringIndex) => {
     const rows = ring ? input.dataset.rows.filter((row) => (row[ring.field] ?? "") === ringKey) : input.dataset.rows;
     const values = rows.map((row) => Math.max(0, Number(row[value.field] ?? "0")));
@@ -445,7 +458,7 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
       .value((datum) => datum)
       .startAngle(layoutStartAngle)
       .endAngle(layoutEndAngle)(values);
-    const inner = donut || ring ? ringWidth * (ringIndex + (donut ? 1 : 0)) : 0;
+    const inner = innerRadius + (donut || ring ? ringWidth * (ringIndex + (donut ? 1 : 0)) : 0);
     const outer = ring ? inner + ringWidth * 0.92 : outerRadius;
     const radiusValues = radius
       ? rows.map((row) => Number(row[radius.field] ?? "")).filter(Number.isFinite)

@@ -90,10 +90,13 @@ const {
   selectionBounds,
   selectionFrame,
   selectionRotation,
+  selectedPolarAngleSpan,
   editingGroupTransform,
   selectionOverlayZoom,
   rotationInputPosition,
   rotationInputVisible,
+  polarAngleInputPosition,
+  polarAngleInputVisible,
   marqueeBounds,
   selectionUnits,
   isPanning,
@@ -149,6 +152,7 @@ const {
   updateSelectedChartMarkGroupConfig,
   closeAxisBinding,
   setSelectionRotation,
+  setPolarAngleSpan,
   onCandidateDragStart,
   onCandidateDragEnd,
   insertCompositionCandidate,
@@ -1732,6 +1736,8 @@ onBeforeUnmount(() => {
                     'composition-drop-zone--concat': activeDropZone.type === 'concat',
                     'composition-drop-zone--horizontal': activeDropZone.direction === 'horizontal',
                     'composition-drop-zone--vertical': activeDropZone.direction === 'vertical',
+                    'composition-drop-zone--radial': activeDropZone.direction === 'radial',
+                    'composition-drop-zone--angular': activeDropZone.direction === 'angular',
                     'composition-drop-zone--before': activeDropZone.concatPosition === 'before',
                     'composition-drop-zone--after': activeDropZone.concatPosition === 'after',
                     'composition-drop-zone--nested': activeDropZone.type === 'nested',
@@ -2089,12 +2095,15 @@ onBeforeUnmount(() => {
                 :on-axis-scale-pointer-down="onCoordinateAxisScalePointerDown"
               />
               <PolarCoordinateSystem
-                v-for="node in selectedCanvasNodesWithCoordinateGuides.filter((item) => item.coordinateGuide?.type !== 'Cartesian')"
+                v-for="node in selectedCanvasNodesWithCoordinateGuides.filter((item) => item.coordinateGuide?.type === 'Polar')"
                 :key="`coordinate-guide-${node.id}`"
                 :node="node"
                 :view-zoom="selectionOverlayZoom"
+                :show-axis="true"
+                :interactive="true"
                 :class="{ 'coordinate-control--drag-source': compositionDragSourceId === node.id }"
                 :on-angle-pointer-down="onPolarAnglePointerDown"
+                :on-axis-scale-pointer-down="onCoordinateAxisScalePointerDown"
               />
               </g>
             </g>
@@ -2114,6 +2123,29 @@ onBeforeUnmount(() => {
               :value="Math.round(selectionRotation)"
               @change="
                 setSelectionRotation(
+                  Number(($event.target as HTMLInputElement).value),
+                )
+              "
+            />
+            <span>°</span>
+          </label>
+          <label
+            v-if="selectedPolarAngleSpan !== null && polarAngleInputVisible"
+            class="rotation-input"
+            :style="polarAngleInputPosition ? {
+              left: `${polarAngleInputPosition.left}px`,
+              top: `${polarAngleInputPosition.top}px`,
+            } : undefined"
+          >
+            <span>Angle</span>
+            <input
+              type="number"
+              min="1"
+              max="360"
+              step="1"
+              :value="Math.round(selectedPolarAngleSpan)"
+              @change="
+                setPolarAngleSpan(
                   Number(($event.target as HTMLInputElement).value),
                 )
               "
@@ -3979,7 +4011,9 @@ onBeforeUnmount(() => {
   stroke: #059669;
 }
 .composition-drop-zone--horizontal,
-.composition-drop-zone--vertical {
+.composition-drop-zone--vertical,
+.composition-drop-zone--radial,
+.composition-drop-zone--angular {
   stroke-width: 3;
 }
 .composition-drop-zone--invalid {
@@ -4297,17 +4331,32 @@ onBeforeUnmount(() => {
   fill: transparent;
   stroke: transparent;
 }
+.coordinate-guide-layer :deep(.polar-coordinate-radius-handle-stem) {
+  stroke: #1554b2;
+  stroke-width: 1.4;
+  stroke-dasharray: 2 2;
+  pointer-events: none;
+}
+.coordinate-guide-layer :deep(.polar-coordinate-radius-control) {
+  cursor: ew-resize;
+  touch-action: none;
+}
+.coordinate-guide-layer :deep(.polar-coordinate-radius-hit-target) {
+  fill: transparent;
+  stroke: transparent;
+}
+.coordinate-guide-layer :deep(.polar-coordinate-radius-handle) {
+  fill: #1554b2;
+  stroke: #fff;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
 .coordinate-guide-layer :deep(.polar-coordinate-angle-handle) {
   fill: #fff;
   stroke: #1554b2;
   stroke-width: 2;
-  opacity: 0;
-  transition: opacity 120ms ease;
-  vector-effect: non-scaling-stroke;
-}
-.coordinate-guide-layer :deep(.polar-coordinate-angle-control:hover .polar-coordinate-angle-handle),
-.coordinate-guide-layer :deep(.polar-coordinate-angle-control:active .polar-coordinate-angle-handle) {
   opacity: 1;
+  vector-effect: non-scaling-stroke;
 }
 .selection-overlay {
   pointer-events: none;

@@ -44,18 +44,18 @@ describe("independent Polar coordinate system component", () => {
       upperAngle: 0,
       radiusEnd: { x: 272, y: 100 },
       upperRadiusEnd: { x: 272, y: 100 },
-      lowerControlArcPath: `M 272 100 A 162 162 0 0 1 ${110 + Math.cos(Math.PI / 6) * 162} 181`,
+      lowerControlArcPath: `M 272 100 A 162 162 0 0 1 ${110 + Math.cos(Math.PI / 12) * 162} ${100 + Math.sin(Math.PI / 12) * 162}`,
       renderedScale: 1,
     });
     const upperArcValues = model.upperControlArcPath.match(/-?\d+(?:\.\d+)?/g)?.map(Number) ?? [];
     expect(upperArcValues).toHaveLength(9);
-    expect(upperArcValues[0]).toBeCloseTo(110 + Math.cos(Math.PI / 6) * 162);
-    expect(upperArcValues[1]).toBeCloseTo(19);
+    expect(upperArcValues[0]).toBeCloseTo(110 + Math.cos(Math.PI / 12) * 162);
+    expect(upperArcValues[1]).toBeCloseTo(100 - Math.sin(Math.PI / 12) * 162);
     expect(upperArcValues.at(-2)).toBe(272);
     expect(upperArcValues.at(-1)).toBe(100);
   });
 
-  it("renders overlapping boundary rays with separate 30-degree control arcs", () => {
+  it("renders overlapping boundary rays with separate 15-degree control arcs", () => {
     const node = polarNode();
     const render = (PolarCoordinateSystem as any).setup({
       node,
@@ -95,7 +95,7 @@ describe("independent Polar coordinate system component", () => {
     expect(angleAxes.every((axis: any) => axis.type === "path")).toBe(true);
 
     const labels = coordinateSystem.children.filter((child: any) => child.type === "text");
-    expect(labels.map((label: any) => label.children)).toEqual(["R", "Theta"]);
+    expect(labels).toHaveLength(0);
 
     const control = coordinateSystem.children.find((child: any) =>
       classes(child).includes("polar-coordinate-angle-control"),

@@ -349,6 +349,7 @@ describe("semantic Case 1 renderers", () => {
       dataset,
     });
     expect(result.content.match(/data-mark-role="cell"/g)).toHaveLength(40);
+    expect(result.content.match(/<rect data-chart-id=/g)).toHaveLength(40);
     expect(result.plotArea.width).toBeGreaterThan(0);
     expect(result.plotArea.height).toBeGreaterThan(0);
     expect(result.scales?.x.type).toBe("point");

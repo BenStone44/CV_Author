@@ -27,16 +27,12 @@ describe("chart template categories", () => {
       "Line chart",
       "Area chart",
       "Point",
-      "Rect",
+      "Heatmap",
       "Arc",
-      "Contour",
-      "Hexbin",
       "Chord",
       "Sankey",
       "Parallel coordinates",
-      "Sunburst / Icicle",
-      "Treemap",
-      "Dendrogram",
+      "Tree",
       "Calendar",
       "Boxplot",
     ]);
@@ -45,8 +41,18 @@ describe("chart template categories", () => {
     expect(categories.find((category) => category.id === "barchart")?.candidates).toHaveLength(5);
     expect(categories.find((category) => category.id === "linechart")?.candidates).toHaveLength(2);
     expect(categories.find((category) => category.id === "areachart")?.candidates).toHaveLength(4);
+    expect(categories.find((category) => category.id === "heatmap")?.candidates.map((candidate) => candidate.chartType)).toEqual([
+      "MatrixDiagram",
+      "Contour",
+      "Hexbin",
+    ]);
     expect(categories.find((category) => category.id === "arc")?.candidates).toHaveLength(2);
-    expect(categories.find((category) => category.id === "sunburst-icicle")?.candidates).toHaveLength(2);
+    expect(categories.find((category) => category.id === "tree")?.candidates.map((candidate) => candidate.chartType)).toEqual([
+      "Sunburst",
+      "Icicle",
+      "Treemap",
+      "Dendrogram",
+    ]);
   });
 
   it("keeps unknown templates in an Other family", () => {

@@ -143,6 +143,34 @@ function cartesianChart(id: string, x: number, chartType: "AreaChart" | "LineGra
   return chart;
 }
 
+function polarChart(id: string, x: number, angleSpan = 120): CanvasGroupNode {
+  return {
+    kind: "group",
+    id,
+    name: id,
+    x,
+    y: 100,
+    width: 400,
+    height: 400,
+    scaleX: 1,
+    scaleY: 1,
+    rotation: 0,
+    coordinateGuide: {
+      type: "Polar",
+      origin: { x: 200, y: 200 },
+      angleSpan,
+      angleOffset: 0,
+    },
+    chartSpec: {
+      chartType: "PieChart",
+      datasetId: layerDataset.id,
+      encodings: { theta: { field: "value", type: "quantitative" } },
+      plotArea: { x: 0, y: 0, width: 400, height: 400 },
+    },
+    children: [],
+  };
+}
+
 function worldPlotArea(node: CanvasNode) {
   const plotArea = node.chartSpec!.plotArea!;
   const minX = node.kind === "leaf" ? node.contentMinX : 0;
@@ -1796,6 +1824,64 @@ describe("composition coordinate editing", () => {
       expect(sourceAfter.renderedContent).toContain('data-mark-role="line"');
       expect((sourceAfter.chartSpec?.scales?.y?.domain as [number, number])[0]).toBeGreaterThan(0);
     }
+  });
+
+  it("offers Polar radial, angular, and layer drop zones", () => {
+    const source = polarChart("drag-polar-source", 100);
+    const target = polarChart("drag-polar-target", 800);
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    store.canvasNodes.value = [source, target];
+    store.selectedIds.value = [source.id];
+
+    const targetOrigin = { x: target.x + 200, y: target.y + 200 };
+    const dragTo = (point: { x: number; y: number }) => {
+      store.onCanvasNodePointerDown(source, pointerEvent(source.x + 20, source.y + 20));
+      listeners.get("pointermove")?.(pointerEvent(point.x, point.y));
+      const zone = store.activeDropZone.value;
+      listeners.get("pointerup")?.(pointerEvent(point.x, point.y));
+      return zone;
+    };
+
+    const radialZone = dragTo({ x: targetOrigin.x + 230, y: targetOrigin.y });
+    expect(radialZone).toMatchObject({ type: "concat", direction: "radial", sharedChannels: ["angle"], compatible: true });
+
+    store.canvasNodes.value = [source, target];
+    source.compositionSpec = undefined;
+    target.compositionSpec = undefined;
+    const angularBefore = dragTo({ x: targetOrigin.x + 95, y: targetOrigin.y + 8 });
+    expect(angularBefore).toMatchObject({ type: "concat", direction: "angular", concatPosition: "before", sharedChannels: ["radius"] });
+
+    store.canvasNodes.value = [source, target];
+    source.compositionSpec = undefined;
+    target.compositionSpec = undefined;
+    const layerZone = dragTo({ x: targetOrigin.x + 50, y: targetOrigin.y + 85 });
+    expect(layerZone).toMatchObject({ type: "layer", sharedChannels: ["angle", "radius"], compatible: true });
+  });
+
+  it("lays out Polar radial and angular concat members on one frame", () => {
+    const source = polarChart("polar-radial-source", 100, 120);
+    const target = polarChart("polar-radial-target", 800, 120);
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    store.canvasNodes.value = [source, target];
+    store.selectedIds.value = [source.id, target.id];
+
+    expect(store.executeComposition("concat", true, ["angle"], "radial")).toBe(true);
+    const radialMembers = store.canvasNodes.value;
+    expect(radialMembers[0]?.coordinateGuide?.origin).toEqual(radialMembers[1]?.coordinateGuide?.origin);
+    expect(radialMembers.map((node) => [node.coordinateGuide?.innerRadiusRatio, node.coordinateGuide?.outerRadiusRatio])).toEqual([[0, 0.5], [0.5, 1]]);
+
+    const angularSource = polarChart("polar-angular-source", 100, 120);
+    const angularTarget = polarChart("polar-angular-target", 800, 120);
+    store.canvasNodes.value = [angularSource, angularTarget];
+    store.selectedIds.value = [angularSource.id, angularTarget.id];
+    expect(store.executeComposition("concat", true, ["radius"], "angular")).toBe(true);
+    const angularMembers = store.canvasNodes.value;
+    expect(angularMembers[0]?.coordinateGuide?.origin).toEqual(angularMembers[1]?.coordinateGuide?.origin);
+    expect(angularMembers.map((node) => [node.coordinateGuide?.angleOffset, node.coordinateGuide?.angleSpan])).toEqual([[0, 60], [60, 60]]);
   });
 
   it("nests a configured pie block when it is dragged onto a scatter mark", async () => {

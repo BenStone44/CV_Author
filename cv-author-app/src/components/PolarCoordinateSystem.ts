@@ -1,6 +1,6 @@
 import { defineComponent, h, type PropType } from "vue";
 import { getLeafNodeTransform, getNodeTransform } from "../utils/canvasUtils";
-import type { CanvasNode, Point } from "../types";
+import type { CanvasNode, CoordinateChannel, Point } from "../types";
 
 export type PolarCoordinateSystemModel = {
   origin: Point;
@@ -8,6 +8,7 @@ export type PolarCoordinateSystemModel = {
   angleSpan: number;
   upperAngle: number;
   radiusEnd: Point;
+  radiusControlPoint: Point;
   upperRadiusEnd: Point;
   radiusLabel: Point;
   thetaLabel: Point;
@@ -67,9 +68,18 @@ export function createPolarCoordinateSystemModel(
   const radius = (contentRadius + padding) * (guide.radiusScale ?? 1);
   const angleSpan = normalizePolarAngleSpan(guide.angleSpan);
   const upperAngle = 360 - angleSpan;
+  const renderedScale = Math.max(
+    Math.abs(node.scaleX),
+    Math.abs(node.scaleY),
+    0.0001,
+  ) * Math.max(viewZoom, 0.0001);
   const radiusEnd = {
     x: guide.origin.x + radius,
     y: guide.origin.y,
+  };
+  const radiusControlPoint = {
+    x: radiusEnd.x + 18 / renderedScale,
+    y: radiusEnd.y,
   };
   const upperRadiusEnd = pointAtAngle(guide.origin, radius, upperAngle);
   const thetaLabel = pointAtAngle(guide.origin, radius + 18, angleSpan >= 359.999 ? 315 : angleSpan / 2);
@@ -82,13 +92,10 @@ export function createPolarCoordinateSystemModel(
     upperRadiusEnd,
     radiusLabel: { x: guide.origin.x + radius * 0.52, y: guide.origin.y - 10 },
     thetaLabel,
-    upperControlArcPath: arcPath(guide.origin, radius, upperAngle + 30, upperAngle),
-    lowerControlArcPath: arcPath(guide.origin, radius, 0, -30),
-    renderedScale: Math.max(
-      Math.abs(node.scaleX),
-      Math.abs(node.scaleY),
-      0.0001,
-    ) * Math.max(viewZoom, 0.0001),
+    upperControlArcPath: arcPath(guide.origin, radius, upperAngle + 15, upperAngle),
+    lowerControlArcPath: arcPath(guide.origin, radius, 0, -15),
+    radiusControlPoint,
+    renderedScale,
   };
 }
 
@@ -98,8 +105,14 @@ export const PolarCoordinateSystem = defineComponent({
     node: { type: Object as PropType<CanvasNode>, required: true },
     viewZoom: { type: Number, default: 1 },
     applyTransform: { type: Boolean, default: true },
+    showAxis: { type: Boolean, default: true },
+    interactive: { type: Boolean, default: true },
     onAnglePointerDown: {
       type: Function as PropType<(node: CanvasNode, event: PointerEvent) => void>,
+      default: null,
+    },
+    onAxisScalePointerDown: {
+      type: Function as PropType<(node: CanvasNode, axis: CoordinateChannel, event: PointerEvent) => void>,
       default: null,
     },
   },
@@ -120,47 +133,63 @@ export const PolarCoordinateSystem = defineComponent({
           "coordinate-guide",
           "coordinate-guide--polar",
           "polar-coordinate-system",
+          props.interactive ? "polar-coordinate-system--interactive" : "polar-coordinate-system--static",
         ],
         transform,
         "pointer-events": "none",
       }, [
-        h("line", {
-          class: ["polar-coordinate-radius-axis", "polar-coordinate-radius-axis--lower"],
-          x1: model.origin.x,
-          y1: model.origin.y,
-          x2: model.radiusEnd.x,
-          y2: model.radiusEnd.y,
+        ...(props.showAxis ? [
+          h("line", {
+            class: ["polar-coordinate-radius-axis", "polar-coordinate-radius-axis--lower"],
+            x1: model.origin.x,
+            y1: model.origin.y,
+            x2: model.radiusEnd.x,
+            y2: model.radiusEnd.y,
+            "vector-effect": "non-scaling-stroke",
+          }),
+          h("line", {
+            class: ["polar-coordinate-radius-axis", "polar-coordinate-radius-axis--upper"],
+            x1: model.origin.x,
+            y1: model.origin.y,
+            x2: model.upperRadiusEnd.x,
+            y2: model.upperRadiusEnd.y,
+            "vector-effect": "non-scaling-stroke",
+          }),
+          h("path", {
+            class: ["polar-coordinate-angle-axis", "polar-coordinate-angle-axis--upper"],
+            d: model.upperControlArcPath,
+            "vector-effect": "non-scaling-stroke",
+          }),
+          h("path", {
+            class: ["polar-coordinate-angle-axis", "polar-coordinate-angle-axis--lower"],
+            d: model.lowerControlArcPath,
+            "vector-effect": "non-scaling-stroke",
+          }),
+        ] : []),
+        ...(props.interactive ? [h("line", {
+          class: "polar-coordinate-radius-handle-stem",
+          x1: model.radiusEnd.x,
+          y1: model.radiusEnd.y,
+          x2: model.radiusControlPoint.x,
+          y2: model.radiusControlPoint.y,
           "vector-effect": "non-scaling-stroke",
-        }),
-        h("line", {
-          class: ["polar-coordinate-radius-axis", "polar-coordinate-radius-axis--upper"],
-          x1: model.origin.x,
-          y1: model.origin.y,
-          x2: model.upperRadiusEnd.x,
-          y2: model.upperRadiusEnd.y,
-          "vector-effect": "non-scaling-stroke",
-        }),
-        h("path", {
-          class: ["polar-coordinate-angle-axis", "polar-coordinate-angle-axis--upper"],
-          d: model.upperControlArcPath,
-          "vector-effect": "non-scaling-stroke",
-        }),
-        h("path", {
-          class: ["polar-coordinate-angle-axis", "polar-coordinate-angle-axis--lower"],
-          d: model.lowerControlArcPath,
-          "vector-effect": "non-scaling-stroke",
-        }),
-        h("text", {
-          class: "polar-coordinate-axis-label polar-coordinate-axis-label--radius",
-          transform: `translate(${model.radiusLabel.x} ${model.radiusLabel.y}) scale(${1 / model.renderedScale})`,
-          "text-anchor": "middle",
-        }, "R"),
-        h("text", {
-          class: "polar-coordinate-axis-label polar-coordinate-axis-label--theta",
-          transform: `translate(${model.thetaLabel.x} ${model.thetaLabel.y}) scale(${1 / model.renderedScale})`,
-          "text-anchor": "middle",
-        }, "Theta"),
-        h("g", {
+        }), h("g", {
+          class: "polar-coordinate-radius-control",
+          transform: `translate(${model.radiusControlPoint.x} ${model.radiusControlPoint.y}) scale(${1 / model.renderedScale})`,
+          "pointer-events": "all",
+          role: "slider",
+          "aria-label": "Adjust polar radius",
+          onPointerdown: (event: PointerEvent) => {
+            event.preventDefault();
+            event.stopPropagation();
+            props.onAxisScalePointerDown?.(props.node, "radius", event);
+          },
+        }, [
+          h("title", "Adjust polar radius"),
+          h("circle", { class: "polar-coordinate-radius-hit-target", cx: 0, cy: 0, r: 16 }),
+          h("circle", { class: "polar-coordinate-radius-handle", cx: 0, cy: 0, r: 7 }),
+        ])] : []),
+        ...(props.interactive ? [h("g", {
           class: "polar-coordinate-angle-control",
           transform: `translate(${model.upperRadiusEnd.x} ${model.upperRadiusEnd.y}) scale(${1 / model.renderedScale})`,
           "pointer-events": "all",
@@ -181,6 +210,7 @@ export const PolarCoordinateSystem = defineComponent({
           h("circle", { class: "polar-coordinate-angle-hit-target", cx: 0, cy: 0, r: 16 }),
           h("circle", { class: "polar-coordinate-angle-handle", cx: 0, cy: 0, r: 7 }),
         ]),
+        ] : []),
       ]);
     };
   },

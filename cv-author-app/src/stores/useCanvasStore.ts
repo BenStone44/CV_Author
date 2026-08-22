@@ -132,12 +132,27 @@ const historyLimit = 50;
 export const MIN_ZOOM = 0.25;
 export const MAX_ZOOM = 4;
 
+const matrixThumbnailColumns = 6;
+const matrixThumbnailRows = 4;
+const matrixThumbnailPalette = ["#eff6ff", "#bfdbfe", "#93c5fd", "#60a5fa", "#3b82f6", "#1d4ed8"];
+const matrixThumbnailCells = Array.from(
+  { length: matrixThumbnailColumns * matrixThumbnailRows },
+  (_, index) => {
+    const column = index % matrixThumbnailColumns;
+    const row = Math.floor(index / matrixThumbnailColumns);
+    const colorIndex = (column * 2 + row * 3) % matrixThumbnailPalette.length;
+    const fill = matrixThumbnailPalette[colorIndex] ?? "#eff6ff";
+    return `<rect x="${column * 42}" y="${row * 32}" width="42" height="32" fill="${fill}"/>`;
+  },
+).join("");
+const matrixThumbnailSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><g transform="translate(34 26)" stroke="#fff" stroke-width="2">${matrixThumbnailCells}</g></svg>`;
+
 const implementedTemplateSvgs = {
   LineGraph: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 180"><g stroke="#94a3b8" stroke-width="1" stroke-dasharray="2 4" opacity=".28"><line x1="28" y1="42" x2="352" y2="42"/><line x1="28" y1="86" x2="352" y2="86"/><line x1="28" y1="130" x2="352" y2="130"/></g><g fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M30 118L80 97L130 107L182 62L234 77L284 36L350 52" stroke="#2563eb"/><path d="M30 137L80 122L130 83L182 99L234 52L284 68L350 80" stroke="#e11d48"/><path d="M30 101L80 112L130 72L182 83L234 37L284 49L350 35" stroke="#059669"/></g></svg>`,
   Scatterplot: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><g fill="#2563eb" fill-opacity=".86" stroke="#fff" stroke-width="2"><circle cx="68" cy="121" r="7"/><circle cx="92" cy="98" r="6"/><circle cx="126" cy="112" r="8"/><circle cx="152" cy="76" r="7"/><circle cx="185" cy="91" r="6"/><circle cx="214" cy="54" r="8"/><circle cx="247" cy="68" r="7"/><circle cx="278" cy="37" r="6"/></g></svg>`,
   PieChart: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><g transform="translate(160 90)"><path d="M0 0V-70A70 70 0 0 1 66.6 21.6Z" fill="#2563eb"/><path d="M0 0L66.6 21.6A70 70 0 0 1 -21.6 66.6Z" fill="#059669"/><path d="M0 0L-21.6 66.6A70 70 0 0 1 -56.6 -41.1Z" fill="#d97706"/><path d="M0 0L-56.6 -41.1A70 70 0 0 1 0 -70Z" fill="#dc2626"/></g></svg>`,
   DonutChart: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><g transform="translate(160 90) rotate(-90)"><circle r="56" fill="none" stroke="#e2e8f0" stroke-width="28"/><circle r="56" fill="none" stroke="#2563eb" stroke-width="28" stroke-dasharray="132 352"/><circle r="56" fill="none" stroke="#059669" stroke-width="28" stroke-dasharray="91 352" stroke-dashoffset="-132"/><circle r="56" fill="none" stroke="#d97706" stroke-width="28" stroke-dasharray="76 352" stroke-dashoffset="-223"/><circle r="56" fill="none" stroke="#dc2626" stroke-width="28" stroke-dasharray="53 352" stroke-dashoffset="-299"/></g></svg>`,
-  MatrixDiagram: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><g transform="translate(68 20)" stroke="#fff" stroke-width="3"><rect x="0" y="0" width="46" height="34" fill="#dbeafe"/><rect x="46" y="0" width="46" height="34" fill="#93c5fd"/><rect x="92" y="0" width="46" height="34" fill="#2563eb"/><rect x="138" y="0" width="46" height="34" fill="#bfdbfe"/><rect x="0" y="34" width="46" height="34" fill="#60a5fa"/><rect x="46" y="34" width="46" height="34" fill="#dbeafe"/><rect x="92" y="34" width="46" height="34" fill="#1d4ed8"/><rect x="138" y="34" width="46" height="34" fill="#93c5fd"/><rect x="0" y="68" width="46" height="34" fill="#bfdbfe"/><rect x="46" y="68" width="46" height="34" fill="#3b82f6"/><rect x="92" y="68" width="46" height="34" fill="#dbeafe"/><rect x="138" y="68" width="46" height="34" fill="#60a5fa"/><rect x="0" y="102" width="46" height="34" fill="#1d4ed8"/><rect x="46" y="102" width="46" height="34" fill="#93c5fd"/><rect x="92" y="102" width="46" height="34" fill="#60a5fa"/><rect x="138" y="102" width="46" height="34" fill="#dbeafe"/></g></svg>`,
+  MatrixDiagram: matrixThumbnailSvg,
   SingleBarChart: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><g fill="#2563eb"><rect x="42" y="92" width="36" height="58"/><rect x="96" y="56" width="36" height="94"/><rect x="150" y="76" width="36" height="74"/><rect x="204" y="32" width="36" height="118"/><rect x="258" y="67" width="36" height="83"/></g></svg>`,
   GroupedBarChart: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><g><g fill="#2563eb"><rect x="34" y="78" width="17" height="72"/><rect x="98" y="48" width="17" height="102"/><rect x="162" y="64" width="17" height="86"/><rect x="226" y="35" width="17" height="115"/></g><g fill="#059669"><rect x="53" y="102" width="17" height="48"/><rect x="117" y="76" width="17" height="74"/><rect x="181" y="91" width="17" height="59"/><rect x="245" y="60" width="17" height="90"/></g></g></svg>`,
   StackedBarChart: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><g><g fill="#2563eb"><rect x="42" y="102" width="38" height="48"/><rect x="106" y="84" width="38" height="66"/><rect x="170" y="93" width="38" height="57"/><rect x="234" y="70" width="38" height="80"/></g><g fill="#059669"><rect x="42" y="73" width="38" height="29"/><rect x="106" y="48" width="38" height="36"/><rect x="170" y="61" width="38" height="32"/><rect x="234" y="29" width="38" height="41"/></g></g></svg>`,
@@ -293,6 +308,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const editingCompositionId = ref<string | null>(null);
   const chartDrilldown = ref<ChartDrilldown | null>(null);
   const rotationInputVisible = ref(false);
+  const polarAngleInputVisible = ref(false);
   const undoStack = ref<CanvasHistorySnapshot[]>([]);
   const redoStack = ref<CanvasHistorySnapshot[]>([]);
   const clipboardNodes = ref<CanvasNode[]>([]);
@@ -1167,6 +1183,14 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       && isAtomicChartReady(node);
   }
 
+  function isStandalonePolarCompositionChart(node: CanvasNode) {
+    const contract = node.chartSpec ? getChartTemplateContract(node.chartSpec.chartType) : null;
+    return !node.compositionSpec
+      && node.coordinateGuide?.type === "Polar"
+      && contract?.coordinateSystem === "Polar"
+      && isAtomicChartReady(node);
+  }
+
   function encodingForSharedChannel(node: CanvasNode, channel: CoordinateChannel) {
     const spec = node.chartSpec;
     if (!spec) return undefined;
@@ -1184,6 +1208,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
 
   function sharedChannelEncodingsAreCompatible(nodes: CanvasNode[], channel: CoordinateChannel) {
     const encodings = nodes.map((node) => encodingForSharedChannel(node, channel));
+    if (channel === "radius" && encodings.every((encoding) => !encoding)) return true;
     if (encodings.some((encoding) => !encoding)) return false;
     const firstType = encodings[0]!.type;
     return encodings.every((encoding) => encoding!.type === firstType);
@@ -1381,6 +1406,15 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const node = selectedNodes.value[0];
     return node ? node.rotation : 0;
   });
+  const selectedPolarAngleSpan = computed(() => {
+    const node = selectedNodes.value.find((item) => item.coordinateGuide?.type === "Polar");
+    if (node?.compositionSpec?.type === "concat" && Number.isFinite(node.compositionSpec.polarAngleSpan)) {
+      return Math.max(1, Math.min(node.compositionSpec.polarAngleSpan!, 360));
+    }
+    return node?.coordinateGuide?.type === "Polar"
+      ? Math.max(1, Math.min(node.coordinateGuide.angleSpan ?? 360, 360))
+      : null;
+  });
   const marqueeBounds = computed(() => {
     if (!interaction.value || interaction.value.type !== "marquee") return null;
     return normalizeBounds(interaction.value.startPoint, interaction.value.currentPoint);
@@ -1520,6 +1554,19 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       top: viewPan.value.y + canvasPoint.y * viewZoom.value,
     };
   });
+  const polarAngleInputPosition = computed(() => {
+    if (!polarAngleInputVisible.value) return null;
+    const node = selectedNodes.value.find((item) => item.coordinateGuide?.type === "Polar");
+    if (!node) return null;
+    const model = createPolarCoordinateSystemModel(node, selectionOverlayZoom.value);
+    if (!model) return null;
+    let canvasPoint = nodeLocalToSelectionScopePoint(node, model.upperRadiusEnd);
+    if (editingGroupPath.value.length > 0) canvasPoint = transformPoint(editingGroupMatrix.value, canvasPoint);
+    return {
+      left: viewPan.value.x + canvasPoint.x * viewZoom.value,
+      top: viewPan.value.y + canvasPoint.y * viewZoom.value,
+    };
+  });
 
   // --- history ---
   function captureCanvasHistory(relationships = snapshotRelationships()): CanvasHistorySnapshot {
@@ -1605,7 +1652,13 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   }
   function setSelection(ids: string[]) {
     selectedIds.value = normalizeSelection(ids);
-    if (selectedIds.value.length === 0) rotationInputVisible.value = false;
+    if (selectedIds.value.length === 0) {
+      rotationInputVisible.value = false;
+      polarAngleInputVisible.value = false;
+    }
+    if (!selectedIds.value.some((id) => getSelectionNode(id)?.coordinateGuide?.type === "Polar")) {
+      polarAngleInputVisible.value = false;
+    }
   }
   function toggleSelection(ids: string[]) {
     const targetIds = normalizeSelection(ids);
@@ -2334,7 +2387,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     return true;
   }
 
-  function createStructuralComposition(type: "concat" | "facet" | "nested", recordHistory = true, requestedChannels?: CoordinateChannel[], concatDirection?: "horizontal" | "vertical", concatPosition?: "before" | "after") {
+  function createStructuralComposition(type: "concat" | "facet" | "nested", recordHistory = true, requestedChannels?: CoordinateChannel[], concatDirection?: "horizontal" | "vertical" | "radial" | "angular", concatPosition?: "before" | "after") {
     const sourceNodes = [...selectedNodes.value];
     const bounds = selectionBounds.value;
     if (!bounds
@@ -2342,12 +2395,21 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       || !sourceNodes.every(isAtomicChartReady)
       || (type === "concat" && sourceNodes.length < 2)) return false;
     if (type === "concat") {
-      const sharedChannel: CoordinateChannel = (concatDirection ?? "horizontal") === "horizontal" ? "y" : "x";
+      const direction = concatDirection ?? "horizontal";
+      const sharedChannel: CoordinateChannel = direction === "horizontal"
+        ? "y"
+        : direction === "vertical"
+          ? "x"
+          : direction === "radial" ? "angle" : "radius";
       const sharedChannels = requestedChannels ?? [sharedChannel];
-      if (!sourceNodes.every(isStandaloneCartesianCompositionChart)
+      const polar = sourceNodes.every(isStandalonePolarCompositionChart);
+      const cartesian = sourceNodes.every(isStandaloneCartesianCompositionChart);
+      if ((!polar && !cartesian)
         || sharedChannels.length !== 1
         || sharedChannels[0] !== sharedChannel
-        || !sharedChannelEncodingsAreCompatible(sourceNodes, sharedChannel)) return false;
+        || !sharedChannelEncodingsAreCompatible(sourceNodes, sharedChannel)
+        || (polar && direction !== "radial" && direction !== "angular")
+        || (cartesian && (direction === "radial" || direction === "angular"))) return false;
     }
     const compositionId = crypto.randomUUID();
     const gap = type === "facet"
@@ -2424,6 +2486,10 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         : sourceNodes;
       children = orderedNodes.map((node) => {
         const plotBounds = collectNodeSelectionBounds(node);
+        if (direction === "radial" || direction === "angular") {
+          // Polar concat placement is normalized after the composition is built.
+          return node;
+        }
         if (direction === "vertical") {
           node.y += bounds.minY + cursor - plotBounds.minY;
           cursor += plotBounds.height + gap;
@@ -2436,10 +2502,15 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     }
     const childBounds = getCanvasNodeListBounds(children);
     if (!childBounds) return false;
+    const compositionDirection = concatDirection ?? "horizontal";
     const sharedChannels: CoordinateChannel[] = type === "facet"
       ? []
       : type === "concat"
-      ? requestedChannels ?? ["y"]
+      ? requestedChannels ?? [
+        compositionDirection === "vertical" ? "x"
+          : compositionDirection === "radial" ? "angle"
+            : compositionDirection === "angular" ? "radius" : "y",
+      ]
       : [...(getChartTemplateContract(children[0]?.chartSpec?.chartType ?? "")?.shareableChannels ?? [])];
     const coordinateSystem: CoordinateSystemSpec | null = sharedChannels.length > 0 ? {
       id: `coordinate:${compositionId}`,
@@ -2463,7 +2534,13 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const compositionSpec: NonNullable<CanvasNode["compositionSpec"]> = {
       id: `composition:${compositionId}`,
       type,
-      direction: type === "concat" ? (concatDirection ?? "horizontal") : undefined,
+      direction: type === "concat" ? compositionDirection : undefined,
+      polarAngleSpan: type === "concat" && children[0]?.coordinateGuide?.type === "Polar"
+        ? Math.max(1, Math.min(children[0].coordinateGuide.angleSpan ?? 360, 360))
+        : undefined,
+      polarAngleOffset: type === "concat" && children[0]?.coordinateGuide?.type === "Polar"
+        ? children[0].coordinateGuide.angleOffset ?? 0
+        : undefined,
       sharedChannels,
       facetField,
       facetValues,
@@ -2510,7 +2587,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     return true;
   }
 
-  function executeComposition(type: "layer" | "concat" | "facet", recordHistory = true, requestedChannels?: CoordinateChannel[], concatDirection?: "horizontal" | "vertical", concatPosition?: "before" | "after") {
+  function executeComposition(type: "layer" | "concat" | "facet", recordHistory = true, requestedChannels?: CoordinateChannel[], concatDirection?: "horizontal" | "vertical" | "radial" | "angular", concatPosition?: "before" | "after") {
     const created = type === "layer"
       ? createLayer(recordHistory, requestedChannels)
       : createStructuralComposition(type, recordHistory, requestedChannels, concatDirection, concatPosition);
@@ -3042,6 +3119,114 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     };
   }
 
+  function polarSectorGeometry(node: CanvasNode, model: ReturnType<typeof createPolarCoordinateSystemModel>, innerRadius: number, outerRadius: number, startDegrees: number, endDegrees: number) {
+    if (!model) return null;
+    const span = Math.max(Math.abs(endDegrees - startDegrees), 1);
+    const steps = Math.max(8, Math.ceil(span / 8));
+    const localPoints = [
+      ...Array.from({ length: steps + 1 }, (_, index) =>
+        polarPointAtAngle(model.origin, outerRadius, startDegrees + (endDegrees - startDegrees) * index / steps)),
+      ...Array.from({ length: steps + 1 }, (_, index) =>
+        polarPointAtAngle(model.origin, innerRadius, endDegrees - (endDegrees - startDegrees) * index / steps)),
+    ];
+    const outline = localPoints.map((point) => nodeLocalToSelectionScopePoint(node, point));
+    const xs = outline.map(({ x }) => x);
+    const ys = outline.map(({ y }) => y);
+    const minX = Math.min(...xs);
+    const minY = Math.min(...ys);
+    const maxX = Math.max(...xs);
+    const maxY = Math.max(...ys);
+    return {
+      outline,
+      bounds: { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY },
+    };
+  }
+
+  function polarCompositionDropZoneAtPoint(target: CanvasNode, source: CanvasNode, point: Point): ChartDropZone | null {
+    if (target.coordinateGuide?.type !== "Polar" || !target.chartSpec || !source.chartSpec) return null;
+    const model = createPolarCoordinateSystemModel(target, viewZoom.value);
+    if (!model) return null;
+    const sourcePolar = isStandalonePolarCompositionChart(source);
+    const targetPolar = isStandalonePolarCompositionChart(target);
+    const contracts = [getChartTemplateContract(source.chartSpec.chartType), getChartTemplateContract(target.chartSpec.chartType)];
+    const compatiblePolar = sourcePolar && targetPolar && contracts.every((contract) => contract?.coordinateSystem === "Polar");
+    if (!compatiblePolar) return null;
+    const localPoint = toNodeLocalPoint(target, point);
+    const dx = localPoint.x - model.origin.x;
+    const dy = model.origin.y - localPoint.y;
+    const distance = Math.hypot(dx, dy);
+    const rawDegrees = (Math.atan2(-dy, dx) * 180 / Math.PI + 360) % 360;
+    const degrees = rawDegrees < 0.001 ? 0 : 360 - rawDegrees;
+    const angleSpan = model.angleSpan;
+    const plotArea = target.chartSpec.plotArea;
+    const chartRadius = plotArea
+      ? Math.max(8, Math.min(plotArea.width, plotArea.height) / 2)
+      : Math.max(8, Math.min(target.width, target.height) * 0.38
+        * (target.coordinateGuide.radiusScale ?? 1));
+    const edgeAngle = Math.min(30, Math.max(8, angleSpan * 0.22));
+    const inAngle = angleSpan >= 359.999 || degrees <= angleSpan;
+    const radialGap = Math.max(8, chartRadius * 0.06);
+    const radialThickness = Math.max(24, Math.min(chartRadius * 0.35, 120));
+    const radialInner = chartRadius + radialGap;
+    const radialOuter = radialInner + radialThickness;
+    const inRadialZone = distance >= radialInner && distance <= radialOuter
+      && (angleSpan >= 359.999 || degrees <= angleSpan);
+    const before = degrees <= edgeAngle;
+    const after = angleSpan >= 359.999
+      ? degrees >= 360 - edgeAngle
+      : degrees >= Math.max(0, angleSpan - edgeAngle) && degrees <= angleSpan;
+    const sourceContract = contracts[0];
+    const targetContract = contracts[1];
+    const sharedChannelCompatible = (channel: CoordinateChannel) =>
+      !!sourceContract?.shareableChannels.includes(channel)
+      && !!targetContract?.shareableChannels.includes(channel)
+      && sharedChannelEncodingsAreCompatible([source, target], channel);
+    if (inRadialZone) {
+      const geometry = polarSectorGeometry(target, model, radialInner, radialOuter, 0, -angleSpan);
+      if (!geometry) return null;
+      return {
+        targetNodeId: target.id,
+        type: "concat",
+        sharedChannels: ["angle"],
+        ...geometry,
+        compatible: sharedChannelCompatible("angle"),
+        direction: "radial",
+        concatPosition: "after",
+      };
+    }
+    if (distance <= chartRadius && inAngle && (before || after)) {
+      const isBefore = before && !after;
+      const start = isBefore ? 0 : -Math.max(0, angleSpan - edgeAngle);
+      const end = isBefore ? -edgeAngle : -angleSpan;
+      const geometry = polarSectorGeometry(target, model, 0, chartRadius, start, end);
+      if (!geometry) return null;
+      return {
+        targetNodeId: target.id,
+        type: "concat",
+        sharedChannels: ["radius"],
+        ...geometry,
+        compatible: sharedChannelCompatible("radius"),
+        direction: "angular",
+        concatPosition: isBefore ? "before" : "after",
+      };
+    }
+    if (distance <= chartRadius && inAngle) {
+      const geometry = polarSectorGeometry(target, model, 0, chartRadius, 0, -angleSpan);
+      if (!geometry) return null;
+      const sharedChannels = ["angle", "radius"].filter((channel): channel is CoordinateChannel =>
+        sharedChannelCompatible(channel),
+      );
+      return {
+        targetNodeId: target.id,
+        type: "layer",
+        sharedChannels,
+        ...geometry,
+        compatible: sharedChannels.length > 0,
+      };
+    }
+    return null;
+  }
+
   function compositionDropZoneAtPoint(point: Point, sourceNodeId: string): ChartDropZone | null {
     const source = findCanvasNode(sourceNodeId);
     if (!source?.chartSpec) return null;
@@ -3050,6 +3235,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       && !!node.chartSpec
     );
     for (const target of [...chartTargets].reverse()) {
+      if (target.coordinateGuide?.type === "Polar") continue;
       const nestedItem = semanticItemDropZone(target, point, sourceNodeId);
       if (nestedItem) return nestedItem;
     }
@@ -3060,6 +3246,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     );
     for (const target of targets) {
       if (!target.coordinateGuide || !target.chartSpec) continue;
+      if (target.coordinateGuide.type === "Polar") {
+        const polarZone = polarCompositionDropZoneAtPoint(target, source, point);
+        if (polarZone) return polarZone;
+        continue;
+      }
       const localPoint = toNodeLocalPoint(target, point);
       const localMinX = target.kind === "leaf" ? target.contentMinX : 0;
       const localMinY = target.kind === "leaf" ? target.contentMinY : 0;
@@ -3863,6 +4054,62 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     });
   }
 
+  function setPolarNodeOrigin(node: CanvasNode, desiredOrigin: Point, rotation: number) {
+    if (node.coordinateGuide?.type !== "Polar") return;
+    node.rotation = rotation;
+    const localMinX = node.kind === "leaf" ? node.contentMinX : 0;
+    const localMinY = node.kind === "leaf" ? node.contentMinY : 0;
+    const localCenter = { x: localMinX + node.width / 2, y: localMinY + node.height / 2 };
+    const radians = rotation * Math.PI / 180;
+    const dx = (node.coordinateGuide.origin.x - localCenter.x) * node.scaleX;
+    const dy = (node.coordinateGuide.origin.y - localCenter.y) * node.scaleY;
+    const worldCenter = {
+      x: desiredOrigin.x - (dx * Math.cos(radians) - dy * Math.sin(radians)),
+      y: desiredOrigin.y - (dx * Math.sin(radians) + dy * Math.cos(radians)),
+    };
+    node.x = worldCenter.x - node.width * node.scaleX / 2;
+    node.y = worldCenter.y - node.height * node.scaleY / 2;
+  }
+
+  function alignPolarConcatFrame(owner: CanvasNode, members: CanvasNode[]) {
+    if (owner.coordinateGuide?.type !== "Polar" || owner.compositionSpec?.type !== "concat") return;
+    if (!members.every((member) => member.coordinateGuide?.type === "Polar")) return;
+    const direction = owner.compositionSpec.direction;
+    const orderedMembers = owner.compositionSpec.members
+      .map((item) => members.find((member) => member.id === item.nodeId))
+      .filter((member): member is CanvasNode => !!member);
+    const ownerOrigin = nodeLocalToSelectionScopePoint(owner, owner.coordinateGuide.origin);
+    const totalAngleSpan = Math.max(1, Math.min(
+      owner.compositionSpec.polarAngleSpan ?? owner.coordinateGuide.angleSpan ?? 360,
+      360,
+    ));
+    const baseAngleOffset = owner.compositionSpec.polarAngleOffset ?? owner.coordinateGuide.angleOffset ?? 0;
+    const angularSpan = totalAngleSpan / Math.max(orderedMembers.length, 1);
+    orderedMembers.forEach((member, index) => {
+      const guide = member.coordinateGuide;
+      if (guide?.type !== "Polar") return;
+      member.width = owner.width;
+      member.height = owner.height;
+      member.scaleX = owner.scaleX;
+      member.scaleY = owner.scaleY;
+      guide.origin = { ...owner.coordinateGuide!.origin };
+      guide.radiusScale = owner.coordinateGuide?.radiusScale;
+      guide.ringScale = owner.coordinateGuide?.ringScale;
+      setPolarNodeOrigin(member, ownerOrigin, owner.rotation);
+      if (direction === "angular") {
+        guide.angleSpan = angularSpan;
+        guide.angleOffset = baseAngleOffset + angularSpan * index;
+        guide.innerRadiusRatio = 0;
+        guide.outerRadiusRatio = 1;
+      } else {
+        guide.angleSpan = owner.coordinateGuide?.angleSpan;
+        guide.angleOffset = baseAngleOffset;
+        guide.innerRadiusRatio = index / orderedMembers.length;
+        guide.outerRadiusRatio = (index + 1) / orderedMembers.length;
+      }
+    });
+  }
+
   function alignConcatPlotLayout(owner: CanvasNode, members: CanvasNode[]) {
     const direction = owner.compositionSpec?.direction ?? "horizontal";
     const orderedMembers = owner.compositionSpec?.members
@@ -3896,8 +4143,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     // declared shared channels and preserves independent concat dimensions.
     members.forEach((member) => renderChartNode(member, false));
     if (type === "concat") {
+      if (owner.coordinateGuide?.type === "Polar") alignPolarConcatFrame(owner, members);
       alignConcatSharedFrame(owner, members);
-      alignConcatPlotLayout(owner, members);
+      if (owner.coordinateGuide?.type !== "Polar") alignConcatPlotLayout(owner, members);
     }
     members.forEach((member) => renderChartNode(member, true));
   }
@@ -4939,6 +5187,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function onRotateHandlePointerDown(event: PointerEvent) {
     if (event.button !== 0 || !selectionBounds.value || selectedIds.value.length === 0) return;
     event.stopPropagation();
+    polarAngleInputVisible.value = false;
     const bounds = selectionBounds.value;
     const center = { x: bounds.minX + bounds.width / 2, y: bounds.minY + bounds.height / 2 };
     const scopeGroupId = editingGroupPath.value.at(-1);
@@ -4972,6 +5221,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (event.button !== 0 || !guide) return;
     if (guide.type === "Cartesian" && axis !== "x" && axis !== "y") return;
     if (guide.type === "Polar" && axis !== "radius" && axis !== "ring") return;
+    polarAngleInputVisible.value = false;
     const scopeGroupId = editingGroupPath.value.at(-1);
     interaction.value = {
       type: "coordinate-axis-scale",
@@ -4990,6 +5240,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (event.button !== 0 || node.coordinateGuide?.type !== "Polar") return;
     event.preventDefault();
     event.stopPropagation();
+    rotationInputVisible.value = false;
+    polarAngleInputVisible.value = false;
     const scopeGroupId = editingGroupPath.value.at(-1);
     interaction.value = {
       type: "polar-angle",
@@ -5025,6 +5277,26 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       if (item) item.rotation = next;
     });
     rotationInputVisible.value = true;
+  }
+  function setPolarAngleSpan(value: number) {
+    if (!Number.isFinite(value) || selectedIds.value.length === 0) return;
+    const angleSpan = Math.max(1, Math.min(value, 360));
+    const node = selectedNodes.value.find((item) => item.coordinateGuide?.type === "Polar");
+    if (!node || node.coordinateGuide?.type !== "Polar") return;
+    pushCanvasHistory();
+    if (node.compositionSpec?.type === "concat") {
+      node.compositionSpec.polarAngleSpan = angleSpan;
+      const owner = findCanvasNode(node.coordinateSystem?.ownerNodeId ?? "") ?? node;
+      renderSharedCoordinateComposition(owner);
+      polarAngleInputVisible.value = true;
+      return;
+    }
+    coordinateTargets(node.id, "angle").forEach((member) => {
+      if (member.coordinateGuide?.type !== "Polar") return;
+      member.coordinateGuide.angleSpan = angleSpan;
+      renderChartNode(member);
+    });
+    polarAngleInputVisible.value = true;
   }
   function updateMoveInteraction(currentPoint: Point, mi: MoveInteraction) {
     const dx = currentPoint.x - mi.startPoint.x;
@@ -5102,11 +5374,14 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (!node || !guide) return;
     const localStart = toNodeLocalPoint(node, ci.startPoint);
     const localCurrent = toNodeLocalPoint(node, currentPoint);
-    const span = ci.axis === "x" || ci.axis === "ring" ? Math.max(node.width, 1) : Math.max(node.height, 1);
+    const horizontal = ci.axis === "x"
+      || ci.axis === "ring"
+      || (guide.type === "Polar" && ci.axis === "radius");
+    const span = horizontal ? Math.max(node.width, 1) : Math.max(node.height, 1);
     const direction = guide.type === "Cartesian"
       ? (ci.axis === "x" ? guide.xDirection : guide.yDirection)
       : 1;
-    const delta = ci.axis === "x" || ci.axis === "ring"
+    const delta = horizontal
       ? (localCurrent.x - localStart.x) * direction
       : (localCurrent.y - localStart.y) * direction;
     const nextScale = clamp(ci.startScale + delta / span, Math.max(1 / span, 0.001), 1.5);
@@ -5139,6 +5414,12 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (!node || guide?.type !== "Polar") return;
     const localPoint = toNodeLocalPoint(node, currentPoint);
     const angleSpan = polarAngleSpanFromPoint(guide.origin, localPoint);
+    if (node.compositionSpec?.type === "concat") {
+      node.compositionSpec.polarAngleSpan = angleSpan;
+      const owner = findCanvasNode(node.coordinateSystem?.ownerNodeId ?? "") ?? node;
+      renderSharedCoordinateComposition(owner);
+      return;
+    }
     coordinateTargets(node.id, "angle").forEach((member) => {
       if (member.coordinateGuide?.type !== "Polar") return;
       member.coordinateGuide.angleSpan = angleSpan;
@@ -5158,6 +5439,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const ai = interaction.value;
     if (ai?.type === "marquee") finalizeMarqueeSelection(ai);
     if (ai?.type === "rotate") rotationInputVisible.value = true;
+    if (ai?.type === "polar-angle") polarAngleInputVisible.value = true;
     if (ai?.type === "move" && compositionDragSourceId.value && activeDropZone.value) {
       commitCompositionDrop(activeDropZone.value, compositionDragSourceId.value);
     }
@@ -5845,10 +6127,13 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     selectionBounds,
     selectionFrame,
     selectionRotation,
+    selectedPolarAngleSpan,
     editingGroupTransform,
     selectionOverlayZoom,
     rotationInputPosition,
     rotationInputVisible,
+    polarAngleInputPosition,
+    polarAngleInputVisible,
     marqueeBounds,
     selectionUnits,
     isPanning,
@@ -5925,6 +6210,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     setParallelFields,
     closeAxisBinding,
     setSelectionRotation,
+    setPolarAngleSpan,
     onCandidateDragStart,
     onCandidateDragEnd,
     insertCompositionCandidate,

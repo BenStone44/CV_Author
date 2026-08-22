@@ -24,6 +24,9 @@ export type PolarCoordinateGuide = {
   radiusScale?: number;
   ringScale?: number;
   angleSpan?: number;
+  angleOffset?: number;
+  innerRadiusRatio?: number;
+  outerRadiusRatio?: number;
 };
 
 export type CoordinateGuide = CartesianCoordinateGuide | PolarCoordinateGuide;
@@ -308,7 +311,9 @@ export type CompositionSpec = {
   type: "layer" | "concat" | "facet" | "nested";
   members: CompositionMemberSpec[];
   sharedChannels: CoordinateChannel[];
-  direction?: "horizontal" | "vertical" | "radial";
+  direction?: "horizontal" | "vertical" | "radial" | "angular";
+  polarAngleSpan?: number;
+  polarAngleOffset?: number;
   facetField?: string;
   facetValues?: string[];
   facetDirection?: "row" | "column";
@@ -341,7 +346,7 @@ export type ChartDropZone = {
     rowKey?: string;
     bounds: Bounds;
   }>;
-  direction?: "horizontal" | "vertical";
+  direction?: "horizontal" | "vertical" | "radial" | "angular";
   concatPosition?: "before" | "after";
 };
 
@@ -492,7 +497,7 @@ export type RelationshipComposition = {
   memberChartIds: string[];
   sharedAxisIds: string[];
   sharedChannels: CoordinateChannel[];
-  direction?: "horizontal" | "vertical" | "radial";
+  direction?: "horizontal" | "vertical" | "radial" | "angular";
   sourceChartId?: string;
   facetField?: string;
   facetRowField?: string;
