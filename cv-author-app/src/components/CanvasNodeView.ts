@@ -1,6 +1,7 @@
 import { defineComponent, h, type PropType } from "vue";
-import type { CanvasNode, CoordinateChannel, EncodingChannel, Point } from "../types";
+import type { CanvasNode, CoordinateChannel, EncodingChannel, NestedRenderPlacement, Point } from "../types";
 import { getNodeSelectionBounds, getNodeTransform, getLeafNodeTransform } from "../utils/canvasUtils";
+import { CanvasCoordinateSystemLayer } from "./CartesianCoordinateSystem";
 import { PolarCoordinateSystem } from "./PolarCoordinateSystem";
 
 function arrowHead(end: Point, direction: Point, size: number) {
@@ -179,6 +180,137 @@ function cartesianCoordinateOverlay(
   ]);
 }
 
+type Matrix = { a: number; b: number; c: number; d: number; e: number; f: number };
+
+const identityMatrix = (): Matrix => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 });
+
+function multiplyMatrix(left: Matrix, right: Matrix): Matrix {
+  return {
+    a: left.a * right.a + left.c * right.b,
+    b: left.b * right.a + left.d * right.b,
+    c: left.a * right.c + left.c * right.d,
+    d: left.b * right.c + left.d * right.d,
+    e: left.a * right.e + left.c * right.f + left.e,
+    f: left.b * right.e + left.d * right.f + left.f,
+  };
+}
+
+function inverseMatrix(matrix: Matrix): Matrix | null {
+  const determinant = matrix.a * matrix.d - matrix.b * matrix.c;
+  if (!Number.isFinite(determinant) || Math.abs(determinant) < 1e-12) return null;
+  return {
+    a: matrix.d / determinant,
+    b: -matrix.b / determinant,
+    c: -matrix.c / determinant,
+    d: matrix.a / determinant,
+    e: (matrix.c * matrix.f - matrix.d * matrix.e) / determinant,
+    f: (matrix.b * matrix.e - matrix.a * matrix.f) / determinant,
+  };
+}
+
+function matrixTransform(matrix: Matrix) {
+  return `matrix(${matrix.a} ${matrix.b} ${matrix.c} ${matrix.d} ${matrix.e} ${matrix.f})`;
+}
+
+function nodeTransformMatrix(node: CanvasNode): Matrix {
+  const radians = node.rotation * Math.PI / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  const cx = (node.kind === "leaf" ? node.contentMinX : 0) + node.width / 2;
+  const cy = (node.kind === "leaf" ? node.contentMinY : 0) + node.height / 2;
+  const a = cos * node.scaleX;
+  const b = sin * node.scaleX;
+  const c = -sin * node.scaleY;
+  const d = cos * node.scaleY;
+  const centerX = node.x + node.width * node.scaleX / 2;
+  const centerY = node.y + node.height * node.scaleY / 2;
+  return {
+    a,
+    b,
+    c,
+    d,
+    e: centerX - a * cx - c * cy,
+    f: centerY - b * cx - d * cy,
+  };
+}
+
+function svgTransformMatrix(value: string | null): Matrix {
+  if (!value) return identityMatrix();
+  let result = identityMatrix();
+  const commandPattern = /([a-z]+)\s*\(([^)]*)\)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = commandPattern.exec(value))) {
+    const values = match[2]?.match(/[-+]?(?:\d*\.?\d+)(?:e[-+]?\d+)?/gi)?.map(Number) ?? [];
+    const command = match[1]?.toLowerCase();
+    let next = identityMatrix();
+    if (command === "matrix" && values.length >= 6) {
+      next = { a: values[0]!, b: values[1]!, c: values[2]!, d: values[3]!, e: values[4]!, f: values[5]! };
+    } else if (command === "translate" && values.length >= 1) {
+      next.e = values[0]!;
+      next.f = values[1] ?? 0;
+    } else if (command === "scale" && values.length >= 1) {
+      next.a = values[0]!;
+      next.d = values[1] ?? values[0]!;
+    } else if (command === "rotate" && values.length >= 1) {
+      const radians = values[0]! * Math.PI / 180;
+      const rotation = { a: Math.cos(radians), b: Math.sin(radians), c: -Math.sin(radians), d: Math.cos(radians), e: 0, f: 0 };
+      if (values.length >= 3) {
+        const cx = values[1]!;
+        const cy = values[2]!;
+        next = multiplyMatrix(
+          multiplyMatrix({ a: 1, b: 0, c: 0, d: 1, e: cx, f: cy }, rotation),
+          { a: 1, b: 0, c: 0, d: 1, e: -cx, f: -cy },
+        );
+      } else next = rotation;
+    } else if (command === "skewx" && values.length >= 1) {
+      next.c = Math.tan(values[0]! * Math.PI / 180);
+    } else if (command === "skewy" && values.length >= 1) {
+      next.b = Math.tan(values[0]! * Math.PI / 180);
+    }
+    result = multiplyMatrix(result, next);
+  }
+  return result;
+}
+
+const parsedMarkupCache = new Map<string, SVGSVGElement | null>();
+
+function parseSvgMarkup(markup: string) {
+  if (parsedMarkupCache.has(markup)) return parsedMarkupCache.get(markup) ?? null;
+  if (parsedMarkupCache.size >= 64) parsedMarkupCache.clear();
+  if (typeof DOMParser === "undefined") return null;
+  const document = new DOMParser().parseFromString(
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">${markup}</svg>`,
+    "image/svg+xml",
+  );
+  const root = document.querySelector("parsererror") ? null : document.documentElement as unknown as SVGSVGElement;
+  parsedMarkupCache.set(markup, root);
+  return root;
+}
+
+function markMatchesPlacement(element: Element, placement: NestedRenderPlacement, fallbackIndex: number) {
+  if (!placement.parentDataKey) return true;
+  try {
+    const identity = JSON.parse(placement.parentDataKey) as {
+      rowKey?: string;
+      categoryKey?: string;
+      seriesKey?: string;
+      role?: string;
+      fallbackIndex?: number;
+    };
+    return (identity.rowKey === undefined || element.getAttribute("data-row-key") === identity.rowKey)
+      && (identity.categoryKey === undefined || element.getAttribute("data-category-key") === identity.categoryKey)
+      && (identity.seriesKey === undefined || element.getAttribute("data-series-key") === identity.seriesKey)
+      && (identity.role === undefined || element.getAttribute("data-mark-role") === identity.role)
+      && (identity.fallbackIndex === undefined || fallbackIndex === identity.fallbackIndex);
+  } catch {
+    return [
+      element.getAttribute("data-row-key"),
+      element.getAttribute("data-category-key"),
+      element.getAttribute("data-series-key"),
+    ].includes(placement.parentDataKey);
+  }
+}
+
 export const CanvasNodeView: any = defineComponent({
   name: "CanvasNodeView",
   props: {
@@ -189,6 +321,8 @@ export const CanvasNodeView: any = defineComponent({
     editingChartId: { type: String as PropType<string | null>, default: null },
     draggingNodeId: { type: String as PropType<string | null>, default: null },
     selectedIds: { type: Array as PropType<string[]>, default: () => [] },
+    nestedPlacements: { type: Array as PropType<NestedRenderPlacement[]>, default: () => [] },
+    nestedRenderedChildIds: { type: Object as PropType<ReadonlySet<string>>, default: () => new Set<string>() },
     onNodePointerDown: { type: Function as PropType<(node: CanvasNode, event: PointerEvent) => void>, default: null },
     onNodeDoubleClick: { type: Function as PropType<(node: CanvasNode, event: MouseEvent) => void>, default: null },
     onNodeContextMenu: { type: Function as PropType<(node: CanvasNode, event: MouseEvent) => void>, default: null },
@@ -226,6 +360,139 @@ export const CanvasNodeView: any = defineComponent({
           ? (event: MouseEvent) => props.onNodeContextMenu!(props.node, event)
           : undefined,
       };
+      const nodePlacements = props.nestedPlacements.filter((placement) =>
+        placement.parentChartId === props.node.id,
+      );
+      const renderNestedChild = (placement: NestedRenderPlacement, ancestorMatrix: Matrix) => {
+        const inverseAncestor = inverseMatrix(ancestorMatrix);
+        const inverseParent = inverseMatrix(nodeTransformMatrix(props.node));
+        if (!inverseAncestor || !inverseParent) return null;
+        const child = placement.child;
+        // Paint inside the parent mark's layer while keeping the child's model-space frame.
+        return h("g", {
+          key: `nested-placement:${placement.relationshipId}`,
+          class: "nested-render-placement",
+          transform: matrixTransform(multiplyMatrix(inverseAncestor, inverseParent)),
+        }, [
+          h(NodeView, {
+            key: child.id,
+            node: child,
+            interactive: props.interactive,
+            selected: props.selectedIds.includes(child.id),
+            editingGroupPath: props.editingGroupPath,
+            editingChartId: props.editingChartId,
+            draggingNodeId: props.draggingNodeId,
+            selectedIds: props.selectedIds,
+            nestedPlacements: props.nestedPlacements,
+            nestedRenderedChildIds: props.nestedRenderedChildIds,
+            onNodePointerDown: props.onNodePointerDown,
+            onNodeDoubleClick: props.onNodeDoubleClick,
+            onNodeContextMenu: props.onNodeContextMenu,
+            onMarkPointerDown: props.onMarkPointerDown,
+            onEditingBackgroundPointerDown: props.onEditingBackgroundPointerDown,
+          }),
+          h(CanvasCoordinateSystemLayer, {
+            key: `coordinate-system-${child.id}`,
+            node: child,
+            draggingNodeId: props.draggingNodeId,
+            hiddenNodeIds: props.nestedRenderedChildIds,
+            allowHiddenNodeId: child.id,
+          }),
+        ]);
+      };
+      const renderNestedMarkup = (markup: string) => {
+        const root = parseSvgMarkup(markup);
+        if (!root) return null;
+        const anchors = new Map<Element, NestedRenderPlacement[]>();
+        const suppressedParentMarks = new Set<Element>();
+        const unmatched = new Set(nodePlacements);
+        const marks = Array.from(root.querySelectorAll("[data-mark-role]"));
+        nodePlacements.forEach((placement) => {
+          const groupMarks = placement.parentMarkGroupId
+            ? marks.filter((element) => element.getAttribute("data-mark-group-id") === placement.parentMarkGroupId)
+            : marks;
+          const matchingMarks = groupMarks.filter((element, index) => {
+            const role = element.getAttribute("data-mark-role");
+            const roleIndex = groupMarks.slice(0, index)
+              .filter((candidate) => candidate.getAttribute("data-mark-role") === role).length;
+            return markMatchesPlacement(element, placement, roleIndex);
+          });
+          const anchor = matchingMarks.at(-1) ?? groupMarks.at(-1);
+          if (!anchor) return;
+          if (!placement.retainParent) {
+            matchingMarks.forEach((element) => {
+              suppressedParentMarks.add(element);
+            });
+          }
+          anchors.set(anchor, [...(anchors.get(anchor) ?? []), placement]);
+          unmatched.delete(placement);
+        });
+
+        const renderElement = (element: Element, path: string, ancestorMatrix: Matrix): any => {
+          const attributes: Record<string, string> = {};
+          Array.from(element.attributes).forEach((attribute) => { attributes[attribute.name] = attribute.value; });
+          attributes.key = path;
+          if (suppressedParentMarks.has(element)) {
+            attributes.style = `${attributes.style ?? ""};visibility:hidden !important;pointer-events:none !important;`;
+            attributes["aria-hidden"] = "true";
+          }
+          const elementMatrix = multiplyMatrix(ancestorMatrix, svgTransformMatrix(element.getAttribute("transform")));
+          const children: any[] = [];
+          Array.from(element.childNodes).forEach((childNode, index) => {
+            if (childNode.nodeType === 1) {
+              const childElement = childNode as Element;
+              children.push(renderElement(childElement, `${path}.${index}`, elementMatrix));
+              (anchors.get(childElement) ?? []).forEach((placement) => {
+                const nestedChild = renderNestedChild(placement, elementMatrix);
+                if (nestedChild) children.push(nestedChild);
+              });
+            } else if (childNode.nodeType === 3 && childNode.nodeValue) {
+              children.push(childNode.nodeValue);
+            }
+          });
+          return h(element.tagName, attributes, children);
+        };
+
+        const content: any[] = [];
+        Array.from(root.childNodes).forEach((childNode, index) => {
+          if (childNode.nodeType === 1) {
+            const childElement = childNode as Element;
+            content.push(renderElement(childElement, `svg.${index}`, identityMatrix()));
+            (anchors.get(childElement) ?? []).forEach((placement) => {
+              const nestedChild = renderNestedChild(placement, identityMatrix());
+              if (nestedChild) content.push(nestedChild);
+            });
+          } else if (childNode.nodeType === 3 && childNode.nodeValue) {
+            content.push(childNode.nodeValue);
+          }
+        });
+        unmatched.forEach((placement) => {
+          const nestedChild = renderNestedChild(placement, identityMatrix());
+          if (nestedChild) content.push(nestedChild);
+        });
+        return content;
+      };
+      const renderContent = (content: string, hasInteractiveMarks: boolean) => {
+        const contentProps = {
+          class: hasInteractiveMarks ? "semantic-rendered-content" : undefined,
+          style: { pointerEvents: hasInteractiveMarks ? "all" : "none" },
+          onPointerdown: hasInteractiveMarks
+            ? (event: PointerEvent) => markHandler!(props.node, event)
+            : undefined,
+        };
+        const nestedContent = props.node.renderedContent && nodePlacements.length > 0
+          ? renderNestedMarkup(props.node.renderedContent)
+          : null;
+        if (nestedContent) return h("g", contentProps, nestedContent);
+        if (props.node.renderedContent && nodePlacements.length > 0) {
+          return h("g", contentProps, [
+            h("g", { innerHTML: content }),
+            ...nodePlacements.flatMap((placement) =>
+              renderNestedChild(placement, identityMatrix()) ?? []),
+          ]);
+        }
+        return h("g", { ...contentProps, innerHTML: content });
+      };
 
       if (props.node.kind === "leaf") {
         const hasInteractiveMarks = !!props.node.renderedContent
@@ -254,7 +521,7 @@ export const CanvasNodeView: any = defineComponent({
             "vector-effect": "non-scaling-stroke",
             "pointer-events": "none",
           })] : []),
-          h("g", { class: hasInteractiveMarks ? "semantic-rendered-content" : undefined, innerHTML: props.node.renderedContent ?? props.node.content, style: { pointerEvents: hasInteractiveMarks ? "all" : "none" }, onPointerdown: hasInteractiveMarks ? (event: PointerEvent) => markHandler!(props.node, event) : undefined }),
+          renderContent(props.node.renderedContent ?? props.node.content, hasInteractiveMarks),
         ]);
       }
 
@@ -271,7 +538,7 @@ export const CanvasNodeView: any = defineComponent({
             fill: "transparent",
             "pointer-events": hasInteractiveMarks ? "none" : "all",
           }),
-          h("g", { class: hasInteractiveMarks ? "semantic-rendered-content" : undefined, innerHTML: props.node.renderedContent, style: { pointerEvents: hasInteractiveMarks ? "all" : "none" }, onPointerdown: hasInteractiveMarks ? (event: PointerEvent) => markHandler!(props.node, event) : undefined }),
+          renderContent(props.node.renderedContent, hasInteractiveMarks),
         ]);
       }
 
@@ -328,25 +595,29 @@ export const CanvasNodeView: any = defineComponent({
               "pointer-events": "none",
             })]
             : []),
-          ...props.node.children.map((child) =>
-          h(NodeView, {
-            key: child.id,
-            node: child,
-            interactive: isActiveEditingGroup,
-            selected: props.selectedIds.includes(child.id),
-            editingGroupPath: isEditingAncestor && editingPath[1] === child.id
-              ? editingPath.slice(1)
-              : [],
-            editingChartId: props.editingChartId,
-            draggingNodeId: props.draggingNodeId,
-            selectedIds: props.selectedIds,
-            onNodePointerDown: props.onNodePointerDown,
-            onNodeDoubleClick: props.onNodeDoubleClick,
-            onNodeContextMenu: props.onNodeContextMenu,
-            onMarkPointerDown: props.onMarkPointerDown,
-            onEditingBackgroundPointerDown: props.onEditingBackgroundPointerDown,
-          }),
-          ),
+          ...props.node.children
+            .filter((child) => !props.nestedRenderedChildIds.has(child.id))
+            .map((child) =>
+              h(NodeView, {
+                key: child.id,
+                node: child,
+                interactive: isActiveEditingGroup,
+                selected: props.selectedIds.includes(child.id),
+                editingGroupPath: isEditingAncestor && editingPath[1] === child.id
+                  ? editingPath.slice(1)
+                  : [],
+                editingChartId: props.editingChartId,
+                draggingNodeId: props.draggingNodeId,
+                selectedIds: props.selectedIds,
+                nestedPlacements: props.nestedPlacements,
+                nestedRenderedChildIds: props.nestedRenderedChildIds,
+                onNodePointerDown: props.onNodePointerDown,
+                onNodeDoubleClick: props.onNodeDoubleClick,
+                onNodeContextMenu: props.onNodeContextMenu,
+                onMarkPointerDown: props.onMarkPointerDown,
+                onEditingBackgroundPointerDown: props.onEditingBackgroundPointerDown,
+              }),
+            ),
         ],
       );
     };

@@ -1,0 +1,93 @@
+\firstsection{Introduction}
+
+\maketitle
+
+Many data-driven graphics combine multiple visual representations to compare
+data, reveal cross-view relationships, and communicate complex narratives.
+Such composite visualizations are common in visual analytics and
+communication~\cite{vasurvey, Survey16, deng2023survey, AI4VIS}, encompassing
+patterns such as concatenation, layering, faceting, and
+nesting~\cite{javed2012exploring, Composite, vaid}. 
+Authoring these visualizations requires managing data, encodings,
+coordinate systems, layouts, and dependencies across charts. 
+
+
+Existing approaches address different stages of visualization authoring, but
+chart-level composition often remains indirect. Low-level libraries~\cite{bostock2011d3} provide
+fine-grained control, but require authors to manually implement and maintain
+alignment, shared scales, layouts, and update logic. Interactive graphical
+editors similarly offer substantial freedom in constructing and manipulating
+marks and visual primitives~\cite{Lyra, DataIllustrator}. While this
+mark-level flexibility supports expressive designs, authors must first
+assemble primitives into coherent charts and then maintain their relationships
+during composition and subsequent editing. Declarative grammars and
+template-based tools facilitate common charts and compositions, but require
+authors to work with predefined operators, specification structures, or
+layout templates~\cite{bostock2011d3, satyanarayan2016vega, Tableau}.
+Departures from these structures may require substantial specification changes
+or low-level customization. These approaches leave an opportunity for
+authoring abstractions that operate directly on charts while retaining
+interactive control over their composition and refinement.
+
+Realizing this opportunity raises three challenges. First, composing charts as
+blocks involves more than arranging them spatially: adjacent charts may share
+an axis, overlapping charts may form a semantic layer, and repeated charts may
+constitute a facet. These composition relationships must remain explicit and
+editable so that individual blocks and their dependencies are preserved during
+refinement. Second, data adaptation becomes more complex once charts are composed. For an
+individual chart, incompatibilities can often be addressed by remapping data
+fields and encodings. A composition, however, introduces cross-chart
+constraints: its blocks may differ in data dimensions, schemas, or levels of
+granularity, while shared axes, layers, and facets impose different
+compatibility requirements. The authoring process must therefore help authors
+identify and reconcile such mismatches without reconstructing the constituent
+charts. Third, the predefined scope of chart blocks may constrain design
+exploration. A block-based approach should therefore organize blocks along
+meaningful design dimensions and surface alternatives for authors to explore.
+Although blocks may serve as reusable templates, they should remain
+configurable and replaceable rather than prescribe fixed visual outcomes.
+
+To inform the design of chart blocks and their alternatives, we first
+conducted a formative study with visualization experts. Drawing on perceptual
+principles and their design experience, the experts examined what should
+constitute a reusable chart block and which alternatives should be offered for
+a given design. Our analysis of their discussions identified three dimensions
+for organizing chart blocks---coordinate system, visual style, and data
+dimensionality. These dimensions provide a structured basis for defining block
+units and surfacing design alternatives during authoring.
+
+Guided by these findings, we developed {\system}, an interactive
+authoring tool for constructing composite visualizations with reusable chart
+blocks. Users drag and drop chart blocks to express spatial relationships,
+which the system interprets as composition operations such as concatenation,
+layering, and faceting. A data-aware recommendation engine evaluates the
+dimensional compatibility of the blocks and recommends alternative chart
+designs and data mappings, both to resolve mismatches and to support design
+exploration. These alternatives are organized along the coordinate-system,
+visual-style, and data-dimensionality dimensions identified in our formative
+study. Users can then rearrange, replace, and refine individual blocks while
+their composition relationships remain explicit and editable. 
+Through case studies and a comparative user study, 
+we demonstrate that {\system} supports the construction and iterative 
+refinement of complex composite visualizations and is easier to learn 
+and use than Lyra~\cite{Lyra}.
+
+
+
+
+
+In summary, our contributions are:
+\begin{itemize}
+    \item A formative study that identifies coordinate system, visual style,
+    and data dimensionality as key dimensions for defining reusable chart
+    blocks and organizing their design alternatives;
+
+    \item An interactive authoring tool that supports
+    drag-and-drop composition with explicit and editable chart relationships,
+    together with a data-aware recommendation engine for evaluating
+    compatibility and suggesting chart alternatives and data mappings;
+
+    \item Empirical findings from case studies and a comparative user study
+    that characterize the capabilities, benefits, and limitations of
+    block-based, data-aware authoring for composite visualizations.
+\end{itemize}

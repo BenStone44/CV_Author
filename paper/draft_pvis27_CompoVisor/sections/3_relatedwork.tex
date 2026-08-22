@@ -1,0 +1,78 @@
+\section{Related Work}
+We review prior work in design patterns, libraries and grammars, and interactive design tools for composite visualization.
+\subsection{Design Patterns of Composite Visualization}
+
+Composite visualizations integrate multiple visual representations to support
+complex analytical and communicative goals and are widely used in visual
+analytics systems~\cite{vasurvey, Survey16, deng2023survey, AI4VIS}. Compared
+with single-view visualizations, their design requires consideration of not
+only the encodings within individual charts but also the spatial, semantic,
+and data relationships among charts~\cite{nested, lyi2020comparative,
+Composite, vaid}.
+
+Prior work has characterized composite visualizations through a range of
+composition patterns. Early taxonomies identify high-level patterns such as
+juxtaposition, superimposition, overloading, and nesting
+~\cite{javed2012exploring}. Subsequent work provides more fine-grained
+characterizations of their visual variations~\cite{Composite}, while recent
+schema-based representations formalize composite designs using operators such
+as concatenation, layering, faceting, and nesting and capture the data types
+encoded by their components~\cite{vaid}. Together, these studies establish a
+useful vocabulary for describing composite visualization structures.
+
+However, these representations are primarily designed to characterize
+existing visualizations rather than support their construction. Interactive
+authoring additionally requires explicit decisions about the granularity of
+reusable components and the conditions under which they can be composed. For
+example, visually related chart variants may require different data
+dimensions, while composition operations may impose constraints on shared
+fields, coordinate systems, or data hierarchies. Leaving these requirements
+abstract makes descriptive patterns difficult to translate directly into
+interactive authoring operations.
+
+{\system} builds on these taxonomies by operationalizing their composition
+patterns for authoring. It defines reusable chart-level building blocks
+together with their data-dimensional requirements and enables users to compose
+them through direct manipulation.
+
+
+\subsection{Libraries and Grammars for Composite Visualization}
+
+Visualization libraries~\cite{Protovis, Atlas, Encodable, ProtoGraph, bostock2011d3} and grammars~\cite{nebula, Atlas, Decinteraction, satyanarayan2015reactive, satyanarayan2016vega, zong2022animated, VolumeVisualization, moreira2023urban, Atom, Gosling, dmutidens, Libra} provide formal mechanisms for authoring visualizations. 
+
+In composite visualization authoring, low-level libraries such as D3~\cite{bostock2011d3} offer fine-grained control over different visual marks, but require authors to manually implement relationships among them, including alignment, layout coordination, and shared scales. Higher-level declarative grammars such as Vega-Lite~\cite{satyanarayan2016vega} reduce some of this implementation burden by providing operators and configuration options for common cases such as concatenation, faceting, and layering. Nevertheless, these compositions are still specified through textual or hierarchical structures, rather than through direct associations among visual objects. When compositions become complex, authors often need high familiarity with the specification structure and produce lengthy hierarchical descriptions. Hence, expressing visual composition intents through code or declarative specifications remains indirect for iterative canvas-based arrangement, nesting, layering, and refinement.
+
+{\system} adopts a complementary approach by maintaining an internal schema for composite visualization authoring. The schema represents composition relationships among visual components and is incrementally updated through direct manipulation. In this way, users can construct complex composite structures through direct manipulation, without manually adjust complex specifications.
+
+\subsection{Interactive Visualization Design Tools}
+
+Numerous interactive tools~\cite{Epigraphics, DataInk, Tableau, DataWrapper,
+plotly, Lyra, DataIllustrator} have been developed to support visualization
+authoring without conventional programming.
+
+Chart typology tools and online chart makers \cite{manyeyes, DataWrapper,
+rawgraphs, plotly} allow users to quickly create common charts from
+data and compare design alternatives. More advanced systems such as
+Tableau~\cite{Tableau} provide richer interactive authoring workflows,
+including shelf-based encoding, automatic chart generation, and detailed
+configuration of visual mappings. Nevertheless, these tools are primarily
+oriented toward single-view visualizations or dashboard-style arrangements
+and provide limited support for constructing composite visualizations through
+explicit relationships among their constituent charts, such as layering,
+faceting, and nesting.
+
+Research systems further explore how direct manipulation and graphical editing
+can support more expressive visualization design. Lyra~\cite{Lyra} combines
+data-driven visualization specification with familiar vector-graphics-style
+editing, while Data Illustrator~\cite{DataIllustrator} introduces lazy data
+binding to flexibly transform graphical elements into data-driven graphics.
+However, these systems primarily construct visualizations from low-level
+graphical elements, such as rectangles, lines, and arcs, which enables highly
+customized designs but may require users to construct and coordinate visual
+structures from relatively primitive building blocks, even when the intended
+design consists of recognizable charts.
+
+In contrast, {\system} treats charts as the primary building blocks and
+supports direct manipulation of chart-level composition relationships,
+reducing the need to construct composite visualizations from low-level
+graphical primitives.

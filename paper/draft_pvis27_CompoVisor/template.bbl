@@ -1,0 +1,387 @@
+\begin{thebibliography}{10}
+
+\bibitem{Tableau}
+Tableau.
+\newblock \url{https://www.tableau.com/}.
+
+\bibitem{Protovis}
+M.~Bostock and J.~Heer.
+\newblock Protovis: {A} graphical toolkit for visualization.
+\newblock {\em {IEEE} Transactions on Visualization and Computer Graphics},
+  15(6):1121--1128, 2009. \href{https://doi.org/10.1109/TVCG.2009.174}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1109\discretionary{/}{%
+}{/}TVCG\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2009\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}174}}}
+
+
+\bibitem{bostock2011d3}
+M.~Bostock, V.~Ogievetsky, and J.~Heer.
+\newblock {{D}}{$^3$} data-driven documents.
+\newblock {\em IEEE Transactions on Visualization and Computer Graphics},
+  17(12):2301--2309, 2011. \href{https://doi.org/10.1109/TVCG.2011.185}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1109\discretionary{/}{%
+}{/}TVCG\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2011\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}185}}}
+
+
+\bibitem{nebula}
+R.~Chen, X.~Shu, J.~Chen, D.~Weng, J.~Tang, S.~Fu et al.
+\newblock Nebula: {A} coordinating grammar of graphics.
+\newblock {\em {IEEE} Transactions on Visualization and Computer Graphics},
+  28(12):4127--4140, 2022. \href{https://doi.org/10.1109/TVCG.2021.3076222}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1109\discretionary{/}{%
+}{/}TVCG\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2021\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}3076222}}}
+
+
+\bibitem{DataWrapper}
+{Datawrapper}.
+\newblock {Datawrapper}.
+\newblock \url{https://www.datawrapper.de/}, 2026.
+\newblock Accessed: 2026-08-05.
+
+\bibitem{Composite}
+D.~Deng, W.~Cui, X.~Meng, M.~Xu, Y.~Liao, H.~Zhang et al.
+\newblock Revisiting the design patterns of composite visualizations.
+\newblock {\em {IEEE} Transactions on Visualization and Computer Graphics},
+  29(12):5406--5421, 2023. \href{https://doi.org/10.1109/TVCG.2022.3213565}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1109\discretionary{/}{%
+}{/}TVCG\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2022\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}3213565}}}
+
+
+\bibitem{deng2023survey}
+Z.~Deng, D.~Weng, S.~Liu, Y.~Tian, M.~Xu, and Y.~Wu.
+\newblock A survey of urban visual analytics: Advances and future directions.
+\newblock {\em Computational Visual Media}, 9(1):3--39, 2023.
+  \href{https://doi.org/10.1007/S41095-022-0275-7}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1007\discretionary{/}{%
+}{/}S41095\discretionary{%
+}{-}{-}022\discretionary{%
+}{-}{-}0275\discretionary{%
+}{-}{-}7}}}
+
+
+\bibitem{javed2012exploring}
+W.~Javed and N.~Elmqvist.
+\newblock Exploring the design space of composite visualization.
+\newblock In {\em Proceedings of {{IEEE}} Pacific Visualization Symposium}, pp.
+  1--8, 2012.
+
+\bibitem{dmutidens}
+J.~Jo, F.~Vernier, P.~Dragicevic, and J.~Fekete.
+\newblock A declarative rendering model for multiclass density maps.
+\newblock {\em {IEEE} Transactions on Visualization and Computer Graphics},
+  25(1):470--480, 2019. \href{https://doi.org/10.1109/TVCG.2018.2865141}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1109\discretionary{/}{%
+}{/}TVCG\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2018\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2865141}}}
+
+
+\bibitem{vasurvey}
+X.~Kui, N.~Liu, Q.~Liu, J.~Liu, X.~Zeng, and C.~Zhang.
+\newblock A survey of visual analytics techniques for online education.
+\newblock {\em Visual Informatics}, 6(4):67--77, 2022.
+
+\bibitem{Atlas}
+Z.~Liu, C.~Chen, F.~Morales, and Y.~Zhao.
+\newblock Atlas: Grammar-based procedural generation of data visualizations.
+\newblock In {\em 2021 {IEEE} Visualization Conference, {IEEE} {VIS} 2021 -
+  Short Papers, New Orleans, LA, USA, October 24-29, 2021}, pp. 171--175.
+  {IEEE}, 2021.
+
+\bibitem{DataIllustrator}
+Z.~Liu, J.~Thompson, A.~Wilson, M.~Dontcheva, J.~Delorey, S.~Grigg et al.
+\newblock Data illustrator: Augmenting vector design tools with lazy data
+  binding for expressive visualization authoring.
+\newblock In {\em Proceedings of the 2018 CHI Conference on Human Factors in
+  Computing Systems}, CHI '18, pp. 1–13. Association for Computing Machinery,
+  New York, NY, USA, 2018. \href{https://doi.org/10.1145/3173574.3173697}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1145\discretionary{/}{%
+}{/}3173574\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}3173697}}}
+
+
+\bibitem{lyi2020comparative}
+S.~LYi, J.~Jo, and J.~Seo.
+\newblock Comparative layouts revisited: {{Design}} space, guidelines, and
+  future directions.
+\newblock {\em IEEE Transactions on Visualization and Computer Graphics},
+  27(2):1525--1535, 2021. \href{https://doi.org/10.1109/TVCG.2020.3030419}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1109\discretionary{/}{%
+}{/}TVCG\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2020\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}3030419}}}
+
+
+\bibitem{Gosling}
+S.~L'Yi, Q.~Wang, F.~Lekschas, and N.~Gehlenborg.
+\newblock Gosling: {A} grammar-based toolkit for scalable and interactive
+  genomics data visualization.
+\newblock {\em {IEEE} Transactions on Visualization and Computer Graphics},
+  28(1):140--150, 2022. \href{https://doi.org/10.1109/TVCG.2021.3114876}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1109\discretionary{/}{%
+}{/}TVCG\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2021\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}3114876}}}
+
+
+\bibitem{rawgraphs}
+M.~Mauri, T.~Elli, G.~Caviglia, G.~Uboldi, and M.~Azzi.
+\newblock {RAWGraphs: A Visualisation Platform to Create Open Outputs}.
+\newblock In {\em Proceedings of the 12th Biannual Conference on Italian SIGCHI
+  Chapter}, pp. 1--5. ACM, 2017. \href{https://doi.org/10.1145/3125571.3125585}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1145\discretionary{/}{%
+}{/}3125571\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}3125585}}}
+
+
+\bibitem{moreira2023urban}
+G.~Moreira, M.~Hosseini, M.~N.~A. Nipu, M.~Lage, N.~Ferreira, and F.~Miranda.
+\newblock The urban toolkit: {A} grammar-based framework for urban visual
+  analytics.
+\newblock {\em {IEEE} Transactions on Visualization and Computer Graphics},
+  30(1):1402--1412, 2024. \href{https://doi.org/10.1109/TVCG.2023.3326598}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1109\discretionary{/}{%
+}{/}TVCG\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2023\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}3326598}}}
+
+
+\bibitem{nested}
+T.~Munzner.
+\newblock A nested model for visualization design and validation.
+\newblock {\em IEEE transactions on visualization and computer graphics},
+  15(6):921--928, 2009.
+
+\bibitem{Atom}
+D.~Park, S.~M. Drucker, R.~Fernandez, and N.~Elmqvist.
+\newblock Atom: {A} grammar for unit visualizations.
+\newblock {\em {IEEE} Transactions on Visualization and Computer Graphics},
+  24(12):3032--3043, 2018. \href{https://doi.org/10.1109/TVCG.2017.2785807}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1109\discretionary{/}{%
+}{/}TVCG\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2017\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2785807}}}
+
+
+\bibitem{plotly}
+{Plotly Technologies Inc.}
+\newblock {Plotly}.
+\newblock \url{https://plotly.com/}, 2026.
+\newblock Accessed: 2026-08-05.
+
+\bibitem{ProtoGraph}
+M.~Rodrigues, J.~Dapello, P.~Vaithilingam, C.~Nobre, and J.~Beyer.
+\newblock Protograph: {A} non-expert toolkit for creating animated graphs.
+\newblock In {\em 2023 {IEEE} Visualization and Visual Analytics (VIS),
+  Melbourne, Australia, October 21-27, 2023}, pp. 176--180. {IEEE}, 2023.
+
+\bibitem{Lyra}
+A.~Satyanarayan and J.~Heer.
+\newblock Lyra: an interactive visualization design environment.
+\newblock In {\em Proceedings of the 16th Eurographics Conference on
+  Visualization}, EuroVis '14, pp. 351–360. Eurographics Association, Goslar,
+  DEU, 2014.
+
+\bibitem{satyanarayan2016vega}
+A.~Satyanarayan, D.~Moritz, K.~Wongsuphasawat, and J.~Heer.
+\newblock Vega-lite: {A} grammar of interactive graphics.
+\newblock {\em {IEEE} Transactions on Visualization and Computer Graphics},
+  23(1):341--350, 2017. \href{https://doi.org/10.1109/TVCG.2016.2599030}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1109\discretionary{/}{%
+}{/}TVCG\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2016\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2599030}}}
+
+
+\bibitem{satyanarayan2015reactive}
+A.~Satyanarayan, R.~Russell, J.~Hoffswell, and J.~Heer.
+\newblock Reactive vega: {A} streaming dataflow architecture for declarative
+  interactive visualization.
+\newblock {\em {IEEE} Transactions on Visualization and Computer Graphics},
+  22(1):659--668, 2016. \href{https://doi.org/10.1109/TVCG.2015.2467091}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1109\discretionary{/}{%
+}{/}TVCG\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2015\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2467091}}}
+
+
+\bibitem{Decinteraction}
+A.~Satyanarayan, K.~Wongsuphasawat, and J.~Heer.
+\newblock Declarative interaction design for data visualization.
+\newblock In H.~Benko, M.~Dontcheva, and D.~Wigdor, eds., {\em The 27th Annual
+  {ACM} Symposium on User Interface Software and Technology, {UIST} '14,
+  Honolulu, HI, USA, October 5-8, 2014}, pp. 669--678. {ACM}, 2014.
+  \href{https://doi.org/10.1145/2642918.2647360}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1145\discretionary{/}{%
+}{/}2642918\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2647360}}}
+
+
+\bibitem{VolumeVisualization}
+M.~Shih, C.~Rozhon, and K.~Ma.
+\newblock A declarative grammar of flexible volume visualization pipelines.
+\newblock {\em {IEEE} Transactions on Visualization and Computer Graphics},
+  25(1):1050--1059, 2019. \href{https://doi.org/10.1109/TVCG.2018.2864841}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1109\discretionary{/}{%
+}{/}TVCG\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2018\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2864841}}}
+
+
+\bibitem{manyeyes}
+F.~B. Viegas, M.~Wattenberg, F.~van Ham, J.~Kriss, and M.~McKeon.
+\newblock {Many Eyes: A Site for Visualization at Internet Scale}.
+\newblock {\em IEEE Transactions on Visualization and Computer Graphics},
+  13(6):1121--1128, 2007. \href{https://doi.org/10.1109/TVCG.2007.70577}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1109\discretionary{/}{%
+}{/}TVCG\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2007\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}70577}}}
+
+
+\bibitem{Encodable}
+K.~Wongsuphasawat.
+\newblock Encodable: Configurable grammar for visualization components.
+\newblock In {\em 31st {IEEE} Visualization Conference, {IEEE} {VIS} 2020 -
+  Short Papers, Virtual Event, USA, October 25-30, 2020}, pp. 131--135. {IEEE},
+  2020.
+
+\bibitem{AI4VIS}
+A.~Wu, Y.~Wang, X.~Shu, D.~Moritz, W.~Cui, H.~Zhang et al.
+\newblock Ai4vis: Survey on artificial intelligence approaches for data
+  visualization.
+\newblock {\em IEEE Transactions on Visualization and Computer Graphics},
+  28(12):5049--5070, 2022. \href{https://doi.org/10.1109/TVCG.2021.3099002}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1109\discretionary{/}{%
+}{/}TVCG\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2021\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}3099002}}}
+
+
+\bibitem{Survey16}
+Y.~Wu, N.~Cao, D.~Gotz, Y.~Tan, and D.~A. Keim.
+\newblock A survey on visual analytics of social media data.
+\newblock {\em IEEE Transactions on Multimedia}, 18(11):2135--2148, 2016.
+  \href{https://doi.org/10.1109/TMM.2016.2614220}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1109\discretionary{/}{%
+}{/}TMM\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2016\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2614220}}}
+
+
+\bibitem{DataInk}
+H.~Xia, N.~Henry~Riche, F.~Chevalier, B.~De~Araujo, and D.~Wigdor.
+\newblock Dataink: Direct and creative data-oriented drawing.
+\newblock In {\em Proceedings of the 2018 CHI Conference on Human Factors in
+  Computing Systems}, CHI '18, pp. 1–13. Association for Computing Machinery,
+  New York, NY, USA, 2018. \href{https://doi.org/10.1145/3173574.3173797}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1145\discretionary{/}{%
+}{/}3173574\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}3173797}}}
+
+
+\bibitem{vaid}
+L.~Ying, A.~Wu, H.~Li, Z.~Deng, J.~Lan, J.~Wu et al.
+\newblock {VAID:} indexing view designs in visual analytics system.
+\newblock In F.~F. Mueller, P.~Kyburz, J.~R. Williamson, C.~Sas, M.~L. Wilson,
+  P.~O.~T. Dugas et al., eds., {\em Proceedings of the {CHI} Conference on
+  Human Factors in Computing Systems, {CHI} 2024, Honolulu, HI, USA, May 11-16,
+  2024}, pp. 198:1--198:15. {ACM}, 2024.
+  \href{https://doi.org/10.1145/3613904.3642237}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1145\discretionary{/}{%
+}{/}3613904\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}3642237}}}
+
+
+\bibitem{Libra}
+Y.~Zhao, Y.~Wang, X.~Luo, Y.~Wang, and J.-D. Fekete.
+\newblock Libra: An interaction model for data visualization.
+\newblock In {\em Proceedings of the 2025 CHI Conference on Human Factors in
+  Computing Systems}, CHI '25,  art. no. 1169,  17 pp. Association for
+  Computing Machinery, New York, NY, USA, 2025.
+  \href{https://doi.org/10.1145/3706598.3713769}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1145\discretionary{/}{%
+}{/}3706598\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}3713769}}}
+
+
+\bibitem{Epigraphics}
+T.~Zhou, J.~Huang, and G.~Y.-Y. Chan.
+\newblock Epigraphics: Message-driven infographics authoring.
+\newblock In {\em Proceedings of the 2024 CHI Conference on Human Factors in
+  Computing Systems}, CHI '24,  art. no. 200,  18 pp. Association for Computing
+  Machinery, New York, NY, USA, 2024.
+  \href{https://doi.org/10.1145/3613904.3642172}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1145\discretionary{/}{%
+}{/}3613904\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}3642172}}}
+
+
+\bibitem{zong2022animated}
+J.~Zong, J.~Pollock, D.~Wootton, and A.~Satyanarayan.
+\newblock Animated vega-lite: Unifying animation with a grammar of interactive
+  graphics.
+\newblock {\em {IEEE} Transactions on Visualization and Computer Graphics},
+  29(1):149--159, 2023. \href{https://doi.org/10.1109/TVCG.2022.3209369}
+{doi: {{%
+10\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}1109\discretionary{/}{%
+}{/}TVCG\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}2022\hspace{.1pt}\discretionary{.}{%
+}{.}\hspace{.4pt}3209369}}}
+
+
+\end{thebibliography}

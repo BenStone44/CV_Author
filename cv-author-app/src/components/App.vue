@@ -7,8 +7,9 @@ import {
   ref,
   watch,
 } from "vue";
-import { ArrowUp, ChevronDown, SlidersHorizontal, Ungroup, X } from "@lucide/vue";
+import { ArrowUp, Check, ChevronDown, Move, RotateCcw, SlidersHorizontal, Ungroup, X } from "@lucide/vue";
 import { CanvasNodeView } from "./CanvasNodeView";
+import AlignmentToolbar from "./AlignmentToolbar.vue";
 import {
   CanvasCoordinateSystemLayer,
   CartesianCoordinateSystem,
@@ -66,6 +67,9 @@ const {
   nestedBindingNode,
   nestedBindingColumns,
   nestedBindingSuggestedAngleFields,
+  nestedPositionEditor,
+  nestedRenderPlacements,
+  nestedRenderedChildIds,
   axisBindingTarget,
   axisBindingNode,
   axisBindingColumns,
@@ -159,6 +163,9 @@ const {
   createCompositionCandidate,
   confirmNestedBinding,
   closeNestedBinding,
+  updateNestedPosition,
+  resetNestedPosition,
+  closeNestedPositionEditor,
   applyLlmRenderer,
   applyInputColumnIntent,
   closeDimensionDropDecision,
@@ -166,6 +173,9 @@ const {
   alignSelection,
   resetCanvasZoom,
 } = useCanvasStore(canvasRef);
+const visibleCanvasNodes = computed(() =>
+  canvasNodes.value.filter((node) => !nestedRenderedChildIds.value.has(node.id)),
+);
 const implementedTemplateCategories = computed(() =>
   groupChartTemplateCandidates(implementedTemplateCandidates.value.filter((candidate) =>
     selectedCoordinateSystems.value.size === 0
@@ -425,6 +435,178 @@ watch(nestedBindingTarget, (target) => {
   void nextTick(positionNestedBindingPopup);
 });
 
+type AlignmentMode = "left" | "center-x" | "right" | "top" | "center-y" | "bottom";
+type NestedAnchorSide = "parentAnchor" | "childAnchor";
+
+const nestedAnchorOptions = [
+  { x: 0, y: 0, label: "Top left" },
+  { x: 0.5, y: 0, label: "Top center" },
+  { x: 1, y: 0, label: "Top right" },
+  { x: 0, y: 0.5, label: "Middle left" },
+  { x: 0.5, y: 0.5, label: "Center" },
+  { x: 1, y: 0.5, label: "Middle right" },
+  { x: 0, y: 1, label: "Bottom left" },
+  { x: 0.5, y: 1, label: "Bottom center" },
+  { x: 1, y: 1, label: "Bottom right" },
+] as const;
+
+const nestedPreviewGeometry = {
+  parentInsetX: 40,
+  parentY: 34,
+  parentHeight: 188,
+  childWidth: 108,
+  childHeight: 68,
+  offsetScale: 2,
+};
+const nestedPreviewDrag = ref<{
+  pointerId: number;
+  startClientX: number;
+  startClientY: number;
+  startOffsetX: number;
+  startOffsetY: number;
+  minDeltaX: number;
+  maxDeltaX: number;
+  minDeltaY: number;
+  maxDeltaY: number;
+} | null>(null);
+const nestedChildPreviewStyle = computed(() => {
+  const parameters = nestedPositionEditor.value?.parameters;
+  if (!parameters) return undefined;
+  const geometry = nestedPreviewGeometry;
+  return {
+    left: `calc(${parameters.parentAnchor.x * 100}% + ${
+      geometry.parentInsetX * (1 - 2 * parameters.parentAnchor.x)
+      - parameters.childAnchor.x * geometry.childWidth
+      + parameters.offset.x * geometry.offsetScale
+    }px)`,
+    top: `${geometry.parentY
+      + parameters.parentAnchor.y * geometry.parentHeight
+      - parameters.childAnchor.y * geometry.childHeight
+      + parameters.offset.y * geometry.offsetScale}px`,
+  };
+});
+const nestedParentAnchorStyle = computed(() => {
+  const anchor = nestedPositionEditor.value?.parameters.parentAnchor;
+  if (!anchor) return undefined;
+  return {
+    left: `${anchor.x * 100}%`,
+    top: `${anchor.y * 100}%`,
+  };
+});
+const nestedChildAnchorStyle = computed(() => {
+  const anchor = nestedPositionEditor.value?.parameters.childAnchor;
+  if (!anchor) return undefined;
+  return {
+    left: `${anchor.x * 100}%`,
+    top: `${anchor.y * 100}%`,
+  };
+});
+const nestedOffsetGuideStyle = computed(() => {
+  const parameters = nestedPositionEditor.value?.parameters;
+  if (!parameters) return undefined;
+  const geometry = nestedPreviewGeometry;
+  const offsetX = parameters.offset.x * geometry.offsetScale;
+  const offsetY = parameters.offset.y * geometry.offsetScale;
+  return {
+    left: `calc(${parameters.parentAnchor.x * 100}% + ${geometry.parentInsetX * (1 - 2 * parameters.parentAnchor.x)}px)`,
+    top: `${geometry.parentY + parameters.parentAnchor.y * geometry.parentHeight}px`,
+    width: `${Math.hypot(offsetX, offsetY)}px`,
+    transform: `rotate(${Math.atan2(offsetY, offsetX) * 180 / Math.PI}deg)`,
+  };
+});
+
+function alignNestedPosition(mode: AlignmentMode) {
+  const parameters = nestedPositionEditor.value?.parameters;
+  if (!parameters) return;
+  const parentAnchor = { ...parameters.parentAnchor };
+  const childAnchor = { ...parameters.childAnchor };
+  const offset = { ...parameters.offset };
+  if (mode === "left" || mode === "center-x" || mode === "right") {
+    const x = mode === "left" ? 0 : mode === "right" ? 1 : 0.5;
+    parentAnchor.x = x;
+    childAnchor.x = x;
+    offset.x = 0;
+  } else {
+    const y = mode === "top" ? 0 : mode === "bottom" ? 1 : 0.5;
+    parentAnchor.y = y;
+    childAnchor.y = y;
+    offset.y = 0;
+  }
+  updateNestedPosition({ parentAnchor, childAnchor, offset });
+}
+
+function onCanvasToolbarAlign(mode: AlignmentMode) {
+  if (nestedPositionEditor.value) {
+    alignNestedPosition(mode);
+    return;
+  }
+  alignSelection(mode);
+}
+
+function selectNestedAnchor(side: NestedAnchorSide, anchor: { x: number; y: number }) {
+  if (side === "parentAnchor") updateNestedPosition({ parentAnchor: anchor });
+  else updateNestedPosition({ childAnchor: anchor });
+}
+
+function setNestedParentRetention(event: Event) {
+  updateNestedPosition({ retainParent: (event.currentTarget as HTMLInputElement).checked });
+}
+
+function isNestedAnchorSelected(side: NestedAnchorSide, anchor: { x: number; y: number }) {
+  const selected = nestedPositionEditor.value?.parameters[side];
+  return selected?.x === anchor.x && selected.y === anchor.y;
+}
+
+function nestedAnchorOptionStyle(anchor: { x: number; y: number }) {
+  return {
+    left: `${anchor.x * 100}%`,
+    top: `${anchor.y * 100}%`,
+  };
+}
+
+function onNestedPreviewPointerDown(event: PointerEvent) {
+  const offset = nestedPositionEditor.value?.parameters.offset;
+  if (!offset || event.button !== 0) return;
+  const child = event.currentTarget as HTMLElement;
+  const preview = child.parentElement;
+  if (!preview) return;
+  child.setPointerCapture(event.pointerId);
+  const childRect = child.getBoundingClientRect();
+  const previewRect = preview.getBoundingClientRect();
+  const visibleHandle = 18;
+  nestedPreviewDrag.value = {
+    pointerId: event.pointerId,
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    startOffsetX: offset.x,
+    startOffsetY: offset.y,
+    minDeltaX: previewRect.left + visibleHandle - childRect.right,
+    maxDeltaX: previewRect.right - visibleHandle - childRect.left,
+    minDeltaY: previewRect.top + visibleHandle - childRect.bottom,
+    maxDeltaY: previewRect.bottom - visibleHandle - childRect.top,
+  };
+}
+
+function onNestedPreviewPointerMove(event: PointerEvent) {
+  const drag = nestedPreviewDrag.value;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  const deltaX = Math.max(drag.minDeltaX, Math.min(event.clientX - drag.startClientX, drag.maxDeltaX));
+  const deltaY = Math.max(drag.minDeltaY, Math.min(event.clientY - drag.startClientY, drag.maxDeltaY));
+  updateNestedPosition({
+    offset: {
+      x: drag.startOffsetX + deltaX / nestedPreviewGeometry.offsetScale,
+      y: drag.startOffsetY + deltaY / nestedPreviewGeometry.offsetScale,
+    },
+  });
+}
+
+function onNestedPreviewPointerUp(event: PointerEvent) {
+  if (nestedPreviewDrag.value?.pointerId !== event.pointerId) return;
+  const target = event.currentTarget as HTMLElement;
+  if (target.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId);
+  nestedPreviewDrag.value = null;
+}
+
 function isScatterChartType(chartType: string) {
   return chartType
     .replace(/[\s_-]/g, "")
@@ -536,6 +718,7 @@ function onCompositionKeyDown(event: KeyboardEvent) {
     closeCompositionCandidates();
     closeAxisBinding();
     closeNestedBinding();
+    closeNestedPositionEditor();
   }
 }
 
@@ -831,7 +1014,10 @@ onBeforeUnmount(() => {
           >
             <ArrowUp :size="18" :stroke-width="1.9" aria-hidden="true" />
           </button>
-          <div class="toolbar toolbar--floating">
+          <div
+            class="toolbar toolbar--floating"
+            :class="{ 'toolbar--nested-positioning': nestedPositionEditor }"
+          >
             <div class="icon-tools" role="group" aria-label="History">
               <button
                 class="icon-button"
@@ -984,80 +1170,10 @@ onBeforeUnmount(() => {
                 <span>{{ option.label }}</span>
               </button>
             </div>
-            <div class="alignment-tools" role="group" aria-label="Alignment">
-              <button
-                class="icon-button"
-                type="button"
-                title="Align left"
-                aria-label="Align left"
-                :disabled="selectionUnits.length < 2"
-                @click="alignSelection('left')"
-              >
-                <svg viewBox="0 0 16 16" aria-hidden="true">
-                  <path d="M3 2.5v11M6 4.5h7M6 8h5M6 11.5h7" />
-                </svg>
-              </button>
-              <button
-                class="icon-button"
-                type="button"
-                title="Align center horizontally"
-                aria-label="Align center horizontally"
-                :disabled="selectionUnits.length < 2"
-                @click="alignSelection('center-x')"
-              >
-                <svg viewBox="0 0 16 16" aria-hidden="true">
-                  <path d="M8 2.5v11M4 4.5h8M5.5 8h5M4 11.5h8" />
-                </svg>
-              </button>
-              <button
-                class="icon-button"
-                type="button"
-                title="Align right"
-                aria-label="Align right"
-                :disabled="selectionUnits.length < 2"
-                @click="alignSelection('right')"
-              >
-                <svg viewBox="0 0 16 16" aria-hidden="true">
-                  <path d="M13 2.5v11M3 4.5h7M5 8h5M3 11.5h7" />
-                </svg>
-              </button>
-              <button
-                class="icon-button"
-                type="button"
-                title="Align top"
-                aria-label="Align top"
-                :disabled="selectionUnits.length < 2"
-                @click="alignSelection('top')"
-              >
-                <svg viewBox="0 0 16 16" aria-hidden="true">
-                  <path d="M2.5 3h11M4.5 6v7M8 6v5M11.5 6v7" />
-                </svg>
-              </button>
-              <button
-                class="icon-button"
-                type="button"
-                title="Align center vertically"
-                aria-label="Align center vertically"
-                :disabled="selectionUnits.length < 2"
-                @click="alignSelection('center-y')"
-              >
-                <svg viewBox="0 0 16 16" aria-hidden="true">
-                  <path d="M2.5 8h11M4.5 4v8M8 5.5v5M11.5 4v8" />
-                </svg>
-              </button>
-              <button
-                class="icon-button"
-                type="button"
-                title="Align bottom"
-                aria-label="Align bottom"
-                :disabled="selectionUnits.length < 2"
-                @click="alignSelection('bottom')"
-              >
-                <svg viewBox="0 0 16 16" aria-hidden="true">
-                  <path d="M2.5 13h11M4.5 3v7M8 5v5M11.5 3v7" />
-                </svg>
-              </button>
-            </div>
+            <AlignmentToolbar
+              :disabled="!nestedPositionEditor && selectionUnits.length < 2"
+              @align="onCanvasToolbarAlign"
+            />
           </div>
 
           <aside
@@ -1133,6 +1249,157 @@ onBeforeUnmount(() => {
                 <button type="button" @click="applyInputColumnIntent(intent.id)">Apply</button>
               </article>
             </div>
+          </aside>
+
+          <aside
+            v-if="nestedPositionEditor"
+            class="nested-position-editor"
+            role="dialog"
+            aria-modal="false"
+            aria-labelledby="nested-position-title"
+            @click.stop
+            @pointerdown.stop
+          >
+            <header class="nested-position-editor__header">
+              <div>
+                <strong id="nested-position-title">Nested positioning</strong>
+                <span>
+                  {{ nestedPositionEditor.parentName }} + {{ nestedPositionEditor.childName }}
+                  <template v-if="nestedPositionEditor.instanceCount > 1">
+                    / {{ nestedPositionEditor.instanceCount }} instances
+                  </template>
+                </span>
+              </div>
+              <button
+                class="recommendation-popup__close"
+                type="button"
+                title="Close"
+                aria-label="Close nested positioning"
+                @click="closeNestedPositionEditor"
+              >
+                <X :size="18" :stroke-width="1.7" aria-hidden="true" />
+              </button>
+            </header>
+
+            <div class="nested-position-editor__body">
+              <section class="nested-anchor-panel" aria-label="Nested anchors">
+                <div class="nested-anchor-selector">
+                  <header>
+                    <span class="nested-anchor-selector__role nested-anchor-selector__role--parent">Parent anchor</span>
+                    <strong>{{ nestedPositionEditor.parentName }}</strong>
+                  </header>
+                  <div class="nested-anchor-map nested-anchor-map--parent">
+                    <button
+                      v-for="anchor in nestedAnchorOptions"
+                      :key="`parent-${anchor.x}-${anchor.y}`"
+                      class="nested-anchor-option"
+                      :class="{ 'nested-anchor-option--selected': isNestedAnchorSelected('parentAnchor', anchor) }"
+                      :style="nestedAnchorOptionStyle(anchor)"
+                      type="button"
+                      :title="`Parent ${anchor.label}`"
+                      :aria-label="`Use ${anchor.label} as parent anchor`"
+                      :aria-pressed="isNestedAnchorSelected('parentAnchor', anchor)"
+                      @click="selectNestedAnchor('parentAnchor', anchor)"
+                    ></button>
+                  </div>
+                </div>
+
+                <div class="nested-anchor-selector">
+                  <header>
+                    <span class="nested-anchor-selector__role nested-anchor-selector__role--child">Child pin</span>
+                    <strong>{{ nestedPositionEditor.childName }}</strong>
+                  </header>
+                  <div class="nested-anchor-map nested-anchor-map--child">
+                    <button
+                      v-for="anchor in nestedAnchorOptions"
+                      :key="`child-${anchor.x}-${anchor.y}`"
+                      class="nested-anchor-option"
+                      :class="{ 'nested-anchor-option--selected': isNestedAnchorSelected('childAnchor', anchor) }"
+                      :style="nestedAnchorOptionStyle(anchor)"
+                      type="button"
+                      :title="`Child ${anchor.label}`"
+                      :aria-label="`Use ${anchor.label} as child anchor`"
+                      :aria-pressed="isNestedAnchorSelected('childAnchor', anchor)"
+                      @click="selectNestedAnchor('childAnchor', anchor)"
+                    ></button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="nested-position-workspace" aria-label="Nested relative position">
+                <header>
+                  <strong>Relative position</strong>
+                  <output>
+                    x {{ Math.round(nestedPositionEditor.parameters.offset.x) }}
+                    / y {{ Math.round(nestedPositionEditor.parameters.offset.y) }}
+                  </output>
+                </header>
+                <div class="nested-position-preview">
+                  <div
+                    class="nested-position-parent"
+                    :class="{ 'nested-position-parent--omitted': !nestedPositionEditor.parameters.retainParent }"
+                  >
+                    <span class="nested-position-parent__label">{{ nestedPositionEditor.parentName }}</span>
+                    <i
+                      class="nested-position-anchor nested-position-anchor--parent"
+                      :style="nestedParentAnchorStyle"
+                      aria-hidden="true"
+                    ></i>
+                  </div>
+                  <i
+                    class="nested-position-offset-guide"
+                    :style="nestedOffsetGuideStyle"
+                    aria-hidden="true"
+                  ></i>
+                  <button
+                    class="nested-position-child"
+                    type="button"
+                    :style="nestedChildPreviewStyle"
+                    title="Drag child to adjust offset"
+                    :aria-label="`Move ${nestedPositionEditor.childName}`"
+                    @pointerdown.prevent="onNestedPreviewPointerDown"
+                    @pointermove.prevent="onNestedPreviewPointerMove"
+                    @pointerup.prevent="onNestedPreviewPointerUp"
+                    @pointercancel.prevent="onNestedPreviewPointerUp"
+                  >
+                    <Move :size="16" :stroke-width="1.7" aria-hidden="true" />
+                    <span>{{ nestedPositionEditor.childName }}</span>
+                    <i
+                      class="nested-position-anchor nested-position-anchor--child"
+                      :style="nestedChildAnchorStyle"
+                      aria-hidden="true"
+                    ></i>
+                  </button>
+                </div>
+              </section>
+            </div>
+
+            <footer class="nested-position-editor__actions">
+              <label class="nested-position-editor__retain-parent">
+                <input
+                  type="checkbox"
+                  :checked="nestedPositionEditor.parameters.retainParent"
+                  @change="setNestedParentRetention"
+                />
+                <span>Keep parent mark</span>
+              </label>
+              <button
+                class="encoding-inspector__secondary nested-position-editor__reset"
+                type="button"
+                @click="resetNestedPosition"
+              >
+                <RotateCcw :size="15" :stroke-width="1.7" aria-hidden="true" />
+                <span>Reset center</span>
+              </button>
+              <button
+                class="encoding-inspector__confirm nested-position-editor__done"
+                type="button"
+                @click="closeNestedPositionEditor"
+              >
+                <Check :size="16" :stroke-width="1.8" aria-hidden="true" />
+                <span>Done</span>
+              </button>
+            </footer>
           </aside>
 
           <aside
@@ -1246,6 +1513,7 @@ onBeforeUnmount(() => {
           <aside
             v-if="activeCompositionType"
             class="composition-popover"
+            :class="{ 'composition-popover--nested-positioning': nestedPositionEditor }"
             role="dialog"
             aria-modal="false"
             :aria-label="`${activeCompositionOption?.label ?? ''} candidates`"
@@ -1420,7 +1688,7 @@ onBeforeUnmount(() => {
               :transform="`translate(${viewPan.x} ${viewPan.y}) scale(${viewZoom})`"
             >
               <CanvasNodeView
-                v-for="node in canvasNodes"
+                v-for="node in visibleCanvasNodes"
                 :key="node.id"
                 :node="node"
                 :selected="selectedIds.includes(node.id)"
@@ -1429,6 +1697,8 @@ onBeforeUnmount(() => {
                 :editing-chart-id="chartDrilldown?.nodeId ?? null"
                 :dragging-node-id="compositionDragSourceId"
                 :selected-ids="selectedIds"
+                :nested-placements="nestedRenderPlacements"
+                :nested-rendered-child-ids="nestedRenderedChildIds"
                 :on-node-pointer-down="onCanvasNodePointerDown"
                 :on-node-double-click="onCanvasNodeDoubleClick"
                 :on-node-context-menu="onCanvasNodeContextMenu"
@@ -1436,10 +1706,11 @@ onBeforeUnmount(() => {
                 :on-editing-background-pointer-down="onEditingGroupBackgroundPointerDown"
               />
               <CanvasCoordinateSystemLayer
-                v-for="node in canvasNodes"
+                v-for="node in visibleCanvasNodes"
                 :key="`coordinate-system-${node.id}`"
                 :node="node"
                 :dragging-node-id="compositionDragSourceId"
+                :hidden-node-ids="nestedRenderedChildIds"
               />
               <g v-if="activeDropZone" :transform="editingGroupTransform" class="composition-drop-zone-layer">
                 <component
@@ -2418,6 +2689,9 @@ onBeforeUnmount(() => {
   backdrop-filter: blur(12px);
   box-shadow: 0 14px 32px rgba(45, 89, 126, 0.12);
 }
+.toolbar--floating.toolbar--nested-positioning {
+  z-index: 10;
+}
 .hierarchy-back-button {
   position: absolute;
   top: 16px;
@@ -2476,6 +2750,9 @@ onBeforeUnmount(() => {
   box-shadow: 0 18px 40px rgba(45, 89, 126, 0.2);
   backdrop-filter: blur(12px);
 }
+.composition-popover--nested-positioning {
+  z-index: 11;
+}
 .encoding-inspector {
   position: absolute;
   top: 58px;
@@ -2492,6 +2769,306 @@ onBeforeUnmount(() => {
   background: rgba(255, 255, 255, 0.97);
   box-shadow: 0 18px 40px rgba(45, 89, 126, 0.2);
   backdrop-filter: blur(12px);
+}
+.nested-position-editor {
+  position: absolute;
+  left: 16px;
+  right: 264px;
+  top: 50%;
+  z-index: 8;
+  display: grid;
+  gap: 16px;
+  width: min(760px, calc(100% - 280px));
+  max-height: calc(100% - 32px);
+  margin: 0 auto;
+  box-sizing: border-box;
+  overflow-y: auto;
+  padding: 18px;
+  border: 1px solid rgba(24, 33, 47, 0.14);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 28px 70px rgba(15, 23, 42, 0.24);
+  transform: translateY(-50%);
+}
+.nested-position-editor__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.nested-position-editor__header > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+.nested-position-editor__header strong {
+  color: #18212f;
+  font-size: 16px;
+}
+.nested-position-editor__header span {
+  overflow: hidden;
+  color: #6b7889;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nested-position-editor__body {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  min-height: 0;
+  border-top: 1px solid rgba(24, 33, 47, 0.08);
+  border-bottom: 1px solid rgba(24, 33, 47, 0.08);
+}
+.nested-anchor-panel {
+  display: grid;
+  align-content: start;
+  gap: 22px;
+  min-width: 0;
+  padding: 18px 18px 18px 2px;
+  border-right: 1px solid rgba(24, 33, 47, 0.08);
+}
+.nested-anchor-selector {
+  display: grid;
+  gap: 11px;
+}
+.nested-anchor-selector header,
+.nested-position-workspace > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 8px;
+}
+.nested-anchor-selector header strong,
+.nested-position-workspace > header strong {
+  overflow: hidden;
+  color: #334155;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nested-anchor-selector__role {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+.nested-anchor-selector__role--parent {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+.nested-anchor-selector__role--child {
+  background: #ffe4e6;
+  color: #be123c;
+}
+.nested-anchor-map {
+  position: relative;
+  width: calc(100% - 22px);
+  height: 84px;
+  margin: 0 11px;
+  box-sizing: border-box;
+  background: #fff;
+}
+.nested-anchor-map--parent {
+  border: 1.5px solid #8291a5;
+}
+.nested-anchor-map--child {
+  border: 1.5px solid #dc2626;
+}
+.nested-anchor-option {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #a8b4c4;
+  box-shadow: 0 0 0 1px #7c8a9d;
+  transform: translate(-50%, -50%);
+  cursor: pointer;
+}
+.nested-anchor-map--child .nested-anchor-option {
+  background: #fda4af;
+  box-shadow: 0 0 0 1px #e11d48;
+}
+.nested-anchor-option:hover,
+.nested-anchor-option:focus-visible {
+  z-index: 2;
+  outline: 3px solid rgba(37, 99, 235, 0.2);
+  outline-offset: 1px;
+}
+.nested-anchor-map--parent .nested-anchor-option--selected {
+  background: #2563eb;
+  box-shadow: 0 0 0 2px #2563eb;
+}
+.nested-anchor-map--child .nested-anchor-option--selected {
+  background: #dc2626;
+  box-shadow: 0 0 0 2px #dc2626;
+}
+.nested-position-workspace {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  gap: 10px;
+  padding: 18px 2px 18px 18px;
+}
+.nested-position-workspace > header output {
+  color: #7c8a9d;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.nested-position-preview {
+  position: relative;
+  width: 100%;
+  height: 256px;
+  min-height: 256px;
+  overflow: hidden;
+  border: 1px solid rgba(24, 33, 47, 0.1);
+  border-radius: 6px;
+  background-color: #f8fafc;
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.13) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.13) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+.nested-position-parent {
+  position: absolute;
+  left: 40px;
+  right: 40px;
+  top: 34px;
+  height: 188px;
+  box-sizing: border-box;
+  border: 1.5px solid #8291a5;
+  background: rgba(255, 255, 255, 0.72);
+}
+.nested-position-parent--omitted {
+  border-style: dashed;
+  background: rgba(255, 255, 255, 0.24);
+  opacity: 0.38;
+}
+.nested-position-parent__label {
+  position: absolute;
+  left: 8px;
+  top: 7px;
+  max-width: calc(100% - 16px);
+  overflow: hidden;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nested-position-anchor {
+  position: absolute;
+  z-index: 2;
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.nested-position-anchor--parent {
+  background: #2563eb;
+  box-shadow: 0 0 0 1px #2563eb;
+}
+.nested-position-anchor--child {
+  background: #dc2626;
+  box-shadow: 0 0 0 1px #dc2626;
+}
+.nested-position-offset-guide {
+  position: absolute;
+  z-index: 2;
+  height: 1px;
+  background: #dc2626;
+  transform-origin: left center;
+  pointer-events: none;
+}
+.nested-position-offset-guide::after {
+  position: absolute;
+  right: -3px;
+  top: -3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #dc2626;
+  content: "";
+}
+.nested-position-child {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 108px;
+  height: 68px;
+  gap: 6px;
+  box-sizing: border-box;
+  padding: 8px;
+  border: 1.5px solid #dc2626;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #9f1239;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.14);
+}
+.nested-position-child:active {
+  cursor: grabbing;
+}
+.nested-position-child > span {
+  max-width: 72px;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nested-position-editor__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 2px;
+}
+.nested-position-editor__retain-parent {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  margin-right: auto;
+  gap: 7px;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.nested-position-editor__retain-parent input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: #2563eb;
+  cursor: pointer;
+}
+.nested-position-editor__actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  gap: 6px;
+  padding: 7px 11px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.nested-position-editor__done {
+  min-width: 88px;
 }
 .nested-binding-popup {
   position: absolute;
@@ -3847,6 +4424,11 @@ onBeforeUnmount(() => {
     top: 12px;
     width: min(220px, calc(100% - 24px));
   }
+  .nested-position-editor {
+    left: 12px;
+    right: 244px;
+    width: min(680px, calc(100% - 256px));
+  }
   .dimension-decision-control {
     top: 12px;
     left: 12px;
@@ -3889,6 +4471,24 @@ onBeforeUnmount(() => {
     top: 58px;
     right: auto;
     left: 12px;
+  }
+  .nested-position-editor {
+    left: 12px;
+    right: 244px;
+    width: calc(100% - 256px);
+    min-width: 260px;
+  }
+  .nested-position-editor__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .nested-anchor-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 14px 2px;
+    border-right: 0;
+    border-bottom: 1px solid rgba(24, 33, 47, 0.08);
+  }
+  .nested-position-workspace {
+    padding: 14px 2px;
   }
 }
 </style>

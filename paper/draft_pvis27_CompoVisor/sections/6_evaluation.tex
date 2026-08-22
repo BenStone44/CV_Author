@@ -1,0 +1,117 @@
+\section{User Study}
+
+We conducted a controlled user study to evaluate whether users could
+understand and apply our framework to author composite visualizations. We
+adopted visualization re-creation tasks because they provide consistent
+targets, cover the core authoring operations, and enable a controlled
+comparison between systems. We compared our system with Lyra using two VA
+designs selected from the VAID corpus.
+
+\subsection{Study Setting}
+We next describe the participants, tasks, and procedure of the study.
+
+\textbf{Tasks.}
+We selected two VA designs of comparable authoring complexity from the VAID
+corpus as re-creation tasks. Based on a decomposition agreed upon by
+visualization experts, Task~1 contained [X] chart blocks and approximately
+[M] composites, whereas Task~2 contained [Y] chart blocks and approximately
+[N] composites. The composite counts are approximate because the same target
+design may be reproduced using different composition strategies. Participants
+were asked to reproduce the main charts and their composition while ignoring
+annotations and minor stylistic details.
+
+\textbf{Participants.}
+We recruited 12 participants (P1--P12) with experience in visualization
+authoring, including dashboard creation, VA system design, and visualization
+research or development. They were familiar with visualization tools or
+grammars such as D3, Vega, or Vega-Lite. Participants were evenly divided
+into two groups of six. One group completed Task~1 with {\system} and Task~2
+with Lyra, while the other used Lyra for Task~1 and {\system} for Task~2,
+thereby counterbalancing the task--system assignment and system order.
+
+
+\textbf{Procedure.}
+Each session lasted approximately two hours. For each system, participants
+received a 15-minute tutorial using a practice example distinct from the
+study tasks, followed by 5 minutes of free exploration and a 25-minute
+re-creation task. Before each task, we introduced the input data and explained
+the visual structure of the target design. When participants were blocked,
+the facilitator clarified system operations without making authoring
+decisions on their behalf. During each task, we recorded task completion,
+completion time, and the number of mouse clicks.
+After each task, participants completed a 7-point Likert-scale questionnaire
+assessing ease of learning, ease of use, authoring efficiency, support for
+chart composition, and overall satisfaction. Finally, we conducted a
+15-minute semi-structured interview organized around three topics:
+(1) how the block granularity of {\system}, compared with that of Lyra,
+affected authoring;
+(2) how the composite construction processes of the two systems differed;
+and (3) the reasons behind participants' questionnaire ratings. We also
+collected feedback on their authoring strategies, encountered difficulties,
+and suggested improvements.
+
+
+\subsection{Quantitative Results}
+
+\autoref{fig:drag-drop} summarizes the questionnaire ratings and
+task performance under the two conditions. We report questionnaire ratings,
+completion time, and mouse clicks using medians and interquartile ranges
+because of the limited sample size. We used Wilcoxon signed-rank tests for
+paired comparisons of questionnaire ratings, completion time, and mouse
+clicks, and an exact McNemar test to compare task completion rates. We report
+effect sizes together with the statistical significance of the differences.
+
+\textbf{Subjective ratings.}
+Participants rated {\system} higher than Lyra in [dimensions], with median
+ratings of [X] and [Y], respectively. The differences in [dimensions] were
+statistically significant ($p=[~]$, $r=[~]$), whereas no significant
+difference was observed for [dimensions]. These results suggest that
+[interpretation based on the actual results].
+
+\textbf{Task performance.}
+Participants successfully completed [X/12] tasks with {\system} and [Y/12]
+with Lyra. Among the completed tasks, the median completion times were
+[X] and [Y] minutes, and the median numbers of mouse clicks were [X] and
+[Y], respectively. {\system} resulted in [shorter/similar] completion times
+and [fewer/a similar number of] interactions than Lyra. This difference
+indicates that [interpretation], although [mention nonsignificance or task
+variation if applicable].
+
+\subsection{Qualitative Results}
+
+We analyzed participants' interview responses and organized the findings
+around three themes: block-level authoring and family organization, composite
+construction workflows, and the rationale underlying participants'
+subjective ratings.
+
+\textbf{Block-level authoring and family organization.}
+Participants perceived different trade-offs between the block granularities
+of {\system} and Lyra. [X] participants considered the blocks in {\system}
+[more suitable/easier to manipulate] because [reason and representative
+behavior]. In contrast, [X] participants preferred Lyra's [finer/coarser]
+granularity when [scenario]. Participants also reported that the family-based
+design helped them [identify related blocks, reuse configurations, or manage
+structural consistency]. However, [limitations or learning difficulties, if
+any]. These observations indicate that [overall interpretation].
+
+
+\textbf{Composite construction workflow.}
+Participants described the two systems as supporting different composition
+strategies. With {\system}, they typically [describe the actual workflow],
+whereas with Lyra, they [describe the corresponding Lyra workflow].
+Participants noted that {\system}'s composite operations made
+[relationships/layout structures] more explicit and reduced [specific
+operations or difficulties]. By comparison, Lyra offered [its perceived
+advantage], but required participants to [specific additional operation].
+Several participants also noted that [common difficulty or limitation].
+Overall, these findings suggest that [interpretation of the workflow
+difference].
+
+
+\textbf{Perceived usability and rating rationale.}
+Participants attributed their ratings primarily to [factors]. Those who
+rated {\system} highly emphasized [advantages], while lower ratings were
+mainly associated with [limitations]. Ratings for Lyra were influenced by
+[factors]. These explanations help contextualize the quantitative results:
+[connect the interview findings to the differences or lack of differences
+in questionnaire ratings].

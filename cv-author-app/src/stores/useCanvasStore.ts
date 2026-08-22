@@ -55,6 +55,7 @@ import type {
   ChartDrilldown,
   ChartRelationshipState,
   NestedRelationship,
+  NestedRenderPlacement,
   RelativeNestedParameters,
   DataColumnType,
   MarkGroupSharedConfig,
@@ -249,6 +250,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     chartsForAxis,
     reconcileCanvasNodes: reconcileRelationshipNodes,
     defaultRelativeParameters,
+    resolveNestedRelationship,
   } = relationshipStore;
   // --- sidebar state ---
   const selectedCoordinateSystems = ref<Set<CoordinateSystem>>(new Set());
@@ -310,6 +312,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     analysis: InputColumnIntentAnalysis;
   } | null>(null);
   const nestedBindingTarget = ref<NestedBindingTarget | null>(null);
+  const nestedPositionRelationshipIds = ref<string[]>([]);
   const loadingDrop = ref(false);
   const importNotice = ref<string | null>(null);
   const axisBindingTarget = ref<AxisBindingTarget | null>(null);
@@ -319,6 +322,31 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   let importNoticeTimer: number | null = null;
   let clipboardPasteCount = 0;
   let nestedRelationshipBaseSnapshot: ChartRelationshipState | null = null;
+
+  const nestedPositionEditor = computed(() => {
+    const relationships = nestedPositionRelationshipIds.value
+      .map((relationshipId) => chartRelationships.value.nestedRelationships[relationshipId])
+      .filter((relationship): relationship is NestedRelationship => !!relationship);
+    const relationship = relationships[0];
+    if (!relationship) return null;
+    const parameters = relationship.parameters as Partial<RelativeNestedParameters>;
+    if (!parameters.parentAnchor || !parameters.childAnchor || !parameters.offset) return null;
+    const parent = findCanvasNode(relationship.parentChartId);
+    const child = findCanvasNode(relationship.childChartId);
+    return {
+      relationshipIds: relationships.map((item) => item.id),
+      parentName: parent?.name ?? "Parent",
+      childName: child?.name.replace(/ nested \d+$/, "") ?? "Child",
+      instanceCount: relationships.length,
+      parameters: {
+        parentAnchor: { ...parameters.parentAnchor },
+        childAnchor: { ...parameters.childAnchor },
+        offset: { ...parameters.offset },
+        retainParent: relationships.every((item) =>
+          (item.parameters as Partial<RelativeNestedParameters>).retainParent !== false),
+      },
+    };
+  });
 
   // --- helpers ---
   function getRootNode(nodeId: string) {
@@ -755,6 +783,18 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       f: left.b * right.e + left.d * right.f + left.f,
     };
   }
+  function invertMatrix(matrix: Matrix): Matrix | null {
+    const determinant = matrix.a * matrix.d - matrix.b * matrix.c;
+    if (!Number.isFinite(determinant) || Math.abs(determinant) < 1e-12) return null;
+    return {
+      a: matrix.d / determinant,
+      b: -matrix.b / determinant,
+      c: -matrix.c / determinant,
+      d: matrix.a / determinant,
+      e: (matrix.c * matrix.f - matrix.d * matrix.e) / determinant,
+      f: (matrix.b * matrix.e - matrix.a * matrix.f) / determinant,
+    };
+  }
   function groupMatrix(group: CanvasGroupNode): Matrix {
     const radians = group.rotation * Math.PI / 180;
     const cos = Math.cos(radians);
@@ -783,15 +823,23 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   // The visible model-space rectangle moves when the viewport is panned.
   // Keeping this conversion in one place prevents drops and interactions from
   // being clamped to the old, untransformed 0..viewport range.
+  function getCanvasViewport() {
+    const canvas = canvasRef.value;
+    const rect = canvas?.getBoundingClientRect();
+    return {
+      left: (rect?.left ?? 0) + (canvas?.clientLeft ?? 0),
+      top: (rect?.top ?? 0) + (canvas?.clientTop ?? 0),
+      width: canvas?.clientWidth ?? 0,
+      height: canvas?.clientHeight ?? 0,
+    };
+  }
   function getCanvasBounds(): Bounds {
-    const rect = canvasRef.value?.getBoundingClientRect();
+    const viewport = getCanvasViewport();
     const zoom = Math.max(viewZoom.value, 0.0001);
-    const width = rect?.width ?? 0;
-    const height = rect?.height ?? 0;
     const minX = -viewPan.value.x / zoom;
     const minY = -viewPan.value.y / zoom;
-    const maxX = (width - viewPan.value.x) / zoom;
-    const maxY = (height - viewPan.value.y) / zoom;
+    const maxX = (viewport.width - viewPan.value.x) / zoom;
+    const maxY = (viewport.height - viewPan.value.y) / zoom;
     return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
   }
   function getSelectionScopeBounds(): Bounds {
@@ -801,9 +849,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       : getCanvasBounds();
   }
   function toCanvasPoint(clientX: number, clientY: number): Point {
-    const rect = canvasRef.value?.getBoundingClientRect();
-    const screenX = clientX - (rect?.left ?? 0);
-    const screenY = clientY - (rect?.top ?? 0);
+    const viewport = getCanvasViewport();
+    const screenX = clientX - viewport.left;
+    const screenY = clientY - viewport.top;
     return { x: (screenX - viewPan.value.x) / viewZoom.value, y: (screenY - viewPan.value.y) / viewZoom.value };
   }
   function toNodeLocalPoint(node: CanvasNode, point: Point): Point {
@@ -1277,6 +1325,29 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const node = nestedBindingNode.value;
     return node ? nestedPieValueFields(node) : [];
   });
+  const nestedRenderPlacements = computed<NestedRenderPlacement[]>(() =>
+    Object.values(chartRelationships.value.nestedRelationships).flatMap((relationship) => {
+      if (relationship.status !== "active") return [];
+      const parent = findCanvasNode(relationship.parentChartId);
+      const child = findCanvasNode(relationship.childChartId);
+      if (
+        !parent?.renderedContent
+        || !child
+        || parentGroupIdForNode(parent.id) !== parentGroupIdForNode(child.id)
+      ) return [];
+      return [{
+        relationshipId: relationship.id,
+        parentChartId: relationship.parentChartId,
+        parentMarkGroupId: relationship.parentMarkGroupId,
+        parentDataKey: relationship.parentDataKey,
+        retainParent: (relationship.parameters as Partial<RelativeNestedParameters>).retainParent !== false,
+        child,
+      }];
+    }),
+  );
+  const nestedRenderedChildIds = computed<ReadonlySet<string>>(() =>
+    new Set(nestedRenderPlacements.value.map((placement) => placement.child.id)),
+  );
   const selectionScopeBounds = computed<Bounds | null>(() =>
     computeSelectionBounds(getSelectionScopeNodes(), selectedIds.value),
   );
@@ -1459,6 +1530,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     interaction.value = null;
     detachPointerListeners();
     editingCompositionId.value = null;
+    nestedPositionRelationshipIds.value = [];
     chartDrilldown.value = null;
     nestedDropPath = [];
     canvasNodes.value = migrateIndependentViewGroups(snapshot.nodes.map((n) => cloneCanvasNode(n)));
@@ -1630,17 +1702,70 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function semanticSelectionBounds(elements: Element[], scopeGroupId: string | null | undefined = editingGroupPath.value.at(-1)) {
     let bounds: Bounds | null = null;
     elements.forEach((element) => {
+      if (element instanceof SVGGraphicsElement) {
+        try {
+          const elementMatrix = element.getScreenCTM();
+          const scopeElement = scopeGroupId
+            ? Array.from(canvasRef.value?.querySelectorAll<SVGGraphicsElement>("[data-node-id]") ?? [])
+              .find((candidate) => candidate.dataset.nodeId === scopeGroupId)
+            : element.ownerSVGElement?.firstElementChild;
+          const scopeMatrix = scopeElement instanceof SVGGraphicsElement
+            ? scopeElement.getScreenCTM()
+            : null;
+          const inverseScopeMatrix = scopeMatrix ? invertMatrix(scopeMatrix) : null;
+          if (elementMatrix && inverseScopeMatrix) {
+            const relativeMatrix = multiplyMatrix(inverseScopeMatrix, elementMatrix);
+            const box = element.getBBox({
+              fill: true,
+              stroke: true,
+              markers: true,
+              clipped: true,
+            });
+            const points = [
+              transformPoint(relativeMatrix, { x: box.x, y: box.y }),
+              transformPoint(relativeMatrix, { x: box.x + box.width, y: box.y }),
+              transformPoint(relativeMatrix, { x: box.x, y: box.y + box.height }),
+              transformPoint(relativeMatrix, { x: box.x + box.width, y: box.y + box.height }),
+            ];
+            const minX = Math.min(...points.map((point) => point.x));
+            const minY = Math.min(...points.map((point) => point.y));
+            const maxX = Math.max(...points.map((point) => point.x));
+            const maxY = Math.max(...points.map((point) => point.y));
+            if ([minX, minY, maxX, maxY].every(Number.isFinite) && (maxX > minX || maxY > minY)) {
+              bounds = mergeBounds(bounds, {
+                minX,
+                minY,
+                maxX,
+                maxY,
+                width: maxX - minX,
+                height: maxY - minY,
+              });
+              return;
+            }
+          }
+        } catch {
+          // Fall back for detached or partially rendered SVG elements.
+        }
+      }
       const rect = element.getBoundingClientRect();
       if (rect.width <= 0 && rect.height <= 0) return;
-      const topLeft = toSelectionScopePoint(rect.left, rect.top, scopeGroupId);
-      const bottomRight = toSelectionScopePoint(rect.right, rect.bottom, scopeGroupId);
+      const points = [
+        toSelectionScopePoint(rect.left, rect.top, scopeGroupId),
+        toSelectionScopePoint(rect.right, rect.top, scopeGroupId),
+        toSelectionScopePoint(rect.left, rect.bottom, scopeGroupId),
+        toSelectionScopePoint(rect.right, rect.bottom, scopeGroupId),
+      ];
+      const minX = Math.min(...points.map((point) => point.x));
+      const minY = Math.min(...points.map((point) => point.y));
+      const maxX = Math.max(...points.map((point) => point.x));
+      const maxY = Math.max(...points.map((point) => point.y));
       bounds = mergeBounds(bounds, {
-        minX: Math.min(topLeft.x, bottomRight.x),
-        minY: Math.min(topLeft.y, bottomRight.y),
-        maxX: Math.max(topLeft.x, bottomRight.x),
-        maxY: Math.max(topLeft.y, bottomRight.y),
-        width: Math.abs(bottomRight.x - topLeft.x),
-        height: Math.abs(bottomRight.y - topLeft.y),
+        minX,
+        minY,
+        maxX,
+        maxY,
+        width: maxX - minX,
+        height: maxY - minY,
       });
     });
     return bounds;
@@ -2587,6 +2712,58 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     return created;
   }
 
+  function openNestedPositionEditor(relationshipIds: string[]) {
+    nestedPositionRelationshipIds.value = relationshipIds.filter((relationshipId) => {
+      const relationship = chartRelationships.value.nestedRelationships[relationshipId];
+      return relationship?.status === "active" && relationship.relationType === "relative-position";
+    });
+  }
+
+  function updateNestedPosition(config: {
+    parentAnchor?: Point;
+    childAnchor?: Point;
+    offset?: Point;
+    retainParent?: boolean;
+  }) {
+    const normalizeAnchor = (value: Point) => ({
+      x: clamp(value.x, 0, 1),
+      y: clamp(value.y, 0, 1),
+    });
+    nestedPositionRelationshipIds.value.forEach((relationshipId) => {
+      const relationship = chartRelationships.value.nestedRelationships[relationshipId];
+      if (!relationship) return;
+      const parameters = relationship.parameters as Partial<RelativeNestedParameters>;
+      if (!parameters.parentAnchor || !parameters.childAnchor || !parameters.offset) return;
+      dispatchRelationship({
+        type: "update-nested",
+        relationshipId,
+        changes: {
+          parameters: {
+            ...parameters,
+            parentAnchor: config.parentAnchor ? normalizeAnchor(config.parentAnchor) : { ...parameters.parentAnchor },
+            childAnchor: config.childAnchor ? normalizeAnchor(config.childAnchor) : { ...parameters.childAnchor },
+            offset: config.offset && Number.isFinite(config.offset.x) && Number.isFinite(config.offset.y)
+              ? { ...config.offset }
+              : { ...parameters.offset },
+            retainParent: config.retainParent ?? parameters.retainParent ?? true,
+          } as RelativeNestedParameters,
+        },
+      });
+    });
+  }
+
+  function resetNestedPosition() {
+    updateNestedPosition({
+      parentAnchor: { x: 0.5, y: 0.5 },
+      childAnchor: { x: 0.5, y: 0.5 },
+      offset: { x: 0, y: 0 },
+    });
+  }
+
+  function closeNestedPositionEditor() {
+    nestedPositionRelationshipIds.value = [];
+  }
+
   function scatterPointDropZone(node: CanvasNode, point: Point) {
     const spec = node.chartSpec;
     const dataset = spec ? getDataset(spec.datasetId) : null;
@@ -3071,6 +3248,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       selectedIds.value = childInstances.map(({ child }) => child.id);
       semanticSelection.value = null;
       axisBindingTarget.value = null;
+      openNestedPositionEditor(childInstances.map(({ relationshipId }) => relationshipId));
       setImportNotice(`${sourceName} nested into ${nestedTargets.length} ${target.name} items.`);
       return true;
     }
@@ -4671,13 +4849,13 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (node.chartSpec && nextSelection.length === 1) compositionDragSourceId.value = node.id;
   }
   function openContextMenu(event: MouseEvent) {
-    const rect = canvasRef.value?.getBoundingClientRect();
-    if (!rect) return;
+    if (!canvasRef.value) return;
+    const viewport = getCanvasViewport();
     const menuWidth = 196;
     const menuHeight = 404;
     contextMenu.value = {
-      x: clamp(event.clientX - rect.left, 8, rect.width - menuWidth - 8),
-      y: clamp(event.clientY - rect.top, 8, rect.height - menuHeight - 8),
+      x: clamp(event.clientX - viewport.left, 8, viewport.width - menuWidth - 8),
+      y: clamp(event.clientY - viewport.top, 8, viewport.height - menuHeight - 8),
       point: toCanvasPoint(event.clientX, event.clientY),
     };
   }
@@ -5055,11 +5233,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function onCanvasWheel(event: WheelEvent) {
     const target = event.target;
     if (target instanceof Element && target.closest(".toolbar--floating")) return;
-    const rect = canvasRef.value?.getBoundingClientRect();
-    if (!rect) return;
+    if (!canvasRef.value) return;
+    const viewport = getCanvasViewport();
     event.preventDefault();
-    const screenX = event.clientX - rect.left;
-    const screenY = event.clientY - rect.top;
+    const screenX = event.clientX - viewport.left;
+    const screenY = event.clientY - viewport.top;
     const nextZoom = clamp(viewZoom.value * Math.exp(-event.deltaY * 0.0015), MIN_ZOOM, MAX_ZOOM);
     if (nextZoom === viewZoom.value) return;
     const modelX = (screenX - viewPan.value.x) / viewZoom.value;
@@ -5522,7 +5700,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     void nextTick(() => {
       nestedLayoutScheduled = false;
       Object.values(chartRelationships.value.nestedRelationships).forEach((relationship) => {
-        if (relationship.status !== "active") return;
+        if (relationship.status !== "active" || relationship.relationType !== "relative-position") return;
         const parent = findCanvasNode(relationship.parentChartId);
         const child = findCanvasNode(relationship.childChartId);
         if (!parent || !child) return;
@@ -5546,17 +5724,23 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         const scopeGroupId = parentGroupIdForNode(child.id) ?? null;
         const bounds = semanticSelectionBounds(targetMarks, scopeGroupId);
         if (!bounds || bounds.width <= 0 || bounds.height <= 0) return;
-        const fitScale = Math.max(0.01, Math.min(
-          bounds.width * 0.78 / Math.max(child.width, 1),
-          bounds.height * 0.78 / Math.max(child.height, 1),
-        ));
-        const next = {
-          x: bounds.minX + (bounds.width - child.width * fitScale) / 2,
-          y: bounds.minY + (bounds.height - child.height * fitScale) / 2,
-          scaleX: fitScale,
-          scaleY: fitScale,
+        const next = resolveNestedRelationship(relationship.id, {
+          x: bounds.minX,
+          y: bounds.minY,
+          width: bounds.width,
+          height: bounds.height,
+          scaleX: 1,
+          scaleY: 1,
           rotation: parent.rotation,
-        };
+        }, {
+          x: child.x,
+          y: child.y,
+          width: child.width,
+          height: child.height,
+          scaleX: 1,
+          scaleY: 1,
+          rotation: child.rotation,
+        });
         if (
           Math.abs(child.x - next.x) < 0.01
           && Math.abs(child.y - next.y) < 0.01
@@ -5605,6 +5789,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     nestedBindingNode,
     nestedBindingColumns,
     nestedBindingSuggestedAngleFields,
+    nestedPositionEditor,
+    nestedRenderPlacements,
+    nestedRenderedChildIds,
     axisBindingTarget,
     axisBindingNode,
     axisBindingColumns,
@@ -5730,6 +5917,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     createNestedPie,
     confirmNestedBinding,
     closeNestedBinding,
+    updateNestedPosition,
+    resetNestedPosition,
+    closeNestedPositionEditor,
     groupSelectedItems,
     ungroupSelectedItems,
     dissolveSelectedGroups,

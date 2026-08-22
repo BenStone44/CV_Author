@@ -348,10 +348,13 @@ export const CanvasCoordinateSystemLayer: any = defineComponent({
   props: {
     node: { type: Object as PropType<CanvasNode>, required: true },
     draggingNodeId: { type: String as PropType<string | null>, default: null },
+    hiddenNodeIds: { type: Object as PropType<ReadonlySet<string>>, default: () => new Set<string>() },
+    allowHiddenNodeId: { type: String as PropType<string | null>, default: null },
   },
   setup(props) {
     return () => {
       const node = props.node;
+      if (props.hiddenNodeIds.has(node.id) && props.allowHiddenNodeId !== node.id) return null;
       const channels = getCartesianAxisChannels(node, "static");
       if (node.compositionSpec?.type === "layer" && channels.length === 0) return null;
       const children = node.kind === "group"
@@ -359,6 +362,7 @@ export const CanvasCoordinateSystemLayer: any = defineComponent({
           key: child.id,
           node: child,
           draggingNodeId: props.draggingNodeId,
+          hiddenNodeIds: props.hiddenNodeIds,
         }))
         : [];
       const axis = node.coordinateGuide?.type === "Cartesian" && channels.length > 0

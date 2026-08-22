@@ -511,6 +511,7 @@ export type RelativeNestedParameters = {
   offset: Point;
   scale: Point;
   rotation: number;
+  retainParent?: boolean;
   batchId?: string;
   sourceChildId?: string;
   sourceChildName?: string;
@@ -663,6 +664,15 @@ export type CanvasGroupNode = CanvasBaseNode & {
 };
 
 export type CanvasNode = CanvasLeafNode | CanvasGroupNode;
+
+export type NestedRenderPlacement = {
+  relationshipId: string;
+  parentChartId: string;
+  parentMarkGroupId?: string;
+  parentDataKey?: string;
+  retainParent: boolean;
+  child: CanvasNode;
+};
 
 export type Point = {
   x: number;
