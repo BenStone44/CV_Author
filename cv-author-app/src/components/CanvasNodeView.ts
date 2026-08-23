@@ -1,6 +1,6 @@
 import { defineComponent, h, type PropType } from "vue";
 import type { CanvasNode, CoordinateChannel, EncodingChannel, NestedRenderPlacement, Point } from "../types";
-import { getNodeSelectionBounds, getNodeTransform, getLeafNodeTransform, getPolarOccupiedGeometry } from "../utils/canvasUtils";
+import { getCanvasObjectHitTargetBounds, getNodeTransform, getLeafNodeTransform, getPolarOccupiedGeometry } from "../utils/canvasUtils";
 import { CanvasCoordinateSystemLayer } from "./CartesianCoordinateSystem";
 import { PolarCoordinateSystem } from "./PolarCoordinateSystem";
 
@@ -507,7 +507,7 @@ export const CanvasNodeView: any = defineComponent({
             style: { pointerEvents },
           });
         }
-        const hitBounds = getNodeSelectionBounds(props.node);
+        const hitBounds = getCanvasObjectHitTargetBounds(props.node);
         return h("rect", {
           x: hitBounds.minX,
           y: hitBounds.minY,

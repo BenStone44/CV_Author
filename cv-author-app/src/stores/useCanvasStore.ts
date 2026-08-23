@@ -62,6 +62,7 @@ import type {
   Dataset,
   ChartScaleSpec,
   DimensionRecommendation,
+  ChartInstanceDocument,
 } from "../types";
 import { useDatasetStore } from "./useDatasetStore";
 import { useChartRelationshipStore } from "./useChartRelationshipStore";
@@ -126,6 +127,10 @@ import {
   resolveChartEncodingIssues,
 } from "../utils/encodingConfig";
 import { resolveSemanticMarkMatch } from "../utils/chartSelection";
+import {
+  createChartInstanceDocument,
+  restoreCanvasNodesFromChartInstanceDocument,
+} from "../utils/chartInstance";
 import {
   inferColumnIntents,
   type InputColumnIntentAnalysis,
@@ -304,6 +309,12 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
 
   // --- canvas state ---
   const canvasNodes = ref<CanvasNode[]>([]);
+  const chartInstanceDocument = ref<ChartInstanceDocument>({
+    version: 1,
+    coordinateSpace: "canvas",
+    rootInstanceIds: [],
+    instances: [],
+  });
   const viewZoom = ref(1);
   const viewPan = ref<Point>({ x: 0, y: 0 });
   const selectedIds = ref<string[]>([]);
@@ -1691,7 +1702,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   // --- history ---
   function captureCanvasHistory(relationships = snapshotRelationships()): CanvasHistorySnapshot {
     return {
-      nodes: canvasNodes.value.map((n) => cloneCanvasNode(n)),
+      instanceDocument: createChartInstanceDocument(canvasNodes.value),
       selectedIds: [...selectedIds.value],
       editingGroupPath: [...editingGroupPath.value],
       relationships,
@@ -1709,7 +1720,12 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     nestedPositionRelationshipIds.value = [];
     chartDrilldown.value = null;
     nestedDropPath = [];
-    canvasNodes.value = migrateIndependentViewGroups(snapshot.nodes.map((n) => cloneCanvasNode(n)));
+    const snapshotNodes = snapshot.instanceDocument
+      ? restoreCanvasNodesFromChartInstanceDocument(snapshot.instanceDocument)
+      : snapshot.nodes ?? [];
+    chartInstanceDocument.value = snapshot.instanceDocument
+      ?? createChartInstanceDocument(snapshotNodes);
+    canvasNodes.value = migrateIndependentViewGroups(snapshotNodes.map((n) => cloneCanvasNode(n)));
     if (snapshot.relationships) restoreRelationships(snapshot.relationships);
     else {
       dispatchRelationship({ type: "clear" });
@@ -4530,6 +4546,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       };
       node.chartSpec = renderedChartSpec;
       node.renderedContent = result.content;
+      if (node.coordinateGuide?.type === "Polar" && result.polarArea) {
+        node.coordinateGuide.radius = result.polarArea.outerRadius;
+      }
       if (node.nestedSpec && template === "scatter") {
         const nested = renderNestedPie({
           chartId: node.id,
@@ -5469,10 +5488,24 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     rotationInputVisible.value = false;
     polarAngleInputVisible.value = false;
     const scopeGroupId = editingGroupPath.value.at(-1);
+    const startPoint = toSelectionScopePoint(event.clientX, event.clientY, scopeGroupId);
+    const localPoint = toNodeLocalPoint(node, startPoint);
+    const radius = Math.hypot(
+      localPoint.x - node.coordinateGuide.origin.x,
+      localPoint.y - node.coordinateGuide.origin.y,
+    );
+    const renderedScale = Math.max(
+      Math.abs(node.scaleX),
+      Math.abs(node.scaleY),
+      0.0001,
+    ) * Math.max(selectionOverlayZoom.value, 0.0001);
+    if (Number.isFinite(radius) && radius > 0) {
+      node.coordinateGuide.radius = Math.max(1, radius - 4 / renderedScale);
+    }
     interaction.value = {
       type: "polar-angle",
       nodeId: node.id,
-      startPoint: toSelectionScopePoint(event.clientX, event.clientY, scopeGroupId),
+      startPoint,
       scopeGroupId,
       historyCommitted: false,
     };
@@ -6212,11 +6245,21 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       try {
         const raw = localStorage.getItem("cv-author-canvas-v1");
         if (raw) {
-          const saved = JSON.parse(raw) as { nodes?: CanvasNode[]; relationships?: ChartRelationshipState };
-          if (Array.isArray(saved.nodes)) {
-            canvasNodes.value = migrateIndependentViewGroups(saved.nodes
+          const saved = JSON.parse(raw) as {
+            instanceDocument?: ChartInstanceDocument;
+            nodes?: CanvasNode[];
+            relationships?: ChartRelationshipState;
+          };
+          const savedNodes = saved.instanceDocument?.version === 1
+            ? restoreCanvasNodesFromChartInstanceDocument(saved.instanceDocument)
+            : saved.nodes;
+          if (Array.isArray(savedNodes)) {
+            canvasNodes.value = migrateIndependentViewGroups(savedNodes
               .filter((node) => node.id !== "llm-demo-node" && node.chartSpec?.datasetId !== "dataset:llm-demo")
               .map((node) => cloneCanvasNode(node)));
+            chartInstanceDocument.value = saved.instanceDocument?.version === 1
+              ? saved.instanceDocument
+              : createChartInstanceDocument(canvasNodes.value);
             if (saved.relationships?.version === 1) restoreRelationships(saved.relationships);
             else dispatchRelationship({ type: "clear" });
             walkCanvasNodes().forEach((node) => {
@@ -6295,7 +6338,14 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   watch(chartRelationships, projectRelationshipStateToCanvas, { deep: true });
   watch([canvasNodes, chartRelationships], scheduleNestedChildLayout, { deep: true });
   watch([canvasNodes, chartRelationships], ([nodes]) => {
-    try { localStorage.setItem("cv-author-canvas-v1", JSON.stringify({ version: 2, nodes, relationships: snapshotRelationships(false) })); } catch { /* storage is optional */ }
+    chartInstanceDocument.value = createChartInstanceDocument(nodes);
+    try {
+      localStorage.setItem("cv-author-canvas-v1", JSON.stringify({
+        version: 3,
+        instanceDocument: chartInstanceDocument.value,
+        relationships: snapshotRelationships(false),
+      }));
+    } catch { /* storage is optional */ }
   }, { deep: true });
   onBeforeUnmount(() => {
     detachPointerListeners();
@@ -6312,6 +6362,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     compositionCandidates,
     filteredCandidates,
     canvasNodes,
+    chartInstanceDocument,
     chartRelationships,
     relationshipStore,
     selectedRelationshipEntity,

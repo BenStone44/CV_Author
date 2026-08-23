@@ -276,6 +276,74 @@ export function getNodeSelectionBounds(node: CanvasNode): Bounds {
   };
 }
 
+/**
+ * Returns the local bounds represented by CanvasNodeView's
+ * `.canvas-object-hit-target` element.
+ */
+export function getCanvasObjectHitTargetBounds(node: CanvasNode): Bounds {
+  return getPolarOccupiedGeometry(node)?.bounds ?? getNodeSelectionBounds(node);
+}
+
+/**
+ * Resolves the hit-target bounds into canvas coordinates using the same
+ * ancestor transform convention as collectNodeSelectionBounds.
+ */
+export function getCanvasObjectHitTargetBoundsInCanvas(
+  node: CanvasNode,
+  parentX = 0,
+  parentY = 0,
+  parentScaleX = 1,
+  parentScaleY = 1,
+): Bounds {
+  const x = parentX + node.x * parentScaleX;
+  const y = parentY + node.y * parentScaleY;
+  const scaleX = parentScaleX * node.scaleX;
+  const scaleY = parentScaleY * node.scaleY;
+  const localMinX = node.kind === "leaf" ? node.contentMinX : 0;
+  const localMinY = node.kind === "leaf" ? node.contentMinY : 0;
+  const polar = getPolarOccupiedGeometry(node);
+  if (!polar) {
+    const hitTarget = getCanvasObjectHitTargetBounds(node);
+    return boundsFromNodeFrame(
+      x + (hitTarget.minX - localMinX) * scaleX,
+      y + (hitTarget.minY - localMinY) * scaleY,
+      hitTarget.width,
+      hitTarget.height,
+      scaleX,
+      scaleY,
+      node.rotation,
+    );
+  }
+  const transformPoint = (point: Point): Point => {
+    const px = x + (point.x - localMinX) * scaleX;
+    const py = y + (point.y - localMinY) * scaleY;
+    const center = { x: x + node.width * scaleX / 2, y: y + node.height * scaleY / 2 };
+    if (node.rotation === 0) return { x: px, y: py };
+    const radians = node.rotation * Math.PI / 180;
+    const dx = px - center.x;
+    const dy = py - center.y;
+    return {
+      x: center.x + dx * Math.cos(radians) - dy * Math.sin(radians),
+      y: center.y + dx * Math.sin(radians) + dy * Math.cos(radians),
+    };
+  };
+  const angles = [polar.startAngle, polar.endAngle, 0, 90, 180, 270]
+    .filter((angle, index, values) =>
+      angleWithinClockwiseSpan(angle, polar.startAngle, polar.angleSpan)
+      && values.indexOf(angle) === index,
+    );
+  const points = angles.flatMap((angle) => [
+    transformPoint(polarPoint(polar.origin, polar.outerRadius, angle)),
+    ...(polar.innerRadius > 0 ? [transformPoint(polarPoint(polar.origin, polar.innerRadius, angle))] : []),
+  ]);
+  if (polar.innerRadius <= 0) points.push(transformPoint(polar.origin));
+  const minX = Math.min(...points.map((point) => point.x));
+  const minY = Math.min(...points.map((point) => point.y));
+  const maxX = Math.max(...points.map((point) => point.x));
+  const maxY = Math.max(...points.map((point) => point.y));
+  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
+}
+
 export function computeAbsoluteFrame(
   node: CanvasNode,
   parentX = 0,
@@ -434,18 +502,7 @@ export function collectNodeSelectionBounds(
   const y = parentY + node.y * parentScaleY;
   const scaleX = parentScaleX * node.scaleX;
   const scaleY = parentScaleY * node.scaleY;
-  const localMinX = node.kind === "leaf" ? node.contentMinX : 0;
-  const localMinY = node.kind === "leaf" ? node.contentMinY : 0;
-  const selectionBounds = getNodeSelectionBounds(node);
-  let bounds = boundsFromNodeFrame(
-    x + (selectionBounds.minX - localMinX) * scaleX,
-    y + (selectionBounds.minY - localMinY) * scaleY,
-    selectionBounds.width,
-    selectionBounds.height,
-    scaleX,
-    scaleY,
-    node.rotation,
-  );
+  let bounds = getCanvasObjectHitTargetBoundsInCanvas(node, parentX, parentY, parentScaleX, parentScaleY);
   // Configured charts can retain their original template children after the
   // deterministic renderer takes over. Their selection is the live plotArea;
   // stale template geometry must not replace it during multi-selection.

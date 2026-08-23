@@ -1,6 +1,12 @@
 import { defineComponent, h, type PropType } from "vue";
-import { getLeafNodeTransform, getNodeTransform } from "../utils/canvasUtils";
+import {
+  getLeafNodeTransform,
+  getNodeTransform,
+  getPolarOccupiedGeometry,
+} from "../utils/canvasUtils";
 import type { CanvasNode, CoordinateChannel, Point } from "../types";
+
+const POLAR_CONTROL_RADIUS_GAP = 4;
 
 export type PolarCoordinateSystemModel = {
   origin: Point;
@@ -64,15 +70,21 @@ export function createPolarCoordinateSystemModel(
     8,
     Math.min(Math.max(node.width, node.height) * 0.035, 42),
   );
-
-  const radius = (contentRadius + padding) * (guide.radiusScale ?? 1);
-  const angleSpan = normalizePolarAngleSpan(guide.angleSpan);
-  const upperAngle = 360 - angleSpan;
   const renderedScale = Math.max(
     Math.abs(node.scaleX),
     Math.abs(node.scaleY),
     0.0001,
   ) * Math.max(viewZoom, 0.0001);
+
+  const occupiedGeometry = getPolarOccupiedGeometry(node);
+  const chartRadius = Number.isFinite(guide.radius) && guide.radius! > 0
+    ? guide.radius!
+    : occupiedGeometry
+      ? occupiedGeometry.outerRadius
+      : (contentRadius + padding) * (guide.radiusScale ?? 1);
+  const radius = chartRadius + POLAR_CONTROL_RADIUS_GAP / renderedScale;
+  const angleSpan = normalizePolarAngleSpan(guide.angleSpan);
+  const upperAngle = 360 - angleSpan;
   const radiusEnd = {
     x: guide.origin.x + radius,
     y: guide.origin.y,

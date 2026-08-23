@@ -41,20 +41,67 @@ describe("independent Polar coordinate system component", () => {
 
     expect(model).toMatchObject({
       origin: { x: 110, y: 100 },
-      radius: 162,
+      radius: 166,
       angleSpan: 360,
       upperAngle: 0,
-      radiusEnd: { x: 272, y: 100 },
-      upperRadiusEnd: { x: 272, y: 100 },
-      lowerControlArcPath: `M 272 100 A 162 162 0 0 1 ${110 + Math.cos(Math.PI / 12) * 162} ${100 + Math.sin(Math.PI / 12) * 162}`,
+      radiusEnd: { x: 276, y: 100 },
+      upperRadiusEnd: { x: 276, y: 100 },
+      lowerControlArcPath: `M 276 100 A 166 166 0 0 1 ${110 + Math.cos(Math.PI / 12) * 166} ${100 + Math.sin(Math.PI / 12) * 166}`,
       renderedScale: 1,
     });
     const upperArcValues = model.upperControlArcPath.match(/-?\d+(?:\.\d+)?/g)?.map(Number) ?? [];
     expect(upperArcValues).toHaveLength(9);
-    expect(upperArcValues[0]).toBeCloseTo(110 + Math.cos(Math.PI / 12) * 162);
-    expect(upperArcValues[1]).toBeCloseTo(100 - Math.sin(Math.PI / 12) * 162);
-    expect(upperArcValues.at(-2)).toBe(272);
+    expect(upperArcValues[0]).toBeCloseTo(110 + Math.cos(Math.PI / 12) * 166);
+    expect(upperArcValues[1]).toBeCloseTo(100 - Math.sin(Math.PI / 12) * 166);
+    expect(upperArcValues.at(-2)).toBe(276);
     expect(upperArcValues.at(-1)).toBe(100);
+  });
+
+  it("fits the coordinate guide to the rendered outer ring", () => {
+    const node = polarNode({
+      renderedContent: '<path data-mark-role="arc"/>',
+      chartSpec: {
+        chartType: "PieChart",
+        datasetId: "measurements",
+        encodings: { theta: { field: "value", type: "quantitative" } },
+        plotArea: { x: 30, y: 20, width: 160, height: 160 },
+        polarArea: { startAngle: 0, angleSpan: 360, innerRadius: 0, outerRadius: 80 },
+      },
+    });
+
+    expect(createPolarCoordinateSystemModel(node, 0.5)?.radius).toBe(88);
+  });
+
+  it("fits a radial member's coordinate guide to its selection ring", () => {
+    const node = polarNode({
+      id: "inner-ring",
+      renderedContent: '<path data-mark-role="arc"/>',
+      coordinateGuide: {
+        type: "Polar",
+        origin: { x: 110, y: 100 },
+        innerRadiusRatio: 0,
+        outerRadiusRatio: 0.5,
+      },
+      compositionSpec: {
+        id: "composition:radial",
+        type: "concat",
+        direction: "radial",
+        members: [
+          { nodeId: "inner-ring", sourceNodeId: "inner-ring", sharedChannels: ["angle"] },
+          { nodeId: "outer-ring", sourceNodeId: "outer-ring", sharedChannels: ["angle"] },
+        ],
+        sharedChannels: ["angle"],
+      },
+      chartSpec: {
+        chartType: "PieChart",
+        datasetId: "measurements",
+        encodings: { theta: { field: "value", type: "quantitative" } },
+        plotArea: { x: 30, y: 20, width: 160, height: 160 },
+        polarArea: { startAngle: 0, angleSpan: 360, innerRadius: 0, outerRadius: 40 },
+      },
+    });
+
+    expect(createPolarCoordinateSystemModel(node, 0.5)?.radius).toBe(48);
   });
 
   it("renders overlapping boundary rays with separate 15-degree control arcs", () => {
@@ -80,7 +127,7 @@ describe("independent Polar coordinate system component", () => {
     expect(radiusAxes[0].props).toMatchObject({
       x1: 110,
       y1: 100,
-      x2: 272,
+      x2: 276,
       y2: 100,
     });
     expect(radiusAxes[1].props).toMatchObject({
@@ -103,7 +150,7 @@ describe("independent Polar coordinate system component", () => {
       classes(child).includes("polar-coordinate-angle-control"),
     );
     expect(control.props["aria-valuenow"]).toBe(360);
-    expect(control.props.transform).toBe("translate(272 100) scale(1)");
+    expect(control.props.transform).toBe("translate(276 100) scale(1)");
   });
 
   it("subtracts an upper counter-clockwise rotation from the 360-degree range", () => {
@@ -122,9 +169,9 @@ describe("independent Polar coordinate system component", () => {
     });
     const model = createPolarCoordinateSystemModel(node)!;
     expect(model.upperAngle).toBe(60);
-    expect(model.radius).toBe(118);
-    expect(model.upperRadiusEnd.x).toBeCloseTo(159);
-    expect(model.upperRadiusEnd.y).toBeCloseTo(100 - Math.sqrt(3) * 59);
+    expect(model.radius).toBe(120);
+    expect(model.upperRadiusEnd.x).toBeCloseTo(160);
+    expect(model.upperRadiusEnd.y).toBeCloseTo(100 - Math.sqrt(3) * 60);
   });
 
   it("starts angle rotation from the upper ray and isolates the pointer event", () => {
@@ -150,6 +197,18 @@ describe("independent Polar coordinate system component", () => {
     expect(event.preventDefault).toHaveBeenCalledOnce();
     expect(event.stopPropagation).toHaveBeenCalledOnce();
     expect(onAnglePointerDown).toHaveBeenCalledWith(node, event);
+  });
+
+  it("uses the persisted chart radius when positioning polar controls", () => {
+    const node = polarNode({
+      coordinateGuide: {
+        type: "Polar",
+        origin: { x: 110, y: 100 },
+        radius: 64,
+      },
+    });
+
+    expect(createPolarCoordinateSystemModel(node)?.radius).toBe(68);
   });
 
   it("does not render for a non-Polar guide", () => {

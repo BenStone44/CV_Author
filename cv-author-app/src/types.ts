@@ -21,6 +21,8 @@ export type CartesianCoordinateGuide = {
 export type PolarCoordinateGuide = {
   type: "Polar";
   origin: Point;
+  /** Final chart radius in node-local coordinates, populated after rendering. */
+  radius?: number;
   radiusScale?: number;
   ringScale?: number;
   angleSpan?: number;
@@ -437,14 +439,14 @@ export type NestedSpec = {
   innerChartType: "PieChart";
 };
 
-export type ChartInstanceKind = "canvas" | "facet-cell" | "nested-child" | "virtual";
+export type ChartRelationshipInstanceKind = "canvas" | "facet-cell" | "nested-child" | "virtual";
 
 export type ChartRelationshipRecord = {
   id: string;
   nodeId: string | null;
   chartType: string;
   datasetId: string | null;
-  instanceKind: ChartInstanceKind;
+  instanceKind: ChartRelationshipInstanceKind;
   sourceChartId?: string;
   sourceTemplateId?: string;
   facetKey?: string;
@@ -701,6 +703,94 @@ export type Bounds = {
   height: number;
 };
 
+export type ChartInstanceId = string;
+export type ChartInstanceCoordinateSystem = "Cartesian" | "Polar";
+
+export type CompositeCompositionConfig = Omit<CompositionSpec, "members">;
+export type CompositeLayerConfig = Omit<LayerSpec, "children">;
+export type CompositeNestedConfig = Omit<NestedSpec, "parentChartNodeId"> & {
+  parentInstanceId?: ChartInstanceId;
+};
+
+export type CompositeChartConfig =
+  | {
+    type: "layer" | "concat" | "facet";
+    composition: CompositeCompositionConfig;
+    layer?: CompositeLayerConfig;
+    memberInstanceIds: ChartInstanceId[];
+  }
+  | {
+    type: "nested";
+    composition?: CompositeCompositionConfig;
+    nested: CompositeNestedConfig;
+    memberInstanceIds: ChartInstanceId[];
+  };
+
+export type ChartInstanceSpec =
+  | { kind: "chart"; chart: ChartSpec }
+  | { kind: "composite"; composite: CompositeChartConfig };
+
+export type ChartInstanceKind =
+  | "single"
+  | "composite-root"
+  | "composite-member"
+  | "nested-child";
+
+export type CartesianCoordinateBounds = {
+  type: "Cartesian";
+  plot: Bounds;
+  xAxis?: Bounds;
+  yAxis?: Bounds;
+};
+
+export type PolarCoordinateBounds = {
+  type: "Polar";
+  origin: Point;
+  innerRadius: number;
+  outerRadius: number;
+  startAngle: number;
+  endAngle: number;
+  angleSpan: number;
+  envelope: Bounds;
+};
+
+export type ChartCoordinateBounds = CartesianCoordinateBounds | PolarCoordinateBounds;
+
+export type ChartInnerBounds = {
+  marks: Bounds;
+  markGroups?: Record<string, Bounds>;
+};
+
+export type ChartInstanceBounds = {
+  space: "canvas";
+  /** This is the same geometry used by `.canvas-object-hit-target`. */
+  outer: Bounds;
+  coordinate: ChartCoordinateBounds;
+  inner: ChartInnerBounds;
+};
+
+export type ChartInstance = {
+  id: ChartInstanceId;
+  nodeId?: string;
+  kind: ChartInstanceKind;
+  datasetId: string | null;
+  coordinateSystem: ChartInstanceCoordinateSystem;
+  spec: ChartInstanceSpec;
+  /** Runtime renderer snapshot; group children are reconstructed from instance IDs. */
+  renderNode: CanvasNode;
+  bounds: ChartInstanceBounds;
+  parentInstanceId?: ChartInstanceId;
+  compositionId?: string;
+  revision: number;
+};
+
+export type ChartInstanceDocument = {
+  version: 1;
+  coordinateSpace: "canvas";
+  rootInstanceIds: ChartInstanceId[];
+  instances: ChartInstance[];
+};
+
 export type ParsedSvgLeafTemplateNode = {
   kind: "leaf";
   content: string;
@@ -828,7 +918,8 @@ export type Interaction =
   | PanInteraction;
 
 export type CanvasHistorySnapshot = {
-  nodes: CanvasNode[];
+  instanceDocument: ChartInstanceDocument;
+  nodes?: CanvasNode[];
   selectedIds: string[];
   editingGroupPath?: string[];
   relationships?: ChartRelationshipState;
