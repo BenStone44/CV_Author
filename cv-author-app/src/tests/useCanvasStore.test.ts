@@ -1962,6 +1962,38 @@ describe("composition coordinate editing", () => {
     expect(angularMembers.map((node) => [node.coordinateGuide?.angleOffset, node.coordinateGuide?.angleSpan])).toEqual([[0, 60], [60, 60]]);
   });
 
+  it("uses annular outlines instead of a rectangular selection box for Polar nodes", () => {
+    const inner = polarChart("polar-selection-inner", 100, 120);
+    const outer = polarChart("polar-selection-outer", 100, 120);
+    inner.coordinateGuide = {
+      ...inner.coordinateGuide!,
+      innerRadiusRatio: 0,
+      outerRadiusRatio: 0.5,
+    };
+    outer.coordinateGuide = {
+      ...outer.coordinateGuide!,
+      innerRadiusRatio: 0.5,
+      outerRadiusRatio: 1,
+    };
+    inner.chartSpec = {
+      ...inner.chartSpec!,
+      polarArea: { startAngle: 0, angleSpan: 120, innerRadius: 0, outerRadius: 100 },
+    };
+    outer.chartSpec = {
+      ...outer.chartSpec!,
+      polarArea: { startAngle: 0, angleSpan: 120, innerRadius: 100, outerRadius: 200 },
+    };
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    store.canvasNodes.value = [inner, outer];
+    store.selectedIds.value = [inner.id, outer.id];
+
+    expect(store.selectionPolarOutlines.value).toHaveLength(2);
+    expect(store.selectionPolarOutlines.value[0]?.path).toContain(" A 100 100 ");
+    expect(store.selectionPolarOutlines.value[1]?.path).toContain(" A 200 200 ");
+    expect(store.selectionPolarOutlines.value[1]?.path).toContain(" A 100 100 ");
+  });
+
   it("extends Polar layer and concat compositions without replacing their members", () => {
     const layerFirst = polarChart("repeat-polar-layer-first", 100);
     const layerSecond = polarChart("repeat-polar-layer-second", 800);

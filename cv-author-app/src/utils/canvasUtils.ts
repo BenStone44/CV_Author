@@ -6,6 +6,7 @@ import type {
   AbsoluteNodeFrame,
   ChartSpec,
 } from "../types";
+import { getChartEncodingSchema } from "./chartEncodingSchemas";
 
 export function clamp(value: number, min: number, max: number) {
   if (max < min) return min;
@@ -106,6 +107,148 @@ export function getNodeVisualSize(node: CanvasNode) {
   return { width: bounds.maxX - bounds.minX, height: bounds.maxY - bounds.minY };
 }
 
+export type PolarOccupiedGeometry = {
+  origin: Point;
+  startAngle: number;
+  endAngle: number;
+  angleSpan: number;
+  innerRadius: number;
+  outerRadius: number;
+  bounds: Bounds;
+  path: string;
+};
+
+function polarPoint(origin: Point, radius: number, angle: number): Point {
+  const radians = angle * Math.PI / 180;
+  return {
+    x: origin.x + Math.cos(radians) * radius,
+    y: origin.y + Math.sin(radians) * radius,
+  };
+}
+
+function angleWithinClockwiseSpan(angle: number, startAngle: number, angleSpan: number) {
+  if (angleSpan >= 360 - 0.0001) return true;
+  const offset = ((angle - startAngle) % 360 + 360) % 360;
+  return offset <= angleSpan + 0.0001;
+}
+
+function polarOccupiedPath(
+  origin: Point,
+  innerRadius: number,
+  outerRadius: number,
+  startAngle: number,
+  angleSpan: number,
+) {
+  const startOuter = polarPoint(origin, outerRadius, startAngle);
+  if (angleSpan >= 360 - 0.0001) {
+    const oppositeOuter = polarPoint(origin, outerRadius, startAngle + 180);
+    const outer = `M ${startOuter.x} ${startOuter.y} A ${outerRadius} ${outerRadius} 0 1 1 ${oppositeOuter.x} ${oppositeOuter.y} A ${outerRadius} ${outerRadius} 0 1 1 ${startOuter.x} ${startOuter.y} Z`;
+    if (innerRadius <= 0.0001) return outer;
+    const startInner = polarPoint(origin, innerRadius, startAngle);
+    const oppositeInner = polarPoint(origin, innerRadius, startAngle + 180);
+    return `${outer} M ${startInner.x} ${startInner.y} A ${innerRadius} ${innerRadius} 0 1 0 ${oppositeInner.x} ${oppositeInner.y} A ${innerRadius} ${innerRadius} 0 1 0 ${startInner.x} ${startInner.y} Z`;
+  }
+
+  const endAngle = startAngle + angleSpan;
+  const endOuter = polarPoint(origin, outerRadius, endAngle);
+  const largeArc = angleSpan > 180 ? 1 : 0;
+  if (innerRadius <= 0.0001) {
+    return `M ${startOuter.x} ${startOuter.y} A ${outerRadius} ${outerRadius} 0 ${largeArc} 1 ${endOuter.x} ${endOuter.y} L ${origin.x} ${origin.y} Z`;
+  }
+  const endInner = polarPoint(origin, innerRadius, endAngle);
+  const startInner = polarPoint(origin, innerRadius, startAngle);
+  return `M ${startOuter.x} ${startOuter.y} A ${outerRadius} ${outerRadius} 0 ${largeArc} 1 ${endOuter.x} ${endOuter.y} L ${endInner.x} ${endInner.y} A ${innerRadius} ${innerRadius} 0 ${largeArc} 0 ${startInner.x} ${startInner.y} Z`;
+}
+
+/**
+ * Resolves the occupied polar region in node-local coordinates. Prefer the
+ * renderer's final radii (including Donut holes and ring gaps); older nodes
+ * fall back to reversing the radial-concat ratio from the saved plot area.
+ */
+export function getPolarOccupiedGeometry(node: CanvasNode): PolarOccupiedGeometry | null {
+  const guide = node.coordinateGuide;
+  const plotArea = node.chartSpec?.plotArea;
+  const polarGuide = guide?.type === "Polar" ? guide : null;
+  const chartSchema = node.chartSpec ? getChartEncodingSchema(node.chartSpec.chartType) : null;
+  const declaredPolar = node.coordinateSystem?.type === "Polar"
+    || chartSchema?.coordinateSystem === "Polar";
+  if ((!polarGuide && !declaredPolar) || !plotArea) return null;
+  const origin = polarGuide?.origin ?? {
+    x: plotArea.x + plotArea.width / 2,
+    y: plotArea.y + plotArea.height / 2,
+  };
+  const composition = node.compositionSpec?.type === "concat" ? node.compositionSpec : null;
+  const memberCount = Math.max(composition?.members.length ?? 0, 1);
+  const memberIndex = Math.max(
+    composition?.members.findIndex((member) => member.nodeId === node.id) ?? 0,
+    0,
+  );
+  const radialInnerRatio = composition?.direction === "radial" ? memberIndex / memberCount : 0;
+  const radialOuterRatio = composition?.direction === "radial" ? (memberIndex + 1) / memberCount : 1;
+  const fallbackInnerRatio = chartSchema?.renderer === "donut"
+    ? (radialInnerRatio + radialOuterRatio) / 2
+    : radialInnerRatio;
+  const angularSpan = composition?.direction === "angular"
+    ? (composition.polarAngleSpan ?? 360) / memberCount
+    : composition?.polarAngleSpan;
+  const angularOffset = composition?.direction === "angular"
+    ? (composition.polarAngleOffset ?? 0) + angularSpan! * memberIndex
+    : composition?.polarAngleOffset;
+
+  const renderedPolarArea = node.chartSpec?.polarArea;
+  const hasRenderedRadii = !!renderedPolarArea
+    && Number.isFinite(renderedPolarArea.innerRadius)
+    && Number.isFinite(renderedPolarArea.outerRadius)
+    && renderedPolarArea.outerRadius > 0;
+  const outerRatio = Math.max(0.01, Math.min(polarGuide?.outerRadiusRatio ?? radialOuterRatio, 1));
+  const innerRatio = Math.max(0, Math.min(polarGuide?.innerRadiusRatio ?? fallbackInnerRatio, outerRatio));
+  const renderedOuterRadius = Math.max(0, Math.min(plotArea.width, plotArea.height) / 2);
+  if (!hasRenderedRadii && renderedOuterRadius <= 0) return null;
+  const baseRadius = renderedOuterRadius / outerRatio;
+  const innerRadius = hasRenderedRadii
+    ? Math.max(0, renderedPolarArea!.innerRadius)
+    : baseRadius * innerRatio;
+  const outerRadius = hasRenderedRadii
+    ? Math.max(innerRadius, renderedPolarArea!.outerRadius)
+    : baseRadius * outerRatio;
+  const configuredStartAngle = hasRenderedRadii && Number.isFinite(renderedPolarArea!.startAngle)
+    ? renderedPolarArea!.startAngle
+    : polarGuide?.angleOffset ?? angularOffset ?? 0;
+  const configuredAngleSpan = hasRenderedRadii && Number.isFinite(renderedPolarArea!.angleSpan)
+    ? renderedPolarArea!.angleSpan
+    : polarGuide?.angleSpan ?? angularSpan;
+  const startAngle = ((configuredStartAngle % 360) + 360) % 360;
+  const angleSpan = Number.isFinite(configuredAngleSpan)
+    ? Math.max(1, Math.min(configuredAngleSpan!, 360))
+    : 360;
+  const endAngle = startAngle + angleSpan;
+
+  const angles = [startAngle, endAngle, 0, 90, 180, 270]
+    .filter((angle, index, values) =>
+      angleWithinClockwiseSpan(angle, startAngle, angleSpan)
+      && values.indexOf(angle) === index,
+    );
+  const points = angles.flatMap((angle) => [
+    polarPoint(origin, outerRadius, angle),
+    ...(innerRadius > 0 ? [polarPoint(origin, innerRadius, angle)] : []),
+  ]);
+  if (innerRadius <= 0) points.push(origin);
+  const minX = Math.min(...points.map((point) => point.x));
+  const minY = Math.min(...points.map((point) => point.y));
+  const maxX = Math.max(...points.map((point) => point.x));
+  const maxY = Math.max(...points.map((point) => point.y));
+  return {
+    origin,
+    startAngle,
+    endAngle,
+    angleSpan,
+    innerRadius,
+    outerRadius,
+    bounds: { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY },
+    path: polarOccupiedPath(origin, innerRadius, outerRadius, startAngle, angleSpan),
+  };
+}
+
 // Selection geometry intentionally excludes Cartesian axis decorations. Axis
 // labels and tick marks are rendered outside the chart plot area, but they are
 // not part of the Chart's resize/rotate frame.
@@ -174,6 +317,7 @@ export function cloneChartSpec(chartSpec: ChartSpec | null | undefined) {
       }
       : undefined,
     plotArea: chartSpec.plotArea ? { ...chartSpec.plotArea } : undefined,
+    polarArea: chartSpec.polarArea ? { ...chartSpec.polarArea } : undefined,
     styleTokens: chartSpec.styleTokens
       ? { ...chartSpec.styleTokens, palette: [...chartSpec.styleTokens.palette] }
       : undefined,

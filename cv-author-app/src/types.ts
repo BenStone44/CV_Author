@@ -118,6 +118,13 @@ export type ChartPlotArea = {
   height: number;
 };
 
+export type ChartPolarArea = {
+  startAngle: number;
+  angleSpan: number;
+  innerRadius: number;
+  outerRadius: number;
+};
+
 export type ChartScaleSpec = {
   type: "utc" | "linear" | "log" | "point";
   domain: [string, string] | [number, number] | string[];
@@ -235,6 +242,7 @@ export type ChartSpec = {
   seriesFields?: ChartEncoding[];
   scales?: Partial<Record<EncodingChannel, ChartScaleSpec>>;
   plotArea?: ChartPlotArea;
+  polarArea?: ChartPolarArea;
   styleTokens?: ChartStyleTokens;
   renderer?: ChartRendererReference;
   filters?: Record<string, string>;

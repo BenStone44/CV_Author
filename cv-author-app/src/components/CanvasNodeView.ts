@@ -1,6 +1,6 @@
 import { defineComponent, h, type PropType } from "vue";
 import type { CanvasNode, CoordinateChannel, EncodingChannel, NestedRenderPlacement, Point } from "../types";
-import { getNodeSelectionBounds, getNodeTransform, getLeafNodeTransform } from "../utils/canvasUtils";
+import { getNodeSelectionBounds, getNodeTransform, getLeafNodeTransform, getPolarOccupiedGeometry } from "../utils/canvasUtils";
 import { CanvasCoordinateSystemLayer } from "./CartesianCoordinateSystem";
 import { PolarCoordinateSystem } from "./PolarCoordinateSystem";
 
@@ -493,25 +493,42 @@ export const CanvasNodeView: any = defineComponent({
         }
         return h("g", { ...contentProps, innerHTML: content });
       };
+      const hitTarget = (hasInteractiveMarks = false) => {
+        const pointerEvents = hasInteractiveMarks ? "none" : "all";
+        const polarGeometry = getPolarOccupiedGeometry(props.node);
+        if (polarGeometry) {
+          return h("path", {
+            d: polarGeometry.path,
+            fill: "transparent",
+            "fill-rule": "evenodd",
+            class: "canvas-object-hit-target",
+            "data-hit-target-shape": "polar",
+            "pointer-events": pointerEvents,
+            style: { pointerEvents },
+          });
+        }
+        const hitBounds = getNodeSelectionBounds(props.node);
+        return h("rect", {
+          x: hitBounds.minX,
+          y: hitBounds.minY,
+          width: hitBounds.width,
+          height: hitBounds.height,
+          fill: "transparent",
+          class: "canvas-object-hit-target",
+          "data-hit-target-shape": "rect",
+          "pointer-events": pointerEvents,
+          style: { pointerEvents },
+        });
+      };
 
       if (props.node.kind === "leaf") {
         const hasInteractiveMarks = !!props.node.renderedContent
           && props.editingChartId === props.node.id
           && !!markHandler;
         const isChartPlaceholder = !!props.node.chartSpec && !props.node.renderedContent;
-        const hitBounds = getNodeSelectionBounds(props.node);
         return h("g", { ...sharedProps }, [
           // Keep a stable hit area for thin strokes and hollow SVG shapes.
-          h("rect", {
-            x: hitBounds.minX,
-            y: hitBounds.minY,
-            width: hitBounds.width,
-            height: hitBounds.height,
-            fill: "transparent",
-            class: "canvas-object-hit-target",
-            "pointer-events": hasInteractiveMarks ? "none" : "all",
-            style: { pointerEvents: hasInteractiveMarks ? "none" : "all" },
-          }),
+          hitTarget(hasInteractiveMarks),
           ...(isChartPlaceholder ? [h("rect", {
             class: "chart-placeholder-frame",
             x: props.node.contentMinX,
@@ -526,18 +543,9 @@ export const CanvasNodeView: any = defineComponent({
       }
 
       if (props.node.renderedContent && !isEditingAncestor) {
-        const hitBounds = getNodeSelectionBounds(props.node);
         const hasInteractiveMarks = props.editingChartId === props.node.id && !!markHandler;
         return h("g", sharedProps, [
-          h("rect", {
-            class: "canvas-object-hit-target",
-            x: hitBounds.minX,
-            y: hitBounds.minY,
-            width: hitBounds.width,
-            height: hitBounds.height,
-            fill: "transparent",
-            "pointer-events": hasInteractiveMarks ? "none" : "all",
-          }),
+          hitTarget(hasInteractiveMarks),
           renderContent(props.node.renderedContent, hasInteractiveMarks),
         ]);
       }
@@ -571,18 +579,7 @@ export const CanvasNodeView: any = defineComponent({
             })]
             : []),
           ...(nodeInteractive
-            ? [h("rect", (() => {
-              const hitBounds = getNodeSelectionBounds(props.node);
-              return {
-              class: "canvas-object-hit-target",
-              x: hitBounds.minX,
-              y: hitBounds.minY,
-              width: hitBounds.width,
-              height: hitBounds.height,
-              fill: "transparent",
-              "pointer-events": "all",
-              };
-            })())]
+            ? [hitTarget()]
             : []),
           ...(!props.node.renderedContent && props.node.chartSpec
             ? [h("rect", {

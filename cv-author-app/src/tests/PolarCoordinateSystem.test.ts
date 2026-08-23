@@ -4,7 +4,9 @@ import {
   polarAngleSpanFromPoint,
   PolarCoordinateSystem,
 } from "../components/PolarCoordinateSystem";
+import { CanvasNodeView } from "../components/CanvasNodeView";
 import type { CanvasLeafNode } from "../types";
+import { getPolarOccupiedGeometry } from "../utils/canvasUtils";
 
 function polarNode(overrides: Partial<CanvasLeafNode> = {}): CanvasLeafNode {
   return {
@@ -166,5 +168,160 @@ describe("independent Polar coordinate system component", () => {
     });
 
     expect(render()).toBeNull();
+  });
+
+  it("uses the occupied angular and radial ranges for the polar hit target", () => {
+    const node = polarNode({
+      renderedContent: '<path data-mark-role="arc"/>',
+      coordinateGuide: {
+        type: "Polar",
+        origin: { x: 110, y: 100 },
+        angleOffset: 90,
+        angleSpan: 90,
+        innerRadiusRatio: 0.5,
+        outerRadiusRatio: 1,
+      },
+      chartSpec: {
+        chartType: "PieChart",
+        datasetId: "measurements",
+        encodings: { theta: { field: "value", type: "quantitative" } },
+        plotArea: { x: 30, y: 20, width: 160, height: 160 },
+        polarArea: { startAngle: 90, angleSpan: 90, innerRadius: 40, outerRadius: 80 },
+      },
+    });
+
+    const geometry = getPolarOccupiedGeometry(node)!;
+    expect(geometry).toMatchObject({
+      startAngle: 90,
+      endAngle: 180,
+      innerRadius: 40,
+      outerRadius: 80,
+    });
+    expect(geometry.bounds.minX).toBe(30);
+    expect(geometry.bounds.minY).toBeCloseTo(100);
+    expect(geometry.bounds.maxX).toBeCloseTo(110);
+    expect(geometry.bounds.maxY).toBe(180);
+  });
+
+  it("renders a sector or annulus path instead of a frame-sized polar hit rectangle", () => {
+    const node = polarNode({
+      renderedContent: '<path data-mark-role="arc"/>',
+      coordinateGuide: {
+        type: "Polar",
+        origin: { x: 110, y: 100 },
+        angleOffset: 0,
+        angleSpan: 120,
+        innerRadiusRatio: 0.5,
+        outerRadiusRatio: 1,
+      },
+      chartSpec: {
+        chartType: "PieChart",
+        datasetId: "measurements",
+        encodings: { theta: { field: "value", type: "quantitative" } },
+        plotArea: { x: 30, y: 20, width: 160, height: 160 },
+        polarArea: { startAngle: 0, angleSpan: 120, innerRadius: 40, outerRadius: 80 },
+      },
+    });
+    const render = (CanvasNodeView as any).setup({
+      node,
+      interactive: true,
+      selected: false,
+      editingGroupPath: [],
+      editingChartId: null,
+      draggingNodeId: null,
+      selectedIds: [],
+      nestedPlacements: [],
+      nestedRenderedChildIds: new Set<string>(),
+      onNodePointerDown: vi.fn(),
+      onNodeDoubleClick: null,
+      onNodeContextMenu: null,
+      onMarkPointerDown: null,
+      onEditingBackgroundPointerDown: null,
+    });
+
+    const hitTarget = render().children[0];
+    expect(hitTarget.type).toBe("path");
+    expect(hitTarget.props.d).toContain(" A 80 80 ");
+    expect(hitTarget.props.d).toContain(" A 40 40 ");
+    expect(hitTarget.props["fill-rule"]).toBe("evenodd");
+    expect(hitTarget.props["data-hit-target-shape"]).toBe("polar");
+  });
+
+  it("uses the Polar chart contract when a migrated node has no coordinate guide", () => {
+    const node = polarNode({
+      renderedContent: '<path data-mark-role="arc"/>',
+      coordinateGuide: null,
+      chartSpec: {
+        chartType: "DonutChart",
+        datasetId: "measurements",
+        encodings: { theta: { field: "value", type: "quantitative" } },
+        plotArea: { x: 84, y: 24, width: 152, height: 152 },
+        polarArea: { startAngle: 0, angleSpan: 360, innerRadius: 38, outerRadius: 76 },
+      },
+    });
+    const render = (CanvasNodeView as any).setup({
+      node,
+      interactive: true,
+      selected: false,
+      editingGroupPath: [],
+      editingChartId: null,
+      draggingNodeId: null,
+      selectedIds: [],
+      nestedPlacements: [],
+      nestedRenderedChildIds: new Set<string>(),
+      onNodePointerDown: vi.fn(),
+      onNodeDoubleClick: null,
+      onNodeContextMenu: null,
+      onMarkPointerDown: null,
+      onEditingBackgroundPointerDown: null,
+    });
+
+    const hitTarget = render().children[0];
+    expect(hitTarget.type).toBe("path");
+    expect(hitTarget.props.d).toContain(" A 76 76 ");
+    expect(hitTarget.props.d).toContain(" A 38 38 ");
+    expect(hitTarget.props["data-hit-target-shape"]).toBe("polar");
+  });
+
+  it("recovers an annular hit target from a migrated radial concat", () => {
+    const node = polarNode({
+      id: "outer-ring",
+      renderedContent: '<path data-mark-role="arc"/>',
+      coordinateGuide: null,
+      coordinateSystem: {
+        id: "coordinate:radial",
+        type: "Polar",
+        ownerNodeId: "inner-ring",
+        members: [
+          { nodeId: "inner-ring", channels: ["angle", "radius"] },
+          { nodeId: "outer-ring", channels: ["angle", "radius"] },
+        ],
+        sharedChannels: ["angle"],
+      },
+      compositionSpec: {
+        id: "composition:radial",
+        type: "concat",
+        direction: "radial",
+        polarAngleSpan: 120,
+        members: [
+          { nodeId: "inner-ring", sourceNodeId: "inner-ring", sharedChannels: ["angle"] },
+          { nodeId: "outer-ring", sourceNodeId: "outer-ring", sharedChannels: ["angle"] },
+        ],
+        sharedChannels: ["angle"],
+      },
+      chartSpec: {
+        chartType: "PieChart",
+        datasetId: "measurements",
+        encodings: { theta: { field: "value", type: "quantitative" } },
+        plotArea: { x: 84, y: 24, width: 152, height: 152 },
+      },
+    });
+
+    const geometry = getPolarOccupiedGeometry(node)!;
+    expect(geometry.innerRadius).toBe(38);
+    expect(geometry.outerRadius).toBe(76);
+    expect(geometry.angleSpan).toBe(120);
+    expect(geometry.path).toContain(" A 76 76 ");
+    expect(geometry.path).toContain(" A 38 38 ");
   });
 });

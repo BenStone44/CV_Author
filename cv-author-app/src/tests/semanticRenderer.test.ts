@@ -309,6 +309,25 @@ describe("semantic Case 1 renderers", () => {
     expect(full.content.match(/data-mark-role="arc"/g)).toHaveLength(40);
     expect(partial.content.match(/data-mark-role="arc"/g)).toHaveLength(40);
     expect(partial.content).not.toBe(full.content.replaceAll("full-pie", "partial-pie"));
+    expect(partial.polarArea).toMatchObject({
+      startAngle: 0,
+      angleSpan: 270,
+      innerRadius: 0,
+      outerRadius: partial.plotArea.width / 2,
+    });
+
+    const donut = renderDeterministicChart({
+      chartId: "donut",
+      width: 320,
+      height: 180,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Polar", origin: { x: 160, y: 90 }, angleSpan: 270 },
+      chartSpec: { ...chartSpec, chartType: "DonutChart" },
+      dataset,
+    });
+    expect(donut.polarArea?.innerRadius).toBeGreaterThan(0);
+    expect(donut.polarArea?.outerRadius).toBe(donut.plotArea.width / 2);
   });
 
   it("renders scatter marks without duplicate axes", () => {

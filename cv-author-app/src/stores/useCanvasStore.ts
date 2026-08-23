@@ -89,6 +89,9 @@ import {
   createCanvasNodesSvgMarkup,
   cloneChartSpec,
   getNodeSelectionBounds,
+  getPolarOccupiedGeometry,
+  getLeafNodeTransform,
+  getNodeTransform,
 } from "../utils/canvasUtils";
 import { chartScalePosition, renderDeterministicChart, renderLayerChart, renderNestedPie } from "../utils/semanticRenderer";
 import {
@@ -1500,6 +1503,24 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       height: visualBounds.height * node.scaleY,
       rotation: node.rotation,
     };
+  });
+  const selectionPolarOutlines = computed(() => {
+    if (semanticSelection.value || selectedIds.value.length === 0) return [];
+    const nodes = selectedIds.value.flatMap((id) => {
+      const node = getSelectionNode(id);
+      return node ? [node] : [];
+    });
+    if (nodes.length !== selectedIds.value.length) return [];
+    const outlines = nodes.flatMap((node) => {
+      const geometry = getPolarOccupiedGeometry(node);
+      if (!geometry) return [];
+      return [{
+        key: node.id,
+        path: geometry.path,
+        transform: node.kind === "leaf" ? getLeafNodeTransform(node) : getNodeTransform(node),
+      }];
+    });
+    return outlines.length === nodes.length ? outlines : [];
   });
   const selectionRotation = computed(() => {
     const node = selectedNodes.value[0];
@@ -4378,6 +4399,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         ...chartSpec,
         scales: undefined,
         plotArea: undefined,
+        polarArea: undefined,
         renderer: {
           kind: "deterministic-chart",
           version: contract.rendererVersion,
@@ -4393,6 +4415,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         ...chartSpec,
         scales: undefined,
         plotArea: undefined,
+        polarArea: undefined,
         renderer: undefined,
       };
       return;
@@ -4404,6 +4427,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         ...chartSpec,
         scales: undefined,
         plotArea: undefined,
+        polarArea: undefined,
         renderer: {
           kind: "deterministic-chart",
           version: contract.rendererVersion,
@@ -4490,6 +4514,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         ...syncedChartSpec,
         scales: result.scales,
         plotArea: result.plotArea,
+        polarArea: result.polarArea,
         renderer: {
           kind: "deterministic-chart",
           version: contract.rendererVersion,
@@ -4500,6 +4525,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         ...persistedSyncedChartSpec,
         scales: result.scales,
         plotArea: result.plotArea,
+        polarArea: result.polarArea,
         renderer: renderingChartSpec.renderer,
       };
       node.chartSpec = renderedChartSpec;
@@ -4523,6 +4549,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         ...persistedSyncedChartSpec,
         scales: undefined,
         plotArea: undefined,
+        polarArea: undefined,
         renderer: {
           kind: "deterministic-chart",
           version: contract.rendererVersion,
@@ -6333,6 +6360,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     selectedNodes,
     selectionBounds,
     selectionFrame,
+    selectionPolarOutlines,
     selectionRotation,
     selectedPolarAngleSpan,
     editingGroupTransform,

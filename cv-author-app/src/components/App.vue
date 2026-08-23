@@ -89,6 +89,7 @@ const {
   selectedNodes,
   selectionBounds,
   selectionFrame,
+  selectionPolarOutlines,
   selectionRotation,
   selectedPolarAngleSpan,
   editingGroupTransform,
@@ -1973,7 +1974,19 @@ onBeforeUnmount(() => {
                   :vector-effect="'non-scaling-stroke'"
                 />
                 <g v-if="selectionFrame">
+                  <template v-if="selectionPolarOutlines.length > 0">
+                    <path
+                      v-for="outline in selectionPolarOutlines"
+                      :key="`polar-selection-${outline.key}`"
+                      class="selection-box selection-box--polar"
+                      :d="outline.path"
+                      :transform="outline.transform"
+                      fill-rule="evenodd"
+                      :vector-effect="'non-scaling-stroke'"
+                    />
+                  </template>
                   <rect
+                    v-else
                     class="selection-box"
                     :class="{ 'selection-box--semantic': !!semanticSelection }"
                     :x="selectionFrame.x"

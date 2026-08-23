@@ -1,7 +1,7 @@
 import { extent } from "d3-array";
 import { scaleLinear, scaleLog, scalePoint, scaleUtc } from "d3-scale";
 import { arc, pie } from "d3-shape";
-import type { CartesianCoordinateGuide, ChartEncoding, ChartSpec, Dataset, LayerSpec, NestedSpec, ChartPlotArea, ChartScaleSpec, CoordinateGuide, MarkGroupSharedConfig } from "../types";
+import type { CartesianCoordinateGuide, ChartEncoding, ChartSpec, Dataset, LayerSpec, NestedSpec, ChartPlotArea, ChartPolarArea, ChartScaleSpec, CoordinateGuide, MarkGroupSharedConfig } from "../types";
 import { renderLineChart, type LineRenderInput } from "./lineRenderer";
 import { cartesianAxisEncoding, normalizeBarChartVariant, normalizeChartTemplate } from "./chartTemplates";
 import { getChartEncodingSchema, type ChartRendererKey } from "./chartEncodingSchemas";
@@ -382,6 +382,12 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
   const angleOffset = input.coordinateGuide?.type === "Polar" ? input.coordinateGuide.angleOffset ?? 0 : 0;
   const layoutStartAngle = (-270 + angleOffset) * Math.PI / 180;
   const layoutEndAngle = layoutStartAngle + angleSpan * Math.PI / 180;
+  const polarArea = (occupiedInnerRadius: number, occupiedOuterRadius: number): ChartPolarArea => ({
+    startAngle: angleOffset,
+    angleSpan,
+    innerRadius: occupiedInnerRadius,
+    outerRadius: occupiedOuterRadius,
+  });
   if (angleFields.length > 0) {
     const flattenFields = (input.chartSpec.flattenFields ?? []).filter((field) =>
       input.dataset.columns.some((column) => column.name === field),
@@ -443,6 +449,7 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
     return {
       content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="pie" data-renderer="deterministic-chart@1" data-theta-fields="${esc(angleFields.map((encoding) => encoding.field).join("|"))}" data-angle-fields="${esc(angleFields.map((encoding) => encoding.field).join("|"))}" data-flatten-fields="${esc(flattenFields.join("|"))}" data-radius-mode="${radiusMode}">${arcs}</g>`,
       plotArea: { x: cx - outerRadius, y: cy - outerRadius, width: outerRadius * 2, height: outerRadius * 2 },
+      polarArea: polarArea(innerRadius, outerRadius),
       scales: undefined,
     };
   }
@@ -479,9 +486,14 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
       return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="arc" data-mark-group-id="mark-group:${esc(input.chartId)}:arc" data-row-key="${esc(key(input.dataset, row) || String(index))}" data-series-key="${esc(ringKey)}" data-category-key="${esc(categoryKey)}" data-radius-field="${esc(radius?.field ?? "")}" data-radius-value="${Number.isFinite(radiusValue) ? radiusValue : ""}" d="${path(datum) ?? ""}" transform="translate(${cx} ${cy})" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 1)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
     }).join("");
   }).join("");
+  const occupiedInnerRadius = innerRadius + (donut ? ringWidth : 0);
+  const occupiedOuterRadius = ring
+    ? occupiedInnerRadius + ringWidth * Math.max(ringValues.length - 1, 0) + ringWidth * 0.92
+    : outerRadius;
   return {
     content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="${donut ? "donut" : "pie"}" data-renderer="deterministic-chart@1">${arcs}</g>`,
     plotArea: { x: cx - outerRadius, y: cy - outerRadius, width: outerRadius * 2, height: outerRadius * 2 },
+    polarArea: polarArea(occupiedInnerRadius, occupiedOuterRadius),
     scales: undefined,
   };
 }
@@ -590,6 +602,7 @@ export type GenericRenderInput = {
 export type DeterministicChartResult = {
   content: string;
   plotArea: ChartPlotArea;
+  polarArea?: ChartPolarArea;
   scales?: { x: ChartScaleSpec; y: ChartScaleSpec };
 };
 
