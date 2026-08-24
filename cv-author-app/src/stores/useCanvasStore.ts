@@ -456,6 +456,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   }
 
   function relationshipCoordinateSystem(nodeId: string): CoordinateSystemSpec | null {
+    const sourceNode = findCanvasNode(nodeId);
     const axisEntries = axesForChart(nodeId);
     if (axisEntries.length === 0) return null;
     const memberChannels = new Map<string, CoordinateChannel[]>();
@@ -484,6 +485,14 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       : sharedAxisIds.length > 0
         ? chartsForAxis(sharedAxisIds[0]!)[0]?.chart.nodeId ?? nodeId
         : nodeId;
+    const compositionMembers = sourceNode?.compositionSpec?.members
+      .map((member) => findCanvasNode(member.nodeId))
+      .filter((member): member is CanvasNode => !!member) ?? [];
+    const polarMembers = [sourceNode, ...compositionMembers]
+      .filter((member, index, all): member is CanvasNode => !!member && all.findIndex((candidate) => candidate?.id === member.id) === index);
+    const polarOuterRadius = axisEntries[0]?.axis.coordinateType === "Polar"
+      ? Math.max(0, ...polarMembers.map((member) => getPolarOccupiedGeometry(member)?.outerRadius ?? 0))
+      : 0;
     return {
       id: sharedAxisIds.length > 0
         ? `coordinate:${sharedAxisIds.slice().sort().join("|")}`
@@ -492,6 +501,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       ownerNodeId,
       members: Array.from(memberChannels, ([memberNodeId, channels]) => ({ nodeId: memberNodeId, channels })),
       sharedChannels: Array.from(new Set(sharedChannels)),
+      ...(polarOuterRadius > 0 ? { polarOuterRadius } : {}),
     };
   }
 
@@ -591,6 +601,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       .map((member) => findCanvasNode(member.nodeId))
       .filter((member): member is CanvasNode => !!member);
     if (members.length === 0) return null;
+    if (editingCompositionId.value === spec.id) return [source];
     if ((spec.type === "concat" || spec.type === "layer") && !spec.sharedChannels.includes(channel)) return [source];
     return members;
   }
@@ -1093,7 +1104,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           }
         });
       } else if (guide.type === "Polar") {
-        const model = createPolarCoordinateSystemModel(node, viewZoom.value);
+        const model = createPolarCoordinateSystemModel(
+          node,
+          viewZoom.value,
+          !node.compositionSpec || editingCompositionId.value !== node.compositionSpec.id,
+        );
         if (!model) return;
         const worldOrigin = nodeLocalToSelectionScopePoint(node, model.origin);
         const worldRadiusEnd = nodeLocalToSelectionScopePoint(node, model.radiusEnd);
@@ -1331,9 +1346,18 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const selectedNodes = computed(() =>
     selectedIds.value.map((id) => getSelectionNode(id)).filter((n): n is CanvasNode => !!n),
   );
-  const axisBindingNode = computed(() =>
-    axisBindingTarget.value ? findCanvasNode(axisBindingTarget.value.nodeId) : null,
-  );
+  const axisBindingNode = computed(() => {
+    const target = axisBindingTarget.value ? findCanvasNode(axisBindingTarget.value.nodeId) : null;
+    if (!target) return null;
+    const composition = target.compositionSpec;
+    if (composition?.type !== "layer" && composition?.type !== "concat") return target;
+    if (editingCompositionId.value === composition.id) return target;
+    return findCanvasNode(target.coordinateSystem?.ownerNodeId ?? "")
+      ?? composition.members
+        .map((member) => findCanvasNode(member.nodeId))
+        .find((member): member is CanvasNode => !!member)
+      ?? target;
+  });
   const axisBindingDataset = computed(() => {
     const datasetId = axisBindingNode.value?.chartSpec?.datasetId;
     return datasetId ? getDataset(datasetId) : activeDataset.value;
@@ -1689,7 +1713,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (!polarAngleInputVisible.value) return null;
     const node = selectedNodes.value.find((item) => item.coordinateGuide?.type === "Polar");
     if (!node) return null;
-    const model = createPolarCoordinateSystemModel(node, selectionOverlayZoom.value);
+    const model = createPolarCoordinateSystemModel(
+      node,
+      selectionOverlayZoom.value,
+      !node.compositionSpec || editingCompositionId.value !== node.compositionSpec.id,
+    );
     if (!model) return null;
     let canvasPoint = nodeLocalToSelectionScopePoint(node, model.upperRadiusEnd);
     if (editingGroupPath.value.length > 0) canvasPoint = transformPoint(editingGroupMatrix.value, canvasPoint);
@@ -2070,7 +2098,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           sharedConfig: { opacity: 1, ...patch },
         }],
       };
-      renderChartNode(node);
+      renderChartNode(node, !(node.compositionSpec
+        && editingCompositionId.value === node.compositionSpec.id));
       registerChartRelationship(node);
       return true;
     }
@@ -2084,7 +2113,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       }
     });
     if (node.layerSpec) renderSemanticNode(node);
-    else renderChartNode(node);
+    else renderChartNode(node, !(node.compositionSpec
+      && editingCompositionId.value === node.compositionSpec.id));
     registerChartRelationship(node);
     return true;
   }
@@ -2123,6 +2153,12 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   }
 
   function encodingTargets(node: CanvasNode) {
+    if (node.compositionSpec?.type === "layer" || node.compositionSpec?.type === "concat") {
+      if (editingCompositionId.value === node.compositionSpec.id) return node.chartSpec ? [node] : [];
+      return node.compositionSpec.members
+        .map((member) => findCanvasNode(member.nodeId))
+        .filter((member): member is CanvasNode => !!member?.chartSpec);
+    }
     return dimensionDecisionTargets(node);
   }
 
@@ -2137,9 +2173,18 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       if (!target.chartSpec) return;
       target.llmRenderer = null;
       target.chartSpec = update(target, target.chartSpec);
-      if (render) renderSharedCoordinateComposition(target);
       registerChartRelationship(target);
     });
+    if (render) {
+      const owner = (node.compositionSpec?.type === "layer" || node.compositionSpec?.type === "concat")
+        && editingCompositionId.value !== node.compositionSpec.id
+        ? findCanvasNode(node.coordinateSystem?.ownerNodeId ?? "") ?? targets[0] ?? node
+        : null;
+      if (owner) renderSharedCoordinateComposition(owner);
+      else if ((node.compositionSpec?.type === "layer" || node.compositionSpec?.type === "concat")
+        && editingCompositionId.value === node.compositionSpec.id) targets.forEach((target) => renderChartNode(target, false));
+      else targets.forEach((target) => renderSharedCoordinateComposition(target));
+    }
     reconcileRelationshipNodes(canvasNodes.value);
   }
 
@@ -4375,6 +4420,25 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       if (owner.coordinateGuide?.type !== "Polar") alignConcatPlotLayout(owner, members);
     }
     members.forEach((member) => renderChartNode(member, true));
+    if (owner.coordinateSystem?.type === "Polar") {
+      const outerRadius = Math.max(
+        0,
+        ...members.map((member) => getPolarOccupiedGeometry(member)?.outerRadius ?? 0),
+      );
+      const sharedOuterRadius = outerRadius > 0 ? outerRadius : undefined;
+      if (owner.compositionSpec?.type === "layer" || owner.compositionSpec?.type === "concat") {
+        members.forEach((member) => {
+          if (member.compositionSpec?.type === "layer" || member.compositionSpec?.type === "concat") {
+            member.compositionSpec.polarOuterRadius = sharedOuterRadius;
+          }
+        });
+      }
+      members.forEach((member) => {
+        if (member.coordinateSystem?.type === "Polar") {
+          member.coordinateSystem.polarOuterRadius = sharedOuterRadius;
+        }
+      });
+    }
   }
 
   function renderChartNode(node: CanvasNode, useLayerScales = true) {
@@ -5309,6 +5373,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       setSelection(selectParent && member ? [member.id] : []);
       semanticSelection.value = null;
       axisBindingTarget.value = null;
+      if (member) renderSharedCoordinateComposition(member);
       return true;
     }
     return exitGroupEditing(selectParent);
@@ -5466,6 +5531,13 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (event.button !== 0 || !guide) return;
     if (guide.type === "Cartesian" && axis !== "x" && axis !== "y") return;
     if (guide.type === "Polar" && axis !== "radius" && axis !== "ring") return;
+    if (guide.type === "Polar"
+      && (node.compositionSpec?.type === "layer" || node.compositionSpec?.type === "concat")
+      && editingCompositionId.value !== node.compositionSpec.id
+      && !node.compositionSpec.sharedChannels.includes(axis)) return;
+    if (guide.type === "Cartesian"
+      && node.compositionSpec?.type === "concat"
+      && !node.compositionSpec.sharedChannels.includes(axis)) return;
     polarAngleInputVisible.value = false;
     const scopeGroupId = editingGroupPath.value.at(-1);
     interaction.value = {
@@ -5483,6 +5555,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   }
   function onPolarAnglePointerDown(node: CanvasNode, event: PointerEvent) {
     if (event.button !== 0 || node.coordinateGuide?.type !== "Polar") return;
+    if ((node.compositionSpec?.type === "layer" || node.compositionSpec?.type === "concat")
+      && editingCompositionId.value !== node.compositionSpec.id
+      && !node.compositionSpec.sharedChannels.includes("angle")) return;
     event.preventDefault();
     event.stopPropagation();
     rotationInputVisible.value = false;
@@ -5543,7 +5618,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const node = selectedNodes.value.find((item) => item.coordinateGuide?.type === "Polar");
     if (!node || node.coordinateGuide?.type !== "Polar") return;
     pushCanvasHistory();
-    if (node.compositionSpec?.type === "concat") {
+    if ((node.compositionSpec?.type === "layer" || node.compositionSpec?.type === "concat")
+      && editingCompositionId.value !== node.compositionSpec.id) {
       node.compositionSpec.polarAngleSpan = angleSpan;
       const owner = findCanvasNode(node.coordinateSystem?.ownerNodeId ?? "") ?? node;
       renderSharedCoordinateComposition(owner);
@@ -5553,7 +5629,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     coordinateTargets(node.id, "angle").forEach((member) => {
       if (member.coordinateGuide?.type !== "Polar") return;
       member.coordinateGuide.angleSpan = angleSpan;
-      renderChartNode(member);
+      renderChartNode(member, editingCompositionId.value === member.compositionSpec?.id ? false : true);
     });
     polarAngleInputVisible.value = true;
   }
@@ -5650,13 +5726,15 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       const binding = bindingForChartChannel(member.id, ci.axis);
       if (binding) axisIds.add(binding.axisId);
     });
-    axisIds.forEach((axisId) => {
-      dispatchRelationship({
-        type: "update-axis",
-        axisId,
-        changes: { config: { scale: nextScale } },
+    if (!node.compositionSpec || editingCompositionId.value !== node.compositionSpec.id) {
+      axisIds.forEach((axisId) => {
+        dispatchRelationship({
+          type: "update-axis",
+          axisId,
+          changes: { config: { scale: nextScale } },
+        });
       });
-    });
+    }
     targets.forEach((member) => {
       const memberGuide = member.coordinateGuide;
       if (!memberGuide) return;
@@ -5664,8 +5742,17 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       else if (memberGuide.type === "Cartesian" && ci.axis === "y") memberGuide.yScale = nextScale;
       else if (memberGuide.type === "Polar" && ci.axis === "radius") memberGuide.radiusScale = nextScale;
       else if (memberGuide.type === "Polar" && ci.axis === "ring") memberGuide.ringScale = nextScale;
-      renderChartNode(member);
     });
+    if ((node.compositionSpec?.type === "layer" || node.compositionSpec?.type === "concat")
+      && editingCompositionId.value !== node.compositionSpec.id) {
+      const owner = findCanvasNode(node.coordinateSystem?.ownerNodeId ?? "") ?? node;
+      renderSharedCoordinateComposition(owner);
+    } else {
+      targets.forEach((member) => renderChartNode(
+        member,
+        editingCompositionId.value === member.compositionSpec?.id ? false : true,
+      ));
+    }
   }
   function updatePolarAngleInteraction(currentPoint: Point, pi: PolarAngleInteraction) {
     const node = findCanvasNode(pi.nodeId);
@@ -5673,7 +5760,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (!node || guide?.type !== "Polar") return;
     const localPoint = toNodeLocalPoint(node, currentPoint);
     const angleSpan = polarAngleSpanFromPoint(guide.origin, localPoint);
-    if (node.compositionSpec?.type === "concat") {
+    if ((node.compositionSpec?.type === "layer" || node.compositionSpec?.type === "concat")
+      && editingCompositionId.value !== node.compositionSpec.id) {
       node.compositionSpec.polarAngleSpan = angleSpan;
       const owner = findCanvasNode(node.coordinateSystem?.ownerNodeId ?? "") ?? node;
       renderSharedCoordinateComposition(owner);
@@ -5682,7 +5770,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     coordinateTargets(node.id, "angle").forEach((member) => {
       if (member.coordinateGuide?.type !== "Polar") return;
       member.coordinateGuide.angleSpan = angleSpan;
-      renderChartNode(member);
+      renderChartNode(member, editingCompositionId.value === member.compositionSpec?.id ? false : true);
     });
   }
   function finalizeMarqueeSelection(mi: MarqueeInteraction) {

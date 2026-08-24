@@ -275,6 +275,8 @@ export type CoordinateSystemSpec = {
   ownerNodeId: string;
   members: CoordinateSystemMember[];
   sharedChannels: CoordinateChannel[];
+  /** Maximum rendered outer radius across a Polar composition's members. */
+  polarOuterRadius?: number;
 };
 
 export type DimensionRecommendation = {
@@ -324,6 +326,8 @@ export type CompositionSpec = {
   direction?: "horizontal" | "vertical" | "radial" | "angular";
   polarAngleSpan?: number;
   polarAngleOffset?: number;
+  /** Maximum rendered outer radius across Polar composition members. */
+  polarOuterRadius?: number;
   facetField?: string;
   facetValues?: string[];
   facetDirection?: "row" | "column";

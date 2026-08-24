@@ -41,6 +41,13 @@ export function getCartesianAxisChannels(
   const isLayer = node.compositionSpec?.type === "layer";
   const isOwner = !system || system.ownerNodeId === node.id;
   if (isLayer) return mode === "static" && isOwner ? [...cartesianChannels] : [];
+  // Concat only has one shared Cartesian dimension. Interactive controls for
+  // the other dimension would edit an independent member axis and imply a
+  // scale that is not uniform across the composition.
+  if (mode === "interactive" && node.compositionSpec?.type === "concat") {
+    const shared = new Set(node.compositionSpec.sharedChannels);
+    return cartesianChannels.filter((channel) => shared.has(channel));
+  }
   if (mode === "interactive") return [...cartesianChannels];
   const shared = new Set(system?.sharedChannels ?? []);
   return cartesianChannels.filter((channel) => !shared.has(channel) || isOwner);

@@ -767,6 +767,14 @@ function onCompositionEncodingChange(patch: Parameters<typeof setCompositionEnco
   setCompositionEncoding(patch);
 }
 
+function polarScaleChannels(node: CanvasNode): CoordinateChannel[] {
+  const composition = node.compositionSpec;
+  if (!composition || editingCompositionId.value === composition.id) return ["angle", "radius", "ring"];
+  return composition.sharedChannels.filter((channel): channel is CoordinateChannel =>
+    channel === "angle" || channel === "radius" || channel === "ring",
+  );
+}
+
 function onAxisSwap(swapped: boolean) {
   setAxisSwap(swapped);
 }
@@ -2114,6 +2122,8 @@ onBeforeUnmount(() => {
                 :view-zoom="selectionOverlayZoom"
                 :show-axis="true"
                 :interactive="true"
+                :use-composite-radius="editingCompositionId !== node.compositionSpec?.id"
+                :scale-channels="polarScaleChannels(node)"
                 :class="{ 'coordinate-control--drag-source': compositionDragSourceId === node.id }"
                 :on-angle-pointer-down="onPolarAnglePointerDown"
                 :on-axis-scale-pointer-down="onCoordinateAxisScalePointerDown"
