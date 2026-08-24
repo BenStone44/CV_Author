@@ -457,8 +457,8 @@ onBeforeUnmount(() =>
           <tr v-if="showChartOperations" class="data-table__operation-row">
             <th class="data-table__binding-label data-table__operation-tools" scope="row">
               <span>Operation</span>
-              <button class="data-table__drag-tool" type="button" draggable="true" @dragstart="onOperationDragStart('filter', $event)" @dragend="onOperationDragEnd"><Filter :size="11" aria-hidden="true" />Filter</button>
-              <button class="data-table__drag-tool" type="button" draggable="true" @dragstart="onOperationDragStart('aggregate', $event)" @dragend="onOperationDragEnd"><Sigma :size="12" aria-hidden="true" />Aggregate</button>
+              <button class="data-table__drag-tool data-table__drag-tool--icon" type="button" title="Filter" aria-label="Filter" draggable="true" @dragstart="onOperationDragStart('filter', $event)" @dragend="onOperationDragEnd"><Filter :size="12" aria-hidden="true" /></button>
+              <button class="data-table__drag-tool data-table__drag-tool--icon" type="button" title="Aggregate" aria-label="Aggregate" draggable="true" @dragstart="onOperationDragStart('aggregate', $event)" @dragend="onOperationDragEnd"><Sigma :size="13" aria-hidden="true" /></button>
             </th>
             <th
               v-for="column in columns"
@@ -471,40 +471,33 @@ onBeforeUnmount(() =>
             >
               <div v-if="column.type === 'quantitative'" class="data-table__operation-actions">
                 <details v-if="operationAdded(column.name, 'filter')" class="data-table__operation-menu">
-                  <summary class="data-table__operation-label"><Filter :size="11" aria-hidden="true" />Filter</summary>
+                  <summary class="data-table__operation-label" title="Filter" aria-label="Filter"><Filter :size="12" aria-hidden="true" /></summary>
                   <div class="data-table__menu-popover">
                     <label>Top N<input type="number" min="1" step="1" :value="numericFilterValue(column.name, 'topN')" @change="updateNumericFilter(column.name, 'topN', $event)" /></label>
                     <label>Bins<input type="number" min="2" step="1" :value="numericFilterValue(column.name, 'binCount')" @change="updateNumericFilter(column.name, 'binCount', $event)" /></label>
                   </div>
                 </details>
                 <details v-if="operationAdded(column.name, 'aggregate')" class="data-table__operation-menu">
-                  <summary class="data-table__operation-label"><Sigma :size="12" aria-hidden="true" />Aggregate</summary>
+                  <summary class="data-table__operation-label" title="Aggregate" aria-label="Aggregate"><Sigma :size="13" aria-hidden="true" /></summary>
                   <div class="data-table__menu-popover">
                     <select aria-label="Aggregation" :value="aggregationValue(column.name)" @change="updateAggregation(column.name, $event)"><option value="">None</option><option value="sum">Sum</option><option value="avg">Average</option></select>
                   </div>
                 </details>
               </div>
               <div v-else class="data-table__categorical-controls">
-                <div class="data-table__category-values" :title="valuesForColumn(column.name).join(', ')">
-                  <span v-for="value in valuesForColumn(column.name)" :key="`${column.name}-value-${value}`">{{ value }}</span>
+                <div class="data-table__categorical-options">
+                  <label v-for="value in valuesForColumn(column.name)" :key="`${column.name}-${value}`" class="data-panel__value-option">
+                    <input type="checkbox" :checked="isValueSelected(column.name, value)" @change="toggleValueFilter(column.name, value, $event)" />
+                    <span :title="value">{{ value }}</span>
+                  </label>
                 </div>
-                <details v-if="operationAdded(column.name, 'filter')" class="data-table__operation-menu">
-                  <summary class="data-table__operation-label"><Filter :size="11" aria-hidden="true" />Filter</summary>
-                  <div class="data-table__menu-popover data-table__menu-popover--values">
-                    <label v-for="value in valuesForColumn(column.name)" :key="`${column.name}-${value}`" class="data-panel__value-option">
-                      <input type="checkbox" :checked="isValueSelected(column.name, value)" @change="toggleValueFilter(column.name, value, $event)" />
-                      <span :title="value">{{ value }}</span>
-                    </label>
-                  </div>
-                </details>
                 <details v-if="operationAdded(column.name, 'aggregate')" class="data-table__operation-menu">
-                  <summary class="data-table__operation-label"><Sigma :size="12" aria-hidden="true" />Aggregate</summary>
+                  <summary class="data-table__operation-label" title="Aggregate" aria-label="Aggregate"><Sigma :size="13" aria-hidden="true" /></summary>
                   <div class="data-table__menu-popover">
                     <select aria-label="Aggregation" :value="aggregationValue(column.name)" @change="updateAggregation(column.name, $event)"><option value="">Group</option><option value="sum">Sum</option><option value="avg">Average</option></select>
                   </div>
                 </details>
               </div>
-              <span v-if="!operationAdded(column.name, 'filter') && !operationAdded(column.name, 'aggregate')" class="data-table__drop-hint">Drop here</span>
             </th>
           </tr>
         </thead>
@@ -526,14 +519,18 @@ onBeforeUnmount(() =>
       <table
         v-else
         class="data-table data-table--transposed"
+        :class="{
+          'data-table--has-encoding': Object.keys(props.encodingBindings).length > 0,
+          'data-table--has-operations': showChartOperations,
+        }"
       >
         <thead>
           <tr>
             <th class="data-table__field-name" scope="col">Field</th>
-            <th v-if="Object.keys(props.encodingBindings).length > 0" class="data-table__binding-cell" scope="col">Encoding</th>
-            <th v-if="showChartOperations" class="data-table__operation-cell data-table__operation-tools" scope="col">
-              <button class="data-table__drag-tool" type="button" draggable="true" @dragstart="onOperationDragStart('filter', $event)" @dragend="onOperationDragEnd"><Filter :size="11" aria-hidden="true" />Filter</button>
-              <button class="data-table__drag-tool" type="button" draggable="true" @dragstart="onOperationDragStart('aggregate', $event)" @dragend="onOperationDragEnd"><Sigma :size="12" aria-hidden="true" />Aggregate</button>
+            <th v-if="Object.keys(props.encodingBindings).length > 0" class="data-table__binding-cell data-table__fixed-column" scope="col">Encoding</th>
+            <th v-if="showChartOperations" class="data-table__operation-cell data-table__operation-tools data-table__fixed-column" scope="col">
+              <button class="data-table__drag-tool data-table__drag-tool--icon" type="button" title="Filter" aria-label="Filter" draggable="true" @dragstart="onOperationDragStart('filter', $event)" @dragend="onOperationDragEnd"><Filter :size="12" aria-hidden="true" /></button>
+              <button class="data-table__drag-tool data-table__drag-tool--icon" type="button" title="Aggregate" aria-label="Aggregate" draggable="true" @dragstart="onOperationDragStart('aggregate', $event)" @dragend="onOperationDragEnd"><Sigma :size="13" aria-hidden="true" /></button>
             </th>
             <th
               v-for="(_, rowIndex) in previewRows"
@@ -574,25 +571,26 @@ onBeforeUnmount(() =>
                 <option value="quantitative">quantitative</option>
               </select>
             </th>
-            <td v-if="Object.keys(props.encodingBindings).length > 0" class="data-table__binding-cell">
+            <td v-if="Object.keys(props.encodingBindings).length > 0" class="data-table__binding-cell data-table__fixed-column">
               <span v-if="encodingLabels(column.name).length === 0" class="data-table__binding-empty">-</span>
               <span v-else class="data-table__binding-values">
                 <span v-for="label in encodingLabels(column.name)" :key="`${column.name}-${label}`" class="data-table__binding-value">{{ label }}</span>
               </span>
             </td>
-            <td v-if="showChartOperations" class="data-table__operation-cell" :class="{ 'data-table__operation-cell--target': operationDragActive }" @dragover.prevent @drop.prevent="onOperationDrop(column.name, $event)">
+            <td v-if="showChartOperations" class="data-table__operation-cell data-table__fixed-column" :class="{ 'data-table__operation-cell--target': operationDragActive }" @dragover.prevent @drop.prevent="onOperationDrop(column.name, $event)">
               <div v-if="column.type === 'quantitative'" class="data-table__operation-actions">
-                <details v-if="operationAdded(column.name, 'filter')" class="data-table__operation-menu"><summary class="data-table__operation-label"><Filter :size="11" aria-hidden="true" />Filter</summary><div class="data-table__menu-popover"><label>Top N<input type="number" min="1" step="1" :value="numericFilterValue(column.name, 'topN')" @change="updateNumericFilter(column.name, 'topN', $event)" /></label><label>Bins<input type="number" min="2" step="1" :value="numericFilterValue(column.name, 'binCount')" @change="updateNumericFilter(column.name, 'binCount', $event)" /></label></div></details>
-                <details v-if="operationAdded(column.name, 'aggregate')" class="data-table__operation-menu"><summary class="data-table__operation-label"><Sigma :size="12" aria-hidden="true" />Aggregate</summary><div class="data-table__menu-popover"><select aria-label="Aggregation" :value="aggregationValue(column.name)" @change="updateAggregation(column.name, $event)"><option value="">None</option><option value="sum">Sum</option><option value="avg">Average</option></select></div></details>
+                <details v-if="operationAdded(column.name, 'filter')" class="data-table__operation-menu"><summary class="data-table__operation-label" title="Filter" aria-label="Filter"><Filter :size="12" aria-hidden="true" /></summary><div class="data-table__menu-popover"><label>Top N<input type="number" min="1" step="1" :value="numericFilterValue(column.name, 'topN')" @change="updateNumericFilter(column.name, 'topN', $event)" /></label><label>Bins<input type="number" min="2" step="1" :value="numericFilterValue(column.name, 'binCount')" @change="updateNumericFilter(column.name, 'binCount', $event)" /></label></div></details>
+                <details v-if="operationAdded(column.name, 'aggregate')" class="data-table__operation-menu"><summary class="data-table__operation-label" title="Aggregate" aria-label="Aggregate"><Sigma :size="13" aria-hidden="true" /></summary><div class="data-table__menu-popover"><select aria-label="Aggregation" :value="aggregationValue(column.name)" @change="updateAggregation(column.name, $event)"><option value="">None</option><option value="sum">Sum</option><option value="avg">Average</option></select></div></details>
               </div>
               <div v-else class="data-table__categorical-controls">
-                <div class="data-table__category-values" :title="valuesForColumn(column.name).join(', ')">
-                  <span v-for="value in valuesForColumn(column.name)" :key="`${column.name}-value-${value}`">{{ value }}</span>
+                <div class="data-table__categorical-options">
+                  <label v-for="value in valuesForColumn(column.name)" :key="`${column.name}-${value}`" class="data-panel__value-option">
+                    <input type="checkbox" :checked="isValueSelected(column.name, value)" @change="toggleValueFilter(column.name, value, $event)" />
+                    <span :title="value">{{ value }}</span>
+                  </label>
                 </div>
-                <details v-if="operationAdded(column.name, 'filter')" class="data-table__operation-menu"><summary class="data-table__operation-label"><Filter :size="11" aria-hidden="true" />Filter</summary><div class="data-table__menu-popover data-table__menu-popover--values"><label v-for="value in valuesForColumn(column.name)" :key="`${column.name}-${value}`" class="data-panel__value-option"><input type="checkbox" :checked="isValueSelected(column.name, value)" @change="toggleValueFilter(column.name, value, $event)" /><span :title="value">{{ value }}</span></label></div></details>
-                <details v-if="operationAdded(column.name, 'aggregate')" class="data-table__operation-menu"><summary class="data-table__operation-label"><Sigma :size="12" aria-hidden="true" />Aggregate</summary><div class="data-table__menu-popover"><select aria-label="Aggregation" :value="aggregationValue(column.name)" @change="updateAggregation(column.name, $event)"><option value="">Group</option><option value="sum">Sum</option><option value="avg">Average</option></select></div></details>
+                <details v-if="operationAdded(column.name, 'aggregate')" class="data-table__operation-menu"><summary class="data-table__operation-label" title="Aggregate" aria-label="Aggregate"><Sigma :size="13" aria-hidden="true" /></summary><div class="data-table__menu-popover"><select aria-label="Aggregation" :value="aggregationValue(column.name)" @change="updateAggregation(column.name, $event)"><option value="">Group</option><option value="sum">Sum</option><option value="avg">Average</option></select></div></details>
               </div>
-              <span v-if="!operationAdded(column.name, 'filter') && !operationAdded(column.name, 'aggregate')" class="data-table__drop-hint">Drop here</span>
             </td>
             <td
               v-for="(row, rowIndex) in previewRows"
@@ -724,11 +722,19 @@ onBeforeUnmount(() =>
 .data-panel__value-option {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
-  padding: 3px 0 3px 8px;
+  padding: 1px 2px 1px 0;
   color: #526174;
-  font-size: 11px;
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.data-panel__value-option input {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  margin: 0;
 }
 
 .data-panel__value-option span {
@@ -785,6 +791,13 @@ onBeforeUnmount(() =>
   font-size: 10px;
 }
 
+.data-table__drag-tool--icon {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  justify-content: center;
+}
+
 .data-table__drag-tool:active {
   cursor: grabbing;
 }
@@ -798,7 +811,10 @@ onBeforeUnmount(() =>
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  margin-bottom: 4px;
+  width: 24px;
+  height: 24px;
+  margin-bottom: 2px;
+  justify-content: center;
   color: #526174;
   cursor: pointer;
   font-size: 10px;
@@ -807,15 +823,6 @@ onBeforeUnmount(() =>
 
 .data-table__operation-label::-webkit-details-marker {
   display: none;
-}
-
-.data-table__drop-hint {
-  display: inline-block;
-  padding: 3px 5px;
-  border: 1px dashed #cbd5e1;
-  border-radius: 4px;
-  color: #94a3b8;
-  font-size: 9px;
 }
 
 .data-panel__numeric-operation label,
@@ -889,29 +896,26 @@ onBeforeUnmount(() =>
   overflow-y: auto;
 }
 
-.data-table__category-values {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 3px;
-  max-width: 150px;
-  max-height: 116px;
-  margin-bottom: 4px;
-  overflow-y: auto;
+.data-table__categorical-options {
+  display: grid;
+  grid-template-rows: repeat(4, max-content);
+  grid-auto-flow: column;
+  grid-auto-columns: max-content;
+  align-content: start;
+  align-items: center;
+  gap: 2px 8px;
+  height: 80px;
+  min-height: 120px;
+  max-height: 120px;
+  margin-bottom: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: thin;
 }
 
-.data-table__category-values span {
-  flex: 0 0 auto;
-  overflow: hidden;
-  padding: 2px 5px;
-  border: 1px solid #dbe3ec;
-  border-radius: 3px;
-  background: #f8fafc;
-  color: #526174;
-  font-size: 10px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+.data-table__categorical-options .data-panel__value-option {
+  width: max-content;
+  max-width: 92px;
 }
 
 .data-table__numeric-controls {
@@ -939,12 +943,34 @@ onBeforeUnmount(() =>
   font-size: 10px;
 }
 
-.data-table__categorical-controls details[open] .data-panel__value-option {
-  max-width: 160px;
-}
-
 .data-table__categorical-controls select {
   margin-top: 4px;
+}
+
+.data-table--transposed .data-table__operation-tools {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.data-table--transposed .data-table__operation-tools .data-table__drag-tool {
+  width: 24px;
+  min-width: 0;
+  justify-content: center;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.data-table--transposed .data-table__operation-actions {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.data-panel--expanded .data-table--transposed .data-table__operation-cell.data-table__fixed-column {
+  width: 280px;
+  min-width: 280px;
+  max-width: 280px;
 }
 
 @media (max-width: 760px) {
@@ -1393,6 +1419,54 @@ onBeforeUnmount(() =>
   background: #f1f5f8;
   color: #33465b;
   font-weight: 700;
+}
+
+/* Keep the field controls visible while preview values scroll horizontally. */
+.data-table--transposed .data-table__fixed-column {
+  position: sticky;
+  z-index: 1;
+  background: #f1f5f8;
+}
+
+.data-table--transposed .data-table__field-name {
+  width: 128px;
+  min-width: 128px !important;
+  max-width: 128px !important;
+}
+
+.data-table--transposed thead .data-table__fixed-column {
+  z-index: 3;
+  background: #e5edf4;
+}
+
+.data-table--transposed .data-table__binding-cell.data-table__fixed-column {
+  left: 128px;
+  width: 92px;
+  min-width: 92px;
+  max-width: 92px;
+  overflow: hidden;
+}
+
+.data-table--transposed .data-table__operation-cell.data-table__fixed-column {
+  left: 220px;
+  width: 116px;
+  min-width: 116px;
+  max-width: 116px;
+}
+
+.data-table--transposed:not(.data-table--has-encoding) .data-table__operation-cell.data-table__fixed-column {
+  left: 128px;
+}
+
+.data-table--transposed .data-table__fixed-column::after,
+.data-table--transposed .data-table__field-name::after {
+  position: absolute;
+  top: 0;
+  right: -1px;
+  bottom: -1px;
+  width: 1px;
+  background: #d7e0e9;
+  content: "";
 }
 
 .data-table thead .data-table__field-name {
