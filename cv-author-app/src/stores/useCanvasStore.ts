@@ -3943,8 +3943,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (!target) return;
     axisBindingTarget.value = { ...target, channel };
   }
-  function setAxisSwap(swapped: boolean) {
-    const node = axisBindingNode.value;
+  function setAxisSwap(swapped: boolean, nodeId?: string) {
+    const node = nodeId ? findCanvasNode(nodeId) : axisBindingNode.value;
     if (!node?.chartSpec || node.coordinateGuide?.type !== "Cartesian") return;
     updateEncodingTargets(node, (_target, spec) => ({
       ...spec,
@@ -5982,14 +5982,23 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const anchor = { x: isEast ? start.minX : start.maxX, y: isSouth ? start.minY : start.maxY };
     const hChange = (dirX * (currentPoint.x - si.startPoint.x)) / start.width;
     const vChange = (dirY * (currentPoint.y - si.startPoint.y)) / start.height;
-    const dominant = Math.abs(hChange) >= Math.abs(vChange) ? hChange : vChange;
-    const rawScale = 1 + dominant;
-    const minScale = Math.max(minW / start.width, minH / start.height, 0.01);
     const availW = isEast ? canvasBounds.maxX - anchor.x : anchor.x - canvasBounds.minX;
     const availH = isSouth ? canvasBounds.maxY - anchor.y : anchor.y - canvasBounds.minY;
-    const maxScale = Math.max(Math.min(availW / start.width, availH / start.height), 0.01);
-    const scale = clamp(rawScale, Math.min(minScale, maxScale), maxScale);
-    si.itemIds.forEach((id) => { const item = getSelectionNode(id); const snap = si.snapshots[id]; if (!item || !snap) return; item.x = anchor.x + (snap.x - anchor.x) * scale; item.y = anchor.y + (snap.y - anchor.y) * scale; item.scaleX = Math.max(snap.scaleX * scale, 0.01); item.scaleY = Math.max(snap.scaleY * scale, 0.01); });
+    const minScaleX = Math.max(minW / start.width, 0.01);
+    const minScaleY = Math.max(minH / start.height, 0.01);
+    const maxScaleX = Math.max(availW / start.width, 0.01);
+    const maxScaleY = Math.max(availH / start.height, 0.01);
+    const scaleX = clamp(1 + hChange, Math.min(minScaleX, maxScaleX), maxScaleX);
+    const scaleY = clamp(1 + vChange, Math.min(minScaleY, maxScaleY), maxScaleY);
+    si.itemIds.forEach((id) => {
+      const item = getSelectionNode(id);
+      const snap = si.snapshots[id];
+      if (!item || !snap) return;
+      item.x = anchor.x + (snap.x - anchor.x) * scaleX;
+      item.y = anchor.y + (snap.y - anchor.y) * scaleY;
+      item.scaleX = Math.max(snap.scaleX * scaleX, 0.01);
+      item.scaleY = Math.max(snap.scaleY * scaleY, 0.01);
+    });
   }
   function updateCoordinateOriginInteraction(currentPoint: Point, ci: CoordinateOriginInteraction) {
     const node = findCanvasNode(ci.nodeId);

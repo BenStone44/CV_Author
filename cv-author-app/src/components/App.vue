@@ -7,14 +7,10 @@ import {
   ref,
   watch,
 } from "vue";
-import { ArrowUp, Check, ChevronDown, Move, RotateCcw, SlidersHorizontal, X } from "@lucide/vue";
+import { ArrowLeftRight, ArrowUp, Check, ChevronDown, Move, RotateCcw, SlidersHorizontal, X } from "@lucide/vue";
 import { CanvasNodeView } from "./CanvasNodeView";
 import AlignmentToolbar from "./AlignmentToolbar.vue";
-import {
-  CanvasCoordinateSystemLayer,
-  CartesianCoordinateSystem,
-  getCartesianAxisChannels,
-} from "./CartesianCoordinateSystem";
+import { CanvasCoordinateSystemLayer } from "./CartesianCoordinateSystem";
 import { PolarCoordinateSystem } from "./PolarCoordinateSystem";
 import CsvDataPanel from "./CsvDataPanel.vue";
 import EncodingConfigPanel from "./EncodingConfigPanel.vue";
@@ -276,6 +272,9 @@ const csvEncodingBindings = computed<Record<string, string[]>>(() => {
   Object.entries(spec.encodings).forEach(([channel, encoding]) => {
     if (!encoding) return;
     if (channel === "y" && spec.valueFields?.length) return;
+    const displayChannel = spec.axisSwapped && (channel === "x" || channel === "y")
+      ? channel === "x" ? "y" : "x"
+      : channel;
     const label: Record<string, string> = {
       x: "X",
       y: "Y",
@@ -289,7 +288,7 @@ const csvEncodingBindings = computed<Record<string, string[]>>(() => {
       ring: "Ring",
       dimensions: "Dimensions",
     };
-    add(encoding.field, label[channel] ?? channel);
+    add(encoding.field, label[displayChannel] ?? displayChannel);
   });
 
   const itemBinding = barItemAxisBinding(node);
@@ -724,6 +723,31 @@ function closeEncodingInspector() {
   encodingInspectorOpen.value = false;
 }
 const selectedCanvasNodesWithCoordinateGuides = coordinateGuideNodes;
+const cartesianAxisSwapNode = computed(() => {
+  if (semanticSelection.value || selectedIds.value.length !== 1) return null;
+  const node = selectedNodes.value[0];
+  return node?.coordinateGuide?.type === "Cartesian" && node.chartSpec ? node : null;
+});
+const cartesianAxisSwapPosition = computed(() => {
+  const frame = selectionFrame.value;
+  if (!frame || !cartesianAxisSwapNode.value) return null;
+  const inset = 18 / selectionOverlayZoom.value;
+  const point = { x: frame.x + inset, y: frame.y + inset };
+  const center = { x: frame.x + frame.width / 2, y: frame.y + frame.height / 2 };
+  const radians = frame.rotation * Math.PI / 180;
+  const dx = point.x - center.x;
+  const dy = point.y - center.y;
+  return {
+    x: center.x + dx * Math.cos(radians) - dy * Math.sin(radians),
+    y: center.y + dx * Math.sin(radians) + dy * Math.cos(radians),
+  };
+});
+
+function toggleSelectedCartesianAxes() {
+  const node = cartesianAxisSwapNode.value;
+  if (!node?.chartSpec) return;
+  setAxisSwap(node.chartSpec.axisSwapped !== true, node.id);
+}
 
 function openCompositionCandidates(type: CompositionType) {
   closeAxisBinding();
@@ -2057,6 +2081,32 @@ onBeforeUnmount(() => {
                     :transform="`rotate(${selectionFrame.rotation} ${selectionFrame.x + selectionFrame.width / 2} ${selectionFrame.y + selectionFrame.height / 2})`"
                     :vector-effect="'non-scaling-stroke'"
                   />
+                  <g
+                    v-if="cartesianAxisSwapNode && cartesianAxisSwapPosition"
+                    class="cartesian-axis-swap-control"
+                    :class="{ 'is-active': cartesianAxisSwapNode.chartSpec?.axisSwapped }"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Swap X and Y axes"
+                    :aria-pressed="cartesianAxisSwapNode.chartSpec?.axisSwapped === true"
+                    :transform="`translate(${cartesianAxisSwapPosition.x} ${cartesianAxisSwapPosition.y})`"
+                    @pointerdown.stop.prevent="toggleSelectedCartesianAxes"
+                    @keydown.enter.stop.prevent="toggleSelectedCartesianAxes"
+                    @keydown.space.stop.prevent="toggleSelectedCartesianAxes"
+                  >
+                    <title>Swap X and Y axes</title>
+                    <circle
+                      :r="12 / selectionOverlayZoom"
+                      vector-effect="non-scaling-stroke"
+                    />
+                    <ArrowLeftRight
+                      :x="-8 / selectionOverlayZoom"
+                      :y="-8 / selectionOverlayZoom"
+                      :size="16 / selectionOverlayZoom"
+                      :stroke-width="2"
+                      aria-hidden="true"
+                    />
+                  </g>
                   <circle
                     v-if="canTransformSelection"
                     v-for="handle in scaleHandles"
@@ -2157,17 +2207,6 @@ onBeforeUnmount(() => {
                   </g>
                 </g>
               </g>
-              <CartesianCoordinateSystem
-                v-for="node in selectedCanvasNodesWithCoordinateGuides.filter((item) => item.coordinateGuide?.type === 'Cartesian' && getCartesianAxisChannels(item, 'interactive').length > 0)"
-                :key="`coordinate-guide-${node.id}`"
-                :node="node"
-                :view-zoom="selectionOverlayZoom"
-                :channels="getCartesianAxisChannels(node, 'interactive')"
-                :show-axis="false"
-                :interactive="true"
-                :class="{ 'coordinate-control--drag-source': compositionDragSourceId === node.id }"
-                :on-axis-scale-pointer-down="onCoordinateAxisScalePointerDown"
-              />
               <PolarCoordinateSystem
                 v-for="node in selectedCanvasNodesWithCoordinateGuides.filter((item) => item.coordinateGuide?.type === 'Polar')"
                 :key="`coordinate-guide-${node.id}`"
@@ -4420,25 +4459,6 @@ onBeforeUnmount(() => {
   stroke-linejoin: round;
   pointer-events: none;
 }
-.cartesian-coordinate-system :deep(.cartesian-axis-endpoint) {
-  pointer-events: all;
-}
-.cartesian-coordinate-system :deep(.cartesian-axis-handle-stem) {
-  stroke: #1554b2;
-  stroke-width: 1.4;
-  stroke-dasharray: 2 2;
-  pointer-events: none;
-}
-.cartesian-coordinate-system :deep(.cartesian-axis-scale-handle) {
-  fill: #1554b2;
-  stroke: #fff;
-  stroke-width: 1.5;
-  cursor: ew-resize;
-  touch-action: none;
-}
-.cartesian-coordinate-system :deep(.cartesian-axis-endpoint--y .cartesian-axis-scale-handle) {
-  cursor: ns-resize;
-}
 .coordinate-guide-layer :deep(.polar-coordinate-radius-axis),
 .coordinate-guide-layer :deep(.polar-coordinate-angle-axis) {
   fill: none;
@@ -4510,6 +4530,33 @@ onBeforeUnmount(() => {
 .selection-box--semantic {
   fill: rgba(21, 84, 178, 0.1);
   stroke-dasharray: none;
+}
+.cartesian-axis-swap-control {
+  color: #1554b2;
+  pointer-events: all;
+  cursor: pointer;
+  outline: none;
+}
+.cartesian-axis-swap-control circle {
+  fill: rgba(255, 255, 255, 0.96);
+  stroke: #1554b2;
+  stroke-width: 1.5;
+  filter: drop-shadow(0 2px 5px rgba(30, 64, 175, 0.22));
+  transition: fill 120ms ease, stroke 120ms ease;
+}
+.cartesian-axis-swap-control :deep(svg) {
+  overflow: visible;
+  pointer-events: none;
+}
+.cartesian-axis-swap-control:hover circle,
+.cartesian-axis-swap-control:focus circle,
+.cartesian-axis-swap-control.is-active circle {
+  fill: #1554b2;
+}
+.cartesian-axis-swap-control:hover,
+.cartesian-axis-swap-control:focus,
+.cartesian-axis-swap-control.is-active {
+  color: #fff;
 }
 .selection-configure {
   opacity: 0.32;

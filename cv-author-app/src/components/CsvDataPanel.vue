@@ -21,6 +21,7 @@ import {
   encodeCsvColumnDragPayload,
   endCsvColumnDrag,
 } from "../utils/csvColumnDrag";
+import { getEncodingChannelConfigsForSpec, resolvedEncodingField } from "../utils/encodingConfig";
 
 const previewRowLimit = 250;
 
@@ -74,8 +75,17 @@ const selectedChartDataset = computed(() => {
   const chart = props.selectedChart;
   return chart ? getDataset(chart.datasetId) : null;
 });
+const hasCoordinateBinding = computed(() => {
+  const chart = props.selectedChart;
+  if (!chart) return false;
+  return getEncodingChannelConfigsForSpec(chart).some((config) =>
+    (config.role === "dimension" || config.role === "measure")
+    && !!resolvedEncodingField(chart, config.channel),
+  );
+});
 const showChartOperations = computed(() => !!props.selectedChart
   && props.selectedChart.datasetId === activeDataset.value?.id
+  && hasCoordinateBinding.value
   && !isGraph.value);
 const filterValues = ref<Record<string, string[]>>({});
 type OperationKind = "filter" | "aggregate";
@@ -131,10 +141,20 @@ function onOperationDragEnd() {
   operationDragActive.value = false;
 }
 
+function isFieldBound(field: string) {
+  return (props.encodingBindings[field]?.length ?? 0) > 0;
+}
+
+function onOperationDragOver(field: string, event: DragEvent) {
+  if (isFieldBound(field)) event.preventDefault();
+}
+
 function onOperationDrop(field: string, event: DragEvent) {
+  event.preventDefault();
+  operationDragActive.value = false;
+  if (!isFieldBound(field)) return;
   const kind = event.dataTransfer?.getData("application/x-cv-chart-operation") as OperationKind;
   if (kind !== "filter" && kind !== "aggregate") return;
-  operationDragActive.value = false;
   addedOperations.value = {
     ...addedOperations.value,
     [field]: { ...addedOperations.value[field], [kind]: true },
@@ -147,6 +167,22 @@ function operationAdded(field: string, kind: OperationKind) {
 
 function isValueSelected(field: string, value: string) {
   return filterValues.value[field]?.includes(value) ?? true;
+}
+
+function areAllValuesSelected(field: string) {
+  const values = valuesForColumn(field);
+  return values.length > 0 && values.every((value) => isValueSelected(field, value));
+}
+
+function areSomeValuesSelected(field: string) {
+  const values = valuesForColumn(field);
+  return values.some((value) => isValueSelected(field, value)) && !areAllValuesSelected(field);
+}
+
+function toggleAllValueFilters(field: string, event: Event) {
+  const values = (event.target as HTMLInputElement).checked ? valuesForColumn(field) : [];
+  filterValues.value = { ...filterValues.value, [field]: values };
+  props.onSetValueFilter?.(field, values);
 }
 
 function toggleValueFilter(field: string, value: string, event: Event) {
@@ -464,12 +500,12 @@ onBeforeUnmount(() =>
               v-for="column in columns"
               :key="`operation-${column.name}`"
               class="data-table__operation-cell"
-              :class="{ 'data-table__operation-cell--target': operationDragActive }"
+              :class="{ 'data-table__operation-cell--target': operationDragActive && isFieldBound(column.name) }"
               scope="col"
-              @dragover.prevent
-              @drop.prevent="onOperationDrop(column.name, $event)"
+              @dragover="onOperationDragOver(column.name, $event)"
+              @drop="onOperationDrop(column.name, $event)"
             >
-              <div v-if="column.type === 'quantitative'" class="data-table__operation-actions">
+              <div v-if="isFieldBound(column.name) && column.type === 'quantitative'" class="data-table__operation-actions">
                 <details v-if="operationAdded(column.name, 'filter')" class="data-table__operation-menu">
                   <summary class="data-table__operation-label" title="Filter" aria-label="Filter"><Filter :size="12" aria-hidden="true" /></summary>
                   <div class="data-table__menu-popover">
@@ -484,8 +520,18 @@ onBeforeUnmount(() =>
                   </div>
                 </details>
               </div>
-              <div v-else class="data-table__categorical-controls">
+              <div v-else-if="isFieldBound(column.name)" class="data-table__categorical-controls">
                 <div class="data-table__categorical-options">
+                  <label class="data-panel__value-option data-panel__value-option--all">
+                    <input
+                      type="checkbox"
+                      :checked="areAllValuesSelected(column.name)"
+                      :indeterminate="areSomeValuesSelected(column.name)"
+                      :disabled="valuesForColumn(column.name).length === 0"
+                      @change="toggleAllValueFilters(column.name, $event)"
+                    />
+                    <span>All</span>
+                  </label>
                   <label v-for="value in valuesForColumn(column.name)" :key="`${column.name}-${value}`" class="data-panel__value-option">
                     <input type="checkbox" :checked="isValueSelected(column.name, value)" @change="toggleValueFilter(column.name, value, $event)" />
                     <span :title="value">{{ value }}</span>
@@ -577,13 +623,23 @@ onBeforeUnmount(() =>
                 <span v-for="label in encodingLabels(column.name)" :key="`${column.name}-${label}`" class="data-table__binding-value">{{ label }}</span>
               </span>
             </td>
-            <td v-if="showChartOperations" class="data-table__operation-cell data-table__fixed-column" :class="{ 'data-table__operation-cell--target': operationDragActive }" @dragover.prevent @drop.prevent="onOperationDrop(column.name, $event)">
-              <div v-if="column.type === 'quantitative'" class="data-table__operation-actions">
+            <td v-if="showChartOperations" class="data-table__operation-cell data-table__fixed-column" :class="{ 'data-table__operation-cell--target': operationDragActive && isFieldBound(column.name) }" @dragover="onOperationDragOver(column.name, $event)" @drop="onOperationDrop(column.name, $event)">
+              <div v-if="isFieldBound(column.name) && column.type === 'quantitative'" class="data-table__operation-actions">
                 <details v-if="operationAdded(column.name, 'filter')" class="data-table__operation-menu"><summary class="data-table__operation-label" title="Filter" aria-label="Filter"><Filter :size="12" aria-hidden="true" /></summary><div class="data-table__menu-popover"><label>Top N<input type="number" min="1" step="1" :value="numericFilterValue(column.name, 'topN')" @change="updateNumericFilter(column.name, 'topN', $event)" /></label><label>Bins<input type="number" min="2" step="1" :value="numericFilterValue(column.name, 'binCount')" @change="updateNumericFilter(column.name, 'binCount', $event)" /></label></div></details>
                 <details v-if="operationAdded(column.name, 'aggregate')" class="data-table__operation-menu"><summary class="data-table__operation-label" title="Aggregate" aria-label="Aggregate"><Sigma :size="13" aria-hidden="true" /></summary><div class="data-table__menu-popover"><select aria-label="Aggregation" :value="aggregationValue(column.name)" @change="updateAggregation(column.name, $event)"><option value="">None</option><option value="sum">Sum</option><option value="avg">Average</option></select></div></details>
               </div>
-              <div v-else class="data-table__categorical-controls">
+              <div v-else-if="isFieldBound(column.name)" class="data-table__categorical-controls">
                 <div class="data-table__categorical-options">
+                  <label class="data-panel__value-option data-panel__value-option--all">
+                    <input
+                      type="checkbox"
+                      :checked="areAllValuesSelected(column.name)"
+                      :indeterminate="areSomeValuesSelected(column.name)"
+                      :disabled="valuesForColumn(column.name).length === 0"
+                      @change="toggleAllValueFilters(column.name, $event)"
+                    />
+                    <span>All</span>
+                  </label>
                   <label v-for="value in valuesForColumn(column.name)" :key="`${column.name}-${value}`" class="data-panel__value-option">
                     <input type="checkbox" :checked="isValueSelected(column.name, value)" @change="toggleValueFilter(column.name, value, $event)" />
                     <span :title="value">{{ value }}</span>
@@ -741,6 +797,11 @@ onBeforeUnmount(() =>
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.data-panel__value-option--all {
+  color: #18212f;
+  font-weight: 600;
 }
 
 .data-panel__numeric-operation,

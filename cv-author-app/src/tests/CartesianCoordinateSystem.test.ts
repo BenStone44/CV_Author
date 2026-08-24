@@ -92,7 +92,6 @@ describe("independent Cartesian axis component", () => {
       showAxis: true,
       interactive: false,
       applyTransform: false,
-      onAxisScalePointerDown: null,
     });
     const axisGroup = render();
     expect(axisGroup.props["font-family"]).toBe(model.fontFamily);
@@ -102,6 +101,21 @@ describe("independent Cartesian axis component", () => {
 
     const scaledModel = createCartesianAxisModel(chartNode({ scaleX: 2, scaleY: 2 }))!;
     expect(scaledModel.fontSize).toBe(4.5);
+
+    const stretchedNode = chartNode({ scaleX: 2, scaleY: 1 });
+    const stretchedRender = (CartesianCoordinateSystem as any).setup({
+      node: stretchedNode,
+      viewZoom: 1,
+      channels: ["x", "y"],
+      showAxis: true,
+      interactive: false,
+      applyTransform: false,
+    });
+    const stretchedLabels = stretchedRender().children.filter(
+      (child: any) => child.props?.class === "cartesian-axis-tick-label",
+    );
+    expect(stretchedLabels.length).toBeGreaterThan(0);
+    expect(stretchedLabels.every((label: any) => label.props.transform.includes("scale(1 2)"))).toBe(true);
   });
 
   it("uses the same model for categorical axes without renderer-owned labels", () => {

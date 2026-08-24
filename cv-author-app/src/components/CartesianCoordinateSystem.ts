@@ -155,7 +155,6 @@ export const CartesianCoordinateSystem = defineComponent({
     bindingFields: { type: Array as PropType<string[]>, default: () => [] },
     bindingAxis: { type: String as PropType<"x" | "y">, default: "y" },
     onBindingRemove: { type: Function as PropType<(nodeId: string, field: string) => void>, default: null },
-    onAxisScalePointerDown: { type: Function as PropType<(node: CanvasNode, axis: "x" | "y", event: PointerEvent) => void>, default: null },
   },
   setup(props) {
     return () => {
@@ -175,6 +174,10 @@ export const CartesianCoordinateSystem = defineComponent({
       const xEnd = model?.xEnd ?? { x: guide.xDirection === 1 ? right : left, y: origin.y };
       const yEnd = model?.yEnd ?? { x: origin.x, y: guide.yDirection === -1 ? top : bottom };
       const screenScale = Math.max(Math.abs(props.node.scaleX), Math.abs(props.node.scaleY), 0.0001) * Math.max(props.viewZoom, 0.0001);
+      const nodeScaleX = Math.max(Math.abs(props.node.scaleX), 0.0001);
+      const nodeScaleY = Math.max(Math.abs(props.node.scaleY), 0.0001);
+      const textScale = Math.max(nodeScaleX, nodeScaleY);
+      const textTransform = (x: number, y: number) => `translate(${x} ${y}) scale(${textScale / nodeScaleX} ${textScale / nodeScaleY})`;
       const arrowSize = 11 / screenScale;
       const includes = (channel: EncodingChannel) => props.channels.includes(channel);
       const axisNodes = [] as ReturnType<typeof h>[];
@@ -201,10 +204,16 @@ export const CartesianCoordinateSystem = defineComponent({
           }));
           axisNodes.push(...model.yTicks.flatMap((tick) => {
             const tickEnd = model.origin.x + (guide.xDirection === 1 ? -5 : 5);
-            const textX = model.origin.x + (guide.xDirection === 1 ? -model.fontSize * 0.8 : model.fontSize * 0.8);
+            const textOffset = model.fontSize * textScale / nodeScaleX * 0.8;
+            const textX = model.origin.x + (guide.xDirection === 1 ? -textOffset : textOffset);
             return [
               h("line", { class: "cartesian-axis-tick", x1: model.origin.x, y1: tick.position, x2: tickEnd, y2: tick.position, stroke: model.axisColor, "vector-effect": "non-scaling-stroke" }),
-              h("text", { class: "cartesian-axis-tick-label", x: textX, y: tick.position, "text-anchor": guide.xDirection === 1 ? "end" : "start", "dominant-baseline": "middle" }, tick.label),
+              h("text", {
+                class: "cartesian-axis-tick-label",
+                transform: textTransform(textX, tick.position),
+                "text-anchor": guide.xDirection === 1 ? "end" : "start",
+                "dominant-baseline": "middle",
+              }, tick.label),
             ];
           }));
         }
@@ -220,10 +229,15 @@ export const CartesianCoordinateSystem = defineComponent({
           }));
           axisNodes.push(...model.xTicks.flatMap((tick) => {
             const tickEnd = model.origin.y + (guide.yDirection === -1 ? 5 : -5);
-            const textY = model.origin.y + (guide.yDirection === -1 ? model.fontSize * 1.6 : -model.fontSize * 0.8);
+            const textOffset = model.fontSize * textScale / nodeScaleY;
+            const textY = model.origin.y + (guide.yDirection === -1 ? textOffset * 1.6 : -textOffset * 0.8);
             return [
               h("line", { class: "cartesian-axis-tick", x1: tick.position, y1: model.origin.y, x2: tick.position, y2: tickEnd, stroke: model.axisColor, "vector-effect": "non-scaling-stroke" }),
-              h("text", { class: "cartesian-axis-tick-label", x: tick.position, y: textY, "text-anchor": "middle" }, tick.label),
+              h("text", {
+                class: "cartesian-axis-tick-label",
+                transform: textTransform(tick.position, textY),
+                "text-anchor": "middle",
+              }, tick.label),
             ];
           }));
         }
@@ -238,35 +252,6 @@ export const CartesianCoordinateSystem = defineComponent({
         );
       }
 
-      const endpoint = (axis: EncodingChannel, point: Point, direction: Point) => {
-        const scaleHandlePoint = {
-          x: point.x + direction.x * 18 / screenScale,
-          y: point.y + direction.y * 18 / screenScale,
-        };
-        return h("g", { class: `cartesian-axis-endpoint cartesian-axis-endpoint--${axis}` }, [
-          h("line", { class: "cartesian-axis-handle-stem", x1: point.x, y1: point.y, x2: scaleHandlePoint.x, y2: scaleHandlePoint.y, "vector-effect": "non-scaling-stroke" }),
-          h("rect", {
-            class: "cartesian-axis-scale-handle",
-            x: scaleHandlePoint.x - 5 / screenScale,
-            y: scaleHandlePoint.y - 5 / screenScale,
-            width: 10 / screenScale,
-            height: 10 / screenScale,
-            rx: 1.5 / screenScale,
-            onPointerdown: (event: PointerEvent) => {
-              event.preventDefault();
-              event.stopPropagation();
-              props.onAxisScalePointerDown?.(props.node, axis, event);
-            },
-          }),
-        ]);
-      };
-      const controls = props.interactive
-        ? props.channels.flatMap((channel) => {
-          const end = channel === "x" ? xEnd : yEnd;
-          const direction = channel === "x" ? { x: guide.xDirection, y: 0 } : { x: 0, y: guide.yDirection };
-          return [endpoint(channel, end, direction)];
-        })
-        : [];
       const bindingControls = props.interactive && props.bindingFields.length > 0
         ? (() => {
           const chipWidth = 138 / screenScale;
@@ -345,7 +330,7 @@ export const CartesianCoordinateSystem = defineComponent({
         "font-size": model?.fontSize,
         fill: model?.textColor,
         "aria-hidden": props.interactive ? undefined : "true",
-      }, [...axisNodes, ...controls, ...bindingControls]);
+      }, [...axisNodes, ...bindingControls]);
     };
   },
 });
