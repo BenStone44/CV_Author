@@ -184,8 +184,8 @@ const requiredEncodingFallbacks: Record<
     color: (spec) => (spec.valueFields?.length ?? 0) > 0,
   },
   matrix: {
-    x: (spec) => !!spec.encodings.column,
-    y: (spec) => !!spec.encodings.row,
+    x: (spec) => !!spec.encodings.x || !!spec.encodings.column,
+    y: (spec) => !!spec.encodings.y || !!spec.encodings.row,
   },
   parallel: { dimensions: (spec) => (spec.parallelFields?.length ?? 0) >= 2 },
   hierarchy: {},

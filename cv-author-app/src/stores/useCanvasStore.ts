@@ -1222,7 +1222,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       && (!node.coordinateGuide || node.coordinateGuide.type === contract.coordinateSystem);
   }
 
-  const cartesianCompositionFamilies = new Set(["area", "line", "bar"]);
+  const cartesianCompositionFamilies = new Set(["area", "line", "bar", "matrix"]);
 
   function isCartesianCompositionChart(node: CanvasNode) {
     const family = normalizeChartTemplate(node.chartSpec?.chartType ?? "");
@@ -1244,7 +1244,15 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function encodingForSharedChannel(node: CanvasNode, channel: CoordinateChannel) {
     const spec = node.chartSpec;
     if (!spec) return undefined;
-    if (channel === "x" || channel === "y") return cartesianAxisEncoding(spec, channel);
+    if (channel === "x" || channel === "y") {
+      const axisEncoding = cartesianAxisEncoding(spec, channel);
+      if (axisEncoding) return axisEncoding;
+      // Matrix/heatmap charts may still use persisted row/column encodings.
+      if (normalizeChartTemplate(spec.chartType) === "matrix") {
+        return channel === "x" ? spec.encodings.column : spec.encodings.row;
+      }
+      return undefined;
+    }
     const encoding = channel === "angle"
       ? spec.encodings.theta ?? spec.encodings.angle
       : spec.encodings[channel];
@@ -1390,7 +1398,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const target = axisBindingTarget.value;
     const node = axisBindingNode.value;
     if (!target || !node) return "";
-    return node.chartSpec?.encodings[mappedEncodingChannel(node, target.channel)]?.field ?? "";
+    return encodingForSharedChannel(node, target.channel)?.field ?? "";
   });
   const axisBindingSeriesCandidates = computed(() => {
     const node = axisBindingNode.value;
