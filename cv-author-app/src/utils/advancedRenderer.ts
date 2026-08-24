@@ -108,7 +108,7 @@ function finiteDomain(values: number[], fallback: [number, number] = [0, 1]): [n
 }
 
 function scaleForEncoding(rows: Dataset["rows"], encoding: ChartEncoding, range: [number, number]) {
-  if (encoding.type === "nominal") {
+  if (encoding.type === "nominal" || encoding.type === "ordinal") {
     const domain = Array.from(new Set(rows.map((row) => row[encoding.field] ?? "")));
     const scale = scalePoint<string>().domain(domain).range(range).padding(0.5);
     return {
@@ -389,7 +389,7 @@ function renderParallel(input: GenericRenderInput) {
   const colorField = colorEncoding?.field ?? fields[0]!.field;
   const colorValues = input.dataset.rows.map((row) => Number(row[colorField] ?? "")).filter(Number.isFinite);
   const sequential = scaleSequential((value) => interpolateBrBG(1 - value)).domain(finiteDomain(colorValues));
-  const categories = colorEncoding?.type === "nominal"
+  const categories = colorEncoding?.type === "nominal" || colorEncoding?.type === "ordinal"
     ? Array.from(new Set(input.dataset.rows.map((row) => row[colorField] ?? "")))
     : [];
   const ordinal = scaleOrdinal<string, string>().domain(categories).range(tableau);
@@ -401,7 +401,7 @@ function renderParallel(input: GenericRenderInput) {
   const paths = sortedRows.map((row) => {
     const index = input.dataset.rows.indexOf(row);
     const points = fields.map((field) => [field.field, numeric(row, field)] as [string, number]);
-    const stroke = colorEncoding?.type === "nominal" ? ordinal(row[colorField] ?? "") : sequential(Number(row[colorField] ?? 0));
+    const stroke = colorEncoding?.type === "nominal" || colorEncoding?.type === "ordinal" ? ordinal(row[colorField] ?? "") : sequential(Number(row[colorField] ?? 0));
     return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="path" data-mark-group-id="mark-group:${esc(input.chartId)}:path" data-row-key="${esc(rowKey(input.dataset, row, index))}" d="${line(points) ?? ""}" fill="none" stroke="${stroke}" stroke-width="1.5" stroke-opacity="0.4"/>`;
   }).join("");
   const axes = fields.map((field) => {

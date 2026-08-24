@@ -1,18 +1,20 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   ChevronsLeft,
   ChevronsRight,
   Columns3,
   FileSpreadsheet,
+  Filter,
   GripVertical,
+  Sigma,
   Rows3,
   Trash2,
   Upload,
 } from "@lucide/vue";
 import defaultCsv from "../../../data/case1.csv?raw";
 import { useDatasetStore } from "../stores/useDatasetStore";
-import type { DataColumnType, DatasetTable } from "../types";
+import type { ChartEncodingChannel, ChartNumericFilter, ChartSpec, DataColumnType, DatasetTable } from "../types";
 import {
   beginCsvColumnDrag,
   csvColumnDragMime,
@@ -24,8 +26,13 @@ const previewRowLimit = 250;
 
 const props = withDefaults(defineProps<{
   encodingBindings?: Record<string, string[]>;
+  selectedChart?: ChartSpec | null;
+  onSetValueFilter?: (field: string, values: string[]) => void;
+  onSetNumericFilter?: (field: string, patch: ChartNumericFilter) => void;
+  onSetAggregation?: (field: string, aggregation?: "sum" | "avg") => void;
 }>(), {
   encodingBindings: () => ({}),
+  selectedChart: null,
 });
 
 const fileInputRef = ref<HTMLInputElement | null>(null);
@@ -43,6 +50,7 @@ const {
   importDataset,
   clearActiveDataset,
   setColumnType,
+  getDataset,
 } = useDatasetStore();
 
 const fileName = computed(() => activeDataset.value?.name ?? "");
@@ -62,6 +70,116 @@ const graphTables = computed(() => {
   ];
 });
 const hasData = computed(() => isGraph.value || headers.value.length > 0);
+const selectedChartDataset = computed(() => {
+  const chart = props.selectedChart;
+  return chart ? getDataset(chart.datasetId) : null;
+});
+const showChartOperations = computed(() => !!props.selectedChart
+  && props.selectedChart.datasetId === activeDataset.value?.id
+  && !isGraph.value);
+const filterValues = ref<Record<string, string[]>>({});
+type OperationKind = "filter" | "aggregate";
+const addedOperations = ref<Record<string, Partial<Record<OperationKind, boolean>>>>({});
+const operationDragActive = ref(false);
+
+function valuesForColumn(field: string) {
+  return Array.from(new Set(selectedChartDataset.value?.rows.map((row) => row[field] ?? "") ?? []))
+    .filter((value) => value !== "");
+}
+
+function resetChartControls(chart: ChartSpec | null) {
+  const dataset = chart ? getDataset(chart.datasetId) : null;
+  const next: Record<string, string[]> = {};
+  (dataset?.columns ?? [])
+    .filter((column) => column.type === "nominal" || column.type === "ordinal" || column.type === "temporal")
+    .forEach((column) => {
+      next[column.name] = chart?.valueFilters?.[column.name]?.slice() ?? valuesForColumnFrom(dataset, column.name);
+    });
+  filterValues.value = next;
+}
+
+function valuesForColumnFrom(dataset: ReturnType<typeof getDataset>, field: string) {
+  return Array.from(new Set(dataset?.rows.map((row) => row[field] ?? "") ?? [])).filter(Boolean);
+}
+
+watch(() => props.selectedChart, (chart) => resetChartControls(chart), { deep: true, immediate: true });
+
+watch(() => props.selectedChart, (chart) => {
+  const next: Record<string, Partial<Record<OperationKind, boolean>>> = {};
+  if (chart) {
+    Object.entries(chart.valueFilters ?? {}).forEach(([field]) => { next[field] = { ...next[field], filter: true }; });
+    Object.entries(chart.numericFilters ?? {}).forEach(([field]) => { next[field] = { ...next[field], filter: true }; });
+    Object.entries(chart.dimensionAggregations ?? {}).forEach(([field]) => { next[field] = { ...next[field], aggregate: true }; });
+    Object.entries(chart.encodings).forEach(([channel, encoding]) => {
+      if (encoding?.field && chart.aggregations?.[channel as ChartEncodingChannel]) {
+        next[encoding.field] = { ...next[encoding.field], aggregate: true };
+      }
+    });
+  }
+  addedOperations.value = next;
+}, { deep: true, immediate: true });
+
+function onOperationDragStart(kind: OperationKind, event: DragEvent) {
+  if (!event.dataTransfer) return;
+  event.dataTransfer.setData("application/x-cv-chart-operation", kind);
+  event.dataTransfer.setData("text/plain", kind);
+  event.dataTransfer.effectAllowed = "copy";
+  operationDragActive.value = true;
+}
+
+function onOperationDragEnd() {
+  operationDragActive.value = false;
+}
+
+function onOperationDrop(field: string, event: DragEvent) {
+  const kind = event.dataTransfer?.getData("application/x-cv-chart-operation") as OperationKind;
+  if (kind !== "filter" && kind !== "aggregate") return;
+  operationDragActive.value = false;
+  addedOperations.value = {
+    ...addedOperations.value,
+    [field]: { ...addedOperations.value[field], [kind]: true },
+  };
+}
+
+function operationAdded(field: string, kind: OperationKind) {
+  return addedOperations.value[field]?.[kind] === true;
+}
+
+function isValueSelected(field: string, value: string) {
+  return filterValues.value[field]?.includes(value) ?? true;
+}
+
+function toggleValueFilter(field: string, value: string, event: Event) {
+  const selected = new Set(filterValues.value[field] ?? valuesForColumn(field));
+  if ((event.target as HTMLInputElement).checked) selected.add(value);
+  else selected.delete(value);
+  const values = Array.from(selected);
+  filterValues.value = { ...filterValues.value, [field]: values };
+  props.onSetValueFilter?.(field, values);
+}
+
+function numericFilterValue(field: string, key: "topN" | "binCount") {
+  return props.selectedChart?.numericFilters?.[field]?.[key] ?? "";
+}
+
+function updateNumericFilter(field: string, key: "topN" | "binCount", event: Event) {
+  const raw = Number((event.target as HTMLInputElement).value);
+  props.onSetNumericFilter?.(field, { [key]: Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : undefined });
+}
+
+function aggregationValue(field: string) {
+  const chart = props.selectedChart;
+  const channel = chart
+    ? (Object.entries(chart.encodings) as Array<[string, { field: string } | undefined]>)
+      .find(([, encoding]) => encoding?.field === field)?.[0]
+    : undefined;
+  return channel ? chart?.aggregations?.[channel as ChartEncodingChannel] ?? "" : chart?.dimensionAggregations?.[field] ?? "";
+}
+
+function updateAggregation(field: string, event: Event) {
+  const value = (event.target as HTMLSelectElement).value as "sum" | "avg" | "";
+  props.onSetAggregation?.(field, value || undefined);
+}
 const tableStatus = computed(() => {
   if (isGraph.value) {
     const [nodes, edges] = graphTables.value;
@@ -147,7 +265,7 @@ function onColumnDragStart(column: { name: string; type: DataColumnType }, event
   const columnPayload = {
     datasetId: dataset.id,
     field: column.name,
-    type: column.type,
+    type: displayColumnType(column.type) ?? "nominal",
   };
   beginCsvColumnDrag(columnPayload);
   event.dataTransfer.setData(csvColumnDragMime, encodeCsvColumnDragPayload(columnPayload));
@@ -177,6 +295,10 @@ function onColumnTypeChange(columnName: string, event: Event, table?: "nodes" | 
   const dataset = activeDataset.value;
   const type = (event.target as HTMLSelectElement).value as DataColumnType;
   if (dataset) setColumnType(dataset.id, columnName, type, table);
+}
+
+function displayColumnType(type: DataColumnType | undefined) {
+  return type === "temporal" ? "ordinal" : type;
 }
 
 onMounted(() => {
@@ -307,13 +429,13 @@ onBeforeUnmount(() =>
                 <span class="data-table__column-label">{{ header }}</span>
               </span>
               <select
-                :value="columns[columnIndex]?.type"
+                :value="displayColumnType(columns[columnIndex]?.type)"
                 class="data-table__column-type"
                 aria-label="Column type"
                 @change="onColumnTypeChange(header, $event)"
               >
                 <option value="nominal">nominal</option>
-                <option value="temporal">temporal</option>
+                <option value="ordinal">ordinal</option>
                 <option value="quantitative">quantitative</option>
               </select>
             </th>
@@ -330,6 +452,59 @@ onBeforeUnmount(() =>
               <span v-else class="data-table__binding-values">
                 <span v-for="label in encodingLabels(header)" :key="`${header}-${label}`" class="data-table__binding-value">{{ label }}</span>
               </span>
+            </th>
+          </tr>
+          <tr v-if="showChartOperations" class="data-table__operation-row">
+            <th class="data-table__binding-label data-table__operation-tools" scope="row">
+              <span>Operation</span>
+              <button class="data-table__drag-tool" type="button" draggable="true" @dragstart="onOperationDragStart('filter', $event)" @dragend="onOperationDragEnd"><Filter :size="11" aria-hidden="true" />Filter</button>
+              <button class="data-table__drag-tool" type="button" draggable="true" @dragstart="onOperationDragStart('aggregate', $event)" @dragend="onOperationDragEnd"><Sigma :size="12" aria-hidden="true" />Aggregate</button>
+            </th>
+            <th
+              v-for="column in columns"
+              :key="`operation-${column.name}`"
+              class="data-table__operation-cell"
+              :class="{ 'data-table__operation-cell--target': operationDragActive }"
+              scope="col"
+              @dragover.prevent
+              @drop.prevent="onOperationDrop(column.name, $event)"
+            >
+              <div v-if="column.type === 'quantitative'" class="data-table__operation-actions">
+                <details v-if="operationAdded(column.name, 'filter')" class="data-table__operation-menu">
+                  <summary class="data-table__operation-label"><Filter :size="11" aria-hidden="true" />Filter</summary>
+                  <div class="data-table__menu-popover">
+                    <label>Top N<input type="number" min="1" step="1" :value="numericFilterValue(column.name, 'topN')" @change="updateNumericFilter(column.name, 'topN', $event)" /></label>
+                    <label>Bins<input type="number" min="2" step="1" :value="numericFilterValue(column.name, 'binCount')" @change="updateNumericFilter(column.name, 'binCount', $event)" /></label>
+                  </div>
+                </details>
+                <details v-if="operationAdded(column.name, 'aggregate')" class="data-table__operation-menu">
+                  <summary class="data-table__operation-label"><Sigma :size="12" aria-hidden="true" />Aggregate</summary>
+                  <div class="data-table__menu-popover">
+                    <select aria-label="Aggregation" :value="aggregationValue(column.name)" @change="updateAggregation(column.name, $event)"><option value="">None</option><option value="sum">Sum</option><option value="avg">Average</option></select>
+                  </div>
+                </details>
+              </div>
+              <div v-else class="data-table__categorical-controls">
+                <div class="data-table__category-values" :title="valuesForColumn(column.name).join(', ')">
+                  <span v-for="value in valuesForColumn(column.name)" :key="`${column.name}-value-${value}`">{{ value }}</span>
+                </div>
+                <details v-if="operationAdded(column.name, 'filter')" class="data-table__operation-menu">
+                  <summary class="data-table__operation-label"><Filter :size="11" aria-hidden="true" />Filter</summary>
+                  <div class="data-table__menu-popover data-table__menu-popover--values">
+                    <label v-for="value in valuesForColumn(column.name)" :key="`${column.name}-${value}`" class="data-panel__value-option">
+                      <input type="checkbox" :checked="isValueSelected(column.name, value)" @change="toggleValueFilter(column.name, value, $event)" />
+                      <span :title="value">{{ value }}</span>
+                    </label>
+                  </div>
+                </details>
+                <details v-if="operationAdded(column.name, 'aggregate')" class="data-table__operation-menu">
+                  <summary class="data-table__operation-label"><Sigma :size="12" aria-hidden="true" />Aggregate</summary>
+                  <div class="data-table__menu-popover">
+                    <select aria-label="Aggregation" :value="aggregationValue(column.name)" @change="updateAggregation(column.name, $event)"><option value="">Group</option><option value="sum">Sum</option><option value="avg">Average</option></select>
+                  </div>
+                </details>
+              </div>
+              <span v-if="!operationAdded(column.name, 'filter') && !operationAdded(column.name, 'aggregate')" class="data-table__drop-hint">Drop here</span>
             </th>
           </tr>
         </thead>
@@ -356,6 +531,10 @@ onBeforeUnmount(() =>
           <tr>
             <th class="data-table__field-name" scope="col">Field</th>
             <th v-if="Object.keys(props.encodingBindings).length > 0" class="data-table__binding-cell" scope="col">Encoding</th>
+            <th v-if="showChartOperations" class="data-table__operation-cell data-table__operation-tools" scope="col">
+              <button class="data-table__drag-tool" type="button" draggable="true" @dragstart="onOperationDragStart('filter', $event)" @dragend="onOperationDragEnd"><Filter :size="11" aria-hidden="true" />Filter</button>
+              <button class="data-table__drag-tool" type="button" draggable="true" @dragstart="onOperationDragStart('aggregate', $event)" @dragend="onOperationDragEnd"><Sigma :size="12" aria-hidden="true" />Aggregate</button>
+            </th>
             <th
               v-for="(_, rowIndex) in previewRows"
               :key="rowIndex"
@@ -385,13 +564,13 @@ onBeforeUnmount(() =>
                 <span class="data-table__column-label">{{ column.name }}</span>
               </span>
               <select
-                :value="column.type"
+                :value="displayColumnType(column.type)"
                 class="data-table__column-type"
                 :aria-label="`${column.name} column type`"
                 @change="onColumnTypeChange(column.name, $event)"
               >
                 <option value="nominal">nominal</option>
-                <option value="temporal">temporal</option>
+                <option value="ordinal">ordinal</option>
                 <option value="quantitative">quantitative</option>
               </select>
             </th>
@@ -400,6 +579,20 @@ onBeforeUnmount(() =>
               <span v-else class="data-table__binding-values">
                 <span v-for="label in encodingLabels(column.name)" :key="`${column.name}-${label}`" class="data-table__binding-value">{{ label }}</span>
               </span>
+            </td>
+            <td v-if="showChartOperations" class="data-table__operation-cell" :class="{ 'data-table__operation-cell--target': operationDragActive }" @dragover.prevent @drop.prevent="onOperationDrop(column.name, $event)">
+              <div v-if="column.type === 'quantitative'" class="data-table__operation-actions">
+                <details v-if="operationAdded(column.name, 'filter')" class="data-table__operation-menu"><summary class="data-table__operation-label"><Filter :size="11" aria-hidden="true" />Filter</summary><div class="data-table__menu-popover"><label>Top N<input type="number" min="1" step="1" :value="numericFilterValue(column.name, 'topN')" @change="updateNumericFilter(column.name, 'topN', $event)" /></label><label>Bins<input type="number" min="2" step="1" :value="numericFilterValue(column.name, 'binCount')" @change="updateNumericFilter(column.name, 'binCount', $event)" /></label></div></details>
+                <details v-if="operationAdded(column.name, 'aggregate')" class="data-table__operation-menu"><summary class="data-table__operation-label"><Sigma :size="12" aria-hidden="true" />Aggregate</summary><div class="data-table__menu-popover"><select aria-label="Aggregation" :value="aggregationValue(column.name)" @change="updateAggregation(column.name, $event)"><option value="">None</option><option value="sum">Sum</option><option value="avg">Average</option></select></div></details>
+              </div>
+              <div v-else class="data-table__categorical-controls">
+                <div class="data-table__category-values" :title="valuesForColumn(column.name).join(', ')">
+                  <span v-for="value in valuesForColumn(column.name)" :key="`${column.name}-value-${value}`">{{ value }}</span>
+                </div>
+                <details v-if="operationAdded(column.name, 'filter')" class="data-table__operation-menu"><summary class="data-table__operation-label"><Filter :size="11" aria-hidden="true" />Filter</summary><div class="data-table__menu-popover data-table__menu-popover--values"><label v-for="value in valuesForColumn(column.name)" :key="`${column.name}-${value}`" class="data-panel__value-option"><input type="checkbox" :checked="isValueSelected(column.name, value)" @change="toggleValueFilter(column.name, value, $event)" /><span :title="value">{{ value }}</span></label></div></details>
+                <details v-if="operationAdded(column.name, 'aggregate')" class="data-table__operation-menu"><summary class="data-table__operation-label"><Sigma :size="12" aria-hidden="true" />Aggregate</summary><div class="data-table__menu-popover"><select aria-label="Aggregation" :value="aggregationValue(column.name)" @change="updateAggregation(column.name, $event)"><option value="">Group</option><option value="sum">Sum</option><option value="avg">Average</option></select></div></details>
+              </div>
+              <span v-if="!operationAdded(column.name, 'filter') && !operationAdded(column.name, 'aggregate')" class="data-table__drop-hint">Drop here</span>
             </td>
             <td
               v-for="(row, rowIndex) in previewRows"
@@ -439,12 +632,12 @@ onBeforeUnmount(() =>
               >
                 <span>{{ header }}</span>
                 <select
-                  :value="graphTable.table.columns[columnIndex]?.type"
+                  :value="displayColumnType(graphTable.table.columns[columnIndex]?.type)"
                   aria-label="Column type"
                   @change="onColumnTypeChange(header, $event, graphTable.key)"
                 >
                   <option value="nominal">nominal</option>
-                  <option value="temporal">temporal</option>
+                  <option value="ordinal">ordinal</option>
                   <option value="quantitative">quantitative</option>
                 </select>
               </th>
@@ -492,12 +685,12 @@ onBeforeUnmount(() =>
               <th class="data-table__field-name" scope="row" :title="column.name">
                 <span>{{ column.name }}</span>
                 <select
-                  :value="column.type"
+                  :value="displayColumnType(column.type)"
                   :aria-label="`${column.name} column type`"
                   @change="onColumnTypeChange(column.name, $event, graphTable.key)"
                 >
                   <option value="nominal">nominal</option>
-                  <option value="temporal">temporal</option>
+                  <option value="ordinal">ordinal</option>
                   <option value="quantitative">quantitative</option>
                 </select>
               </th>
@@ -528,6 +721,244 @@ onBeforeUnmount(() =>
 </template>
 
 <style scoped>
+.data-panel__value-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 0 3px 8px;
+  color: #526174;
+  font-size: 11px;
+}
+
+.data-panel__value-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.data-panel__numeric-operation,
+.data-panel__aggregate-row,
+.data-table__numeric-controls,
+.data-table__categorical-controls,
+.data-table__operation-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 54px 54px 88px;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 6px;
+  color: #526174;
+  font-size: 10px;
+}
+
+.data-panel__numeric-operation strong,
+.data-panel__aggregate-row > span,
+.data-table__operation-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.data-table__operation-cell--target {
+  background: #eef6ff;
+  outline: 1px dashed #6aa9df;
+  outline-offset: -2px;
+}
+
+.data-table__operation-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: normal;
+}
+
+.data-table__drag-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 6px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #fff;
+  color: #526174;
+  cursor: grab;
+  font-size: 10px;
+}
+
+.data-table__drag-tool:active {
+  cursor: grabbing;
+}
+
+.data-table__drag-tool:hover {
+  border-color: #1c7ed6;
+  color: #1554b2;
+}
+
+.data-table__operation-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-bottom: 4px;
+  color: #526174;
+  cursor: pointer;
+  font-size: 10px;
+  list-style: none;
+}
+
+.data-table__operation-label::-webkit-details-marker {
+  display: none;
+}
+
+.data-table__drop-hint {
+  display: inline-block;
+  padding: 3px 5px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 4px;
+  color: #94a3b8;
+  font-size: 9px;
+}
+
+.data-panel__numeric-operation label,
+.data-table__numeric-controls label {
+  display: grid;
+  gap: 2px;
+}
+
+.data-panel__numeric-operation input,
+.data-panel__numeric-operation select,
+.data-panel__aggregate-row select,
+.data-table__operation-cell input,
+.data-table__operation-cell select {
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  padding: 2px 4px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #fff;
+  color: #253247;
+  font-size: 11px;
+}
+
+.data-panel__aggregate-row {
+  grid-template-columns: minmax(0, 1fr) 88px;
+}
+
+.data-table__operation-cell {
+  min-width: 92px;
+  vertical-align: top;
+  overflow: visible;
+  white-space: normal;
+}
+
+.data-table__operation-actions {
+  display: flex;
+  gap: 4px;
+  min-width: 40px;
+  margin: 0;
+}
+
+.data-table__operation-menu {
+  position: relative;
+}
+
+.data-table__menu-popover {
+  position: absolute;
+  z-index: 5;
+  top: 27px;
+  left: 0;
+  display: grid;
+  gap: 6px;
+  min-width: 112px;
+  padding: 7px;
+  border: 1px solid #cbd5e1;
+  border-radius: 5px;
+  background: #fff;
+  box-shadow: 0 5px 16px rgba(24, 33, 47, .16);
+}
+
+.data-table__menu-popover label {
+  display: grid;
+  gap: 2px;
+  color: #526174;
+  font-size: 10px;
+}
+
+.data-table__menu-popover--values {
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.data-table__category-values {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  max-width: 150px;
+  max-height: 116px;
+  margin-bottom: 4px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.data-table__category-values span {
+  flex: 0 0 auto;
+  overflow: hidden;
+  padding: 2px 5px;
+  border: 1px solid #dbe3ec;
+  border-radius: 3px;
+  background: #f8fafc;
+  color: #526174;
+  font-size: 10px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.data-table__numeric-controls {
+  grid-template-columns: 42px 42px;
+  min-width: 116px;
+}
+
+.data-table__numeric-controls select {
+  grid-column: 1 / -1;
+}
+
+.data-table__categorical-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 108px;
+}
+
+.data-table__categorical-controls details {
+  position: relative;
+}
+
+.data-table__categorical-controls summary {
+  cursor: pointer;
+  color: #526174;
+  font-size: 10px;
+}
+
+.data-table__categorical-controls details[open] .data-panel__value-option {
+  max-width: 160px;
+}
+
+.data-table__categorical-controls select {
+  margin-top: 4px;
+}
+
+@media (max-width: 760px) {
+  .data-panel__numeric-operation {
+    grid-template-columns: minmax(0, 1fr) 54px 54px;
+  }
+
+  .data-panel__numeric-operation label:last-child {
+    grid-column: 1 / -1;
+    grid-template-columns: 70px minmax(0, 1fr);
+    align-items: center;
+  }
+}
+
 .data-panel {
   --data-panel-width: 340px;
   --data-panel-max-width: 912px;

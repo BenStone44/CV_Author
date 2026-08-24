@@ -139,6 +139,9 @@ const {
   onCoordinateAxisScalePointerDown,
   onPolarAnglePointerDown,
   setAxisBindingAggregation,
+  setSelectedChartValueFilter,
+  setSelectedChartNumericFilter,
+  setSelectedChartAggregation,
   setAxisSwap,
   clearSeriesBinding,
   setChartSeries,
@@ -300,11 +303,16 @@ const csvEncodingBindings = computed<Record<string, string[]>>(() => {
 
   return bindings;
 });
+const csvPanelChart = computed(() => {
+  if (selectedNodes.value.length !== 1) return null;
+  const node = selectedNodes.value[0];
+  return node?.chartSpec ?? null;
+});
 function createSeriesItemPresentation(node: CanvasNode) {
   const spec = node?.chartSpec;
   const itemBinding = node ? barItemAxisBinding(node) : null;
   const scatterColor = spec && isScatterChartType(spec.chartType)
-    && (spec.encodings.color?.type === "nominal" || spec.encodings.color?.type === "temporal")
+    && (spec.encodings.color?.type === "nominal" || spec.encodings.color?.type === "ordinal" || spec.encodings.color?.type === "temporal")
     ? spec.encodings.color
     : null;
   const binding = itemBinding ?? (scatterColor
@@ -1006,6 +1014,10 @@ onBeforeUnmount(() => {
     <div class="workbench">
       <CsvDataPanel
         :encoding-bindings="csvEncodingBindings"
+        :selected-chart="csvPanelChart"
+        :on-set-value-filter="setSelectedChartValueFilter"
+        :on-set-numeric-filter="setSelectedChartNumericFilter"
+        :on-set-aggregation="setSelectedChartAggregation"
       />
       <main class="workspace">
         <section

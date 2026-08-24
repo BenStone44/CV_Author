@@ -3,6 +3,7 @@ import {
   getChartTemplateContract,
   normalizeChartTemplate,
 } from "./chartTemplates";
+import { isDataColumnTypeCompatible } from "../types";
 import type {
   ChartEncoding,
   ChartEncodingChannel,
@@ -119,7 +120,7 @@ export function profileDatasetDimensions(dataset: Dataset): ColumnDimensionProfi
       && distinctCount <= lowCardinalityLimit
       && repeated > 0
       && (cardinalityRatio <= 0.35 || (allIntegers && distinctCount <= 12));
-    const declaredCategory = column.type === "nominal" && distinctCount >= 2;
+    const declaredCategory = (column.type === "nominal" || column.type === "ordinal") && distinctCount >= 2;
     const promotedCategory = column.type !== "nominal" && lowCardinality;
     const categoryConfidence = declaredCategory
       ? Math.max(0.45, 1 - Math.max(0, cardinalityRatio - 0.2))
@@ -136,7 +137,7 @@ export function profileDatasetDimensions(dataset: Dataset): ColumnDimensionProfi
       distinctCount,
       cardinalityRatio,
       coverage: source.length === 0 ? 0 : validCount / source.length,
-      isComparable: (column.type === "quantitative" || column.type === "temporal")
+      isComparable: (column.type === "quantitative" || column.type === "ordinal" || column.type === "temporal")
         && distinctCount >= 2
         && validCount >= 2,
       canBeCategory: declaredCategory || promotedCategory,
@@ -307,7 +308,7 @@ function channelEligibility(templateId: ChartTemplateKind, profiles: ColumnDimen
       if (mapping.channel === "color" || mapping.channel === "shape" || mapping.role === "series") {
         return profile.canBeCategory;
       }
-      return mapping.accepts.includes(profile.declaredType);
+      return isDataColumnTypeCompatible(mapping.accepts, profile.declaredType);
     });
     return {
       channel: mapping.channel,
@@ -466,7 +467,7 @@ export function inferColumnIntents(
   const binding = explicitRoleBinding(spec);
   if (dropContext.type === "channel") {
     const mapping = contract.channels.find((channel) => channel.channel === dropContext.channel);
-    if (!mapping || !mapping.accepts.includes(inputColumn.type)) {
+    if (!mapping || !isDataColumnTypeCompatible(mapping.accepts, inputColumn.type)) {
       return { inputColumn: inputColumn.name, status: "TYPE_MISMATCH", intents: [], warnings: [] };
     }
     const role = mapping.role === "series" ? "series" : mapping.channel;
@@ -560,7 +561,7 @@ export function inferColumnIntents(
   contract.dimensionUpgrades.forEach((upgrade) => {
     const target = getChartTemplateContract(upgrade.chartType);
     const targetRole = target?.channels.find((mapping) => mapping.role === upgrade.role);
-    if (!isLegalDimension || !targetRole?.accepts.includes(inputColumn.type)) return;
+    if (!isLegalDimension || !targetRole || !isDataColumnTypeCompatible(targetRole.accepts, inputColumn.type)) return;
     intents.push({
       id: `upgrade:${upgrade.chartType}:${inputColumn.name}`,
       kind: "upgrade",

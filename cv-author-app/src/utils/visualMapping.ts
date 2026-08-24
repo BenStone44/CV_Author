@@ -79,13 +79,13 @@ export function isSeriesStyleMapping(value: unknown): value is SeriesStyleMappin
 
 export function parseVisualValue(value: string, encoding: ChartEncoding) {
   const trimmed = value.trim();
-  if (!trimmed || encoding.type === "nominal") return null;
+  if (!trimmed || encoding.type === "nominal" || encoding.type === "ordinal") return null;
   const parsed = encoding.type === "temporal" ? Date.parse(trimmed) : Number(trimmed);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
 export function visualDomain(rows: DataRow[], encoding: ChartEncoding | undefined): [number, number] | null {
-  if (!encoding || encoding.type === "nominal") return null;
+  if (!encoding || encoding.type === "nominal" || encoding.type === "ordinal") return null;
   const values = rows.flatMap((row) => {
     const value = parseVisualValue(row[encoding.field] ?? "", encoding);
     return value === null ? [] : [value];

@@ -44,7 +44,18 @@ export type CompositionType = "layer" | "facet" | "concat" | "nested";
 export type CoordinateSystem = "Cartesian" | "Polar" | "Geographic" | "CoordinateFree";
 export type IconKind = "cartesian" | "polar" | "geographic" | "coordinate-free";
 
-export type DataColumnType = "nominal" | "temporal" | "quantitative";
+/**
+ * CSV semantic types. `temporal` remains a read-compatibility value for
+ * projects saved before ordinal was introduced; new data uses ordinal for
+ * ordered discrete values (including date strings) or quantitative for
+ * numeric timestamps.
+ */
+export type DataColumnType = "nominal" | "ordinal" | "quantitative" | "temporal";
+
+export function isDataColumnTypeCompatible(accepts: readonly DataColumnType[], type: DataColumnType) {
+  return accepts.includes(type)
+    || (type === "ordinal" && (accepts.includes("nominal") || accepts.includes("temporal")));
+}
 
 export type DataColumn = {
   name: string;
@@ -112,6 +123,11 @@ export type ChartTemplateKind =
 export type ChartEncoding = {
   field: string;
   type: DataColumnType;
+};
+
+export type ChartNumericFilter = {
+  topN?: number;
+  binCount?: number;
 };
 
 export type ChartPlotArea = {
@@ -250,6 +266,7 @@ export type ChartSpec = {
   renderer?: ChartRendererReference;
   filters?: Record<string, string>;
   valueFilters?: Record<string, string[]>;
+  numericFilters?: Record<string, ChartNumericFilter>;
   markGroups?: MarkGroupSpec[];
   dimensionRecommendations?: DimensionRecommendation[];
   dimensionDecisions?: Record<string, "aggregate" | "series" | "flatten" | "facet" | "nested">;

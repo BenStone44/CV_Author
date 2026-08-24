@@ -69,7 +69,9 @@ export function inferColumnType(values: string[]): DataColumnType {
   const nonEmptyValues = values.map((value) => value.trim()).filter(Boolean);
   if (nonEmptyValues.length === 0) return "nominal";
   if (nonEmptyValues.every(isNumeric)) return "quantitative";
-  if (nonEmptyValues.every(isTemporal)) return "temporal";
+  // Date-like strings are ordered discrete values. Users can explicitly
+  // reclassify numeric timestamps as quantitative in the data panel.
+  if (nonEmptyValues.every(isTemporal)) return "ordinal";
   return "nominal";
 }
 

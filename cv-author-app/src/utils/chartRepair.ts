@@ -1,4 +1,5 @@
 import { getChartTemplateContract, normalizeBarChartVariant } from "./chartTemplates";
+import { isDataColumnTypeCompatible } from "../types";
 import type { DataColumnType, Dataset, ChartSpec } from "../types";
 
 export type ChartRepairStatus =
@@ -138,7 +139,7 @@ export function validateChartBinding(
     }
     fields.forEach((field) => {
       const column = columns.get(field);
-      if (!column || !role.accepts.includes(column.type)) {
+      if (!column || !isDataColumnTypeCompatible(role.accepts, column.type)) {
         pushIssue(issues, "TYPE_MISMATCH");
         return;
       }
@@ -253,7 +254,7 @@ function enumerateBindings(
     const column = columns.get(field);
     if (!column) return;
     const eligibleRoles = contract.roles.filter((role) =>
-      role.accepts.includes(column.type)
+      isDataColumnTypeCompatible(role.accepts, column.type)
       && (binding[role.id]?.length ?? 0) < role.maxFields);
     const choices = contract.allowFieldReuse
       ? nonEmptySubsets(eligibleRoles)

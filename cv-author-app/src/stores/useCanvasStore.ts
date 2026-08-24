@@ -58,12 +58,14 @@ import type {
   NestedRenderPlacement,
   RelativeNestedParameters,
   DataColumnType,
+  ChartNumericFilter,
   MarkGroupSharedConfig,
   Dataset,
   ChartScaleSpec,
   DimensionRecommendation,
   ChartInstanceDocument,
 } from "../types";
+import { isDataColumnTypeCompatible } from "../types";
 import { useDatasetStore } from "./useDatasetStore";
 import { useChartRelationshipStore } from "./useChartRelationshipStore";
 import { scoreSeriesCandidates } from "../utils/seriesInference";
@@ -1055,14 +1057,14 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
               ? column.type === "quantitative"
               : polarSegmentField
                 ? column.name === polarSegmentField
-                : column.type === "quantitative" || column.type === "nominal" || column.type === "temporal"
+                : column.type === "quantitative" || column.type === "nominal" || column.type === "ordinal" || column.type === "temporal"
             : categoricalMode
             ? categoricalFields.includes(column.name)
             : quantitativeMode
               ? column.type === "quantitative"
               : normalizeChartTemplate(spec.chartType) === "scatter"
-                ? column.type === "nominal" || column.type === "temporal"
-                : column.type === "quantitative" || column.type === "nominal" || column.type === "temporal";
+                ? column.type === "nominal" || column.type === "ordinal" || column.type === "temporal"
+                : column.type === "quantitative" || column.type === "nominal" || column.type === "ordinal" || column.type === "temporal";
           nearestZone = {
             type: "series-item",
             targetNodeId: node.id,
@@ -1419,7 +1421,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const candidates = (channel: OptionalEncodingChannel) => dataset.columns.filter((column) => {
       if (excluded.has(column.name)) return false;
       if (channel === "size") return column.type === "quantitative";
-      return channel === "shape" ? column.type === "nominal" : true;
+      return channel === "shape" ? column.type === "nominal" || column.type === "ordinal" : true;
     });
     return [
       { channel: "color" as const, label: "Color", candidates: candidates("color") },
@@ -1469,7 +1471,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       return [spec.encodings.segment.field];
     }
     return template === "scatter"
-      && (spec.encodings.color?.type === "nominal" || spec.encodings.color?.type === "temporal")
+      && (spec.encodings.color?.type === "nominal" || spec.encodings.color?.type === "ordinal" || spec.encodings.color?.type === "temporal")
       ? [spec.encodings.color.field]
       : [];
   }
@@ -4063,6 +4065,94 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     };
     renderChartNode(node);
   }
+  function selectedDataChart() {
+    return selectedNodes.value.length === 1
+      ? selectedNodes.value[0]?.chartSpec ? selectedNodes.value[0] : null
+      : null;
+  }
+  function setSelectedChartValueFilter(field: string, values: string[]) {
+    const node = selectedDataChart();
+    if (!node?.chartSpec) return;
+    const dataset = getDataset(node.chartSpec.datasetId);
+    if (!dataset) return;
+    const available = new Set(dataset.rows.map((row) => row[field] ?? "").filter(Boolean));
+    const selected = Array.from(new Set(values.filter((value) => available.has(value))));
+    const valueFilters = { ...node.chartSpec.valueFilters };
+    if (selected.length === available.size) delete valueFilters[field];
+    else valueFilters[field] = selected;
+    pushCanvasHistory();
+    node.chartSpec = {
+      ...node.chartSpec,
+      valueFilters: Object.keys(valueFilters).length ? valueFilters : undefined,
+      scales: undefined,
+      plotArea: undefined,
+      renderer: undefined,
+    };
+    renderChartNode(node);
+  }
+  function setSelectedChartNumericFilter(field: string, patch: ChartNumericFilter) {
+    const node = selectedDataChart();
+    if (!node?.chartSpec) return;
+    const dataset = getDataset(node.chartSpec.datasetId);
+    const column = dataset?.columns.find((item) => item.name === field);
+    if (!column || column.type !== "quantitative") return;
+    const current = { ...node.chartSpec.numericFilters };
+    const next = { ...(current[field] ?? {}), ...patch };
+    if (!next.topN && !next.binCount) delete current[field];
+    else current[field] = next;
+    const aggregations = { ...node.chartSpec.aggregations };
+    if (next.binCount && node.chartSpec.encodings.y?.type === "quantitative" && !aggregations.y) {
+      aggregations.y = "sum";
+    }
+    pushCanvasHistory();
+    node.chartSpec = {
+      ...node.chartSpec,
+      numericFilters: Object.keys(current).length ? current : undefined,
+      aggregations: Object.keys(aggregations).length ? aggregations : undefined,
+      scales: undefined,
+      plotArea: undefined,
+      renderer: undefined,
+    };
+    renderChartNode(node);
+  }
+  function setSelectedChartAggregation(field: string, aggregation?: "sum" | "avg") {
+    const node = selectedDataChart();
+    if (!node?.chartSpec) return;
+    const dataset = getDataset(node.chartSpec.datasetId);
+    const column = dataset?.columns.find((item) => item.name === field);
+    if (!column) return;
+    const channel = (Object.entries(node.chartSpec.encodings) as Array<[ChartEncodingChannel, ChartSpec["encodings"][ChartEncodingChannel]]>)
+      .find(([, encoding]) => encoding?.field === field)?.[0];
+    if (channel && column.type === "quantitative") {
+      const aggregations = { ...node.chartSpec.aggregations };
+      if (channel === "x" || channel === "y") {
+        if (aggregation) aggregations[channel] = aggregation;
+        else delete aggregations[channel];
+        pushCanvasHistory();
+        node.chartSpec = {
+          ...node.chartSpec,
+          aggregations: Object.keys(aggregations).length ? aggregations : undefined,
+          renderer: undefined,
+        };
+        renderChartNode(node);
+      }
+      return;
+    }
+    const dimensionAggregations = { ...node.chartSpec.dimensionAggregations };
+    const aggregations = { ...node.chartSpec.aggregations };
+    if (aggregation) dimensionAggregations[field] = aggregation;
+    else delete dimensionAggregations[field];
+    if (aggregation && node.chartSpec.encodings.y?.type === "quantitative") aggregations.y = aggregation;
+    else if (!Object.keys(dimensionAggregations).length) delete aggregations.y;
+    pushCanvasHistory();
+    node.chartSpec = {
+      ...node.chartSpec,
+      dimensionAggregations: Object.keys(dimensionAggregations).length ? dimensionAggregations : undefined,
+      aggregations: Object.keys(aggregations).length ? aggregations : undefined,
+      renderer: undefined,
+    };
+    renderChartNode(node);
+  }
   function confirmSeriesField(fieldName: string) {
     setChartSeries(fieldName);
   }
@@ -4099,7 +4189,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (!node?.chartSpec || !dataset) return false;
     const selected = Array.from(new Set(fieldNames)).flatMap((field) => {
       const column = dataset.columns.find((item) => item.name === field
-        && (item.type === "nominal" || item.type === "temporal"));
+        && (item.type === "nominal" || item.type === "ordinal" || item.type === "temporal"));
       return column ? [{ field: column.name, type: column.type }] : [];
     }).slice(0, 1);
     const occupied = new Set(Object.values(node.chartSpec.encodings)
@@ -4117,7 +4207,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       if (template === "bar" || template === "line") delete encodings.color;
       else if (template === "area" || template === "scatter") {
         if (selected[0]) encodings.color = { ...selected[0] };
-        else if ((template === "scatter" && (encodings.color?.type === "nominal" || encodings.color?.type === "temporal"))
+        else if ((template === "scatter" && (encodings.color?.type === "nominal" || encodings.color?.type === "ordinal" || encodings.color?.type === "temporal"))
           || encodings.color?.field === spec.series?.field
           || spec.seriesFields?.some((encoding) => encoding.field === encodings.color?.field)) {
           delete encodings.color;
@@ -4173,7 +4263,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (!node?.chartSpec || !dataset) return;
     const config = getEncodingChannelConfigsForSpec(node.chartSpec).find((item) => item.channel === channel);
     const column = fieldName ? dataset.columns.find((item) => item.name === fieldName) : undefined;
-    if (!config || (fieldName && (!column || !config.accepts.includes(column.type)))) return;
+    if (!config || (fieldName && (!column || !isDataColumnTypeCompatible(config.accepts, column.type)))) return;
     if (channel === "y" && (node.chartSpec.valueFields?.length ?? 0) > 0) {
       setImportNotice("Y is derived from quantitative Series Items and cannot be bound separately.");
       return;
@@ -6813,6 +6903,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     bindAxisField: bindMarkField,
     setAxisBindingAggregation,
     setValueFilters,
+    setSelectedChartValueFilter,
+    setSelectedChartNumericFilter,
+    setSelectedChartAggregation,
     clearMarkField,
     clearAxisBinding: clearMarkField,
     confirmSeriesField,

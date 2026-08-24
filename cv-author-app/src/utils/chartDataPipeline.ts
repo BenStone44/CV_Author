@@ -20,11 +20,57 @@ export function rowMatchesChartFilters(
 export function filterDatasetForChart(dataset: Dataset, spec: ChartSpec): Dataset {
   const hasFilters = Object.keys(spec.filters ?? {}).length > 0
     || Object.keys(spec.valueFilters ?? {}).length > 0;
-  if (!hasFilters) return dataset;
+  let rows = hasFilters
+    ? dataset.rows.filter((row) => rowMatchesChartFilters(row, spec))
+    : dataset.rows;
+  for (const [field, filter] of Object.entries(spec.numericFilters ?? {})) {
+    const topN = normalizePositiveInteger(filter.topN);
+    if (!topN) continue;
+    const values = Array.from(new Set(rows
+      .map((row) => Number(row[field] ?? ""))
+      .filter(Number.isFinite)))
+      .sort((left, right) => right - left)
+      .slice(0, topN);
+    const allowed = new Set(values.map(String));
+    rows = rows.filter((row) => {
+      const numeric = Number(row[field] ?? "");
+      return Number.isFinite(numeric) && allowed.has(String(numeric));
+    });
+  }
+  if (rows.length === dataset.rows.length && !hasFilters && Object.keys(spec.numericFilters ?? {}).length === 0) return dataset;
   return {
     ...dataset,
-    rows: dataset.rows.filter((row) => rowMatchesChartFilters(row, spec)),
+    rows,
   };
+}
+
+function normalizePositiveInteger(value: number | undefined) {
+  if (!Number.isFinite(value) || value === undefined || value <= 0) return null;
+  return Math.max(1, Math.floor(value));
+}
+
+/** Replace numeric values with equal-width bin midpoints before rendering. */
+export function materializeNumericBins(dataset: Dataset, spec: ChartSpec): Dataset {
+  const binFields = Object.entries(spec.numericFilters ?? {})
+    .map(([field, filter]) => [field, normalizePositiveInteger(filter.binCount)] as const)
+    .filter((entry): entry is readonly [string, number] => !!entry[1]);
+  if (binFields.length === 0) return dataset;
+  let rows = dataset.rows;
+  binFields.forEach(([field, binCount]) => {
+    const values = rows.map((row) => Number(row[field] ?? "")).filter(Number.isFinite);
+    if (values.length === 0) return;
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const width = max === min ? 1 : (max - min) / binCount;
+    rows = rows.map((row) => {
+      const numeric = Number(row[field] ?? "");
+      if (!Number.isFinite(numeric)) return row;
+      const index = Math.min(binCount - 1, Math.max(0, Math.floor((numeric - min) / width)));
+      const midpoint = min + (index + 0.5) * width;
+      return { ...row, [field]: String(midpoint) };
+    });
+  });
+  return { ...dataset, rows };
 }
 
 /** Materializes selected wide CSV value columns as ordinary long-form rows. */
@@ -144,7 +190,7 @@ export function prepareChartData(
 ) {
   const filteredDataset = filterDatasetForChart(sourceDataset, spec);
   const materialized = materializeCsvValueSeries(filteredDataset, spec);
-  const dataset = materialized.dataset;
+  const dataset = materializeNumericBins(materialized.dataset, spec);
   const synchronizedSpec = synchronizeChartEncodingTypes(materialized.chartSpec, dataset);
   return {
     dataset,

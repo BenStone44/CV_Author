@@ -172,7 +172,7 @@ type LineDatum = {
 function parseAxisValue(value: string, type: ChartEncoding["type"]): ParsedAxisValue | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
-  if (type === "nominal") return trimmed;
+  if (type === "nominal" || type === "ordinal") return trimmed;
   if (type === "quantitative") {
     const number = Number(trimmed);
     return Number.isFinite(number) ? number : null;
@@ -193,12 +193,12 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
     ? chartSpec.seriesFields
     : chartSpec.series
       ? [chartSpec.series]
-      : chartSpec.encodings.color?.type === "nominal"
+      : chartSpec.encodings.color?.type === "nominal" || chartSpec.encodings.color?.type === "ordinal"
         ? [chartSpec.encodings.color]
         : [];
   if (!xEncoding || !yEncoding) throw new Error("Line renderer requires both X and Y encodings.");
-  if (seriesEncodings.some((encoding) => encoding.type !== "nominal" && encoding.type !== "temporal")) {
-    throw new Error("Line renderer series encoding must be nominal or temporal.");
+  if (seriesEncodings.some((encoding) => encoding.type !== "nominal" && encoding.type !== "ordinal" && encoding.type !== "temporal")) {
+    throw new Error("Line renderer series encoding must be nominal or ordinal.");
   }
 
   const sourceRows = dataset.rows
@@ -360,7 +360,7 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
         type: "linear" as const,
       };
     }
-    if (encoding.type === "nominal") {
+    if (encoding.type === "nominal" || encoding.type === "ordinal") {
       const domain = uniqueDomain(values);
       const scale = scalePoint<string>().domain(domain).range(range).padding(0.5);
       return {
@@ -424,7 +424,7 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
     : {};
   const series: LineSeriesGeometry[] = [];
   const seriesMarkup = groupedRows.map(([seriesKey, values], index) => {
-    const ordered = progressionEncoding.type === "nominal"
+    const ordered = progressionEncoding.type === "nominal" || progressionEncoding.type === "ordinal"
       ? [...values]
       : [...values].sort((left, right) => Number(progressionValue(left)) - Number(progressionValue(right)));
     const path = pathGenerator(ordered);
