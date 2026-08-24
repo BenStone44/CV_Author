@@ -56,7 +56,7 @@ const emit = defineEmits<{
   seriesFieldChange: [field: string];
   seriesFieldsChange: [fields: string[]];
   valueSeriesFieldsChange: [fields: string[]];
-  angleFieldsChange: [fields: string[]];
+  segmentFieldsChange: [fields: string[]];
   parallelFieldsChange: [fields: string[]];
   markConfigChange: [patch: MarkGroupSharedConfig];
   axisSwap: [swapped: boolean];
@@ -98,8 +98,8 @@ const seriesItemsRequired = computed(() => supportsSeriesItems.value
 const seriesItemLabel = computed(() => seriesRole.value?.semanticLabel ?? "Series");
 const isParallel = computed(() => template.value === "parallel");
 const standardConfigs = computed(() => configs.value.filter((config) => {
-  if (isPolar.value && config.channel === "theta") return false;
-  if (isPolar.value && config.channel === "radius") return false;
+  if (isPolar.value && config.channel === "segment") return false;
+  if (isPolar.value && config.channel === "theta" && polarSegmentMode.value === "quantitative") return false;
   if (isParallel.value && config.channel === "dimensions") return false;
   if (supportsSeriesItems.value && config.role === "series") return false;
   if (supportsSeriesItems.value && seriesItemMode.value === "quantitative" && config.channel === "y") return false;
@@ -128,6 +128,7 @@ const seriesItemColumns = computed(() => props.columns.filter((column) => templa
   ? column.type === "nominal" || column.type === "temporal"
   : column.type === "nominal" || column.type === "temporal" || column.type === "quantitative"));
 const seriesItemDropState = ref<"idle" | "valid" | "invalid">("idle");
+const segmentDropState = ref<"idle" | "valid" | "invalid">("idle");
 const editableSeriesMembers = computed(() => seriesItemMode.value === "quantitative"
   ? selectedValueSeriesFields.value.map((field) => ({ id: field, label: field }))
   : seriesMembers.value);
@@ -143,12 +144,25 @@ const seriesStyleMapping = computed<SeriesStyleMapping>(() => {
 });
 const legendVisible = computed(() => props.markConfig.legendVisible === true);
 const quantitativeColumns = computed(() => props.columns.filter((column) => column.type === "quantitative"));
-const selectedAngleFields = computed(() => props.chartSpec.angleFields?.map((encoding) => encoding.field)
-  ?? (props.chartSpec.encodings.theta
-    ? [props.chartSpec.encodings.theta.field]
-    : props.chartSpec.encodings.angle
-      ? [props.chartSpec.encodings.angle.field]
-      : []));
+const selectedSegmentFields = computed(() => props.chartSpec.encodings.segment?.field
+  ? [props.chartSpec.encodings.segment.field]
+  : props.chartSpec.angleFields?.map((encoding) => encoding.field) ?? []);
+const polarSegmentMode = computed<"categorical" | "quantitative" | null>(() => {
+  if (props.chartSpec.encodings.segment?.field) return "categorical";
+  if ((props.chartSpec.angleFields?.length ?? 0) > 0) return "quantitative";
+  return null;
+});
+const polarSegmentMembers = computed(() => {
+  const field = props.chartSpec.encodings.segment?.field;
+  if (field) {
+    return Array.from(new Set(props.rows.map((row) => row[field] ?? "").filter(Boolean)))
+      .map((id) => ({ id, label: id }));
+  }
+  return (props.chartSpec.angleFields ?? []).map((encoding) => ({
+    id: encoding.field,
+    label: encoding.field,
+  }));
+});
 const selectedParallelFields = computed(() => props.chartSpec.parallelFields?.map((encoding) => encoding.field) ?? []);
 const radiusMode = computed(() => resolvedPolarRadiusMode(props.chartSpec));
 const staticOuterRadius = computed(() => typeof props.markConfig.outerRadius === "number"
@@ -159,7 +173,8 @@ const sizeConfig = computed(() => configs.value.find((config) => config.channel 
 const colorField = computed(() => resolvedEncodingField(props.chartSpec, "color"));
 const sizeField = computed(() => resolvedEncodingField(props.chartSpec, "size"));
 const colorColumn = computed(() => props.columns.find((column) => column.name === colorField.value));
-const supportsLegend = computed(() => supportsSeriesItems.value
+const supportsLegend = computed(() => (isPolar.value && polarSegmentMembers.value.length > 0)
+  || supportsSeriesItems.value
   || (template.value === "scatter" && colorColumn.value?.type === "nominal"));
 const showColorMapping = computed(() => !!colorColumn.value && colorColumn.value.type !== "nominal");
 const showSizeMapping = computed(() => !!sizeField.value);
@@ -240,7 +255,7 @@ const canConfirm = computed(() => resolveChartEncodingIssues(props.chartSpec).le
       return selectedValueSeriesFields.value.length > 0;
     }
     if (config.channel === "dimensions") return selectedParallelFields.value.length >= 2;
-    if (config.multiple) return selectedAngleFields.value.length > 0;
+    if (config.channel === "theta" && polarSegmentMode.value === "quantitative") return true;
     return !!resolvedEncodingField(props.chartSpec, config.channel);
 }));
 
@@ -308,10 +323,49 @@ function onSeriesItemDrop(event: DragEvent) {
   if (!selectedSeriesFields.value.includes(column.name)) emit("seriesFieldsChange", [column.name]);
 }
 
-function toggleAngleField(field: string) {
-  emit("angleFieldsChange", selectedAngleFields.value.includes(field)
-    ? selectedAngleFields.value.filter((item) => item !== field)
-    : [...selectedAngleFields.value, field]);
+function toggleSegmentField(field: string) {
+  const column = props.columns.find((item) => item.name === field);
+  if (!column) return;
+  if (column.type === "quantitative") {
+    emit("segmentFieldsChange", selectedSegmentFields.value.includes(field)
+      ? selectedSegmentFields.value.filter((item) => item !== field)
+      : [...selectedSegmentFields.value, field]);
+  } else {
+    emit("segmentFieldsChange", selectedSegmentFields.value.includes(field) ? [] : [field]);
+  }
+}
+
+function segmentDragColumn(event: DragEvent) {
+  const payload = decodeCsvColumnDragPayload(event.dataTransfer?.getData(csvColumnDragMime))
+    ?? getActiveCsvColumnDrag();
+  if (!payload || payload.datasetId !== props.chartSpec.datasetId) return null;
+  const column = props.columns.find((item) => item.name === payload.field && item.type === payload.type);
+  if (!column) return null;
+  if (selectedSegmentFields.value.includes(column.name)) return column;
+  if (polarSegmentMode.value === "categorical") return null;
+  if (polarSegmentMode.value === "quantitative" && column.type !== "quantitative") return null;
+  const segmentConfig = configs.value.find((config) => config.channel === "segment");
+  return segmentConfig?.accepts.includes(column.type) ? column : null;
+}
+
+function onSegmentDragOver(event: DragEvent) {
+  const compatible = segmentDragColumn(event) !== null;
+  segmentDropState.value = compatible ? "valid" : "invalid";
+  if (event.dataTransfer) event.dataTransfer.dropEffect = compatible ? "copy" : "none";
+}
+
+function onSegmentDragLeave(event: DragEvent) {
+  const current = event.currentTarget;
+  const related = event.relatedTarget;
+  if (current instanceof Element && related instanceof Node && current.contains(related)) return;
+  segmentDropState.value = "idle";
+}
+
+function onSegmentDrop(event: DragEvent) {
+  const column = segmentDragColumn(event);
+  segmentDropState.value = "idle";
+  if (!column || selectedSegmentFields.value.includes(column.name)) return;
+  emit("segmentFieldsChange", [...selectedSegmentFields.value, column.name]);
 }
 
 function toggleParallelField(field: string) {
@@ -403,16 +457,35 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
         Series: selected measure names
       </p>
 
-      <section v-if="isPolar" class="encoding-config__angle" aria-label="Theta measures">
-        <span>Theta <abbr title="Required" aria-label="Required">*</abbr></span>
-        <label v-for="column in quantitativeColumns" :key="column.name">
-          <input
-            type="checkbox"
-            :checked="selectedAngleFields.includes(column.name)"
-            @change="toggleAngleField(column.name)"
-          />
-          <span>{{ column.name }}</span>
-        </label>
+      <section
+        v-if="isPolar"
+        class="encoding-config__segment-drop"
+        :class="{
+          'is-drop-active': segmentDropState === 'valid',
+          'is-drop-invalid': segmentDropState === 'invalid',
+        }"
+        aria-label="Segment fields"
+        @dragover.stop.prevent="onSegmentDragOver"
+        @dragleave.stop="onSegmentDragLeave"
+        @drop.stop.prevent="onSegmentDrop"
+      >
+        <header>
+          <span>Segment</span>
+        </header>
+        <div v-if="selectedSegmentFields.length" class="encoding-config__segment-fields">
+          <span v-for="field in selectedSegmentFields" :key="field">
+            <span :title="field">{{ field }}</span>
+            <button
+              type="button"
+              :title="`Remove ${field}`"
+              :aria-label="`Remove ${field}`"
+              @click="toggleSegmentField(field)"
+            >
+              <X :size="12" :stroke-width="1.8" aria-hidden="true" />
+            </button>
+          </span>
+        </div>
+        <p v-else>Not bound</p>
       </section>
 
       <section v-if="isParallel" class="encoding-config__angle" aria-label="Parallel dimensions">
@@ -432,12 +505,6 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
           <span>R / Outer radius</span>
           <strong>{{ radiusMode === "static" ? "Static" : "Mapped" }}</strong>
         </div>
-        <EncodingChannelField
-          :config="configs.find((config) => config.channel === 'radius')!"
-          :columns="columns"
-          :value="resolvedEncodingField(chartSpec, 'radius')"
-          @change="emit('channelChange', 'radius', $event)"
-        />
         <label v-if="radiusMode === 'static'" class="encoding-config__static encoding-config__static-radius">
           <span>Outer radius</span>
           <input
@@ -452,7 +519,7 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
         </label>
       </section>
 
-      <section v-if="editableSeriesMembers.length || colorConfig || sizeConfig" class="encoding-config__appearance encoding-config__appearance--chart">
+      <section v-if="polarSegmentMembers.length || editableSeriesMembers.length || colorConfig || sizeConfig" class="encoding-config__appearance encoding-config__appearance--chart">
         <label v-if="supportsLegend" class="encoding-config__option">
           <span>Show legend</span>
           <input
@@ -461,6 +528,18 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
             @change="emit('markConfigChange', { legendVisible: ($event.target as HTMLInputElement).checked })"
           />
         </label>
+        <div v-if="isPolar && polarSegmentMembers.length" class="encoding-config__member-colors">
+          <span>Segment colors</span>
+          <label v-for="(member, index) in polarSegmentMembers" :key="member.id">
+            <span :title="member.label">{{ member.label }}</span>
+            <input
+              type="color"
+              :value="seriesMemberColor(member.id, index)"
+              :aria-label="`${member.label} segment color`"
+              @input="updateSeriesMemberStyle(member.id, { color: ($event.target as HTMLInputElement).value })"
+            />
+          </label>
+        </div>
         <div v-if="editableSeriesMembers.length" class="encoding-config__member-styles">
           <header>
             <span>Series styles</span>
@@ -637,6 +716,17 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
 .encoding-config__series-drop { padding: 8px; border: 1px dashed rgba(21, 84, 178, 0.28); border-radius: 6px; transition: border-color 120ms ease, background 120ms ease; }
 .encoding-config__series-drop.is-drop-active { border-color: #1554b2; background: #edf6ff; }
 .encoding-config__series-drop.is-drop-invalid { border-color: #b42318; background: #fff1ef; }
+.encoding-config__segment-drop { display: grid; gap: 8px; min-height: 68px; padding: 8px; border: 1px dashed rgba(21, 84, 178, 0.28); border-radius: 6px; background: #fff; color: #516176; font-size: 11px; transition: border-color 120ms ease, background 120ms ease; }
+.encoding-config__segment-drop.is-drop-active { border-color: #1554b2; background: #edf6ff; }
+.encoding-config__segment-drop.is-drop-invalid { border-color: #b42318; background: #fff1ef; }
+.encoding-config__segment-drop header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.encoding-config__segment-drop header > span { color: #334155; font-weight: 650; }
+.encoding-config__segment-drop p { margin: 0; color: #718096; font-size: 9px; }
+.encoding-config__segment-fields { display: flex; min-width: 0; flex-wrap: wrap; gap: 5px; }
+.encoding-config__segment-fields > span { display: inline-flex; min-width: 0; max-width: 100%; align-items: center; padding-left: 7px; border: 1px solid rgba(21, 84, 178, 0.2); border-radius: 4px; background: #f8fbff; }
+.encoding-config__segment-fields > span > span { min-width: 0; overflow: hidden; color: #334155; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.encoding-config__segment-fields button { display: inline-grid; width: 24px; height: 24px; flex: 0 0 24px; padding: 0; place-items: center; border: 0; border-left: 1px solid rgba(21, 84, 178, 0.12); background: transparent; color: #687585; cursor: pointer; }
+.encoding-config__segment-fields button:hover { background: #fff1ef; color: #b42318; }
 .encoding-config__radius, .encoding-config__appearance { display: grid; gap: 9px; padding-top: 12px; border-top: 1px solid rgba(24, 33, 47, 0.1); color: #516176; font-size: 11px; }
 .encoding-config__radius-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .encoding-config__radius-heading strong { color: #1554b2; font-size: 10px; font-weight: 700; }

@@ -256,15 +256,14 @@ function inferScatterCandidates(dataset: Dataset, profiles: ColumnDimensionProfi
 function inferPieCandidates(dataset: Dataset, profiles: ColumnDimensionProfile[]) {
   const quantitative = profiles.filter((profile) => profile.declaredType === "quantitative" && profile.validCount > 0);
   if (quantitative.length === 0) return [];
-  const assignments = quantitative.map((profile) => assignment("theta", dataset.columns.find((column) => column.name === profile.field)!, "measure"));
-  return [{
-    id: `pie:wide:${quantitative.map((profile) => profile.field).join(":")}`,
-    mode: "wide-angle-components",
-    dimensionality: quantitative.length,
-    score: quantitative.reduce((sum, profile) => sum + profile.coverage, 0) / quantitative.length,
-    assignments,
-    reasons: ["Sibling quantitative fields become pie components", "Field names provide component categories"],
-  } satisfies TemplateEncodingCandidate];
+  return quantitative.map((profile) => ({
+    id: `pie:theta:${profile.field}`,
+    mode: "theta-radius-axes",
+    dimensionality: 1,
+    score: profile.coverage,
+    assignments: [assignment("theta", dataset.columns.find((column) => column.name === profile.field)!, "measure")],
+    reasons: ["The quantitative field is bound to Theta"],
+  } satisfies TemplateEncodingCandidate));
 }
 
 function inferMatrixCandidates(dataset: Dataset, profiles: ColumnDimensionProfile[]) {
@@ -291,19 +290,12 @@ function inferMatrixCandidates(dataset: Dataset, profiles: ColumnDimensionProfil
 }
 
 function inferDonutCandidates(dataset: Dataset, profiles: ColumnDimensionProfile[]) {
-  const measures = profiles.filter((profile) => profile.declaredType === "quantitative");
-  const categories = profiles.filter((profile) => profile.canBeCategory);
-  return measures.flatMap((measure) => categories.map((category) => ({
-    id: `donut:${measure.field}:${category.field}`,
-    mode: "categorized-donut",
-    dimensionality: 2,
-    score: measure.coverage * 0.55 + category.categoryConfidence * 0.45,
-    assignments: [
-      assignment("theta", dataset.columns.find((item) => item.name === measure.field)!, "measure"),
-      assignment("color", dataset.columns.find((item) => item.name === category.field)!, "category"),
-    ],
-    reasons: ["Angle is quantitative", "Category identifies and colors arcs"],
-  } satisfies TemplateEncodingCandidate)));
+  return inferPieCandidates(dataset, profiles).map((candidate) => ({
+    ...candidate,
+    id: candidate.id.replace(/^pie:/, "donut:"),
+    mode: "theta-radius-axes",
+    reasons: ["The quantitative field is bound to Theta", "Donut inner radius is a chart default"],
+  }));
 }
 
 function channelEligibility(templateId: ChartTemplateKind, profiles: ColumnDimensionProfile[]) {
@@ -403,7 +395,7 @@ function explicitRoleBinding(spec: ChartSpec): ChartRoleBinding {
           : spec.encodings[mapping.channel]
             ? [spec.encodings[mapping.channel]!]
             : []
-      : mapping.channel === "theta" && spec.angleFields?.length
+      : mapping.channel === "segment" && spec.angleFields?.length
         ? spec.angleFields
         : mapping.channel === "y" && spec.valueFields?.length
           ? spec.valueFields

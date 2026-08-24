@@ -145,7 +145,7 @@ const {
   setCompositionEncoding,
   setSeriesFields,
   setChartEncoding,
-  setPieAngleFields,
+  setPolarSegmentFields,
   setValueSeriesFields,
   removeBarItemField,
   setParallelFields,
@@ -281,6 +281,7 @@ const csvEncodingBindings = computed<Record<string, string[]>>(() => {
       shape: "Shape",
       theta: "Theta",
       angle: "Theta",
+      segment: "Segment",
       radius: "Radius",
       ring: "Ring",
       dimensions: "Dimensions",
@@ -315,6 +316,9 @@ function createSeriesItemPresentation(node: CanvasNode) {
     ...(spec.seriesFields?.map((encoding) => encoding.field)
       ?? (spec.series ? [spec.series.field] : [])),
     ...(scatterColor ? [scatterColor.field] : []),
+    ...(isPolarChartType(spec.chartType) && spec.encodings.segment?.field
+      ? [spec.encodings.segment.field]
+      : []),
   ]);
   const markConfig = spec.markGroups?.[0]?.sharedConfig ?? {};
   const mappedStyles = isSeriesStyleMapping(markConfig.seriesStyleMapping)
@@ -349,6 +353,7 @@ function createSeriesItemPresentation(node: CanvasNode) {
     members,
     legendVisible: markConfig.legendVisible === true,
     itemEditable: itemBinding !== null,
+    colorOnly: isPolarChartType(spec.chartType),
     frame: seriesItemDropFrame(node),
   };
 }
@@ -643,7 +648,7 @@ function encodingReviewKey(node: CanvasNode | null) {
     node.chartSpec.chartType,
     ...Object.entries(encodings).sort(([left], [right]) => left.localeCompare(right)).map(([channel, encoding]) => `${channel}:${encoding?.field ?? ""}`),
     series?.field ?? "",
-    ...(angleFields ?? []).map((encoding) => `angle:${encoding.field}`),
+    ...(angleFields ?? []).map((encoding) => `segment:${encoding.field}`),
     ...(parallelFields ?? []).map((encoding) => `dimension:${encoding.field}`),
     ...(node.chartSpec.valueFields ?? []).map((encoding) => `value:${encoding.field}`),
     JSON.stringify(node.chartSpec.aggregations ?? {}),
@@ -769,9 +774,9 @@ function onCompositionEncodingChange(patch: Parameters<typeof setCompositionEnco
 
 function polarScaleChannels(node: CanvasNode): CoordinateChannel[] {
   const composition = node.compositionSpec;
-  if (!composition || editingCompositionId.value === composition.id) return ["angle", "radius", "ring"];
+  if (!composition || editingCompositionId.value === composition.id) return ["angle", "radius"];
   return composition.sharedChannels.filter((channel): channel is CoordinateChannel =>
-    channel === "angle" || channel === "radius" || channel === "ring",
+    channel === "angle" || channel === "radius",
   );
 }
 
@@ -1227,7 +1232,7 @@ onBeforeUnmount(() => {
               @series-field-change="onSeriesFieldChange"
               @series-fields-change="onSeriesFieldsChange"
               @value-series-fields-change="setValueSeriesFields"
-              @angle-fields-change="setPieAngleFields"
+              @segment-fields-change="setPolarSegmentFields"
               @parallel-fields-change="setParallelFields"
               @mark-config-change="updateAxisBindingMarkGroupConfig"
             />
@@ -1737,6 +1742,26 @@ onBeforeUnmount(() => {
                 :hidden-node-ids="nestedRenderedChildIds"
               />
               <g v-if="activeDropZone" :transform="editingGroupTransform" class="composition-drop-zone-layer">
+                <foreignObject
+                  v-if="activeDropZone.enterBounds && (activeDropZone.type === 'layer' || activeDropZone.nestedAction === 'enter')"
+                  class="composition-mode-veil"
+                  :class="{ 'composition-mode-veil--nested': activeDropZone.nestedAction === 'enter' }"
+                  :x="activeDropZone.bounds.minX"
+                  :y="activeDropZone.bounds.minY"
+                  :width="activeDropZone.bounds.width"
+                  :height="activeDropZone.bounds.height"
+                  pointer-events="none"
+                >
+                  <div
+                    xmlns="http://www.w3.org/1999/xhtml"
+                    class="composition-mode-veil__surface"
+                    :style="{
+                      '--enter-x': `${activeDropZone.enterBounds.minX + activeDropZone.enterBounds.width / 2 - activeDropZone.bounds.minX}px`,
+                      '--enter-y': `${activeDropZone.enterBounds.minY + activeDropZone.enterBounds.height / 2 - activeDropZone.bounds.minY}px`,
+                      '--enter-radius': `${activeDropZone.enterBounds.width / 2}px`,
+                    }"
+                  ></div>
+                </foreignObject>
                 <component
                   :is="activeDropZone.outline ? 'polygon' : 'rect'"
                   class="composition-drop-zone"
@@ -1760,10 +1785,23 @@ onBeforeUnmount(() => {
                   :points="activeDropZone.outline?.map((point) => `${point.x},${point.y}`).join(' ')"
                   vector-effect="non-scaling-stroke"
                 />
+                <text
+                  v-if="activeDropZone.type === 'layer' || activeDropZone.type === 'nested'"
+                  class="composition-mode-label"
+                  :class="{ 'composition-mode-label--nested': activeDropZone.type === 'nested' }"
+                  :x="activeDropZone.bounds.minX + activeDropZone.bounds.width / 2"
+                  :y="activeDropZone.bounds.minY + 22 / selectionOverlayZoom"
+                  text-anchor="middle"
+                  dominant-baseline="middle"
+                  :font-size="13 / selectionOverlayZoom"
+                >{{ activeDropZone.type === 'nested' ? 'Nested' : 'Layer' }}</text>
                 <g
-                  v-if="activeDropZone.type === 'nested' && activeDropZone.enterBounds"
+                  v-if="activeDropZone.enterBounds"
                   class="composition-enter-zone"
                   :class="{ 'composition-enter-zone--active': activeDropZone.nestedAction === 'enter' }"
+                  :style="{
+                    '--enter-expand-scale': Math.max(activeDropZone.bounds.width, activeDropZone.bounds.height) / Math.max(activeDropZone.enterBounds.width, 1) * 1.35,
+                  }"
                   :transform="`translate(${activeDropZone.enterBounds.minX + activeDropZone.enterBounds.width / 2} ${activeDropZone.enterBounds.minY + activeDropZone.enterBounds.height / 2})`"
                 >
                   <circle
@@ -1774,7 +1812,7 @@ onBeforeUnmount(() => {
                     text-anchor="middle"
                     dominant-baseline="middle"
                     :font-size="12 / selectionOverlayZoom"
-                  >Enter</text>
+                  >{{ activeDropZone.nestedAction === 'enter' ? 'Nested' : 'Enter' }}</text>
                 </g>
               </g>
               <g
@@ -1851,6 +1889,7 @@ onBeforeUnmount(() => {
                         v-for="member in seriesItemOverlay.members"
                         :key="`${seriesItemOverlay.node.id}-series-member-${member.memberId}`"
                         class="series-item-panel__member"
+                        :class="{ 'series-item-panel__member--color-only': seriesItemOverlay.colorOnly }"
                       >
                         <span :title="member.label">{{ member.label }}</span>
                         <label
@@ -1866,6 +1905,7 @@ onBeforeUnmount(() => {
                           />
                         </label>
                         <input
+                          v-if="!seriesItemOverlay.colorOnly"
                           type="number"
                           min="0.5"
                           max="16"
@@ -1875,6 +1915,7 @@ onBeforeUnmount(() => {
                           @change="onSeriesItemStyleChange(member.memberId, { strokeWidth: Number(($event.target as HTMLInputElement).value) })"
                         />
                         <select
+                          v-if="!seriesItemOverlay.colorOnly"
                           :value="member.shape"
                           :aria-label="`${member.label} line style`"
                           @change="onSeriesItemStyleChange(member.memberId, { shape: ($event.target as HTMLSelectElement).value as 'solid' | 'dashed' | 'dotted' })"
@@ -3780,6 +3821,50 @@ onBeforeUnmount(() => {
 .composition-drop-zone-layer {
   pointer-events: none;
 }
+.composition-mode-veil {
+  overflow: hidden;
+  pointer-events: none;
+}
+.composition-mode-veil__surface {
+  width: 100%;
+  height: 100%;
+  background: rgba(238, 244, 250, 0.2);
+  -webkit-backdrop-filter: blur(7px) saturate(0.72);
+  backdrop-filter: blur(7px) saturate(0.72);
+  -webkit-mask-image: radial-gradient(
+    circle at var(--enter-x) var(--enter-y),
+    transparent 0,
+    transparent var(--enter-radius),
+    #000 calc(var(--enter-radius) + 3px)
+  );
+  mask-image: radial-gradient(
+    circle at var(--enter-x) var(--enter-y),
+    transparent 0,
+    transparent var(--enter-radius),
+    #000 calc(var(--enter-radius) + 3px)
+  );
+  transition: background-color 1000ms ease, backdrop-filter 1000ms ease, -webkit-backdrop-filter 420ms ease;
+}
+.composition-mode-veil--nested .composition-mode-veil__surface {
+  background: transparent;
+  -webkit-backdrop-filter: blur(0) saturate(1);
+  backdrop-filter: blur(0) saturate(1);
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+.composition-mode-label {
+  fill: #1554b2;
+  font-weight: 750;
+  letter-spacing: 0;
+  paint-order: stroke;
+  pointer-events: none;
+  stroke: rgba(255, 255, 255, 0.96);
+  stroke-linejoin: round;
+  stroke-width: 4px;
+}
+.composition-mode-label--nested {
+  fill: #9a5200;
+}
 .data-binding-drop-zone-layer {
   pointer-events: none;
 }
@@ -3911,6 +3996,9 @@ onBeforeUnmount(() => {
   background: #fff;
   font-size: 10px;
 }
+.series-item-panel__member--color-only {
+  grid-template-columns: minmax(0, 1fr) 28px;
+}
 .series-item-panel__member > span:first-child {
   font-weight: 650;
 }
@@ -4003,12 +4091,15 @@ onBeforeUnmount(() => {
   stroke-width: 2;
   stroke-dasharray: 7 5;
 }
+.composition-drop-zone--layer {
+  fill: rgba(37, 99, 235, 0.06);
+}
 .composition-drop-zone--nested {
   fill: rgba(217, 119, 6, 0.16);
   stroke: #d97706;
 }
 .composition-drop-zone--enter {
-  fill: rgba(217, 119, 6, 0.08);
+  fill: rgba(217, 119, 6, 0.03);
 }
 .composition-enter-zone {
   pointer-events: none;
@@ -4017,17 +4108,30 @@ onBeforeUnmount(() => {
   fill: rgba(255, 255, 255, 0.94);
   stroke: #d97706;
   stroke-width: 2;
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: fill 160ms ease, opacity 360ms ease 60ms, transform 440ms cubic-bezier(0.2, 0.75, 0.2, 1);
 }
 .composition-enter-zone text {
   fill: #9a5200;
   font-weight: 700;
   letter-spacing: 0;
+  transform-box: fill-box;
+  transform-origin: center;
 }
 .composition-enter-zone--active circle {
   fill: #d97706;
+  opacity: 0;
+  transform: scale(var(--enter-expand-scale, 3));
 }
 .composition-enter-zone--active text {
   fill: #fff;
+  animation: composition-nested-label 440ms ease both;
+}
+@keyframes composition-nested-label {
+  0% { opacity: 0; transform: scale(0.88); }
+  18%, 68% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.08); }
 }
 .composition-drop-zone--concat {
   fill: rgba(5, 150, 105, 0.18);

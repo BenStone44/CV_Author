@@ -99,8 +99,8 @@ export const templateBindingContracts: Record<ChartTemplateKind, TemplateBinding
   pie: {
     templateId: "pie",
     slots: [
-      { id: "theta", label: "Theta", required: true, accepts: ["measure", "measure-set"] },
-      { id: "slice", label: "Breakdown", required: false, accepts: ["dimension", "value-series"], supportsMemberSelection: true },
+      { id: "theta", label: "Theta", required: true, accepts: ["measure"] },
+      { id: "segment", label: "Segment", required: false, accepts: ["dimension", "measure-set"], supportsMemberSelection: true },
       { id: "radius", label: "R", required: false, accepts: ["measure"] },
     ],
     unresolvedDimensionPolicies,
@@ -109,9 +109,8 @@ export const templateBindingContracts: Record<ChartTemplateKind, TemplateBinding
   donut: {
     templateId: "donut",
     slots: [
-      { id: "theta", label: "Theta", required: true, accepts: ["measure", "measure-set"] },
-      { id: "slice", label: "Breakdown", required: false, accepts: ["dimension", "value-series"], supportsMemberSelection: true },
-      { id: "ring", label: "Ring", required: false, accepts: ["dimension"], supportsMemberSelection: true },
+      { id: "theta", label: "Theta", required: true, accepts: ["measure"] },
+      { id: "segment", label: "Segment", required: false, accepts: ["dimension", "measure-set"], supportsMemberSelection: true },
       { id: "radius", label: "R", required: false, accepts: ["measure"] },
     ],
     unresolvedDimensionPolicies,
@@ -248,8 +247,8 @@ const channelSlotMappings: Record<ChartTemplateKind, Partial<Record<ChartEncodin
   line: { x: "x", y: "y", color: "series" },
   scatter: { x: "x", y: "y", color: "series" },
   bar: { x: "category", y: "value" },
-  pie: { theta: "theta", color: "slice", radius: "radius" },
-  donut: { theta: "theta", color: "slice", ring: "ring", radius: "radius" },
+  pie: { theta: "theta", segment: "segment", radius: "radius" },
+  donut: { theta: "theta", segment: "segment", radius: "radius" },
   matrix: { x: "column", y: "row", color: "cell" },
   area: { x: "x", y: "y", color: "series" },
   parallel: {},

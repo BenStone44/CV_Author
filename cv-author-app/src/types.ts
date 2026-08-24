@@ -83,6 +83,7 @@ export type StructuredEncodingChannel =
   | "target"
   | "date"
   | "category"
+  | "segment"
   | "dimensions";
 export type OptionalEncodingChannel = "color" | "size" | "shape";
 export type ChartEncodingChannel =

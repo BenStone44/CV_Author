@@ -346,15 +346,14 @@ function renderBarChart(input: GenericRenderInput) {
 function resolvedPolarEncodings(spec: ChartSpec) {
   return {
     value: spec.encodings.theta ?? spec.encodings.angle ?? spec.encodings.y,
-    category: spec.encodings.color ?? spec.encodings.x,
+    segment: spec.encodings.segment,
     radius: spec.encodings.radius,
-    ring: spec.encodings.ring ?? spec.series,
   };
 }
 
 function renderPolarChart(input: GenericRenderInput, donut: boolean) {
-  const { value, category, radius, ring } = resolvedPolarEncodings(input.chartSpec);
-  const angleFields = donut ? [] : input.chartSpec.angleFields ?? [];
+  const { value, segment, radius } = resolvedPolarEncodings(input.chartSpec);
+  const angleFields = input.chartSpec.angleFields ?? [];
   if (!value && angleFields.length === 0) throw new Error(`${donut ? "Donut" : "Pie"} renderer requires a Theta encoding.`);
   const minX = input.minX;
   const minY = input.minY;
@@ -375,7 +374,9 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
     : 1;
   const innerRadius = baseOuterRadius * innerRadiusRatio;
   const outerRadius = baseOuterRadius * outerRadiusRatio;
-  const colorDomain = visualDomain(input.dataset.rows, category);
+  const markInnerRadius = donut
+    ? innerRadius + Math.max(outerRadius - innerRadius, 1) * 0.5
+    : innerRadius;
   const angleSpan = input.coordinateGuide?.type === "Polar"
     ? Math.max(1, Math.min(input.coordinateGuide.angleSpan ?? 360, 360))
     : 360;
@@ -388,7 +389,9 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
     innerRadius: occupiedInnerRadius,
     outerRadius: occupiedOuterRadius,
   });
-  if (angleFields.length > 0) {
+  if (angleFields.length > 0 || segment) {
+    if (!value && segment) throw new Error(`${donut ? "Donut" : "Pie"} Segment requires a Theta encoding.`);
+    const segmentThetaField = value?.field ?? "";
     const flattenFields = (input.chartSpec.flattenFields ?? []).filter((field) =>
       input.dataset.columns.some((column) => column.name === field),
     );
@@ -404,14 +407,28 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
         else flattenedGroups.set(groupKey, { values, rows: [row] });
       });
     }
-    const components = Array.from(flattenedGroups.values()).flatMap((flattened) =>
-      angleFields.map((encoding) => ({
-        field: encoding.field,
-        flattenValues: flattened.values,
-        rows: flattened.rows,
-        value: flattened.rows.reduce((sum, row) => sum + Math.max(0, Number(row[encoding.field] ?? "0")), 0),
-      })),
-    );
+    const components = segment
+      ? Array.from(new Set(input.dataset.rows.map((row) => row[segment.field] ?? "")))
+        .filter(Boolean)
+        .map((segmentValue) => {
+          const rows = input.dataset.rows.filter((row) => (row[segment.field] ?? "") === segmentValue);
+          return {
+            field: segmentValue,
+            thetaField: segmentThetaField,
+            flattenValues: [] as string[],
+            rows,
+            value: rows.reduce((sum, row) => sum + Math.max(0, Number(row[segmentThetaField] ?? "0")), 0),
+          };
+        })
+      : Array.from(flattenedGroups.values()).flatMap((flattened) =>
+        angleFields.map((encoding) => ({
+          field: encoding.field,
+          thetaField: encoding.field,
+          flattenValues: flattened.values,
+          rows: flattened.rows,
+          value: flattened.rows.reduce((sum, row) => sum + Math.max(0, Number(row[encoding.field] ?? "0")), 0),
+        })),
+      );
     const componentValues = components.map((component) => component.value);
     const layout = pie<number>()
       .sort(null)
@@ -432,64 +449,61 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
     const radiusScale = radiusDomain[0] === undefined || radiusDomain[1] === undefined || radiusDomain[0] === radiusDomain[1]
       ? () => outerRadius
       : scaleLinear().domain(radiusDomain as [number, number]).range([
-        innerRadius + (outerRadius - innerRadius) * 0.42,
+        markInnerRadius + (outerRadius - markInnerRadius) * 0.42,
         outerRadius,
       ]);
+    const seriesStyles = isSeriesStyleMapping(config.seriesStyleMapping)
+      ? config.seriesStyleMapping.values
+      : {};
     const arcs = layout.map((datum, index) => {
       const component = components[index];
       const field = component?.field ?? String(index + 1);
       const categoryKey = [...(component?.flattenValues ?? []), field].join(" / ");
       const radiusValue = componentRadiusValues[index] ?? Number.NaN;
       const componentOuterRadius = Number.isFinite(radiusValue) ? radiusScale(radiusValue) : outerRadius;
-      const path = arc<any>().innerRadius(innerRadius).outerRadius(componentOuterRadius);
-      const representativeRow = component?.rows[0] ?? input.dataset.rows[index] ?? {};
-      const color = visualColor(representativeRow, category, colorDomain, config, palette[index % palette.length]!);
-      return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="arc" data-mark-group-id="mark-group:${esc(input.chartId)}:arc" data-category-key="${esc(categoryKey)}" data-theta-field="${esc(field)}" data-theta-value="${componentValues[index] ?? 0}" data-angle-field="${esc(field)}" data-angle-value="${componentValues[index] ?? 0}" data-flatten-fields="${esc(flattenFields.join("|"))}" data-flatten-values="${esc((component?.flattenValues ?? []).join("|"))}" data-radius-mode="${radiusMode}" data-radius-field="${esc(radius?.field ?? "")}" data-radius-value="${Number.isFinite(radiusValue) ? radiusValue : ""}" d="${path(datum) ?? ""}" transform="translate(${cx} ${cy})" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 1)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
+      const path = arc<any>().innerRadius(markInnerRadius).outerRadius(componentOuterRadius);
+      const color = seriesStyles[field]?.color
+        ?? (palette[index % palette.length]!);
+      return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="arc" data-mark-group-id="mark-group:${esc(input.chartId)}:arc" data-category-key="${esc(categoryKey)}" data-segment-value="${esc(field)}" data-theta-field="${esc(component?.thetaField ?? "")}" data-theta-value="${componentValues[index] ?? 0}" data-angle-field="${esc(component?.thetaField ?? "")}" data-angle-value="${componentValues[index] ?? 0}" data-flatten-fields="${esc(flattenFields.join("|"))}" data-flatten-values="${esc((component?.flattenValues ?? []).join("|"))}" data-radius-mode="${radiusMode}" data-radius-field="${esc(radius?.field ?? "")}" data-radius-value="${Number.isFinite(radiusValue) ? radiusValue : ""}" d="${path(datum) ?? ""}" transform="translate(${cx} ${cy})" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 1)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
     }).join("");
+    const thetaFields = Array.from(new Set(components.map((component) => component.thetaField)));
     return {
-      content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="pie" data-renderer="deterministic-chart@1" data-theta-fields="${esc(angleFields.map((encoding) => encoding.field).join("|"))}" data-angle-fields="${esc(angleFields.map((encoding) => encoding.field).join("|"))}" data-flatten-fields="${esc(flattenFields.join("|"))}" data-radius-mode="${radiusMode}">${arcs}</g>`,
+      content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="${donut ? "donut" : "pie"}" data-renderer="deterministic-chart@1" data-segment-field="${esc(segment?.field ?? "")}" data-segment-fields="${esc(angleFields.map((encoding) => encoding.field).join("|"))}" data-theta-fields="${esc(thetaFields.join("|"))}" data-angle-fields="${esc(thetaFields.join("|"))}" data-flatten-fields="${esc(flattenFields.join("|"))}" data-radius-mode="${radiusMode}">${arcs}</g>`,
       plotArea: { x: cx - outerRadius, y: cy - outerRadius, width: outerRadius * 2, height: outerRadius * 2 },
-      polarArea: polarArea(innerRadius, outerRadius),
+      polarArea: polarArea(markInnerRadius, outerRadius),
       scales: undefined,
     };
   }
   if (!value) throw new Error(`${donut ? "Donut" : "Pie"} renderer requires an angle/value encoding.`);
-  const ringValues = ring ? Array.from(new Set(input.dataset.rows.map((row) => row[ring.field] ?? ""))).filter(Boolean) : ["__single__"];
-  const availableRadius = Math.max(outerRadius - innerRadius, 1);
-  const ringWidth = availableRadius / Math.max(ringValues.length + (donut ? 1 : 0), 1) * (input.coordinateGuide?.type === "Polar" ? input.coordinateGuide.ringScale ?? 1 : 1);
-  const arcs = ringValues.map((ringKey, ringIndex) => {
-    const rows = ring ? input.dataset.rows.filter((row) => (row[ring.field] ?? "") === ringKey) : input.dataset.rows;
-    const values = rows.map((row) => Math.max(0, Number(row[value.field] ?? "0")));
-    const layout = pie<number>()
-      .sort(null)
-      .value((datum) => datum)
-      .startAngle(layoutStartAngle)
-      .endAngle(layoutEndAngle)(values);
-    const inner = innerRadius + (donut || ring ? ringWidth * (ringIndex + (donut ? 1 : 0)) : 0);
-    const outer = ring ? inner + ringWidth * 0.92 : outerRadius;
-    const radiusValues = radius
-      ? rows.map((row) => Number(row[radius.field] ?? "")).filter(Number.isFinite)
-      : [];
-    const radiusDomain = extent(radiusValues) as [number | undefined, number | undefined];
-    const radiusScale = radiusDomain[0] === undefined || radiusDomain[1] === undefined || radiusDomain[0] === radiusDomain[1]
-      ? () => outer
-      : scaleLinear()
-        .domain(radiusDomain as [number, number])
-        .range([inner + (outer - inner) * 0.48, outer]);
-    return layout.map((datum, index) => {
-      const row = rows[index]!;
-      const categoryKey = category ? row[category.field] ?? "" : String(index + 1);
-      const color = visualColor(row, category, colorDomain, config, palette[index % palette.length]!);
-      const radiusValue = radius ? Number(row[radius.field] ?? "") : Number.NaN;
-      const rowOuterRadius = Number.isFinite(radiusValue) ? radiusScale(radiusValue) : outer;
-      const path = arc<any>().innerRadius(inner).outerRadius(rowOuterRadius);
-      return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="arc" data-mark-group-id="mark-group:${esc(input.chartId)}:arc" data-row-key="${esc(key(input.dataset, row) || String(index))}" data-series-key="${esc(ringKey)}" data-category-key="${esc(categoryKey)}" data-radius-field="${esc(radius?.field ?? "")}" data-radius-value="${Number.isFinite(radiusValue) ? radiusValue : ""}" d="${path(datum) ?? ""}" transform="translate(${cx} ${cy})" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 1)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
-    }).join("");
+  // With no Segment binding, each source row remains one arc. Radius still uses
+  // one shared domain so the outer extents are comparable across all arcs.
+  const rows = input.dataset.rows;
+  const values = rows.map((row) => Math.max(0, Number(row[value.field] ?? "0")));
+  const layout = pie<number>()
+    .sort(null)
+    .value((datum) => datum)
+    .startAngle(layoutStartAngle)
+    .endAngle(layoutEndAngle)(values);
+  const donutInnerRadius = markInnerRadius;
+  const radiusValues = radius
+    ? rows.map((row) => Number(row[radius.field] ?? "")).filter(Number.isFinite)
+    : [];
+  const radiusDomain = extent(radiusValues) as [number | undefined, number | undefined];
+  const radiusScale = radiusDomain[0] === undefined || radiusDomain[1] === undefined || radiusDomain[0] === radiusDomain[1]
+    ? () => outerRadius
+    : scaleLinear()
+      .domain(radiusDomain as [number, number])
+      .range([donutInnerRadius + (outerRadius - donutInnerRadius) * 0.48, outerRadius]);
+  const arcs = layout.map((datum, index) => {
+    const row = rows[index]!;
+    const radiusValue = radius ? Number(row[radius.field] ?? "") : Number.NaN;
+    const rowOuterRadius = Number.isFinite(radiusValue) ? radiusScale(radiusValue) : outerRadius;
+    const path = arc<any>().innerRadius(donutInnerRadius).outerRadius(rowOuterRadius);
+    const color = palette[index % palette.length]!;
+    return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="arc" data-mark-group-id="mark-group:${esc(input.chartId)}:arc" data-row-key="${esc(key(input.dataset, row) || String(index))}" data-category-key="${String(index + 1)}" data-radius-field="${esc(radius?.field ?? "")}" data-radius-value="${Number.isFinite(radiusValue) ? radiusValue : ""}" d="${path(datum) ?? ""}" transform="translate(${cx} ${cy})" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 1)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
   }).join("");
-  const occupiedInnerRadius = innerRadius + (donut ? ringWidth : 0);
-  const occupiedOuterRadius = ring
-    ? occupiedInnerRadius + ringWidth * Math.max(ringValues.length - 1, 0) + ringWidth * 0.92
-    : outerRadius;
+  const occupiedInnerRadius = donutInnerRadius;
+  const occupiedOuterRadius = outerRadius;
   return {
     content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="${donut ? "donut" : "pie"}" data-renderer="deterministic-chart@1">${arcs}</g>`,
     plotArea: { x: cx - outerRadius, y: cy - outerRadius, width: outerRadius * 2, height: outerRadius * 2 },

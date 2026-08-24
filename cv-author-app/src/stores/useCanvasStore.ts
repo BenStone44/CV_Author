@@ -331,7 +331,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const draggedCandidateId = ref<string | null>(null);
   const activeDropZone = ref<ChartDropZone | null>(null);
   const compositionDragSourceId = ref<string | null>(null);
-  let nestedEnterHover: { key: string; startedAt: number } | null = null;
+  let nestedEnterHover: { key: string; timeoutId: number } | null = null;
+  function clearNestedEnterHover() {
+    if (nestedEnterHover) window.clearTimeout(nestedEnterHover.timeoutId);
+    nestedEnterHover = null;
+  }
   let nestedDropPath: Array<{ nodeId: string; childMarkIndexes: number[]; groupKey?: string }> = [];
   const activeDataBindingDropZone = ref<DataBindingDropZone | null>(null);
   const dimensionDropTarget = ref<{
@@ -959,7 +963,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     };
     const selectionWidth = selection.width * node.scaleX;
     const width = Math.min(280, Math.max(252, selectionWidth));
-    const height = 30 + Math.max(seriesItemMemberCount(node), 1) * 30;
+    const memberRows = Math.max(seriesItemMemberCount(node), 1);
+    const height = 30 + memberRows * 30;
     const center = {
       x: selectionTopLeft.x + width / 2,
       y: selectionTopLeft.y + selection.height * node.scaleY / 2,
@@ -1041,7 +1046,17 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           const categoricalFields = seriesItemCategoricalFields(spec);
           const categoricalMode = categoricalFields.length > 0;
           const quantitativeMode = (spec.valueFields?.length ?? 0) > 0;
-          const compatible = categoricalMode
+          const polarChart = normalizeChartTemplate(spec.chartType) === "pie"
+            || normalizeChartTemplate(spec.chartType) === "donut";
+          const polarSegmentField = spec.encodings.segment?.field;
+          const polarMeasureSet = (spec.angleFields?.length ?? 0) > 0;
+          const compatible = polarChart
+            ? polarMeasureSet
+              ? column.type === "quantitative"
+              : polarSegmentField
+                ? column.name === polarSegmentField
+                : column.type === "quantitative" || column.type === "nominal" || column.type === "temporal"
+            : categoricalMode
             ? categoricalFields.includes(column.name)
             : quantitativeMode
               ? column.type === "quantitative"
@@ -1111,9 +1126,15 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         );
         if (!model) return;
         const worldOrigin = nodeLocalToSelectionScopePoint(node, model.origin);
-        const worldRadiusEnd = nodeLocalToSelectionScopePoint(node, model.radiusEnd);
-        const radiusDistance = pointToSegmentDistance(point, worldOrigin, worldRadiusEnd);
-        if (radiusDistance <= threshold) {
+        const defaultWorldRadiusEnd = nodeLocalToSelectionScopePoint(node, model.radiusEnd);
+        // Both radial guides represent the same R/outer-radius channel. This
+        // keeps drops consistent for partial polar spans where the upper guide
+        // is the most accessible one.
+        const radialEnds = [model.radiusEnd, model.upperRadiusEnd];
+        radialEnds.forEach((radiusEnd) => {
+          const worldRadiusEnd = nodeLocalToSelectionScopePoint(node, radiusEnd);
+          const radiusDistance = pointToSegmentDistance(point, worldOrigin, worldRadiusEnd);
+          if (radiusDistance > threshold) return;
           const zone: DataBindingDropZone = {
             type: "polar-axis", targetNodeId: node.id, channel: "radius",
             path: `M ${worldOrigin.x} ${worldOrigin.y} L ${worldRadiusEnd.x} ${worldRadiusEnd.y}`,
@@ -1124,7 +1145,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
             nearestZone = zone;
             nearestDistance = radiusDistance;
           }
-        }
+        });
         const steps = Math.max(12, Math.ceil(model.angleSpan / 12));
         let angleDistance = Number.POSITIVE_INFINITY;
         const pathPoints: Point[] = [];
@@ -1137,7 +1158,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         }
         if (angleDistance <= threshold && angleDistance < nearestDistance) {
           const path = pathPoints.map((item, index) => `${index === 0 ? "M" : "L"} ${item.x} ${item.y}`).join(" ");
-          const label = pathPoints[Math.floor(pathPoints.length / 2)] ?? worldRadiusEnd;
+          const label = pathPoints[Math.floor(pathPoints.length / 2)] ?? defaultWorldRadiusEnd;
           nearestZone = {
             type: "polar-axis", targetNodeId: node.id, channel: "angle", path,
             labelPosition: { x: label.x, y: label.y - 8 }, compatible: accepts("theta"), fieldName: payload.field,
@@ -1430,7 +1451,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       return true;
     });
   });
-  function itemBindingAxis(node: CanvasNode): "x" | "y" {
+  function itemBindingAxis(node: CanvasNode): CoordinateChannel {
+    const template = normalizeChartTemplate(node.chartSpec?.chartType ?? "");
+    if (template === "pie" || template === "donut") return "angle";
     return node.chartSpec?.axisSwapped === true ? "x" : "y";
   }
   function logicalAxisChannel(node: CanvasNode, channel: ChartEncodingChannel): ChartEncodingChannel {
@@ -1441,7 +1464,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const explicit = spec.seriesFields?.map((encoding) => encoding.field)
       ?? (spec.series ? [spec.series.field] : []);
     if (explicit.length > 0) return explicit;
-    return normalizeChartTemplate(spec.chartType) === "scatter"
+    const template = normalizeChartTemplate(spec.chartType);
+    if ((template === "pie" || template === "donut") && spec.encodings.segment?.field) {
+      return [spec.encodings.segment.field];
+    }
+    return template === "scatter"
       && (spec.encodings.color?.type === "nominal" || spec.encodings.color?.type === "temporal")
       ? [spec.encodings.color.field]
       : [];
@@ -1449,6 +1476,14 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function barItemAxisBinding(node: CanvasNode) {
     const variant = normalizeBarChartVariant(node.chartSpec?.chartType ?? "");
     const template = normalizeChartTemplate(node.chartSpec?.chartType ?? "");
+    if (node.chartSpec && (template === "pie" || template === "donut")) {
+      return {
+        label: "Segment",
+        fields: node.chartSpec.encodings.segment?.field
+          ? [node.chartSpec.encodings.segment.field]
+          : node.chartSpec.angleFields?.map((encoding) => encoding.field) ?? [],
+      };
+    }
     const isSeriesChart = template === "line" || template === "scatter" || template === "area";
     if (!node.chartSpec || (!isSeriesChart
       && variant !== "grouped" && variant !== "stacked" && variant !== "divergent-stacked")) {
@@ -3344,16 +3379,18 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   }
 
   function enterNestedDropLevel(zone: ChartDropZone) {
-    if (zone.type !== "nested" || !zone.targetChildMarkIndexes?.length) return false;
+    if (zone.type !== "nested") return false;
     let groupKey: string | undefined;
     try {
       groupKey = (JSON.parse(zone.targetDataKey ?? "{}") as { categoryKey?: string }).categoryKey;
     } catch { /* legacy non-JSON item key */ }
-    nestedDropPath.push({
-      nodeId: zone.targetNodeId,
-      childMarkIndexes: [...zone.targetChildMarkIndexes],
-      groupKey,
-    });
+    if (zone.targetChildMarkIndexes?.length) {
+      nestedDropPath.push({
+        nodeId: zone.targetNodeId,
+        childMarkIndexes: [...zone.targetChildMarkIndexes],
+        groupKey,
+      });
+    }
     chartDrilldown.value = { nodeId: zone.targetNodeId, level: "part" };
     semanticSelection.value = null;
     return true;
@@ -3404,30 +3441,51 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function polarCompositionDropZoneAtPoint(target: CanvasNode, source: CanvasNode, point: Point): ChartDropZone | null {
     if (target.coordinateGuide?.type !== "Polar" || !target.chartSpec || !source.chartSpec) return null;
     const model = createPolarCoordinateSystemModel(target, viewZoom.value);
-    if (!model) return null;
+    const occupiedGeometry = getPolarOccupiedGeometry(target);
+    if (!model || !occupiedGeometry) return null;
     const localPoint = toNodeLocalPoint(target, point);
     const dx = localPoint.x - model.origin.x;
     const dy = model.origin.y - localPoint.y;
     const distance = Math.hypot(dx, dy);
-    const rawDegrees = (Math.atan2(-dy, dx) * 180 / Math.PI + 360) % 360;
-    const degrees = rawDegrees < 0.001 ? 0 : 360 - rawDegrees;
+    const pointerAngle = (Math.atan2(-dy, dx) * 180 / Math.PI + 360) % 360;
+    const startAngle = target.compositionSpec?.type === "concat"
+      && target.compositionSpec.direction === "angular"
+      ? target.compositionSpec.polarAngleOffset ?? occupiedGeometry.startAngle
+      : occupiedGeometry.startAngle;
+    const degrees = (pointerAngle - startAngle + 360) % 360;
     const angleSpan = target.compositionSpec?.type === "concat"
       && target.compositionSpec.direction === "angular"
       ? target.compositionSpec.polarAngleSpan ?? model.angleSpan
       : model.angleSpan;
-    const plotArea = target.chartSpec.plotArea;
-    const chartRadius = plotArea
-      ? Math.max(8, Math.min(plotArea.width, plotArea.height) / 2)
-      : Math.max(8, Math.min(target.width, target.height) * 0.38
-        * (target.coordinateGuide.radiusScale ?? 1));
+    const chartInnerRadius = occupiedGeometry.innerRadius;
+    const chartOuterRadius = occupiedGeometry.outerRadius;
     const edgeAngle = Math.min(30, Math.max(8, angleSpan * 0.22));
     const inAngle = angleSpan >= 359.999 || degrees <= angleSpan;
-    const radialGap = Math.max(8, chartRadius * 0.06);
-    const radialThickness = Math.max(24, Math.min(chartRadius * 0.35, 120));
-    const radialInner = chartRadius + radialGap;
-    const radialOuter = radialInner + radialThickness;
-    const inRadialZone = distance >= radialInner && distance <= radialOuter
-      && (angleSpan >= 359.999 || degrees <= angleSpan);
+    const renderedScale = Math.max(
+      Math.abs(target.scaleX),
+      Math.abs(target.scaleY),
+      0.0001,
+    ) * Math.max(viewZoom.value, 0.0001);
+    const radialThickness = Math.max(
+      20 / renderedScale,
+      Math.min(chartOuterRadius * 0.2, 56 / renderedScale),
+    );
+    const outerZone = {
+      innerRadius: chartOuterRadius,
+      outerRadius: chartOuterRadius + radialThickness,
+      position: "after" as const,
+    };
+    const innerZone = chartInnerRadius > 0
+      ? {
+        innerRadius: Math.max(0, chartInnerRadius - radialThickness),
+        outerRadius: chartInnerRadius,
+        position: "before" as const,
+      }
+      : null;
+    const radialZone = [innerZone, outerZone].find((zone) => zone
+      && distance >= zone.innerRadius
+      && distance <= zone.outerRadius
+      && (angleSpan >= 359.999 || degrees <= angleSpan));
     const before = degrees <= edgeAngle;
     const after = angleSpan >= 359.999
       ? degrees >= 360 - edgeAngle
@@ -3445,9 +3503,16 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       direction: "radial" | "angular",
       channel: CoordinateChannel,
     ) => !!nodes && concatNodesAreCompatible(nodes, direction, channel);
-    if (inRadialZone) {
+    if (radialZone) {
       const nodes = polarNodesFor("concat", "radial");
-      const geometry = polarSectorGeometry(target, model, radialInner, radialOuter, 0, -angleSpan);
+      const geometry = polarSectorGeometry(
+        target,
+        model,
+        radialZone.innerRadius,
+        radialZone.outerRadius,
+        -startAngle,
+        -(startAngle + angleSpan),
+      );
       if (!geometry) return null;
       return {
         targetNodeId: target.id,
@@ -3456,15 +3521,19 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         ...geometry,
         compatible: sharedChannelCompatible(nodes, "radial", "angle"),
         direction: "radial",
-        concatPosition: "after",
+        concatPosition: radialZone.position,
       };
     }
-    if (distance <= chartRadius && inAngle && (before || after)) {
+    if (distance >= chartInnerRadius && distance <= chartOuterRadius && inAngle && (before || after)) {
       const nodes = polarNodesFor("concat", "angular");
       const isBefore = before && !after;
-      const start = isBefore ? 0 : -Math.max(0, angleSpan - edgeAngle);
-      const end = isBefore ? -edgeAngle : -angleSpan;
-      const geometry = polarSectorGeometry(target, model, 0, chartRadius, start, end);
+      const start = isBefore
+        ? -startAngle
+        : -(startAngle + Math.max(0, angleSpan - edgeAngle));
+      const end = isBefore
+        ? -(startAngle + edgeAngle)
+        : -(startAngle + angleSpan);
+      const geometry = polarSectorGeometry(target, model, chartInnerRadius, chartOuterRadius, start, end);
       if (!geometry) return null;
       return {
         targetNodeId: target.id,
@@ -3476,9 +3545,16 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         concatPosition: isBefore ? "before" : "after",
       };
     }
-    if (distance <= chartRadius && inAngle) {
+    if (distance >= chartInnerRadius && distance <= chartOuterRadius && inAngle) {
       const nodes = polarNodesFor("layer");
-      const geometry = polarSectorGeometry(target, model, 0, chartRadius, 0, -angleSpan);
+      const geometry = polarSectorGeometry(
+        target,
+        model,
+        chartInnerRadius,
+        chartOuterRadius,
+        -startAngle,
+        -(startAngle + angleSpan),
+      );
       if (!geometry) return null;
       const sharedChannels = nodes ? layerChannelsForNodes(nodes) ?? [] : [];
       return {
@@ -3502,20 +3578,86 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       !sourceCompositionMemberIds.has(node.id)
       && !!node.chartSpec
     );
+    const enteredNestedLevel = (nodeId: string) => chartDrilldown.value?.nodeId === nodeId
+      && chartDrilldown.value.level === "part";
+    const nestedEnterCandidates = new Map<string, ChartDropZone>();
+    const chartEnterZone = (target: CanvasNode): ChartDropZone | null => {
+      if (!target.chartSpec) return null;
+      const localMinX = target.kind === "leaf" ? target.contentMinX : 0;
+      const localMinY = target.kind === "leaf" ? target.contentMinY : 0;
+      const plotArea = target.chartSpec.plotArea ?? {
+        x: localMinX,
+        y: localMinY,
+        width: target.width,
+        height: target.height,
+      };
+      const localPoint = toNodeLocalPoint(target, point);
+      const inside = localPoint.x >= plotArea.x
+        && localPoint.x <= plotArea.x + plotArea.width
+        && localPoint.y >= plotArea.y
+        && localPoint.y <= plotArea.y + plotArea.height;
+      if (!inside) return null;
+      const geometry = localRectDropGeometry(target, plotArea);
+      const center = nodeLocalToSelectionScopePoint(target, {
+        x: plotArea.x + plotArea.width / 2,
+        y: plotArea.y + plotArea.height / 2,
+      });
+      const diameter = Math.min(
+        geometry.bounds.width,
+        geometry.bounds.height,
+        72 / Math.max(viewZoom.value, 0.25),
+      );
+      if (diameter < 18 / Math.max(viewZoom.value, 0.25)) return null;
+      const enterBounds = {
+        minX: center.x - diameter / 2,
+        minY: center.y - diameter / 2,
+        maxX: center.x + diameter / 2,
+        maxY: center.y + diameter / 2,
+        width: diameter,
+        height: diameter,
+      };
+      const nodeElement = Array.from(canvasRef.value?.querySelectorAll<SVGGraphicsElement>("[data-node-id]") ?? [])
+        .find((element) => element.dataset.nodeId === target.id);
+      const markIndexes = nodeElement
+        ? Array.from(nodeElement.querySelectorAll<SVGGraphicsElement>("[data-mark-role]"))
+          .map((_element, index) => index)
+        : [];
+      return {
+        targetNodeId: target.id,
+        type: "nested",
+        sharedChannels: [],
+        ...geometry,
+        compatible: true,
+        nestedAction: pointInBounds(point, enterBounds) ? "enter" : "embed",
+        enterBounds,
+        targetChildMarkIndexes: markIndexes,
+      };
+    };
     for (const target of [...chartTargets].reverse()) {
-      if (target.coordinateGuide?.type === "Polar") continue;
-      const nestedItem = semanticItemDropZone(target, point, sourceNodeId);
-      if (nestedItem) return nestedItem;
+      if (enteredNestedLevel(target.id)) {
+        const nestedItem = semanticItemDropZone(target, point, sourceNodeId);
+        if (nestedItem) return nestedItem;
+        continue;
+      }
+      const enterZone = chartEnterZone(target);
+      if (!enterZone) continue;
+      if (enterZone.nestedAction === "enter") return enterZone;
+      nestedEnterCandidates.set(target.id, enterZone);
     }
-    const targets = chartTargets.filter((node) =>
-      !!node.coordinateGuide
-      && !(chartDrilldown.value?.nodeId === node.id && chartDrilldown.value.level === "part"),
-    );
+    const targets = chartTargets.filter((node) => !!node.coordinateGuide);
+    const withNestedEnter = (zone: ChartDropZone) => {
+      const candidate = nestedEnterCandidates.get(zone.targetNodeId);
+      return candidate?.enterBounds
+        ? { ...zone, enterBounds: candidate.enterBounds }
+        : zone;
+    };
     for (const target of targets) {
       if (!target.coordinateGuide || !target.chartSpec) continue;
+      const nestedLevelEntered = enteredNestedLevel(target.id);
       if (target.coordinateGuide.type === "Polar") {
+        if (nestedLevelEntered) continue;
         const polarZone = polarCompositionDropZoneAtPoint(target, source, point);
-        if (polarZone) return polarZone;
+        if (polarZone) return withNestedEnter(polarZone);
         continue;
       }
       const localPoint = toNodeLocalPoint(target, point);
@@ -3531,9 +3673,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         && localPoint.x <= plotArea.x + plotArea.width
         && localPoint.y >= plotArea.y
         && localPoint.y <= plotArea.y + plotArea.height;
-      if (!inside) continue;
 
-      const nestedPoint = scatterPointDropZone(target, point);
+      const nestedPoint = nestedLevelEntered && inside ? scatterPointDropZone(target, point) : null;
       if (nestedPoint) {
         const sourceTemplate = normalizeChartTemplate(source.chartSpec.chartType);
         const nestedCompatible = sourceTemplate === "pie" || sourceTemplate === "donut";
@@ -3546,40 +3687,50 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           targetRowKey: nestedPoint.rowKey,
         };
       }
+      if (nestedLevelEntered) continue;
 
-      const left = localPoint.x - plotArea.x;
-      const right = plotArea.x + plotArea.width - localPoint.x;
-      const top = localPoint.y - plotArea.y;
-      const bottom = plotArea.y + plotArea.height - localPoint.y;
       const edgeSizeX = Math.min(plotArea.width * 0.22, Math.max(18 / Math.max(viewZoom.value * Math.abs(target.scaleX), 0.25), 12));
       const edgeSizeY = Math.min(plotArea.height * 0.22, Math.max(18 / Math.max(viewZoom.value * Math.abs(target.scaleY), 0.25), 12));
-      const horizontal = Math.min(left / edgeSizeX, right / edgeSizeX) <= Math.min(top / edgeSizeY, bottom / edgeSizeY);
-      const withinBoundary = horizontal
-        ? Math.min(left, right) <= edgeSizeX
-        : Math.min(top, bottom) <= edgeSizeY;
-      if (withinBoundary) {
+      const plotRight = plotArea.x + plotArea.width;
+      const plotBottom = plotArea.y + plotArea.height;
+      const inVerticalSpan = localPoint.y >= plotArea.y && localPoint.y <= plotBottom;
+      const inHorizontalSpan = localPoint.x >= plotArea.x && localPoint.x <= plotRight;
+      const onLeft = inVerticalSpan
+        && localPoint.x >= plotArea.x - edgeSizeX
+        && localPoint.x <= plotArea.x;
+      const onRight = inVerticalSpan
+        && localPoint.x >= plotRight
+        && localPoint.x <= plotRight + edgeSizeX;
+      const onTop = inHorizontalSpan
+        && localPoint.y >= plotArea.y - edgeSizeY
+        && localPoint.y <= plotArea.y;
+      const onBottom = inHorizontalSpan
+        && localPoint.y >= plotBottom
+        && localPoint.y <= plotBottom + edgeSizeY;
+      if (onLeft || onRight || onTop || onBottom) {
+        const horizontal = onLeft || onRight;
         const direction = horizontal ? "horizontal" : "vertical";
         const sharedChannel: CoordinateChannel = horizontal ? "y" : "x";
-        const before = horizontal ? left <= right : top <= bottom;
+        const before = horizontal ? onLeft : onTop;
         const compositionNodes = repeatableCompositionPairNodes(source, target, "concat", direction);
         const compatible = !!compositionNodes
           && compositionNodes.every(isCartesianCompositionChart)
           && concatNodesAreCompatible(compositionNodes, direction, sharedChannel);
         const localZone: ChartPlotArea = horizontal
           ? {
-            x: left <= right ? plotArea.x : plotArea.x + plotArea.width - edgeSizeX,
+            x: onLeft ? plotArea.x - edgeSizeX : plotRight,
             y: plotArea.y,
             width: edgeSizeX,
             height: plotArea.height,
           }
           : {
             x: plotArea.x,
-            y: top <= bottom ? plotArea.y : plotArea.y + plotArea.height - edgeSizeY,
+            y: onTop ? plotArea.y - edgeSizeY : plotBottom,
             width: plotArea.width,
             height: edgeSizeY,
           };
         const geometry = localRectDropGeometry(target, localZone);
-        return {
+        return withNestedEnter({
           targetNodeId: target.id,
           type: "concat",
           sharedChannels: [sharedChannel],
@@ -3587,8 +3738,10 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           compatible,
           direction,
           concatPosition: before ? "before" : "after",
-        };
+        });
       }
+
+      if (!inside) continue;
 
       const compositionNodes = repeatableCompositionPairNodes(source, target, "layer");
       const sharedChannels = compositionNodes ? layerChannelsForNodes(compositionNodes) ?? [] : [];
@@ -3596,18 +3749,18 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         && compositionNodes.every(isCartesianCompositionChart)
         && sharedChannels.length > 0;
       const layerArea = {
-        x: plotArea.x + edgeSizeX,
-        y: plotArea.y + edgeSizeY,
-        width: Math.max(0, plotArea.width - edgeSizeX * 2),
-        height: Math.max(0, plotArea.height - edgeSizeY * 2),
+        x: plotArea.x,
+        y: plotArea.y,
+        width: plotArea.width,
+        height: plotArea.height,
       };
-      return {
+      return withNestedEnter({
         targetNodeId: target.id,
         type: "layer",
         sharedChannels,
         ...localRectDropGeometry(target, layerArea),
         compatible,
-      };
+      });
     }
     return null;
   }
@@ -3636,6 +3789,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         selectedIds.value = [];
         return true;
       }
+      if (chartDrilldown.value?.nodeId !== target.id || chartDrilldown.value.level !== "part") return false;
       const rowKey = zone.targetRowKey;
       if (rowKey && nestedCompositionFromBlock(target, source, rowKey)) {
         const scopeNodes = getSelectionScopeNodes();
@@ -4135,17 +4289,17 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const selected = Array.from(new Set(fieldNames)).flatMap((field) => {
       const column = dataset.columns.find((item) => item.name === field && item.type === "quantitative");
       return column ? [{ field: column.name, type: column.type }] : [];
-    });
+    }).slice(0, 1);
     updateEncodingTargets(node, (_target, spec) => {
       const memberEncodings = { ...spec.encodings };
       delete memberEncodings.theta;
       delete memberEncodings.angle;
       delete memberEncodings.y;
-      if (selected.length === 1) memberEncodings.theta = { ...selected[0]! };
+      if (selected[0]) memberEncodings.theta = { ...selected[0] };
       return {
         ...spec,
         encodings: memberEncodings,
-        angleFields: selected.length > 1 ? selected : undefined,
+        angleFields: undefined,
         radiusMode: undefined,
         componentRadiusFields: undefined,
         renderer: undefined,
@@ -4159,6 +4313,64 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const node = axisBindingNode.value;
     const dataset = axisBindingDataset.value;
     if (node && dataset) applyPieAngleFields(node, dataset, fieldNames);
+  }
+  function setPolarSegmentFields(fieldNames: string[]) {
+    const node = axisBindingNode.value;
+    const dataset = axisBindingDataset.value;
+    if (!node?.chartSpec || !dataset) return;
+    const columns = Array.from(new Set(fieldNames)).flatMap((field) => {
+      const column = dataset.columns.find((item) => item.name === field);
+      return column ? [column] : [];
+    });
+    if (columns.length === 0) {
+      updateEncodingTargets(node, (_target, spec) => {
+        const encodings = { ...spec.encodings };
+        delete encodings.segment;
+        return {
+          ...spec,
+          encodings,
+          angleFields: undefined,
+          radiusMode: undefined,
+          componentRadiusFields: undefined,
+          renderer: undefined,
+          dimensionDecisions: undefined,
+          dimensionRecommendations: undefined,
+        };
+      });
+      return;
+    }
+    const quantitative = columns.every((column) => column.type === "quantitative");
+    if (!quantitative && columns.length > 1) return;
+    updateEncodingTargets(node, (_target, spec) => {
+      const encodings = { ...spec.encodings };
+      delete encodings.segment;
+      delete encodings.angle;
+      delete encodings.y;
+      if (quantitative) {
+        delete encodings.theta;
+        return {
+          ...spec,
+          encodings,
+          angleFields: columns.map((column) => ({ field: column.name, type: column.type })),
+          radiusMode: undefined,
+          componentRadiusFields: undefined,
+          renderer: undefined,
+          dimensionDecisions: undefined,
+          dimensionRecommendations: undefined,
+        };
+      }
+      encodings.segment = { field: columns[0]!.name, type: columns[0]!.type };
+      return {
+        ...spec,
+        encodings,
+        angleFields: undefined,
+        radiusMode: undefined,
+        componentRadiusFields: undefined,
+        renderer: undefined,
+        dimensionDecisions: undefined,
+        dimensionRecommendations: undefined,
+      };
+    });
   }
   function setValueSeriesFields(fieldNames: string[]) {
     const node = axisBindingNode.value;
@@ -4193,6 +4405,17 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (!node?.chartSpec || !dataset || !barItemAxisBinding(node)) return false;
     const column = dataset.columns.find((item) => item.name === fieldName);
     if (!column) return false;
+    const template = normalizeChartTemplate(node.chartSpec.chartType);
+    if (template === "pie" || template === "donut") {
+      const current = node.chartSpec.encodings.segment?.field
+        ? [node.chartSpec.encodings.segment.field]
+        : node.chartSpec.angleFields?.map((encoding) => encoding.field) ?? [];
+      if (current.includes(fieldName)) return true;
+      if (node.chartSpec.encodings.segment?.field) return false;
+      if ((node.chartSpec.angleFields?.length ?? 0) > 0 && column.type !== "quantitative") return false;
+      if (!current.includes(fieldName)) setPolarSegmentFields([...current, fieldName]);
+      return true;
+    }
     if (column.type === "quantitative") {
       const current = node.chartSpec.valueFields?.map((encoding) => encoding.field)
         ?? [];
@@ -4208,6 +4431,16 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const node = findCanvasNode(nodeId);
     if (!node?.chartSpec || !barItemAxisBinding(node)) return;
     axisBindingTarget.value = { nodeId, channel: itemBindingAxis(node) };
+    const template = normalizeChartTemplate(node.chartSpec.chartType);
+    if (template === "pie" || template === "donut") {
+      const segmentFields = node.chartSpec.encodings.segment?.field
+        ? [node.chartSpec.encodings.segment.field]
+        : node.chartSpec.angleFields?.map((encoding) => encoding.field) ?? [];
+      if (segmentFields.includes(fieldName)) {
+        setPolarSegmentFields(segmentFields.filter((field) => field !== fieldName));
+      }
+      return;
+    }
     const valueFields = node.chartSpec.valueFields?.map((encoding) => encoding.field) ?? [];
     if (valueFields.includes(fieldName)) {
       setValueSeriesFields(valueFields.filter((field) => field !== fieldName));
@@ -5792,7 +6025,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     }
     interaction.value = null;
     compositionDragSourceId.value = null;
-    nestedEnterHover = null;
+    clearNestedEnterHover();
     activeDropZone.value = null;
     detachPointerListeners();
   }
@@ -5823,14 +6056,28 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       if (dropZone?.type === "nested" && dropZone.nestedAction === "enter") {
         const key = `${dropZone.targetNodeId}:${dropZone.targetElementId ?? "item"}`;
         if (nestedEnterHover?.key !== key) {
-          nestedEnterHover = { key, startedAt: Date.now() };
-        } else if (Date.now() - nestedEnterHover.startedAt >= 450) {
-          enterNestedDropLevel(dropZone);
-          nestedEnterHover = null;
-          activeDropZone.value = compositionDropZoneAtPoint(movePoint, compositionDragSourceId.value);
+          clearNestedEnterHover();
+          const sourceNodeId = compositionDragSourceId.value;
+          if (sourceNodeId) {
+            const timeoutId = window.setTimeout(() => {
+              const currentZone = activeDropZone.value;
+              const currentKey = currentZone?.type === "nested" && currentZone.nestedAction === "enter"
+                ? `${currentZone.targetNodeId}:${currentZone.targetElementId ?? "item"}`
+                : null;
+              if (interaction.value?.type === "move"
+                && compositionDragSourceId.value === sourceNodeId
+                && currentKey === key
+                && currentZone) {
+                enterNestedDropLevel(currentZone);
+                activeDropZone.value = compositionDropZoneAtPoint(movePoint, sourceNodeId);
+              }
+              nestedEnterHover = null;
+            }, 450);
+            nestedEnterHover = { key, timeoutId };
+          }
         }
       } else {
-        nestedEnterHover = null;
+        clearNestedEnterHover();
       }
       return;
     }
@@ -6090,7 +6337,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (createdNode?.chartSpec && (createdTemplate === "pie" || createdTemplate === "donut")) {
       axisBindingTarget.value = {
         nodeId: createdNode.id,
-        channel: "y",
+        channel: "angle",
         clientX: event.clientX,
         clientY: event.clientY,
       };
@@ -6579,6 +6826,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     bindPolarRadiusField,
     clearPolarRadiusField,
     setPieAngleFields,
+    setPolarSegmentFields,
     setValueSeriesFields,
     removeBarItemField,
     setParallelFields,

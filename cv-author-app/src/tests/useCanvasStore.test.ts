@@ -334,7 +334,7 @@ describe("implemented chart template cards", () => {
     expect(lineCards.every((candidate) => candidate.src.includes("static.observableusercontent.com/thumbnail/"))).toBe(true);
   });
 
-  it("binds Matrix value and Donut ring through the generic encoding API", () => {
+  it("binds Matrix value through the generic encoding API", () => {
     const dataset: Dataset = {
       id: "generic-encoding-data",
       name: "generic-encoding.csv",
@@ -375,25 +375,6 @@ describe("implemented chart template cards", () => {
     expect(matrix.chartSpec.encodings.color?.field).toBe("value");
     expect(matrix.renderedContent).toContain('data-chart-type="matrix"');
 
-    const donut = lineChart("generic-donut", 120, false);
-    donut.coordinateGuide = { type: "Polar", origin: { x: 400, y: 200 } };
-    donut.chartSpec = {
-      chartType: "DonutChart",
-      datasetId: dataset.id,
-      encodings: {
-        angle: { field: "value", type: "quantitative" },
-        color: { field: "category", type: "nominal" },
-      },
-    };
-    store.canvasNodes.value = [donut];
-    store.selectedIds.value = [donut.id];
-    store.axisBindingTarget.value = { nodeId: donut.id, channel: "y" };
-    store.setChartEncoding("ring", "row");
-    expect(donut.chartSpec.encodings.ring?.field).toBe("row");
-    expect(donut.renderedContent).toContain('data-chart-type="donut"');
-
-    store.setChartEncoding("ring", "value");
-    expect(donut.chartSpec.encodings.ring?.field).toBe("row");
   });
 
   it("keeps static encoding config before required channels are complete", () => {
@@ -610,7 +591,7 @@ describe("implemented chart template cards", () => {
     expect(chart.renderedContent?.match(/data-mark-role="bar"/g)).toHaveLength(4);
   });
 
-  it("replaces polar Theta and Slice sources from the encoding panel", () => {
+  it("replaces the polar Theta source from the encoding panel", () => {
     const dataset: Dataset = {
       id: "polar-channel-resolution",
       name: "polar-channel-resolution.csv",
@@ -640,8 +621,10 @@ describe("implemented chart template cards", () => {
       chartSpec: {
         chartType: "PieChart",
         datasetId: dataset.id,
-        encodings: { color: { field: "component", type: "nominal" }, x: { field: "component", type: "nominal" } },
-        angleFields: [{ field: "weight", type: "quantitative" }],
+        encodings: {
+          theta: { field: "weight", type: "quantitative" },
+          segment: { field: "component", type: "nominal" },
+        },
       },
       children: [],
     };
@@ -655,11 +638,9 @@ describe("implemented chart template cards", () => {
     store.setChartEncoding("theta", "fat");
     expect(chart.chartSpec?.angleFields).toBeUndefined();
     expect(chart.chartSpec?.encodings.theta).toEqual({ field: "fat", type: "quantitative" });
+    expect(chart.chartSpec?.encodings.segment).toEqual({ field: "component", type: "nominal" });
     expect(chart.renderedContent).toContain('data-category-key="water"');
 
-    store.setChartEncoding("color", "person");
-    expect(chart.chartSpec?.encodings.color?.field).toBe("person");
-    expect(chart.chartSpec?.encodings.x?.field).toBe("component");
   });
 });
 
@@ -1028,7 +1009,7 @@ describe("generic Layer composition", () => {
 });
 
 describe("CSV to Pie binding", () => {
-  it("binds CSV fields to independent Theta, R, and slice channels", () => {
+  it("binds CSV fields to independent Theta and R channels", () => {
     const dataset: Dataset = {
       id: "csv-pie-dataset",
       name: "csv-pie.csv",
@@ -1080,32 +1061,29 @@ describe("CSV to Pie binding", () => {
     store.axisBindingTarget.value = { nodeId: pieNode.id, channel: "angle" };
     store.setPieAngleFields(["weight"]);
     store.bindPolarRadiusField("radius");
-    store.setChartEncoding("color", "component");
 
     expect(pieNode.chartSpec?.angleFields).toBeUndefined();
     expect(pieNode.chartSpec?.encodings.theta).toEqual({ field: "weight", type: "quantitative" });
     expect(pieNode.chartSpec?.encodings.radius).toEqual({ field: "radius", type: "quantitative" });
-    expect(pieNode.chartSpec?.encodings.color).toEqual({ field: "component", type: "nominal" });
-    expect(pieNode.renderedContent).toContain(
-      'data-category-key="water"',
-    );
+    expect(pieNode.renderedContent).toContain('data-category-key="1"');
     expect(pieNode.renderedContent).toContain('data-radius-field="radius"');
     expect(pieNode.renderedContent).toContain('data-radius-value="10"');
     expect(pieNode.renderedContent).toContain('data-radius-value="40"');
     expect(pieNode.renderedContent?.match(/data-mark-role="arc"/g)).toHaveLength(4);
   });
 
-  it("keeps the Donut R selector synchronized with its CSV encoding", () => {
+  it("adds and removes Donut Segment fields through the measure-set drop area", async () => {
     const dataset: Dataset = {
       id: "pie-radius-store",
       name: "pie-radius-store.csv",
       columns: [
         { name: "person", type: "nominal" },
+        { name: "time", type: "temporal" },
         { name: "water", type: "quantitative" },
         { name: "fat", type: "quantitative" },
         { name: "radius", type: "quantitative" },
       ],
-      rows: [{ person: "A", water: "40", fat: "20", radius: "10" }],
+      rows: [{ person: "A", time: "2025-01-01", water: "40", fat: "20", radius: "10" }],
     };
     const pieNode: CanvasGroupNode = {
       kind: "group",
@@ -1141,11 +1119,46 @@ describe("CSV to Pie binding", () => {
     store.selectedIds.value = [pieNode.id];
     store.axisBindingTarget.value = { nodeId: pieNode.id, channel: "x" };
 
+    expect(store.barItemAxisBinding(pieNode)).toEqual({
+      label: "Segment",
+      fields: ["water", "fat"],
+    });
+    expect(store.addBarItemField("person")).toBe(false);
+    store.removeBarItemField(pieNode.id, "water");
+    expect(pieNode.chartSpec?.angleFields).toEqual([{ field: "fat", type: "quantitative" }]);
+    expect(pieNode.chartSpec?.encodings.theta).toBeUndefined();
+
+    const thetaBounds = store.seriesItemDropBounds(pieNode);
+    await store.onCanvasDrop(columnDragEvent(
+      dataset.id,
+      "water",
+      "quantitative",
+      thetaBounds.minX + thetaBounds.width / 2,
+      thetaBounds.minY + thetaBounds.height / 2,
+    ));
+    expect(pieNode.chartSpec?.encodings.theta).toBeUndefined();
+    expect(pieNode.chartSpec?.angleFields?.map((encoding) => encoding.field)).toEqual(["fat", "water"]);
+
     store.bindPolarRadiusField("radius");
     expect(pieNode.chartSpec?.encodings.radius).toEqual({ field: "radius", type: "quantitative" });
 
     store.clearPolarRadiusField();
     expect(pieNode.chartSpec?.encodings.radius).toBeUndefined();
+
+    store.setPolarSegmentFields(["person"]);
+    store.setPieAngleFields(["water"]);
+    expect(pieNode.chartSpec?.encodings.segment).toEqual({ field: "person", type: "nominal" });
+    expect(pieNode.chartSpec?.encodings.theta).toEqual({ field: "water", type: "quantitative" });
+    expect(pieNode.chartSpec?.angleFields).toBeUndefined();
+    expect(store.addBarItemField("fat")).toBe(false);
+
+    store.bindPolarRadiusField("water");
+    expect(pieNode.chartSpec?.encodings.radius).toEqual({ field: "water", type: "quantitative" });
+    expect(pieNode.chartSpec?.renderer?.status).toBe("ready");
+    expect(pieNode.renderedContent).toContain('data-radius-field="water"');
+
+    store.setPolarSegmentFields(["time"]);
+    expect(pieNode.chartSpec?.encodings.segment).toEqual({ field: "time", type: "temporal" });
   });
 });
 
@@ -1762,12 +1775,12 @@ describe("composition coordinate editing", () => {
     const plotArea = target.chartSpec!.plotArea!;
     const dropPoint = edge === "left" || edge === "right"
       ? {
-        x: target.x + plotArea.x + (edge === "left" ? 2 : plotArea.width - 2),
+        x: target.x + plotArea.x + (edge === "left" ? -2 : plotArea.width + 2),
         y: target.y + plotArea.y + plotArea.height / 2,
       }
       : {
         x: target.x + plotArea.x + plotArea.width / 2,
-        y: target.y + plotArea.y + (edge === "top" ? 2 : plotArea.height - 2),
+        y: target.y + plotArea.y + (edge === "top" ? -2 : plotArea.height + 2),
       };
 
     store.onCanvasNodePointerDown(source, pointerEvent(source.x + 20, source.y + 20));
@@ -1877,7 +1890,7 @@ describe("composition coordinate editing", () => {
     const compositionId = first.compositionSpec?.id;
     const plotArea = second.chartSpec!.plotArea!;
     const dropPoint = {
-      x: second.x + plotArea.x + plotArea.width - 2,
+      x: second.x + plotArea.x + plotArea.width + 2,
       y: second.y + plotArea.y + plotArea.height / 2,
     };
     store.onCanvasNodePointerDown(third, pointerEvent(third.x + 20, third.y + 20));
@@ -1905,16 +1918,17 @@ describe("composition coordinate editing", () => {
   });
 
   it("offers Polar radial, angular, and layer drop zones", () => {
-    const source = polarChart("drag-polar-source", 100);
-    const target = polarChart("drag-polar-target", 800);
     const store = useCanvasStore(coordinateCanvasRef());
     store.relationshipStore.dispatch({ type: "clear" });
     useDatasetStore().datasets.value = [layerDataset];
-    store.canvasNodes.value = [source, target];
-    store.selectedIds.value = [source.id];
-
-    const targetOrigin = { x: target.x + 200, y: target.y + 200 };
-    const dragTo = (point: { x: number; y: number }) => {
+    let dragIndex = 0;
+    const dragTo = (offset: { x: number; y: number }) => {
+      dragIndex += 1;
+      const source = polarChart(`drag-polar-source-${dragIndex}`, 100);
+      const target = polarChart(`drag-polar-target-${dragIndex}`, 800);
+      store.canvasNodes.value = [source, target];
+      store.selectedIds.value = [source.id];
+      const point = { x: target.x + 200 + offset.x, y: target.y + 200 + offset.y };
       store.onCanvasNodePointerDown(source, pointerEvent(source.x + 20, source.y + 20));
       listeners.get("pointermove")?.(pointerEvent(point.x, point.y));
       const zone = store.activeDropZone.value;
@@ -1922,20 +1936,59 @@ describe("composition coordinate editing", () => {
       return zone;
     };
 
-    const radialZone = dragTo({ x: targetOrigin.x + 230, y: targetOrigin.y });
+    const radialZone = dragTo({ x: 230, y: 0 });
     expect(radialZone).toMatchObject({ type: "concat", direction: "radial", sharedChannels: ["angle"], compatible: true });
 
-    store.canvasNodes.value = [source, target];
-    source.compositionSpec = undefined;
-    target.compositionSpec = undefined;
-    const angularBefore = dragTo({ x: targetOrigin.x + 95, y: targetOrigin.y + 8 });
+    const angularBefore = dragTo({ x: 95, y: 8 });
     expect(angularBefore).toMatchObject({ type: "concat", direction: "angular", concatPosition: "before", sharedChannels: ["radius"] });
 
-    store.canvasNodes.value = [source, target];
-    source.compositionSpec = undefined;
-    target.compositionSpec = undefined;
-    const layerZone = dragTo({ x: targetOrigin.x + 50, y: targetOrigin.y + 85 });
+    const layerZone = dragTo({ x: 50, y: 85 });
     expect(layerZone).toMatchObject({ type: "layer", sharedChannels: ["angle", "radius"], compatible: true });
+  });
+
+  it("offers radial drop zones against both Donut radii but only outside a Pie", () => {
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    const dragTo = (chartType: "DonutChart" | "PieChart", radius: number) => {
+      const source = polarChart(`drag-radii-source-${chartType}-${radius}`, 100);
+      const target = polarChart(`drag-radii-target-${chartType}-${radius}`, 800);
+      target.chartSpec = {
+        ...target.chartSpec!,
+        chartType,
+        polarArea: {
+          startAngle: 0,
+          angleSpan: 120,
+          innerRadius: chartType === "DonutChart" ? 100 : 0,
+          outerRadius: 200,
+        },
+      };
+      store.canvasNodes.value = [source, target];
+      store.onCanvasNodePointerDown(source, pointerEvent(source.x + 20, source.y + 20));
+      const point = { x: target.x + 200 + radius, y: target.y + 200 };
+      listeners.get("pointermove")?.(pointerEvent(point.x, point.y));
+      const zone = store.activeDropZone.value;
+      listeners.get("pointerup")?.(pointerEvent(point.x, point.y));
+      return zone;
+    };
+
+    expect(dragTo("DonutChart", 90)).toMatchObject({
+      type: "concat",
+      direction: "radial",
+      concatPosition: "before",
+    });
+    expect(dragTo("DonutChart", 210)).toMatchObject({
+      type: "concat",
+      direction: "radial",
+      concatPosition: "after",
+    });
+    const pieInnerZone = dragTo("PieChart", 20);
+    expect(pieInnerZone?.type === "concat" && pieInnerZone.direction === "radial").toBe(false);
+    expect(dragTo("PieChart", 210)).toMatchObject({
+      type: "concat",
+      direction: "radial",
+      concatPosition: "after",
+    });
   });
 
   it("lays out Polar radial and angular concat members on one frame", () => {
@@ -2061,7 +2114,7 @@ describe("composition coordinate editing", () => {
     ])).toEqual([[0, 40], [40, 40], [80, 40]]);
   });
 
-  it("nests a configured pie block when it is dragged onto a scatter mark", async () => {
+  it("requires entering a chart before nesting a configured pie on a scatter mark", async () => {
     const dataset: Dataset = {
       id: "drag-nested-dataset",
       name: "drag-nested.csv",
@@ -2116,6 +2169,30 @@ describe("composition coordinate editing", () => {
     };
     store.onCanvasNodePointerDown(child, pointerEvent(child.x + 20, child.y + 20));
     listeners.get("pointermove")?.(pointerEvent(firstPoint.x, firstPoint.y));
+
+    expect(store.activeDropZone.value).toMatchObject({
+      targetNodeId: parent.id,
+      type: "layer",
+    });
+    expect(store.canvasNodes.value).toHaveLength(2);
+
+    const chartCenter = {
+      x: parent.x + (plotArea?.x ?? 0) + (plotArea?.width ?? 0) / 2,
+      y: parent.y + (plotArea?.y ?? 0) + (plotArea?.height ?? 0) / 2,
+    };
+    listeners.get("pointermove")?.(pointerEvent(chartCenter.x, chartCenter.y));
+    expect(store.activeDropZone.value).toMatchObject({
+      targetNodeId: parent.id,
+      type: "nested",
+      nestedAction: "enter",
+    });
+
+    store.chartDrilldown.value = { nodeId: parent.id, level: "part" };
+    listeners.get("pointermove")?.(pointerEvent(firstPoint.x, firstPoint.y));
+    expect(store.activeDropZone.value).toMatchObject({
+      targetNodeId: parent.id,
+      type: "nested",
+    });
     listeners.get("pointerup")?.(pointerEvent(firstPoint.x, firstPoint.y));
 
     expect(store.canvasNodes.value).toHaveLength(1);

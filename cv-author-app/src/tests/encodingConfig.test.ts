@@ -157,8 +157,8 @@ describe("card encoding configuration", () => {
     ["StackedBarChart", ["x", "y", "color", "size"]],
     ["DivergentBarChart", ["x", "y", "color", "size"]],
     ["DivergentStackedBarChart", ["x", "y", "color", "size"]],
-    ["PieChart", ["theta", "color", "radius"]],
-    ["DonutChart", ["theta", "color", "ring", "radius"]],
+    ["PieChart", ["theta", "segment", "radius"]],
+    ["DonutChart", ["theta", "segment", "radius"]],
     ["MatrixDiagram", ["x", "y", "color"]],
   ])("builds the %s card from its channel contract", (chartType, expected) => {
     expect(channels(chartType as string)).toEqual(expected);
@@ -199,15 +199,20 @@ describe("card encoding configuration", () => {
     expect(semanticSlotForChannel("MatrixDiagram", "x")).toBe("column");
     expect(semanticSlotForChannel("MatrixDiagram", "y")).toBe("row");
     expect(semanticSlotForChannel("DonutChart", "theta")).toBe("theta");
+    expect(semanticSlotForChannel("DonutChart", "segment")).toBe("segment");
   });
 
   it("exposes semantic slot requirements separately from renderer channels", () => {
     expect(getTemplateBindingContract("PieChart")?.slots).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "theta", label: "Theta", required: true, accepts: ["measure", "measure-set"] }),
+      expect.objectContaining({ id: "theta", label: "Theta", required: true, accepts: ["measure"] }),
+      expect.objectContaining({ id: "segment", label: "Segment", required: false, accepts: ["dimension", "measure-set"] }),
       expect.objectContaining({ id: "radius", label: "R", required: false, accepts: ["measure"] }),
-      expect.objectContaining({ id: "slice", label: "Breakdown" }),
     ]));
-    expect(getEncodingChannelConfigs("DonutChart").find((config) => config.channel === "theta")?.multiple).toBe(true);
+    expect(getEncodingChannelConfigs("DonutChart").find((config) => config.channel === "theta")?.multiple).toBeUndefined();
+    expect(getEncodingChannelConfigs("DonutChart").find((config) => config.channel === "segment")).toMatchObject({
+      role: "dimension",
+      multiple: true,
+    });
   });
 
   it("treats single-line and multi-line as separate channel configurations", () => {
@@ -235,6 +240,20 @@ describe("card encoding configuration", () => {
     ]);
   });
 
+  it("allows one quantitative field to drive both Polar Theta and R", () => {
+    const spec = {
+      chartType: "DonutChart",
+      datasetId: "data",
+      encodings: {
+        theta: { field: "value", type: "quantitative" as const },
+        radius: { field: "value", type: "quantitative" as const },
+      },
+    };
+
+    expect(getChartEncodingSchema("DonutChart")?.allowFieldReuse).toBe(true);
+    expect(resolveChartEncodingIssues(spec)).toEqual([]);
+  });
+
   it("resolves a temporal Series source", () => {
     const spec = {
       chartType: "MultiLineChart",
@@ -256,16 +275,27 @@ describe("card encoding configuration", () => {
     expect(resolvedPolarRadiusMode({ ...base, encodings: { radius: { field: "total", type: "quantitative" } } })).toBe("mapped");
   });
 
-  it("projects CSV theta and radius fields to Theta and R badges", () => {
-    const spec = {
+  it("projects explicit Theta, Segment measures, and Radius to separate badges", () => {
+    const categoricalSpec = {
+      chartType: "PieChart",
+      datasetId: "data",
+      encodings: {
+        theta: { field: "total", type: "quantitative" as const },
+        segment: { field: "person", type: "nominal" as const },
+        radius: { field: "weight", type: "quantitative" as const },
+      },
+    };
+    const measureSetSpec = {
       chartType: "PieChart",
       datasetId: "data",
       encodings: { radius: { field: "weight", type: "quantitative" as const } },
       angleFields: ["water", "fat"]
         .map((field) => ({ field, type: "quantitative" as const })),
     };
-    expect(resolvedPolarAxisRoles(spec, "water")).toEqual([{ channel: "theta", label: "Theta" }]);
-    expect(resolvedPolarAxisRoles(spec, "fat")).toEqual([{ channel: "theta", label: "Theta" }]);
-    expect(resolvedPolarAxisRoles(spec, "weight")).toEqual([{ channel: "radius", label: "R" }]);
+    expect(resolvedPolarAxisRoles(categoricalSpec, "total")).toEqual([{ channel: "theta", label: "Theta" }]);
+    expect(resolvedPolarAxisRoles(categoricalSpec, "person")).toEqual([{ channel: "segment", label: "Segment" }]);
+    expect(resolvedPolarAxisRoles(measureSetSpec, "water")).toEqual([{ channel: "segment", label: "Segment" }]);
+    expect(resolvedPolarAxisRoles(measureSetSpec, "fat")).toEqual([{ channel: "segment", label: "Segment" }]);
+    expect(resolvedPolarAxisRoles(measureSetSpec, "weight")).toEqual([{ channel: "radius", label: "R" }]);
   });
 });

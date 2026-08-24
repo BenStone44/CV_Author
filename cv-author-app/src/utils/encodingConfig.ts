@@ -44,8 +44,8 @@ export type EncodingResolutionIssue = {
 };
 
 export type PolarAxisRole = {
-  channel: "theta" | "radius";
-  label: "Theta" | "R";
+  channel: "theta" | "segment" | "radius";
+  label: "Theta" | "Segment" | "R";
 };
 
 export function resolvedSeriesField(spec: ChartSpec) {
@@ -77,11 +77,15 @@ export function resolvedPolarRadiusMode(spec: ChartSpec): PolarRadiusBindingMode
 export function resolvedPolarAxisRoles(spec: ChartSpec, field: string): PolarAxisRole[] {
   const template = normalizeChartTemplate(spec.chartType);
   if (template !== "pie" && template !== "donut") return [];
-  const thetaFields = spec.angleFields?.map((encoding) => encoding.field)
-    ?? [spec.encodings.theta?.field ?? spec.encodings.angle?.field ?? spec.encodings.y?.field].filter((item): item is string => !!item);
+  const thetaField = spec.encodings.theta?.field ?? spec.encodings.angle?.field ?? spec.encodings.y?.field;
   const radiusField = spec.encodings.radius?.field;
+  const segmentField = spec.encodings.segment?.field;
+  const segmentFields = spec.angleFields?.map((encoding) => encoding.field) ?? [];
   return [
-    ...(thetaFields.includes(field) ? [{ channel: "theta" as const, label: "Theta" as const }] : []),
+    ...(thetaField === field ? [{ channel: "theta" as const, label: "Theta" as const }] : []),
+    ...(segmentField === field || segmentFields.includes(field)
+      ? [{ channel: "segment" as const, label: "Segment" as const }]
+      : []),
     ...(radiusField === field ? [{ channel: "radius" as const, label: "R" as const }] : []),
   ];
 }
@@ -114,10 +118,15 @@ function nativeEncodingFields(spec: ChartSpec, channel: ChartEncodingChannel) {
   if (channel === "row") return [spec.encodings.row?.field, spec.encodings.y?.field];
   if (channel === "theta") {
     return [
-      ...(spec.angleFields?.map((encoding) => encoding.field) ?? []),
       spec.encodings.theta?.field,
       spec.encodings.angle?.field,
       spec.encodings.y?.field,
+    ];
+  }
+  if (channel === "segment" && (template === "pie" || template === "donut")) {
+    return [
+      spec.encodings.segment?.field,
+      ...(spec.angleFields?.map((encoding) => encoding.field) ?? []),
     ];
   }
   if (channel === "y" && (template === "line" || template === "area") && spec.valueFields?.length) {
@@ -136,6 +145,7 @@ function uniqueFields(fields: Array<string | undefined>) {
 
 export function resolveChartEncodingIssues(spec: ChartSpec): EncodingResolutionIssue[] {
   const configs = getEncodingChannelConfigsForSpec(spec);
+  const contract = getChartEncodingSchema(spec.chartType);
   const issues: EncodingResolutionIssue[] = [];
   const resolvedDataChannels: Array<{
     channel: ChartEncodingChannel | "series";
@@ -165,7 +175,7 @@ export function resolveChartEncodingIssues(spec: ChartSpec): EncodingResolutionI
   }));
   owners.forEach((channels, field) => {
     const uniqueChannels = Array.from(new Set(channels));
-    if (uniqueChannels.length < 2) return;
+    if (uniqueChannels.length < 2 || contract?.allowFieldReuse === true) return;
     issues.push({
       code: "duplicate-data-field",
       channels: uniqueChannels,
@@ -187,6 +197,9 @@ export function resolvedEncodingField(spec: ChartSpec, channel: ChartEncodingCha
   }
   if (channel === "radius" && (normalizeChartTemplate(spec.chartType) === "pie" || normalizeChartTemplate(spec.chartType) === "donut")) {
     return spec.encodings.radius?.field ?? "";
+  }
+  if (channel === "segment" && (template === "pie" || template === "donut")) {
+    return spec.encodings.segment?.field ?? spec.angleFields?.[0]?.field ?? "";
   }
   if (channel === "column") return spec.encodings.column?.field ?? spec.encodings.x?.field ?? "";
   if (channel === "row") return spec.encodings.row?.field ?? spec.encodings.y?.field ?? "";

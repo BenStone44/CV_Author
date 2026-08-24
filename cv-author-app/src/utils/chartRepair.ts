@@ -361,20 +361,34 @@ export function analyzeChartSpecRepairs(dataset: Dataset, spec: ChartSpec): Char
   const multiFieldBarSeries = template.id === "bar"
     && ["grouped", "stacked", "divergent-stacked"].includes(normalizeBarChartVariant(spec.chartType) ?? "")
     && !derivedBarSegments;
+  const derivedPolarSegments = (template.id === "pie" || template.id === "donut")
+    && (spec.angleFields?.length ?? 0) > 0;
   const roles: ChartRepairRoleContract[] = template.channels.map((channel) => ({
     id: repairRoleId(template, channel.channel, channel.role),
-    kind: derivedBarSegments && channel.channel === "color"
+    kind: derivedPolarSegments && channel.channel === "segment"
       ? "measure"
-      : channel.role === "dimension" || channel.role === "series" ? "dimension" : channel.role,
-    accepts: derivedBarSegments && channel.channel === "color" ? ["quantitative"] : channel.accepts,
-    minFields: derivedBarSegments && channel.channel === "y" ? 0 : channel.required ? 1 : 0,
-    maxFields: derivedBarSegments && channel.channel === "color"
-      ? spec.valueFields!.length
-      : multiFieldBarSeries && channel.role === "series"
-        ? dataset.columns.length
-        : 1,
-    requiresPartition: channel.role === "dimension" || (channel.role === "series" && !(derivedBarSegments && channel.channel === "color")),
-    minCardinality: channel.role === "dimension" || channel.role === "series" ? 2 : undefined,
+      : derivedBarSegments && channel.channel === "color"
+        ? "measure"
+        : channel.role === "dimension" || channel.role === "series" ? "dimension" : channel.role,
+    accepts: (derivedBarSegments && channel.channel === "color")
+      || (derivedPolarSegments && channel.channel === "segment")
+      ? ["quantitative"]
+      : channel.accepts,
+    minFields: (derivedBarSegments && channel.channel === "y")
+      || (derivedPolarSegments && channel.channel === "theta")
+      ? 0
+      : channel.required ? 1 : 0,
+    maxFields: derivedPolarSegments && channel.channel === "segment"
+      ? spec.angleFields!.length
+      : derivedBarSegments && channel.channel === "color"
+        ? spec.valueFields!.length
+        : multiFieldBarSeries && channel.role === "series"
+          ? dataset.columns.length
+          : 1,
+    requiresPartition: !(derivedPolarSegments && channel.channel === "segment")
+      && (channel.role === "dimension" || (channel.role === "series" && !(derivedBarSegments && channel.channel === "color"))),
+    minCardinality: !(derivedPolarSegments && channel.channel === "segment")
+      && (channel.role === "dimension" || channel.role === "series") ? 2 : undefined,
   }));
   const binding: ChartRoleBinding = {};
   template.channels.forEach((channel) => {
@@ -400,13 +414,15 @@ export function analyzeChartSpecRepairs(dataset: Dataset, spec: ChartSpec): Char
             : spec.encodings[channel.channel];
     if (derivedBarSegments && channel.channel === "color") {
       binding[roleId] = spec.valueFields!.map((field) => field.field);
+    } else if (derivedPolarSegments && channel.channel === "segment") {
+      binding[roleId] = spec.angleFields!.map((field) => field.field);
     } else if (channel.role === "series" && spec.seriesFields?.length) {
       binding[roleId] = spec.seriesFields.map((field) => field.field);
     } else if (encoding) binding[roleId] = [encoding.field];
   });
   return analyzeChartRepairs(dataset, {
     roles,
-    allowFieldReuse: false,
+    allowFieldReuse: template.allowFieldReuse,
     aggregationPolicy: template.aggregationPolicy,
     requiresFunctionalDependency: template.requiresFunctionalDependency,
     requiresIndependentDimensions: template.requiresIndependentDimensions,

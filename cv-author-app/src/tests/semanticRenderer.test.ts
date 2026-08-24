@@ -328,6 +328,115 @@ describe("semantic Case 1 renderers", () => {
     });
     expect(donut.polarArea?.innerRadius).toBeGreaterThan(0);
     expect(donut.polarArea?.outerRadius).toBe(donut.plotArea.width / 2);
+
+    const measureSegmentDonut = renderDeterministicChart({
+      chartId: "measure-segment-donut",
+      width: 320,
+      height: 180,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Polar", origin: { x: 160, y: 90 }, angleSpan: 360 },
+      chartSpec: {
+        chartType: "DonutChart",
+        datasetId: dataset.id,
+        encodings: {},
+        angleFields: [
+          { field: "water_kg", type: "quantitative" },
+          { field: "fat_kg", type: "quantitative" },
+        ],
+      },
+      dataset,
+    });
+    expect(measureSegmentDonut.content).toContain('data-segment-fields="water_kg|fat_kg"');
+    expect(measureSegmentDonut.content.match(/data-mark-role="arc"/g)).toHaveLength(2);
+    expect(measureSegmentDonut.polarArea?.innerRadius).toBeGreaterThan(0);
+  });
+
+  it("groups categorical and temporal Segments and compares their outer radii globally", () => {
+    const polarDataset: Dataset = {
+      id: "polar-segments",
+      name: "polar-segments.csv",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "time", type: "temporal" },
+        { name: "value", type: "quantitative" },
+        { name: "outer", type: "quantitative" },
+      ],
+      rows: [
+        { person: "A", time: "2025-01-01", value: "10", outer: "1" },
+        { person: "A", time: "2025-01-02", value: "5", outer: "2" },
+        { person: "B", time: "2025-01-01", value: "20", outer: "10" },
+      ],
+    };
+    const render = (segment: "person" | "time", type: "nominal" | "temporal") => renderDeterministicChart({
+      chartId: `polar-${segment}`,
+      width: 320,
+      height: 180,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Polar", origin: { x: 160, y: 90 } },
+      chartSpec: {
+        chartType: "DonutChart",
+        datasetId: polarDataset.id,
+        encodings: {
+          theta: { field: "value", type: "quantitative" },
+          segment: { field: segment, type },
+          radius: { field: "outer", type: "quantitative" },
+        },
+        markGroups: [{
+          id: `mark-group:polar-${segment}:arc`,
+          chartId: `polar-${segment}`,
+          role: "arc",
+          memberKeys: [],
+          sharedConfig: {
+            seriesStyleMapping: {
+              type: "series-style",
+              values: { A: { color: "#123456" } },
+            },
+          },
+        }],
+      },
+      dataset: polarDataset,
+    });
+
+    const byPerson = render("person", "nominal");
+    expect(byPerson.content.match(/data-mark-role="arc"/g)).toHaveLength(2);
+    expect(byPerson.content).toContain('data-segment-field="person"');
+    expect(byPerson.content).toContain('data-category-key="A"');
+    expect(byPerson.content).toContain('data-theta-value="15"');
+    expect(byPerson.content).toContain('data-radius-value="3"');
+    expect(byPerson.content).toContain('data-radius-value="10"');
+    expect(byPerson.content).toContain('data-segment-value="A"');
+    expect(byPerson.content).toContain('fill="#123456"');
+    const personPaths = Array.from(byPerson.content.matchAll(/<path[^>]*data-radius-value="(?:3|10)"[^>]*d="([^"]+)"/g));
+    expect(personPaths).toHaveLength(2);
+    expect(personPaths[0]?.[1]).not.toBe(personPaths[1]?.[1]);
+
+    const byTime = render("time", "temporal");
+    expect(byTime.content.match(/data-mark-role="arc"/g)).toHaveLength(2);
+    expect(byTime.content).toContain('data-segment-field="time"');
+
+    const sharedThetaAndRadius = renderDeterministicChart({
+      chartId: "polar-shared-value",
+      width: 320,
+      height: 180,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Polar", origin: { x: 160, y: 90 } },
+      chartSpec: {
+        chartType: "DonutChart",
+        datasetId: polarDataset.id,
+        encodings: {
+          theta: { field: "value", type: "quantitative" },
+          segment: { field: "person", type: "nominal" },
+          radius: { field: "value", type: "quantitative" },
+        },
+      },
+      dataset: polarDataset,
+    });
+    expect(sharedThetaAndRadius.content.match(/data-mark-role="arc"/g)).toHaveLength(2);
+    expect(sharedThetaAndRadius.content).toContain('data-radius-field="value"');
+    expect(sharedThetaAndRadius.content).toContain('data-radius-value="15"');
   });
 
   it("renders scatter marks without duplicate axes", () => {
