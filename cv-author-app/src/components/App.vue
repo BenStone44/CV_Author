@@ -50,8 +50,11 @@ const facetClueDialog = ref<{
   nodeId: string;
   chartName: string;
   fields: string[];
+  coordinateSystem: "Cartesian" | "Polar";
   rowField: string;
   columnField: string;
+  thetaField: string;
+  radiusField: string;
 } | null>(null);
 
 const {
@@ -145,6 +148,7 @@ const {
   onPolarAnglePointerDown,
   setAxisBindingAggregation,
   setAxisSwap,
+  setCoordinateGuideAppearance,
   clearSeriesBinding,
   setChartSeries,
   setCompositionEncoding,
@@ -816,26 +820,28 @@ function openCompositionCandidates(type: CompositionType) {
       node?.compositionSpec?.facetGrid?.columnField,
     ].filter((field): field is string => !!field));
     const remainingClueFields = clueFields.filter((field) => !existingFacetFields.has(field));
-    if (node?.compositionSpec?.type === "facet" && remainingClueFields.length === 1) {
-      const existingDirection = node.compositionSpec.facetDirection ?? "column";
-      const applied = applyDimensionFacet(remainingClueFields[0]!, existingDirection === "row" ? "column" : "row");
-      if (applied) {
+    const dataset = node?.chartSpec ? getDataset(node.chartSpec.datasetId) : null;
+    const eligibleFields = dataset?.columns
+      .filter((column) => column.type === "nominal" || column.type === "ordinal" || column.type === "temporal")
+      .map((column) => column.name)
+      .filter((field) => !existingFacetFields.has(field)) ?? [];
+    if (node) {
+      const selectableFields = clueFields.length > 0
+        ? node.compositionSpec?.type === "facet" ? remainingClueFields : clueFields
+        : eligibleFields;
+      if (selectableFields.length === 0) {
         activeCompositionType.value = null;
         return;
       }
-    }
-    if (node && clueFields.length === 1) {
-      createFacetFromFields(node.id, { columnField: clueFields[0] });
-      activeCompositionType.value = null;
-      return;
-    }
-    if (node && clueFields.length > 1) {
       facetClueDialog.value = {
         nodeId: node.id,
         chartName: node.name,
-        fields: clueFields,
-        rowField: clueFields[0] ?? "",
-        columnField: clueFields[1] ?? "",
+        fields: selectableFields,
+        coordinateSystem: "Cartesian",
+        rowField: "",
+        columnField: selectableFields[0] ?? "",
+        thetaField: selectableFields[0] ?? "",
+        radiusField: selectableFields[1] ?? "",
       };
       activeCompositionType.value = null;
       return;
@@ -847,9 +853,10 @@ function openCompositionCandidates(type: CompositionType) {
 
 const canConfirmFacetClues = computed(() => {
   const dialog = facetClueDialog.value;
-  return !!dialog
-    && (!!dialog.rowField || !!dialog.columnField)
-    && (!dialog.rowField || !dialog.columnField || dialog.rowField !== dialog.columnField);
+  if (!dialog) return false;
+  const first = dialog.coordinateSystem === "Cartesian" ? dialog.rowField : dialog.thetaField;
+  const second = dialog.coordinateSystem === "Cartesian" ? dialog.columnField : dialog.radiusField;
+  return !!(first || second) && (!first || !second || first !== second);
 });
 
 function closeFacetClueDialog() {
@@ -859,10 +866,17 @@ function closeFacetClueDialog() {
 function confirmFacetClues() {
   const dialog = facetClueDialog.value;
   if (!dialog || !canConfirmFacetClues.value) return;
-  createFacetFromFields(dialog.nodeId, {
-    rowField: dialog.rowField || undefined,
-    columnField: dialog.columnField || undefined,
-  });
+  createFacetFromFields(dialog.nodeId, dialog.coordinateSystem === "Cartesian"
+    ? {
+      coordinateSystem: "Cartesian",
+      rowField: dialog.rowField || undefined,
+      columnField: dialog.columnField || undefined,
+    }
+    : {
+      coordinateSystem: "Polar",
+      thetaField: dialog.thetaField || undefined,
+      radiusField: dialog.radiusField || undefined,
+    });
   closeFacetClueDialog();
 }
 
@@ -933,6 +947,10 @@ function polarScaleChannels(node: CanvasNode): CoordinateChannel[] {
 
 function onAxisSwap(swapped: boolean) {
   setAxisSwap(swapped);
+}
+
+function onCoordinateGuideChange(patch: Parameters<typeof setCoordinateGuideAppearance>[0]) {
+  setCoordinateGuideAppearance(patch);
 }
 
 function onSeriesFieldChange(field: string) {
@@ -1176,7 +1194,11 @@ onBeforeUnmount(() => {
             </button>
           </header>
           <div class="facet-clue-dialog__body">
-            <label>
+            <div class="facet-coordinate-mode" role="group" aria-label="Facet coordinate system">
+              <button type="button" :class="{ 'is-active': facetClueDialog.coordinateSystem === 'Cartesian' }" @click="facetClueDialog.coordinateSystem = 'Cartesian'">Cartesian</button>
+              <button type="button" :class="{ 'is-active': facetClueDialog.coordinateSystem === 'Polar' }" @click="facetClueDialog.coordinateSystem = 'Polar'">Polar</button>
+            </div>
+            <label v-if="facetClueDialog.coordinateSystem === 'Cartesian'">
               <span>Row dimension</span>
               <select v-model="facetClueDialog.rowField">
                 <option value="">None</option>
@@ -1190,7 +1212,7 @@ onBeforeUnmount(() => {
                 </option>
               </select>
             </label>
-            <label>
+            <label v-if="facetClueDialog.coordinateSystem === 'Cartesian'">
               <span>Column dimension</span>
               <select v-model="facetClueDialog.columnField">
                 <option value="">None</option>
@@ -1202,6 +1224,20 @@ onBeforeUnmount(() => {
                 >
                   {{ field }}
                 </option>
+              </select>
+            </label>
+            <label v-if="facetClueDialog.coordinateSystem === 'Polar'">
+              <span>Theta dimension</span>
+              <select v-model="facetClueDialog.thetaField">
+                <option value="">None</option>
+                <option v-for="field in facetClueDialog.fields" :key="`theta-${field}`" :value="field" :disabled="field === facetClueDialog.radiusField">{{ field }}</option>
+              </select>
+            </label>
+            <label v-if="facetClueDialog.coordinateSystem === 'Polar'">
+              <span>R dimension</span>
+              <select v-model="facetClueDialog.radiusField">
+                <option value="">None</option>
+                <option v-for="field in facetClueDialog.fields" :key="`radius-${field}`" :value="field" :disabled="field === facetClueDialog.thetaField">{{ field }}</option>
               </select>
             </label>
           </div>
@@ -1441,6 +1477,7 @@ onBeforeUnmount(() => {
               v-if="axisBindingNode?.chartSpec"
               :chart-name="axisBindingNode.chartSpec.chartType ?? axisBindingNode.name"
               :chart-spec="axisBindingNode.chartSpec"
+              :coordinate-guide="axisBindingNode.coordinateGuide"
               :composition-spec="axisBindingNode.compositionSpec"
               :columns="axisBindingColumns"
               :rows="axisBindingRows"
@@ -1451,6 +1488,7 @@ onBeforeUnmount(() => {
               @channel-change="onEncodingChannelChange"
               @composition-change="onCompositionEncodingChange"
               @axis-swap="onAxisSwap"
+              @coordinate-guide-change="onCoordinateGuideChange"
               @series-field-change="onSeriesFieldChange"
               @series-fields-change="onSeriesFieldsChange"
               @value-series-fields-change="setValueSeriesFields"
@@ -3967,6 +4005,34 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   padding: 18px 16px;
+}
+
+.facet-coordinate-mode {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid #cfd7e0;
+  border-radius: 6px;
+}
+
+.facet-coordinate-mode button {
+  min-height: 34px;
+  border: 0;
+  background: #fff;
+  color: #64748b;
+  font: inherit;
+  cursor: pointer;
+}
+
+.facet-coordinate-mode button + button {
+  border-left: 1px solid #cfd7e0;
+}
+
+.facet-coordinate-mode button.is-active {
+  background: #e0f2fe;
+  color: #075985;
+  font-weight: 700;
 }
 
 .facet-clue-dialog__body label {

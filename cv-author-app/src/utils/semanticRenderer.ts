@@ -247,8 +247,16 @@ function renderBarChart(input: GenericRenderInput) {
     height: Math.max(1, input.height - topMargin - bottomMargin),
   };
   const guide = input.coordinateGuide?.type === "Cartesian" ? input.coordinateGuide : null;
-  const scaledPlotWidth = Math.max(1, basePlotArea.width * (guide?.xScale ?? 1));
-  const scaledPlotHeight = Math.max(1, basePlotArea.height * (guide?.yScale ?? 1));
+  const xDiscreteSpacing = (input.chartSpec.axisSwapped ? yEncoding : xEncoding).type === "nominal"
+    || (input.chartSpec.axisSwapped ? yEncoding : xEncoding).type === "ordinal"
+    ? guide?.xDiscreteSpacing ?? 1
+    : 1;
+  const yDiscreteSpacing = (input.chartSpec.axisSwapped ? xEncoding : yEncoding).type === "nominal"
+    || (input.chartSpec.axisSwapped ? xEncoding : yEncoding).type === "ordinal"
+    ? guide?.yDiscreteSpacing ?? 1
+    : 1;
+  const scaledPlotWidth = Math.max(1, basePlotArea.width * (guide?.xScale ?? 1) * xDiscreteSpacing);
+  const scaledPlotHeight = Math.max(1, basePlotArea.height * (guide?.yScale ?? 1) * yDiscreteSpacing);
   const plotArea: ChartPlotArea = input.sharedPlotArea ?? {
     x: guide?.xDirection === -1 ? basePlotArea.x + basePlotArea.width - scaledPlotWidth : basePlotArea.x,
     y: guide?.yDirection === 1 ? basePlotArea.y : basePlotArea.y + basePlotArea.height - scaledPlotHeight,
@@ -358,7 +366,8 @@ function renderBarChart(input: GenericRenderInput) {
     const height = swapped ? barWidth : valueLength;
     return `<rect data-chart-id="${esc(input.chartId)}" data-mark-role="bar" data-mark-group-id="mark-group:${esc(input.chartId)}:bar" data-row-keys="${esc(keys)}" data-category-key="${esc(datum.category)}" data-series-key="${esc(datum.series)}" data-value="${datum.value}" x="${x}" y="${y}" width="${width}" height="${height}" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 0.9)}"/>`;
   }).join("");
-  const zeroLine = (variant === "divergent" || variant === "divergent-stacked") && Number.isFinite(zeroPosition)
+  const showZeroLine = swapped ? guide?.showYLine !== false : guide?.showXLine !== false;
+  const zeroLine = (variant === "divergent" || variant === "divergent-stacked") && Number.isFinite(zeroPosition) && showZeroLine
     ? swapped
       ? `<line data-mark-role="zero-line" x1="${zeroPosition}" y1="${plotArea.y}" x2="${zeroPosition}" y2="${plotArea.y + plotArea.height}" stroke="${esc(input.chartSpec.styleTokens?.axisColor ?? "#64748b")}" stroke-width="1" vector-effect="non-scaling-stroke"/>`
       : `<line data-mark-role="zero-line" x1="${plotArea.x}" y1="${zeroPosition}" x2="${plotArea.x + plotArea.width}" y2="${zeroPosition}" stroke="${esc(input.chartSpec.styleTokens?.axisColor ?? "#64748b")}" stroke-width="1" vector-effect="non-scaling-stroke"/>`
@@ -590,8 +599,8 @@ function renderMatrixChart(input: GenericRenderInput) {
     height: Math.max(1, input.height - topMargin - bottomMargin),
   };
   const guide = input.coordinateGuide?.type === "Cartesian" ? input.coordinateGuide : null;
-  const scaledPlotWidth = Math.max(1, basePlotArea.width * (guide?.xScale ?? 1));
-  const scaledPlotHeight = Math.max(1, basePlotArea.height * (guide?.yScale ?? 1));
+  const scaledPlotWidth = Math.max(1, basePlotArea.width * (guide?.xScale ?? 1) * (guide?.xDiscreteSpacing ?? 1));
+  const scaledPlotHeight = Math.max(1, basePlotArea.height * (guide?.yScale ?? 1) * (guide?.yDiscreteSpacing ?? 1));
   const plotArea: ChartPlotArea = input.sharedPlotArea ?? {
     x: guide?.xDirection === -1
       ? basePlotArea.x + basePlotArea.width - scaledPlotWidth

@@ -17,6 +17,7 @@ import type {
   ChartEncodingChannel,
   ChartSpec,
   CompositionSpec,
+  CoordinateGuide,
   DataColumn,
   DataRow,
   LineSeriesShape,
@@ -43,6 +44,7 @@ import {
 const props = defineProps<{
   chartName: string;
   chartSpec: ChartSpec;
+  coordinateGuide?: CoordinateGuide | null;
   columns: DataColumn[];
   rows: DataRow[];
   markConfig: MarkGroupSharedConfig;
@@ -64,9 +66,21 @@ const emit = defineEmits<{
   markConfigEditStart: [field: string];
   markConfigEditEnd: [];
   axisSwap: [swapped: boolean];
+  coordinateGuideChange: [patch: {
+    showXLine?: boolean;
+    showYLine?: boolean;
+    showThetaLine?: boolean;
+    showRadiusLine?: boolean;
+    showDiscreteLabels?: boolean;
+    xDiscreteSpacing?: number;
+    yDiscreteSpacing?: number;
+  }];
   compositionChange: [patch: {
     facetField?: string;
     facetDirection?: "row" | "column";
+    facetCoordinateSystem?: "Cartesian" | "Polar";
+    facetThetaField?: string;
+    facetRadiusField?: string;
     facetGrid?: CompositionSpec["facetGrid"];
   }];
 }>();
@@ -74,6 +88,11 @@ const emit = defineEmits<{
 const template = computed(() => normalizeChartTemplate(props.chartSpec.chartType));
 const isCartesian = computed(() => getChartTemplateContract(props.chartSpec.chartType)?.coordinateSystem === "Cartesian");
 const axisSwapped = computed(() => props.chartSpec.axisSwapped === true);
+function isDiscreteAxis(axis: "x" | "y") {
+  const source = axisSwapped.value ? (axis === "x" ? "y" : "x") : axis;
+  const type = props.chartSpec.encodings[source]?.type;
+  return type === "nominal" || type === "ordinal";
+}
 const normalizedChartType = computed(() => props.chartSpec.chartType.replace(/[\s_-]/g, "").toLowerCase());
 const configs = computed(() => getEncodingChannelConfigsForSpec(props.chartSpec));
 const isPolar = computed(() => template.value === "pie" || template.value === "donut");
@@ -205,6 +224,7 @@ const colorMapping = computed(() => isLinearColorMapping(props.markConfig.colorM
 const sizeMapping = computed(() => isLinearSizeMapping(props.markConfig.sizeMapping) ? props.markConfig.sizeMapping : defaultSizeMapping);
 const composition = computed(() => props.compositionSpec ?? null);
 const isFacetComposition = computed(() => composition.value?.type === "facet");
+const facetCoordinateSystem = computed(() => composition.value?.facetCoordinateSystem ?? "Cartesian");
 const facetFieldOptions = computed(() => props.columns);
 const facetColumnField = computed(() => {
   if (!composition.value || composition.value.type !== "facet") return "";
@@ -218,6 +238,8 @@ const facetRowField = computed(() => {
     ?? (composition.value.facetDirection === "row" ? composition.value.facetField : "")
     ?? "";
 });
+const facetThetaField = computed(() => composition.value?.facetThetaField ?? facetColumnField.value);
+const facetRadiusField = computed(() => composition.value?.facetRadiusField ?? facetRowField.value);
 function updateFacetField(direction: "row" | "column", field: string) {
   const current = composition.value;
   if (!current || current.type !== "facet") return;
@@ -233,6 +255,12 @@ function updateFacetField(direction: "row" | "column", field: string) {
     facetField: field,
     facetDirection: direction,
   });
+}
+function updateFacetPolarField(channel: "theta" | "radius", field: string) {
+  updateFacetField(channel === "theta" ? "column" : "row", field);
+  emit("compositionChange", channel === "theta"
+    ? { facetCoordinateSystem: "Polar", facetThetaField: field }
+    : { facetCoordinateSystem: "Polar", facetRadiusField: field });
 }
 const fallbackSeriesColors = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#4d7c0f"];
 function seriesMemberColor(memberId: string, index: number) {
@@ -429,6 +457,43 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
           {{ axisSwapped ? "Y / X" : "X / Y" }}
         </button>
       </div>
+      <section v-if="coordinateGuide" class="encoding-config__axis-options" aria-label="Axis display">
+        <strong>Axis display</strong>
+        <div class="encoding-config__axis-toggles">
+          <label v-if="coordinateGuide.type === 'Cartesian'">
+            <input type="checkbox" :checked="coordinateGuide.showXLine !== false" @change="emit('coordinateGuideChange', { showXLine: ($event.target as HTMLInputElement).checked })" />
+            <span>X line</span>
+          </label>
+          <label v-if="coordinateGuide.type === 'Cartesian'">
+            <input type="checkbox" :checked="coordinateGuide.showYLine !== false" @change="emit('coordinateGuideChange', { showYLine: ($event.target as HTMLInputElement).checked })" />
+            <span>Y line</span>
+          </label>
+          <label v-if="coordinateGuide.type === 'Polar'">
+            <input type="checkbox" :checked="coordinateGuide.showThetaLine !== false" @change="emit('coordinateGuideChange', { showThetaLine: ($event.target as HTMLInputElement).checked })" />
+            <span>Theta line</span>
+          </label>
+          <label v-if="coordinateGuide.type === 'Polar'">
+            <input type="checkbox" :checked="coordinateGuide.showRadiusLine !== false" @change="emit('coordinateGuideChange', { showRadiusLine: ($event.target as HTMLInputElement).checked })" />
+            <span>R line</span>
+          </label>
+          <label>
+            <input type="checkbox" :checked="coordinateGuide.showDiscreteLabels !== false" @change="emit('coordinateGuideChange', { showDiscreteLabels: ($event.target as HTMLInputElement).checked })" />
+            <span>Nominal / ordinal labels</span>
+          </label>
+        </div>
+        <template v-if="coordinateGuide.type === 'Cartesian'">
+          <label v-if="isDiscreteAxis('x')" class="encoding-config__axis-spacing">
+            <span>X category spacing</span>
+            <input type="range" min="0.5" max="3" step="0.1" :value="coordinateGuide.xDiscreteSpacing ?? 1" @change="emit('coordinateGuideChange', { xDiscreteSpacing: Number(($event.target as HTMLInputElement).value) })" />
+            <output>{{ (coordinateGuide.xDiscreteSpacing ?? 1).toFixed(1) }}x</output>
+          </label>
+          <label v-if="isDiscreteAxis('y')" class="encoding-config__axis-spacing">
+            <span>Y category spacing</span>
+            <input type="range" min="0.5" max="3" step="0.1" :value="coordinateGuide.yDiscreteSpacing ?? 1" @change="emit('coordinateGuideChange', { yDiscreteSpacing: Number(($event.target as HTMLInputElement).value) })" />
+            <output>{{ (coordinateGuide.yDiscreteSpacing ?? 1).toFixed(1) }}x</output>
+          </label>
+        </template>
+      </section>
       <template v-for="config in standardConfigs" :key="config.channel">
         <EncodingChannelField
           :config="axisConfig(config)"
@@ -642,26 +707,52 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
           <strong>Composition</strong>
           <span>Facet</span>
         </div>
+        <label class="encoding-config__option">
+          <span>Facet coordinates</span>
+          <select
+            :value="facetCoordinateSystem"
+            @change="emit('compositionChange', { facetCoordinateSystem: ($event.target as HTMLSelectElement).value as 'Cartesian' | 'Polar', facetThetaField: facetColumnField, facetRadiusField: facetRowField })"
+          >
+            <option value="Cartesian">Cartesian</option>
+            <option value="Polar">Polar</option>
+          </select>
+        </label>
         <EncodingChannelField
-          :config="{ channel: 'column', label: 'Facet column', role: 'dimension', required: false, accepts: ['nominal', 'temporal', 'quantitative'], emptyLabel: 'Not bound' }"
+          v-if="facetCoordinateSystem === 'Cartesian'"
+          :config="{ channel: 'column', label: 'Facet column', role: 'dimension', required: false, accepts: ['nominal', 'ordinal', 'temporal'], emptyLabel: 'Not bound' }"
           :columns="facetFieldOptions"
           :value="facetColumnField"
           @change="updateFacetField('column', $event)"
         />
         <EncodingChannelField
-          :config="{ channel: 'row', label: 'Facet row', role: 'dimension', required: false, accepts: ['nominal', 'temporal', 'quantitative'], emptyLabel: 'Not bound' }"
+          v-if="facetCoordinateSystem === 'Cartesian'"
+          :config="{ channel: 'row', label: 'Facet row', role: 'dimension', required: false, accepts: ['nominal', 'ordinal', 'temporal'], emptyLabel: 'Not bound' }"
           :columns="facetFieldOptions"
           :value="facetRowField"
           @change="updateFacetField('row', $event)"
         />
+        <EncodingChannelField
+          v-if="facetCoordinateSystem === 'Polar'"
+          :config="{ channel: 'theta', label: 'Facet theta', role: 'dimension', required: false, accepts: ['nominal', 'ordinal', 'temporal'], emptyLabel: 'Not bound' }"
+          :columns="facetFieldOptions"
+          :value="facetThetaField"
+          @change="updateFacetPolarField('theta', $event)"
+        />
+        <EncodingChannelField
+          v-if="facetCoordinateSystem === 'Polar'"
+          :config="{ channel: 'radius', label: 'Facet R', role: 'dimension', required: false, accepts: ['nominal', 'ordinal', 'temporal'], emptyLabel: 'Not bound' }"
+          :columns="facetFieldOptions"
+          :value="facetRadiusField"
+          @change="updateFacetPolarField('radius', $event)"
+        />
         <label class="encoding-config__option">
-          <span>Layout direction</span>
+          <span>{{ facetCoordinateSystem === 'Polar' ? 'Primary facet axis' : 'Layout direction' }}</span>
           <select
             :value="composition?.facetDirection ?? 'column'"
             @change="emit('compositionChange', { facetDirection: ($event.target as HTMLSelectElement).value as 'row' | 'column' })"
           >
-            <option value="column">Columns</option>
-            <option value="row">Rows</option>
+            <option value="column">{{ facetCoordinateSystem === 'Polar' ? 'Theta' : 'Columns' }}</option>
+            <option value="row">{{ facetCoordinateSystem === 'Polar' ? 'R' : 'Rows' }}</option>
           </select>
         </label>
       </section>
@@ -745,6 +836,14 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
 .encoding-config__axis-switch { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 8px; border: 1px solid rgba(24, 33, 47, 0.1); border-radius: 6px; background: #f8fafc; color: #516176; font-size: 11px; }
 .encoding-config__axis-switch button { min-width: 64px; min-height: 28px; padding: 0 8px; border: 1px solid rgba(28, 126, 214, 0.28); border-radius: 999px; background: #fff; color: #1554b2; font: inherit; font-size: 10px; font-weight: 700; cursor: pointer; }
 .encoding-config__axis-switch button.is-active { border-color: #1554b2; background: #1554b2; color: #fff; }
+.encoding-config__axis-options { display: grid; gap: 8px; padding: 8px; border: 1px solid rgba(24, 33, 47, 0.1); border-radius: 6px; background: #f8fafc; }
+.encoding-config__axis-options > strong { color: #516176; font-size: 11px; }
+.encoding-config__axis-toggles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; }
+.encoding-config__axis-toggles label { display: flex; align-items: center; gap: 6px; min-width: 0; color: #526174; font-size: 10px; }
+.encoding-config__axis-toggles label:last-child { grid-column: 1 / -1; }
+.encoding-config__axis-spacing { display: grid; grid-template-columns: minmax(0, 1fr) 88px 28px; align-items: center; gap: 6px; color: #526174; font-size: 10px; }
+.encoding-config__axis-spacing input { width: 100%; min-width: 0; }
+.encoding-config__axis-spacing output { color: #294a6d; text-align: right; }
 .encoding-config__summary { margin: 0; padding: 8px 9px; border-left: 3px solid #1980bd; background: #f3f7fa; color: #334155; font-size: 11px; line-height: 1.45; }
 .encoding-config__derived-series { margin: -4px 0 0; color: #1554b2; font-size: 11px; }
 .encoding-config__aggregation { display: grid; gap: 7px; padding: 8px; border: 1px solid rgba(21, 84, 178, 0.2); border-radius: 6px; background: #f8fbff; color: #334155; }

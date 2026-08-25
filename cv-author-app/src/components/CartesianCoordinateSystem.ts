@@ -7,6 +7,7 @@ import type {
   Point,
 } from "../types";
 import { getLeafNodeTransform, getNodeTransform } from "../utils/canvasUtils";
+import { PolarCoordinateSystem } from "./PolarCoordinateSystem";
 
 type AxisTick = {
   position: number;
@@ -67,7 +68,7 @@ function axisTicks(spec: ChartScaleSpec, maximum: number): AxisTick[] {
   if (spec.type === "point") {
     const domain = spec.domain as string[];
     const scale = scalePoint<string>().domain(domain).range(spec.range).padding(0.5);
-    return sampled(domain, maximum).map((value) => ({
+    return domain.map((value) => ({
       position: scale(value) ?? 0,
       label: value,
     }));
@@ -180,20 +181,14 @@ export const CartesianCoordinateSystem = defineComponent({
       const textTransform = (x: number, y: number) => `translate(${x} ${y}) scale(${textScale / nodeScaleX} ${textScale / nodeScaleY})`;
       const arrowSize = 11 / screenScale;
       const includes = (channel: EncodingChannel) => props.channels.includes(channel);
+      const showXLine = guide.showXLine !== false;
+      const showYLine = guide.showYLine !== false;
+      const showDiscreteLabels = guide.showDiscreteLabels !== false;
       const axisNodes = [] as ReturnType<typeof h>[];
 
       if (props.showAxis && model) {
         if (includes("y")) {
-          axisNodes.push(...model.yTicks.map((tick) => h("line", {
-            class: "cartesian-axis-grid",
-            x1: model.left,
-            y1: tick.position,
-            x2: model.right,
-            y2: tick.position,
-            stroke: model.axisColor,
-            "vector-effect": "non-scaling-stroke",
-          })));
-          axisNodes.push(h("line", {
+          if (showYLine) axisNodes.push(h("line", {
             class: "cartesian-axis-domain",
             x1: model.origin.x,
             y1: model.top,
@@ -202,23 +197,29 @@ export const CartesianCoordinateSystem = defineComponent({
             stroke: model.axisColor,
             "vector-effect": "non-scaling-stroke",
           }));
+          const showLabels = props.node.chartSpec?.scales?.y?.type !== "point" || showDiscreteLabels;
           axisNodes.push(...model.yTicks.flatMap((tick) => {
             const tickEnd = model.origin.x + (guide.xDirection === 1 ? -5 : 5);
             const textOffset = model.fontSize * textScale / nodeScaleX * 0.8;
             const textX = model.origin.x + (guide.xDirection === 1 ? -textOffset : textOffset);
             return [
-              h("line", { class: "cartesian-axis-tick", x1: model.origin.x, y1: tick.position, x2: tickEnd, y2: tick.position, stroke: model.axisColor, "vector-effect": "non-scaling-stroke" }),
-              h("text", {
+              ...(showYLine ? [h("line", { class: "cartesian-axis-tick", x1: model.origin.x, y1: tick.position, x2: tickEnd, y2: tick.position, stroke: model.axisColor, "vector-effect": "non-scaling-stroke" })] : []),
+              ...(showLabels ? [h("text", {
                 class: "cartesian-axis-tick-label",
                 transform: textTransform(textX, tick.position),
                 "text-anchor": guide.xDirection === 1 ? "end" : "start",
                 "dominant-baseline": "middle",
-              }, tick.label),
+              }, tick.label)] : []),
             ];
           }));
+          if (model.yTitle) axisNodes.push(h("text", {
+            class: "cartesian-axis-title",
+            transform: `${textTransform(model.left - model.fontSize * 4.2, (model.top + model.bottom) / 2)} rotate(-90)`,
+            "text-anchor": "middle",
+          }, model.yTitle));
         }
         if (includes("x")) {
-          axisNodes.push(h("line", {
+          if (showXLine) axisNodes.push(h("line", {
             class: "cartesian-axis-domain",
             x1: model.left,
             y1: model.origin.y,
@@ -227,26 +228,53 @@ export const CartesianCoordinateSystem = defineComponent({
             stroke: model.axisColor,
             "vector-effect": "non-scaling-stroke",
           }));
+          const showLabels = props.node.chartSpec?.scales?.x?.type !== "point" || showDiscreteLabels;
           axisNodes.push(...model.xTicks.flatMap((tick) => {
             const tickEnd = model.origin.y + (guide.yDirection === -1 ? 5 : -5);
             const textOffset = model.fontSize * textScale / nodeScaleY;
             const textY = model.origin.y + (guide.yDirection === -1 ? textOffset * 1.6 : -textOffset * 0.8);
             return [
-              h("line", { class: "cartesian-axis-tick", x1: tick.position, y1: model.origin.y, x2: tick.position, y2: tickEnd, stroke: model.axisColor, "vector-effect": "non-scaling-stroke" }),
-              h("text", {
+              ...(showXLine ? [h("line", { class: "cartesian-axis-tick", x1: tick.position, y1: model.origin.y, x2: tick.position, y2: tickEnd, stroke: model.axisColor, "vector-effect": "non-scaling-stroke" })] : []),
+              ...(showLabels ? [h("text", {
                 class: "cartesian-axis-tick-label",
                 transform: textTransform(tick.position, textY),
                 "text-anchor": "middle",
-              }, tick.label),
+              }, tick.label)] : []),
             ];
           }));
+          if (model.xTitle) axisNodes.push(h("text", {
+            class: "cartesian-axis-title",
+            transform: textTransform((model.left + model.right) / 2, model.bottom + model.fontSize * 3.4),
+            "text-anchor": "middle",
+          }, model.xTitle));
+        }
+        const facet = props.node.compositionSpec?.type === "facet" ? props.node.compositionSpec : null;
+        if (facet && showDiscreteLabels) {
+          const filters = props.node.chartSpec?.filters ?? {};
+          const horizontalField = facet.facetCoordinateSystem === "Polar"
+            ? facet.facetThetaField
+            : facet.facetGrid?.columnField ?? (facet.facetDirection !== "row" ? facet.facetField : undefined);
+          const verticalField = facet.facetCoordinateSystem === "Polar"
+            ? facet.facetRadiusField
+            : facet.facetGrid?.rowField ?? (facet.facetDirection === "row" ? facet.facetField : undefined);
+          const caption = (field: string) => filters[field] === undefined ? field : `${field}: ${filters[field]}`;
+          if (horizontalField) axisNodes.push(h("text", {
+            class: ["cartesian-axis-title", "facet-coordinate-axis-label", facet.facetCoordinateSystem === "Polar" ? "facet-coordinate-axis-label--theta" : "facet-coordinate-axis-label--column"],
+            transform: textTransform((model.left + model.right) / 2, model.top - model.fontSize * 1.4),
+            "text-anchor": "middle",
+          }, caption(horizontalField)));
+          if (verticalField) axisNodes.push(h("text", {
+            class: ["cartesian-axis-title", "facet-coordinate-axis-label", facet.facetCoordinateSystem === "Polar" ? "facet-coordinate-axis-label--radius" : "facet-coordinate-axis-label--row"],
+            transform: `${textTransform(model.left - model.fontSize * 1.8, (model.top + model.bottom) / 2)} rotate(-90)`,
+            "text-anchor": "middle",
+          }, caption(verticalField)));
         }
       } else if (props.showAxis) {
-        if (includes("x")) axisNodes.push(
+        if (includes("x") && showXLine) axisNodes.push(
           h("line", { class: "cartesian-axis-line", x1: origin.x, y1: origin.y, x2: xEnd.x, y2: xEnd.y, "vector-effect": "non-scaling-stroke" }),
           h("path", { class: "cartesian-axis-arrow", d: arrowHead(xEnd, { x: guide.xDirection, y: 0 }, arrowSize), "vector-effect": "non-scaling-stroke" }),
         );
-        if (includes("y")) axisNodes.push(
+        if (includes("y") && showYLine) axisNodes.push(
           h("line", { class: "cartesian-axis-line", x1: origin.x, y1: origin.y, x2: yEnd.x, y2: yEnd.y, "vector-effect": "non-scaling-stroke" }),
           h("path", { class: "cartesian-axis-arrow", d: arrowHead(yEnd, { x: 0, y: guide.yDirection }, arrowSize), "vector-effect": "non-scaling-stroke" }),
         );
@@ -365,7 +393,14 @@ export const CanvasCoordinateSystemLayer: any = defineComponent({
           interactive: false,
           applyTransform: false,
         })
-        : null;
+        : node.coordinateGuide?.type === "Polar"
+          ? h(PolarCoordinateSystem, {
+            node,
+            showAxis: true,
+            interactive: false,
+            applyTransform: false,
+          })
+          : null;
       if (!axis && children.length === 0) return null;
       return h("g", {
         class: [

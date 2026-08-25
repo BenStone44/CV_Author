@@ -651,6 +651,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           direction: composition.direction,
           facetField: composition.facetField,
           facetValues: composition.facetCells?.map((cell) => cell.facetKey),
+          facetCoordinateSystem: node.compositionSpec?.facetCoordinateSystem,
+          facetThetaField: node.compositionSpec?.facetThetaField,
+          facetRadiusField: node.compositionSpec?.facetRadiusField,
           facetGrid: composition.facetRowField && composition.facetColumnField
             ? {
               rowField: composition.facetRowField,
@@ -2748,13 +2751,20 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
 
   function createFacetFromFields(
     nodeId: string,
-    fields: { rowField?: string; columnField?: string },
+    fields: {
+      coordinateSystem?: "Cartesian" | "Polar";
+      rowField?: string;
+      columnField?: string;
+      thetaField?: string;
+      radiusField?: string;
+    },
   ) {
     const node = findCanvasNode(nodeId);
     const dataset = node?.chartSpec ? getDataset(node.chartSpec.datasetId) : null;
     if (!node?.chartSpec || !dataset || !isAtomicChartReady(node)) return false;
-    const rowField = fields.rowField || undefined;
-    const columnField = fields.columnField || undefined;
+    const facetCoordinateSystem = fields.coordinateSystem ?? "Cartesian";
+    const rowField = (facetCoordinateSystem === "Polar" ? fields.radiusField : fields.rowField) || undefined;
+    const columnField = (facetCoordinateSystem === "Polar" ? fields.thetaField : fields.columnField) || undefined;
     if ((!rowField && !columnField) || (rowField && rowField === columnField)) return false;
     const available = new Map(dataset.columns.map((column) => [column.name, column]));
     const facetFields = [rowField, columnField].filter((field): field is string => !!field);
@@ -2785,6 +2795,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         ? `Facet by ${rowField} and ${columnField}`
         : `Facet by ${primaryField}`,
       facetDirection: rowField && !columnField ? "row" : "column",
+      facetCoordinateSystem,
+      facetThetaField: facetCoordinateSystem === "Polar" ? columnField : undefined,
+      facetRadiusField: facetCoordinateSystem === "Polar" ? rowField : undefined,
       facetGrid: rowField && columnField
         ? { rowField, columnField, rowValues, columnValues }
         : undefined,
@@ -3093,6 +3106,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     let facetField: string | undefined;
     let facetValues: string[] | undefined;
     let facetDirection: "row" | "column" | undefined;
+    let facetCoordinateSystem: "Cartesian" | "Polar" | undefined;
+    let facetThetaField: string | undefined;
+    let facetRadiusField: string | undefined;
     let facetGrid: NonNullable<CanvasNode["compositionSpec"]>["facetGrid"];
     const facetSourceNodeIds: string[] = [];
     let facetCompositeMemberCount = 1;
@@ -3100,6 +3116,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       const source = sourceNodes[0]!;
       const recommendation = source.chartSpec?.dimensionRecommendations?.find((item) => item.strategy === "facet");
       facetDirection = recommendation?.facetDirection;
+      facetCoordinateSystem = recommendation?.facetCoordinateSystem ?? "Cartesian";
+      facetThetaField = recommendation?.facetThetaField;
+      facetRadiusField = recommendation?.facetRadiusField;
       const dataset = source.chartSpec ? getDataset(source.chartSpec.datasetId) : null;
       facetGrid = recommendation?.facetGrid
         ? {
@@ -3145,8 +3164,23 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           };
         }
         renderChartNode(clone);
-        clone.x = baseX + columnIndex * (compositeBounds.width + gap) + offsetX;
-        clone.y = baseY + rowIndex * (compositeBounds.height + gap) + offsetY;
+        if (facetCoordinateSystem === "Polar") {
+          const thetaCount = facetGrid?.columnValues.length
+            ?? (facetThetaField && dataset
+              ? new Set(dataset.rows.map((row) => row[facetThetaField!] ?? "").filter(Boolean)).size
+              : 1);
+          const radialIndex = facetRadiusField ? rowIndex + 1 : 1;
+          const angleIndex = facetThetaField ? columnIndex : 0;
+          const angle = (-90 + angleIndex * 360 / Math.max(thetaCount, 1)) * Math.PI / 180;
+          const radialStep = Math.max(compositeBounds.width, compositeBounds.height) + gap;
+          const centerX = baseX + compositeBounds.width / 2;
+          const centerY = baseY + compositeBounds.height / 2;
+          clone.x = centerX + Math.cos(angle) * radialStep * radialIndex - compositeBounds.width / 2 + offsetX;
+          clone.y = centerY + Math.sin(angle) * radialStep * radialIndex - compositeBounds.height / 2 + offsetY;
+        } else {
+          clone.x = baseX + columnIndex * (compositeBounds.width + gap) + offsetX;
+          clone.y = baseY + rowIndex * (compositeBounds.height + gap) + offsetY;
+        }
         return clone;
       };
       if (facetGrid) {
@@ -3321,6 +3355,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       facetField,
       facetValues,
       facetDirection,
+      facetCoordinateSystem,
+      facetThetaField,
+      facetRadiusField,
       facetGrid,
       members: children.map((node, index) => ({
         nodeId: node.id,
@@ -4487,6 +4524,24 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       renderer: undefined,
     }));
   }
+  function setCoordinateGuideAppearance(patch: {
+    showXLine?: boolean;
+    showYLine?: boolean;
+    showThetaLine?: boolean;
+    showRadiusLine?: boolean;
+    showDiscreteLabels?: boolean;
+    xDiscreteSpacing?: number;
+    yDiscreteSpacing?: number;
+  }) {
+    const node = axisBindingNode.value;
+    if (!node?.coordinateGuide) return;
+    pushCanvasHistory();
+    Object.assign(node.coordinateGuide, patch);
+    if (patch.xDiscreteSpacing !== undefined || patch.yDiscreteSpacing !== undefined) {
+      renderChartNode(node);
+    }
+    registerChartRelationship(node);
+  }
   function closeAxisBinding() {
     axisBindingTarget.value = null;
   }
@@ -4808,6 +4863,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function setCompositionEncoding(patch: {
     facetField?: string;
     facetDirection?: "row" | "column";
+    facetCoordinateSystem?: "Cartesian" | "Polar";
+    facetThetaField?: string;
+    facetRadiusField?: string;
     facetGrid?: NonNullable<CanvasNode["compositionSpec"]>["facetGrid"];
     sharedChannels?: CoordinateChannel[];
   }) {
@@ -4841,17 +4899,55 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       nextSpec.facetField = undefined;
       nextSpec.facetValues = undefined;
     }
+    if (current.type === "facet" && patch.facetCoordinateSystem) {
+      nextSpec.facetCoordinateSystem = patch.facetCoordinateSystem;
+      nextSpec.facetThetaField = patch.facetThetaField ?? current.facetThetaField;
+      nextSpec.facetRadiusField = patch.facetRadiusField ?? current.facetRadiusField;
+    }
     const members = nextSpec.members
       .map((member) => findCanvasNode(member.nodeId))
       .filter((member): member is CanvasNode => !!member);
-    if (current.type === "facet" && !nextSpec.facetGrid && patch.facetDirection && members.length > 1) {
+    if (current.type === "facet"
+      && members.length > 1
+      && (patch.facetDirection !== undefined || patch.facetCoordinateSystem !== undefined)) {
       const anchor = members[0]!;
       const stepX = anchor.width * anchor.scaleX + 4;
       const stepY = anchor.height * anchor.scaleY + 4;
-      members.forEach((member, index) => {
-        member.x = patch.facetDirection === "row" ? anchor.x : anchor.x + index * stepX;
-        member.y = patch.facetDirection === "row" ? anchor.y + index * stepY : anchor.y;
-      });
+      if (nextSpec.facetCoordinateSystem === "Polar") {
+        const thetaField = nextSpec.facetThetaField;
+        const radiusField = nextSpec.facetRadiusField;
+        const domain = (field: string | undefined) => field && dataset
+          ? Array.from(new Set(dataset.rows.map((row) => row[field] ?? "").filter(Boolean)))
+          : [];
+        const thetaValues = domain(thetaField);
+        const radiusValues = domain(radiusField);
+        const radialStep = Math.max(stepX, stepY);
+        const centerX = anchor.x + anchor.width * anchor.scaleX / 2;
+        const centerY = anchor.y + anchor.height * anchor.scaleY / 2;
+        members.forEach((member, index) => {
+          const thetaValue = thetaField ? member.chartSpec?.filters?.[thetaField] : undefined;
+          const radiusValue = radiusField ? member.chartSpec?.filters?.[radiusField] : undefined;
+          const thetaIndex = Math.max(0, thetaValue ? thetaValues.indexOf(thetaValue) : index);
+          const radiusIndex = Math.max(0, radiusValue ? radiusValues.indexOf(radiusValue) : 0) + 1;
+          const angle = (-90 + thetaIndex * 360 / Math.max(thetaValues.length || members.length, 1)) * Math.PI / 180;
+          member.x = centerX + Math.cos(angle) * radialStep * radiusIndex - member.width * member.scaleX / 2;
+          member.y = centerY + Math.sin(angle) * radialStep * radiusIndex - member.height * member.scaleY / 2;
+        });
+      } else if (nextSpec.facetGrid) {
+        members.forEach((member, index) => {
+          const rowValue = member.chartSpec?.filters?.[nextSpec.facetGrid!.rowField];
+          const columnValue = member.chartSpec?.filters?.[nextSpec.facetGrid!.columnField];
+          const rowIndex = Math.max(0, rowValue ? nextSpec.facetGrid!.rowValues.indexOf(rowValue) : 0);
+          const columnIndex = Math.max(0, columnValue ? nextSpec.facetGrid!.columnValues.indexOf(columnValue) : index);
+          member.x = anchor.x + columnIndex * stepX;
+          member.y = anchor.y + rowIndex * stepY;
+        });
+      } else {
+        members.forEach((member, index) => {
+          member.x = nextSpec.facetDirection === "row" ? anchor.x : anchor.x + index * stepX;
+          member.y = nextSpec.facetDirection === "row" ? anchor.y + index * stepY : anchor.y;
+        });
+      }
     }
     members.forEach((member, index) => {
       member.compositionSpec = nextSpec;
@@ -7620,6 +7716,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     onCoordinateAxisSelect,
     setAxisBindingChannel,
     setAxisSwap,
+    setCoordinateGuideAppearance,
     bindMarkField,
     bindAxisField: bindMarkField,
     setAxisBindingAggregation,

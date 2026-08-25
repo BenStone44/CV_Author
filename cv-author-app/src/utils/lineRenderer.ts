@@ -296,8 +296,14 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
   const basePlotHeight = Math.min(availablePlotHeight, basePlotWidth / defaultCartesianAspectRatio);
   const basePlotX = minX + leftMargin + (availablePlotWidth - basePlotWidth) / 2;
   const basePlotY = minY + topMargin + (availablePlotHeight - basePlotHeight) / 2;
-  const scaledPlotWidth = Math.max(1, basePlotWidth * (coordinateGuide.xScale ?? 1));
-  const scaledPlotHeight = Math.max(1, basePlotHeight * (coordinateGuide.yScale ?? 1));
+  const xDiscreteSpacing = xEncoding.type === "nominal" || xEncoding.type === "ordinal"
+    ? coordinateGuide.xDiscreteSpacing ?? 1
+    : 1;
+  const yDiscreteSpacing = yEncoding.type === "nominal" || yEncoding.type === "ordinal"
+    ? coordinateGuide.yDiscreteSpacing ?? 1
+    : 1;
+  const scaledPlotWidth = Math.max(1, basePlotWidth * (coordinateGuide.xScale ?? 1) * xDiscreteSpacing);
+  const scaledPlotHeight = Math.max(1, basePlotHeight * (coordinateGuide.yScale ?? 1) * yDiscreteSpacing);
   const plotArea: ChartPlotArea = input.sharedPlotArea ?? {
     // Keep the coordinate origin fixed while the opposing endpoint is dragged.
     x: coordinateGuide.xDirection === 1

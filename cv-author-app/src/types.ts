@@ -16,6 +16,11 @@ export type CartesianCoordinateGuide = {
   yDirection: 1 | -1;
   xScale?: number;
   yScale?: number;
+  showXLine?: boolean;
+  showYLine?: boolean;
+  showDiscreteLabels?: boolean;
+  xDiscreteSpacing?: number;
+  yDiscreteSpacing?: number;
 };
 
 export type PolarCoordinateGuide = {
@@ -29,6 +34,9 @@ export type PolarCoordinateGuide = {
   angleOffset?: number;
   innerRadiusRatio?: number;
   outerRadiusRatio?: number;
+  showThetaLine?: boolean;
+  showRadiusLine?: boolean;
+  showDiscreteLabels?: boolean;
 };
 
 export type CoordinateGuide = CartesianCoordinateGuide | PolarCoordinateGuide;
@@ -358,6 +366,9 @@ export type DimensionRecommendation = {
   label: string;
   flattenFields?: string[];
   facetDirection?: "row" | "column";
+  facetCoordinateSystem?: "Cartesian" | "Polar";
+  facetThetaField?: string;
+  facetRadiusField?: string;
   facetGrid?: {
     rowField: string;
     columnField: string;
@@ -400,6 +411,9 @@ export type CompositionSpec = {
   facetField?: string;
   facetValues?: string[];
   facetDirection?: "row" | "column";
+  facetCoordinateSystem?: "Cartesian" | "Polar";
+  facetThetaField?: string;
+  facetRadiusField?: string;
   facetGrid?: {
     rowField: string;
     columnField: string;
