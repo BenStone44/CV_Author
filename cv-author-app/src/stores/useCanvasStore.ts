@@ -262,6 +262,17 @@ export function getFilterIconSvg(icon: IconKind): string {
 }
 
 export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
+  type DragTestStage = "transform" | "position" | "position-dropzone" | "full" | null;
+  const dragTestStage: DragTestStage = typeof window === "undefined"
+    ? null
+    : (() => {
+      const params = new URLSearchParams(window.location.search);
+      if (params.has("drag-transform-only")) return "transform";
+      const value = params.get("drag-stage");
+      return value === "transform" || value === "position" || value === "position-dropzone" || value === "full"
+        ? value
+        : null;
+    })();
   const { datasets, activeDataset, getDataset } = useDatasetStore();
   const relationshipStore = useChartRelationshipStore();
   const {
@@ -331,6 +342,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const interaction = ref<Interaction | null>(null);
   let pendingMoveUpdate: { point: Point; interaction: MoveInteraction } | null = null;
   let moveUpdateFrame: number | null = null;
+  // Position changes are persisted once after a move, never for every frame.
+  let suppressCanvasPersistence = false;
+  let canvasWatchersPaused = false;
+  let stopNestedChildLayoutWatch: (() => void) | null = null;
+  let stopCanvasPersistenceWatch: (() => void) | null = null;
   const contextMenu = ref<ContextMenuState | null>(null);
   const draggedCandidateId = ref<string | null>(null);
   const activeDropZone = ref<ChartDropZone | null>(null);
@@ -5469,7 +5485,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     window.removeEventListener("pointermove", onWindowPointerMove);
     window.removeEventListener("pointerup", onWindowPointerUp);
   }
-  function startMove(itemIds: string[], event: PointerEvent) {
+  function startMove(itemIds: string[], event: PointerEvent, transformOnly = false) {
     const transformItemIds = coordinateTransformItemIds(itemIds);
     if (transformItemIds.length === 0) return;
     const snapshots = Object.fromEntries(transformItemIds.map((id) => { const item = getSelectionNode(id); return [id, { x: item?.x ?? 0, y: item?.y ?? 0 }]; }));
@@ -5481,8 +5497,58 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       snapshots,
       scopeGroupId,
       historyCommitted: false,
+      transformOnly,
     };
+    suppressCanvasPersistence = true;
     attachPointerListeners();
+  }
+
+  function commitMoveHistory(mi: MoveInteraction) {
+    if (mi.transformOnly || !mi.historyCommitted) return;
+    const current: Record<string, Point> = Object.fromEntries(mi.itemIds.map((id) => {
+      const item = getSelectionNode(id);
+      return [id, { x: item?.x ?? 0, y: item?.y ?? 0 }];
+    }));
+    mi.itemIds.forEach((id) => {
+      const item = getSelectionNode(id);
+      const snapshot = mi.snapshots[id];
+      if (item && snapshot) {
+        item.x = snapshot.x;
+        item.y = snapshot.y;
+      }
+    });
+    pushCanvasHistory();
+    mi.itemIds.forEach((id) => {
+      const item = getSelectionNode(id);
+      const position = current[id];
+      if (item && position) {
+        item.x = position.x;
+        item.y = position.y;
+      }
+    });
+  }
+
+  function setTransformOnlyMove(interactionState: MoveInteraction, dx: number, dy: number) {
+    const canvas = canvasRef.value;
+    if (!canvas) return;
+    const ids = new Set(interactionState.itemIds);
+    Array.from(canvas.querySelectorAll<SVGGElement>("[data-node-id]")).forEach((element) => {
+      if (!ids.has(element.dataset.nodeId ?? "")) return;
+      const baseTransform = element.dataset.transformOnlyBase
+        ?? element.getAttribute("transform")
+        ?? "";
+      element.dataset.transformOnlyBase = baseTransform;
+      element.setAttribute("transform", `translate(${dx} ${dy}) ${baseTransform}`);
+    });
+  }
+
+  function clearTransformOnlyMove() {
+    const canvas = canvasRef.value;
+    if (!canvas) return;
+    Array.from(canvas.querySelectorAll<SVGGElement>("[data-transform-only-base]")).forEach((element) => {
+      element.setAttribute("transform", element.dataset.transformOnlyBase ?? "");
+      delete element.dataset.transformOnlyBase;
+    });
   }
   function enterCanvasGroup(node: CanvasGroupNode) {
     if (editingGroupPath.value.length > 0 && !getSelectionNode(node.id)) {
@@ -5719,6 +5785,25 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   }
   function onCanvasNodePointerDown(node: CanvasNode, event: PointerEvent) {
     if (event.button !== 0) return;
+    if (dragTestStage === "transform") {
+      event.preventDefault();
+      event.stopPropagation();
+      startMove([node.id], event, true);
+      return;
+    }
+    if (dragTestStage === "position") {
+      event.preventDefault();
+      event.stopPropagation();
+      startMove([node.id], event);
+      return;
+    }
+    if (dragTestStage === "position-dropzone") {
+      event.preventDefault();
+      event.stopPropagation();
+      startMove([node.id], event);
+      compositionDragSourceId.value = node.id;
+      return;
+    }
     contextMenu.value = null;
     compositionDragSourceId.value = null;
     activeDropZone.value = null;
@@ -5730,7 +5815,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (editingCompositionId.value && node.compositionSpec?.id !== editingCompositionId.value) {
       editingCompositionId.value = null;
     }
-    if (node.chartSpec) dispatchRelationship({ type: "select-entity", selection: { type: "chart", id: node.id } });
     event.stopPropagation();
     if (editingGroupPath.value.length > 0 && !getSelectionNode(node.id)) {
       editingGroupPath.value = [];
@@ -5740,6 +5824,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const hasModifier = event.shiftKey || event.metaKey || event.ctrlKey;
     if (hasModifier) { toggleSelection(targetIds); return; }
     const nextSelection = selectedIds.value.includes(node.id) ? selectedIds.value : targetIds;
+    // Read the pointer origin before selection updates can trigger an SVG layout.
+    startMove(nextSelection, event);
+    if (node.chartSpec) dispatchRelationship({ type: "select-entity", selection: { type: "chart", id: node.id } });
     setSelection(nextSelection);
     semanticSelection.value = null;
     if (node.chartSpec) {
@@ -5751,7 +5838,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         clientY: event.clientY,
       };
     }
-    startMove(nextSelection, event);
     const repeatableComposition = node.compositionSpec?.type === "layer" || node.compositionSpec?.type === "concat"
       ? node.compositionSpec
       : null;
@@ -5982,6 +6068,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       const pending = pendingMoveUpdate;
       pendingMoveUpdate = null;
       if (pending && interaction.value === pending.interaction) {
+        if (!canvasWatchersPaused) pauseCanvasWatchers();
         updateMoveInteraction(pending.point, pending.interaction);
       }
     });
@@ -5995,6 +6082,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const pending = pendingMoveUpdate;
     pendingMoveUpdate = null;
     if (pending && interaction.value === pending.interaction) {
+      if (!canvasWatchersPaused) pauseCanvasWatchers();
       updateMoveInteraction(pending.point, pending.interaction);
     }
   }
@@ -6154,13 +6242,20 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function onWindowPointerUp() {
     const ai = interaction.value;
     if (ai?.type === "move") flushMoveInteraction();
+    if (ai?.type === "move") commitMoveHistory(ai);
+    if (ai?.type === "move" && ai.transformOnly) clearTransformOnlyMove();
     if (ai?.type === "marquee") finalizeMarqueeSelection(ai);
     if (ai?.type === "rotate") rotationInputVisible.value = true;
     if (ai?.type === "polar-angle") polarAngleInputVisible.value = true;
-    if (ai?.type === "move" && compositionDragSourceId.value && activeDropZone.value) {
-      commitCompositionDrop(activeDropZone.value, compositionDragSourceId.value);
+    if (dragTestStage === null || dragTestStage === "full") {
+      if (ai?.type === "move" && compositionDragSourceId.value && activeDropZone.value) {
+        commitCompositionDrop(activeDropZone.value, compositionDragSourceId.value);
+      }
     }
     interaction.value = null;
+    suppressCanvasPersistence = false;
+    resumeCanvasWatchers();
+    if (ai?.type === "move" && !ai.transformOnly) persistCanvasState(canvasNodes.value);
     compositionDragSourceId.value = null;
     clearNestedEnterHover();
     activeDropZone.value = null;
@@ -6184,8 +6279,13 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       const movePoint = ai.scopeGroupId
         ? toSelectionScopePoint(event.clientX, event.clientY, ai.scopeGroupId)
         : point;
-      if (!ai.historyCommitted && (Math.abs(movePoint.x - ai.startPoint.x) > 0.1 || Math.abs(movePoint.y - ai.startPoint.y) > 0.1)) { pushCanvasHistory(); ai.historyCommitted = true; }
+      if (ai.transformOnly) {
+        setTransformOnlyMove(ai, movePoint.x - ai.startPoint.x, movePoint.y - ai.startPoint.y);
+        return;
+      }
+      if (!ai.historyCommitted && (Math.abs(movePoint.x - ai.startPoint.x) > 0.1 || Math.abs(movePoint.y - ai.startPoint.y) > 0.1)) ai.historyCommitted = true;
       scheduleMoveInteraction(movePoint, ai);
+      if (dragTestStage === "position") return;
       activeDropZone.value = compositionDragSourceId.value
         ? compositionDropZoneAtPoint(movePoint, compositionDragSourceId.value)
         : null;
@@ -6807,9 +6907,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       });
     });
   }
-  watch(chartRelationships, projectRelationshipStateToCanvas, { deep: true });
-  watch([canvasNodes, chartRelationships], scheduleNestedChildLayout, { deep: true });
-  watch([canvasNodes, chartRelationships], ([nodes]) => {
+  function persistCanvasState(nodes: CanvasNode[]) {
     chartInstanceDocument.value = createChartInstanceDocument(nodes);
     try {
       localStorage.setItem("cv-author-canvas-v1", JSON.stringify({
@@ -6818,9 +6916,31 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         relationships: snapshotRelationships(false),
       }));
     } catch { /* storage is optional */ }
-  }, { deep: true });
+  }
+  function pauseCanvasWatchers() {
+    if (canvasWatchersPaused) return;
+    stopNestedChildLayoutWatch?.();
+    stopCanvasPersistenceWatch?.();
+    stopNestedChildLayoutWatch = null;
+    stopCanvasPersistenceWatch = null;
+    canvasWatchersPaused = true;
+  }
+  function resumeCanvasWatchers() {
+    if (!canvasWatchersPaused && stopNestedChildLayoutWatch && stopCanvasPersistenceWatch) return;
+    stopNestedChildLayoutWatch = watch([canvasNodes, chartRelationships], scheduleNestedChildLayout, { deep: true });
+    stopCanvasPersistenceWatch = watch([canvasNodes, chartRelationships], ([nodes]) => {
+      if (suppressCanvasPersistence) return;
+      persistCanvasState(nodes);
+    }, { deep: true });
+    canvasWatchersPaused = false;
+  }
+  watch(chartRelationships, projectRelationshipStateToCanvas, { deep: true });
+  resumeCanvasWatchers();
   onBeforeUnmount(() => {
     detachPointerListeners();
+    if (moveUpdateFrame !== null) cancelAnimationFrame(moveUpdateFrame);
+    pendingMoveUpdate = null;
+    pauseCanvasWatchers();
     window.removeEventListener("keydown", onWindowKeyDown);
     window.removeEventListener("click", closeContextMenu);
     if (importNoticeTimer !== null) window.clearTimeout(importNoticeTimer);

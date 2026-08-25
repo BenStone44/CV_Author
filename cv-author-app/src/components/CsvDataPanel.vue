@@ -308,7 +308,6 @@ function displayColumnType(type: DataColumnType | undefined) {
 }
 
 async function ensurePresetDatasets() {
-  const previousActiveName = activeDataset.value?.name;
   const presets = [
     { name: "case1.csv", source: case1Csv },
     { name: "case2.csv", source: case2Csv },
@@ -318,9 +317,7 @@ async function ensurePresetDatasets() {
       await importDataset(new File([preset.source], preset.name, { type: "text/csv" }));
     }
   }
-  const preferred = previousActiveName && presetNames.includes(previousActiveName as typeof presetNames[number])
-    ? datasets.value.find((dataset) => dataset.name === previousActiveName)
-    : datasets.value.find((dataset) => dataset.name === "case1.csv") ?? presetDatasets.value[0];
+  const preferred = datasets.value.find((dataset) => dataset.name === "case1.csv") ?? presetDatasets.value[0];
   if (preferred) setActiveDataset(preferred.id);
   await nextTick(updateExpandedWidth);
 }

@@ -873,6 +873,7 @@ export type MoveInteraction = {
   snapshots: Record<string, Point>;
   scopeGroupId?: string;
   historyCommitted: boolean;
+  transformOnly?: boolean;
 };
 
 export type MarqueeInteraction = {
