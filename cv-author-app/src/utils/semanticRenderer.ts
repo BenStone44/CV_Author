@@ -18,7 +18,6 @@ import {
 } from "./visualMapping";
 import { renderAdvancedChart } from "./advancedRenderer";
 import { csvRowKey } from "./csvDataEngine";
-import { renderMatrixWebgl, type MatrixWebglCell } from "./matrixWebglRenderer";
 
 function esc(value: string) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
@@ -648,7 +647,6 @@ function renderMatrixChart(input: GenericRenderInput) {
     ? Array.from(new Set(input.dataset.rows.map((row) => row[colorEncoding.field] ?? "")))
     : [];
   const colorIndexByValue = new Map(colorValues.map((value, index) => [value, index]));
-  const webglCells: MatrixWebglCell[] = [];
   const cells = cellData.map((cell) => {
     const rowKey = cell.rowKey;
     const columnKey = cell.columnKey;
@@ -666,7 +664,6 @@ function renderMatrixChart(input: GenericRenderInput) {
     const centerY = yPositionByValue.get(rowKey);
     if (!Number.isFinite(centerX) || !Number.isFinite(centerY)) return "";
     const renderedOpacity = Number(config.opacity ?? alpha);
-    webglCells.push({ rowIndex, columnIndex, color, opacity: renderedOpacity });
     const rowKeys = cell.rows
       .map((row, rowIndex) => key(input.dataset, row, cell.rowIndexes[rowIndex] ?? rowIndex))
       .filter(Boolean);
@@ -677,23 +674,6 @@ function renderMatrixChart(input: GenericRenderInput) {
         : "";
     return `<rect data-chart-id="${esc(input.chartId)}" data-mark-role="cell" data-mark-group-id="mark-group:${esc(input.chartId)}:cell"${rowKeyAttribute} data-row-value="${esc(rowKey)}" data-column-value="${esc(columnKey)}" x="${centerX - cellWidth / 2 + 0.5}" y="${centerY - cellHeight / 2 + 0.5}" width="${Math.max(1, cellWidth - 1)}" height="${Math.max(1, cellHeight - 1)}" fill="${esc(color)}" fill-opacity="${renderedOpacity}"/>`;
   }).join("");
-  const webglContent = renderMatrixWebgl({
-    chartId: input.chartId,
-    plotArea,
-    rowValues,
-    columnValues,
-    xRange,
-    yRange,
-    cells: webglCells,
-    overlayMarkup: cells.replaceAll(/ fill="[^"]*" fill-opacity="[^"]*"/g, ' fill="transparent" pointer-events="all"'),
-  });
-  if (webglContent) {
-    return {
-      content: webglContent,
-      plotArea,
-      scales: { x: xScale, y: yScale },
-    };
-  }
   return {
     content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="matrix" data-renderer="deterministic-chart@1">${cells}</g>`,
     plotArea,
