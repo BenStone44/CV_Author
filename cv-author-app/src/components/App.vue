@@ -177,6 +177,7 @@ const {
   dissolveSelectedGroups,
   createCompositionCandidate,
   createFacetFromFields,
+  applyDimensionFacet,
   confirmNestedBinding,
   closeNestedBinding,
   updateNestedPosition,
@@ -193,9 +194,18 @@ const visibleCanvasNodes = computed(() =>
   canvasNodes.value.filter((node) => !nestedRenderedChildIds.value.has(node.id)),
 );
 const chartTransformNode = computed(() => {
-  if (selectedIds.value.length !== 1) return null;
-  const node = selectedNodes.value[0];
-  return node?.chartSpec ? node : null;
+  if (selectedIds.value.length === 1) {
+    const node = selectedNodes.value[0];
+    return node?.chartSpec ? node : null;
+  }
+  const members = selectedNodes.value;
+  const composition = members[0]?.compositionSpec;
+  if (!composition || (composition.type !== "layer" && composition.type !== "concat")) return null;
+  const memberIds = new Set(composition.members.map((member) => member.nodeId));
+  if (members.length !== memberIds.size || members.some((member) => !memberIds.has(member.id))) return null;
+  const ownerId = members[0]?.coordinateSystem?.ownerNodeId;
+  const owner = members.find((member) => member.id === ownerId) ?? members[0];
+  return owner?.chartSpec ? owner : null;
 });
 const implementedTemplateCategories = computed(() =>
   groupChartTemplateCandidates(implementedTemplateCandidates.value.filter((candidate) =>
@@ -795,9 +805,25 @@ function openCompositionCandidates(type: CompositionType) {
     const clueFields = Array.from(new Set(node?.chartSpec?.dataTransforms
       ?.filter((transform) => transform.kind === "filter"
         && transform.mode === "values"
-        && (transform.purpose === "facet-clue" || (transform.purpose === undefined && transform.single)))
+        && (transform.purpose === "facet-clue"
+          || transform.purpose === "nested-context"
+          || (transform.purpose === undefined && transform.single)))
       .map((transform) => transform.mode === "values" ? transform.field : "")
       .filter(Boolean) ?? []));
+    const existingFacetFields = new Set([
+      node?.compositionSpec?.facetField,
+      node?.compositionSpec?.facetGrid?.rowField,
+      node?.compositionSpec?.facetGrid?.columnField,
+    ].filter((field): field is string => !!field));
+    const remainingClueFields = clueFields.filter((field) => !existingFacetFields.has(field));
+    if (node?.compositionSpec?.type === "facet" && remainingClueFields.length === 1) {
+      const existingDirection = node.compositionSpec.facetDirection ?? "column";
+      const applied = applyDimensionFacet(remainingClueFields[0]!, existingDirection === "row" ? "column" : "row");
+      if (applied) {
+        activeCompositionType.value = null;
+        return;
+      }
+    }
     if (node && clueFields.length === 1) {
       createFacetFromFields(node.id, { columnField: clueFields[0] });
       activeCompositionType.value = null;

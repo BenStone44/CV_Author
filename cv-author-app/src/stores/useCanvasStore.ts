@@ -2632,6 +2632,21 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       if (existingDirection === facetDirection) return false;
       setSelection(facetMembers.map((member) => member.id));
     }
+    if (recommendation.strategy === "facet") {
+      facetMembers.forEach((member) => {
+        if (!member.chartSpec) return;
+        const remainingTransforms = member.chartSpec.dataTransforms?.filter((transform) =>
+          !(isFacetClueTransform(transform) && transform.field === recommendation.field));
+        member.chartSpec = {
+          ...member.chartSpec,
+          dataTransforms: remainingTransforms?.length ? remainingTransforms : undefined,
+          scales: undefined,
+          plotArea: undefined,
+          polarArea: undefined,
+          renderer: undefined,
+        };
+      });
+    }
     node.chartSpec.dimensionRecommendations = [
       appliedRecommendation,
       ...(node.chartSpec.dimensionRecommendations ?? []).filter((item) => item.id !== recommendation.id),
@@ -2677,6 +2692,60 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     return applyDimensionRecommendation(recommendation.id, direction, recommendation);
   }
 
+  function isFacetClueTransform(transform: ChartDataTransform): transform is Extract<ChartDataTransform, { kind: "filter"; mode: "values" }> {
+    return transform.kind === "filter"
+      && transform.mode === "values"
+      && (transform.purpose === "facet-clue"
+        || transform.purpose === "nested-context"
+        || (transform.purpose === undefined && transform.single));
+  }
+
+  function facetClueTransforms(spec: ChartSpec | undefined) {
+    return (spec?.dataTransforms ?? []).filter(isFacetClueTransform);
+  }
+
+  /** Keep a clue available on the composition owner when all members supplied it. */
+  function retainSharedFacetClues(owner: CanvasNode, members: CanvasNode[]) {
+    if (!owner.chartSpec || members.length < 2) return;
+    const ownerTransforms = owner.chartSpec.dataTransforms ?? [];
+    const ownerClues = facetClueTransforms(owner.chartSpec);
+    if (ownerClues.length === 0) return;
+    const sharedFields = new Set(ownerClues
+      .filter((clue) => members.every((member) => facetClueTransforms(member.chartSpec).some((candidate) => candidate.field === clue.field)))
+      .map((clue) => clue.field));
+    if (sharedFields.size === 0) return;
+    const retained = ownerTransforms.map((transform) => ({ ...transform }));
+    owner.chartSpec = {
+      ...owner.chartSpec,
+      dataTransforms: retained.length ? retained : undefined,
+      renderer: undefined,
+      scales: undefined,
+      plotArea: undefined,
+      polarArea: undefined,
+    };
+  }
+
+  /** Nested charts inherit parent clues without replacing their own transforms. */
+  function inheritParentFacetClues(parent: CanvasNode, child: CanvasNode) {
+    if (!parent.chartSpec || !child.chartSpec) return;
+    const parentClues = facetClueTransforms(parent.chartSpec);
+    if (parentClues.length === 0) return;
+    const childTransforms = child.chartSpec.dataTransforms ?? [];
+    const childFields = new Set(facetClueTransforms(child.chartSpec).map((clue) => clue.field));
+    const inherited = parentClues
+      .filter((clue) => !childFields.has(clue.field))
+      .map((clue) => ({ ...clue, purpose: "nested-context" as const }));
+    if (inherited.length === 0) return;
+    child.chartSpec = {
+      ...child.chartSpec,
+      dataTransforms: [...childTransforms, ...inherited],
+      renderer: undefined,
+      scales: undefined,
+      plotArea: undefined,
+      polarArea: undefined,
+    };
+  }
+
   function createFacetFromFields(
     nodeId: string,
     fields: { rowField?: string; columnField?: string },
@@ -2720,27 +2789,46 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         ? { rowField, columnField, rowValues, columnValues }
         : undefined,
     };
-    const clueFields = new Set(facetFields);
+    const existingFacetFields = new Set([
+      node.compositionSpec?.facetField,
+      node.compositionSpec?.facetGrid?.rowField,
+      node.compositionSpec?.facetGrid?.columnField,
+    ].filter((field): field is string => !!field));
+    const clueFields = new Set(node.compositionSpec?.type === "facet"
+      ? facetFields.filter((field) => !existingFacetFields.has(field))
+      : facetFields);
     const withoutConsumedClues = (transforms: ChartDataTransform[] | undefined) => transforms?.filter((transform) =>
       !(transform.kind === "filter"
         && transform.mode === "values"
-        && (transform.purpose === "facet-clue" || (transform.purpose === undefined && transform.single))
+        && (transform.purpose === "facet-clue"
+          || transform.purpose === "nested-context"
+          || (transform.purpose === undefined && transform.single))
         && clueFields.has(transform.field)));
-    const remainingTransforms = withoutConsumedClues(node.chartSpec.dataTransforms);
+    const transformTargets = node.compositionSpec?.type === "layer" || node.compositionSpec?.type === "concat"
+      ? node.compositionSpec.members
+        .map((member) => findCanvasNode(member.nodeId))
+        .filter((member): member is CanvasNode => !!member?.chartSpec)
+      : [node];
 
     pushCanvasHistory();
-    node.chartSpec = {
-      ...node.chartSpec,
-      dataTransforms: remainingTransforms?.length ? remainingTransforms : undefined,
-      dimensionRecommendations: [
-        recommendation,
-        ...(node.chartSpec.dimensionRecommendations ?? []).filter((item) => item.strategy !== "facet"),
-      ],
-      scales: undefined,
-      plotArea: undefined,
-      polarArea: undefined,
-      renderer: undefined,
-    };
+    transformTargets.forEach((target) => {
+      if (!target.chartSpec) return;
+      const targetTransforms = withoutConsumedClues(target.chartSpec.dataTransforms);
+      target.chartSpec = {
+        ...target.chartSpec,
+        dataTransforms: targetTransforms?.length ? targetTransforms : undefined,
+        dimensionRecommendations: target.id === node.id
+          ? [
+            recommendation,
+            ...(target.chartSpec.dimensionRecommendations ?? []).filter((item) => item.strategy !== "facet"),
+          ]
+          : target.chartSpec.dimensionRecommendations,
+        scales: undefined,
+        plotArea: undefined,
+        polarArea: undefined,
+        renderer: undefined,
+      };
+    });
     if (node.layerSpec) {
       node.layerSpec = {
         ...node.layerSpec,
@@ -2902,6 +2990,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       })),
     };
     if (recordHistory) pushCanvasHistory();
+    retainSharedFacetClues(owner, layerNodes);
     retireMergedCompositions(existingCompositions, compositionId);
     const frame = {
       x: owner.x,
@@ -3005,6 +3094,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     let facetValues: string[] | undefined;
     let facetDirection: "row" | "column" | undefined;
     let facetGrid: NonNullable<CanvasNode["compositionSpec"]>["facetGrid"];
+    const facetSourceNodeIds: string[] = [];
+    let facetCompositeMemberCount = 1;
     if (type !== "concat") {
       const source = sourceNodes[0]!;
       const recommendation = source.chartSpec?.dimensionRecommendations?.find((item) => item.strategy === "facet");
@@ -3017,50 +3108,81 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           columnValues: [...recommendation.facetGrid.columnValues],
         }
         : undefined;
+      const compositeMembers = sourceNodes.length > 1
+        && (source.compositionSpec?.type === "layer" || source.compositionSpec?.type === "concat")
+        && sourceNodes.every((member) => member.compositionSpec?.id === source.compositionSpec?.id)
+        ? sourceNodes
+        : [source];
+      facetCompositeMemberCount = compositeMembers.length;
+      const compositeBounds = getCanvasNodeListBounds(compositeMembers) ?? collectNodeSelectionBounds(source);
+      const cloneFacetMember = (
+        member: CanvasNode,
+        rowValue: string | undefined,
+        columnValue: string | undefined,
+        rowIndex: number,
+        columnIndex: number,
+      ) => {
+        const clone = cloneCanvasNodeForPaste(member);
+        facetSourceNodeIds.push(member.id);
+        const baseX = type === "facet" ? bounds.minX : 0;
+        const baseY = type === "facet" ? bounds.minY : 0;
+        const offsetX = member.x - compositeBounds.minX;
+        const offsetY = member.y - compositeBounds.minY;
+        clone.name = rowValue !== undefined && columnValue !== undefined
+          ? `${member.name} - ${rowValue} / ${columnValue}`
+          : `${member.name} - ${rowValue ?? columnValue ?? ""}`;
+        if (clone.chartSpec) {
+          const filters = { ...clone.chartSpec.filters };
+          if (facetGrid && rowValue !== undefined && columnValue !== undefined) {
+            filters[facetGrid.rowField] = rowValue;
+            filters[facetGrid.columnField] = columnValue;
+          } else if (facetField && (rowValue ?? columnValue) !== undefined) {
+            filters[facetField] = (rowValue ?? columnValue)!;
+          }
+          clone.chartSpec = {
+            ...clone.chartSpec,
+            filters,
+          };
+        }
+        renderChartNode(clone);
+        clone.x = baseX + columnIndex * (compositeBounds.width + gap) + offsetX;
+        clone.y = baseY + rowIndex * (compositeBounds.height + gap) + offsetY;
+        return clone;
+      };
       if (facetGrid) {
-        facetValues = facetGrid.rowValues.flatMap((rowValue) =>
-          facetGrid!.columnValues.map((columnValue) => `${rowValue}|${columnValue}`),
+        const cellValues = facetGrid.rowValues.flatMap((rowValue) =>
+          facetGrid!.columnValues.map((columnValue) => ({ rowValue, columnValue })),
         );
-        children = facetGrid.rowValues.flatMap((rowValue, rowIndex) =>
-          facetGrid!.columnValues.map((columnValue, columnIndex) => {
-            const clone = cloneCanvasNodeForPaste(source);
-            const baseX = type === "facet" ? bounds.minX : 0;
-            const baseY = type === "facet" ? bounds.minY : 0;
-            clone.name = `${source.name} - ${rowValue} / ${columnValue}`;
-            if (clone.chartSpec) {
-              clone.chartSpec = {
-                ...clone.chartSpec,
-                filters: {
-                  ...clone.chartSpec.filters,
-                  [facetGrid!.rowField]: rowValue,
-                  [facetGrid!.columnField]: columnValue,
-                },
-              };
-            }
-            renderChartNode(clone);
-            clone.x = baseX + columnIndex * (clone.width * clone.scaleX + gap);
-            clone.y = baseY + rowIndex * (clone.height * clone.scaleY + gap);
-            return clone;
-          }),
+        facetValues = cellValues.flatMap(({ rowValue, columnValue }) =>
+          compositeMembers.map(() => `${rowValue}|${columnValue}`),
+        );
+        children = cellValues.flatMap(({ rowValue, columnValue }, index) =>
+          compositeMembers.map((member) => cloneFacetMember(
+            member,
+            rowValue,
+            columnValue,
+            Math.floor(index / facetGrid!.columnValues.length),
+            index % facetGrid!.columnValues.length,
+          )),
         );
       } else {
         facetField = recommendation?.field;
-        facetValues = facetField && dataset
+        const values = facetField && dataset
           ? Array.from(new Set(dataset.rows.map((row) => row[facetField!] ?? "").filter(Boolean)))
           : ["1", "2", "3"];
         const columns = recommendation?.facetDirection === "row"
           ? 1
-          : Math.max(1, facetValues.length);
-        children = facetValues.map((value, index) => {
-          const clone = cloneCanvasNodeForPaste(source);
-          const baseX = type === "facet" ? bounds.minX : 0;
-          const baseY = type === "facet" ? bounds.minY : 0;
-          if (clone.chartSpec && facetField) clone.chartSpec = { ...clone.chartSpec, filters: { ...clone.chartSpec.filters, [facetField]: value } };
-          renderChartNode(clone);
-          clone.x = baseX + (index % columns) * (clone.width * clone.scaleX + gap);
-          clone.y = baseY + Math.floor(index / columns) * (clone.height * clone.scaleY + gap);
-          return clone;
-        });
+          : Math.max(1, values.length);
+        facetValues = values.flatMap((value) => compositeMembers.map(() => value));
+        children = values.flatMap((value, index) =>
+          compositeMembers.map((member) => cloneFacetMember(
+            member,
+            value,
+            undefined,
+            Math.floor(index / columns),
+            index % columns,
+          )),
+        );
       }
     } else {
       let cursor = 0;
@@ -3084,6 +3206,69 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         }
         return node;
       });
+      if (children[0]) retainSharedFacetClues(children[0], children);
+    }
+    if (type === "facet" && facetCompositeMemberCount > 1) {
+      const sourceComposition = sourceNodes[0]?.compositionSpec;
+      const sourceCoordinateSystem = sourceNodes[0]?.coordinateSystem;
+      if (sourceComposition && (sourceComposition.type === "layer" || sourceComposition.type === "concat")) {
+        const cellGroups: CanvasGroupNode[] = [];
+        for (let start = 0; start < children.length; start += facetCompositeMemberCount) {
+          const cellChildren = children.slice(start, start + facetCompositeMemberCount);
+          if (cellChildren.length !== facetCompositeMemberCount) continue;
+          const cellBounds = getCanvasNodeListBounds(cellChildren);
+          if (!cellBounds) continue;
+          const innerCompositionId = `composition:${crypto.randomUUID()}`;
+          const sourceMemberIds = facetSourceNodeIds.slice(start, start + facetCompositeMemberCount);
+          const ownerIndex = sourceCoordinateSystem
+            ? sourceNodes.findIndex((member) => member.id === sourceCoordinateSystem.ownerNodeId)
+            : 0;
+          const innerComposition: NonNullable<CanvasNode["compositionSpec"]> = {
+            ...sourceComposition,
+            id: innerCompositionId,
+            members: cellChildren.map((child, index) => ({
+              nodeId: child.id,
+              sourceNodeId: sourceMemberIds[index] ?? sourceNodes[index]?.id ?? child.id,
+              chartType: child.chartSpec?.chartType,
+              sharedChannels: [...sourceComposition.sharedChannels],
+            })),
+          };
+          const innerCoordinateSystem: CoordinateSystemSpec | null = sourceCoordinateSystem
+            ? {
+              ...sourceCoordinateSystem,
+              id: `coordinate:${innerCompositionId}`,
+              ownerNodeId: cellChildren[ownerIndex >= 0 ? ownerIndex : 0]?.id ?? cellChildren[0]!.id,
+              members: cellChildren.map((child) => ({
+                nodeId: child.id,
+                channels: [...(sourceCoordinateSystem.members.find((member) => member.nodeId === sourceNodes[cellChildren.indexOf(child)]?.id)?.channels ?? sourceComposition.sharedChannels)],
+              })),
+            }
+            : null;
+          cellChildren.forEach((child) => {
+            child.x -= cellBounds.minX;
+            child.y -= cellBounds.minY;
+            child.compositionSpec = innerComposition;
+            child.coordinateSystem = innerCoordinateSystem;
+          });
+          cellGroups.push({
+            kind: "group",
+            id: `facet-cell:${crypto.randomUUID()}`,
+            name: `Facet cell ${cellGroups.length + 1}`,
+            x: cellBounds.minX,
+            y: cellBounds.minY,
+            width: Math.max(cellBounds.width, 1),
+            height: Math.max(cellBounds.height, 1),
+            scaleX: 1,
+            scaleY: 1,
+            rotation: 0,
+            coordinateSystem: null,
+            compositionSpec: null,
+            children: cellChildren,
+          });
+        }
+        children = cellGroups;
+        facetValues = Array.from(new Set(facetValues ?? []));
+      }
     }
     const childBounds = getCanvasNodeListBounds(children);
     if (!childBounds) return false;
@@ -3137,10 +3322,12 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       facetValues,
       facetDirection,
       facetGrid,
-      members: children.map((node) => ({
+      members: children.map((node, index) => ({
         nodeId: node.id,
         sourceNodeId: type !== "concat"
-          ? sourceNodes[0]!.id
+          ? facetCompositeMemberCount > 1
+            ? sourceNodes[0]?.id ?? node.id
+            : facetSourceNodeIds[index] ?? sourceNodes[0]!.id
           : node.compositionSpec?.members.find((member) => member.nodeId === node.id)?.sourceNodeId ?? node.id,
         chartType: node.chartSpec?.chartType,
         sharedChannels,
@@ -3157,6 +3344,15 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         ...children,
       ]);
       reconcileCoordinateSystems();
+      if (type === "facet" && facetCompositeMemberCount > 1) {
+        children.forEach((cell) => {
+          if (cell.kind !== "group") return;
+          const member = cell.children.find((child) =>
+            child.compositionSpec?.type === "layer" || child.compositionSpec?.type === "concat",
+          );
+          if (member) renderSharedCoordinateComposition(member);
+        });
+      }
       setSelection(children[0] ? [children[0].id] : []);
       return true;
     }
@@ -4110,6 +4306,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const parentSpec = parent.chartSpec;
     if (!childSpec || !parentSpec) return false;
     if (childSpec.datasetId !== parentSpec.datasetId) return false;
+    inheritParentFacetClues(parent, child);
     const childTemplate = normalizeChartTemplate(childSpec.chartType);
     if (childTemplate !== "pie" && childTemplate !== "donut") return false;
     const angleFields = childSpec.angleFields?.map((encoding) => encoding.field)
@@ -4167,6 +4364,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       };
       const childInstances = nestedTargets.map((nestedTarget, index) => {
         const child = index === 0 ? source : cloneCanvasNodeForPaste(source);
+        inheritParentFacetClues(target, child);
         const fitScale = Math.max(0.01, Math.min(
           nestedTarget.bounds.width * 0.78 / Math.max(child.width, 1),
           nestedTarget.bounds.height * 0.78 / Math.max(child.height, 1),
