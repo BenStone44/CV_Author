@@ -62,7 +62,6 @@ import type {
   Dataset,
   ChartScaleSpec,
   DimensionRecommendation,
-  ChartInstanceDocument,
   ChartDataTransform,
 } from "../types";
 import { isDataColumnTypeCompatible } from "../types";
@@ -323,12 +322,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
 
   // --- canvas state ---
   const canvasNodes = ref<CanvasNode[]>([]);
-  const chartInstanceDocument = ref<ChartInstanceDocument>({
-    version: 1,
-    coordinateSpace: "canvas",
-    rootInstanceIds: [],
-    instances: [],
-  });
   const viewZoom = ref(1);
   const viewPan = ref<Point>({ x: 0, y: 0 });
   const selectedIds = ref<string[]>([]);
@@ -343,18 +336,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const interaction = ref<Interaction | null>(null);
   let pendingMoveUpdate: { point: Point; interaction: MoveInteraction } | null = null;
   let moveUpdateFrame: number | null = null;
-  // Position changes are persisted once after a move, never for every frame.
-  let suppressCanvasPersistence = false;
   let canvasWatchersPaused = false;
-  type IdleWindow = Window & {
-    requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
-    cancelIdleCallback?: (id: number) => void;
-  };
-  let pendingCanvasPersistenceNodes: CanvasNode[] | null = null;
-  let canvasPersistenceHandle: number | null = null;
-  let canvasPersistenceUsesIdleCallback = false;
   let stopNestedChildLayoutWatch: (() => void) | null = null;
-  let stopCanvasPersistenceWatch: (() => void) | null = null;
   const contextMenu = ref<ContextMenuState | null>(null);
   const draggedCandidateId = ref<string | null>(null);
   const activeDropZone = ref<ChartDropZone | null>(null);
@@ -386,7 +369,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const axisBindingTarget = ref<AxisBindingTarget | null>(null);
   const semanticSelection = ref<SemanticSelection | null>(null);
   const activeNestedRelationshipId = ref<string | null>(null);
-  let restoredCanvas = false;
   let importNoticeTimer: number | null = null;
   let clipboardPasteCount = 0;
   let nestedRelationshipBaseSnapshot: ChartRelationshipState | null = null;
@@ -1927,8 +1909,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const snapshotNodes = snapshot.instanceDocument
       ? restoreCanvasNodesFromChartInstanceDocument(snapshot.instanceDocument)
       : snapshot.nodes ?? [];
-    chartInstanceDocument.value = snapshot.instanceDocument
-      ?? createChartInstanceDocument(snapshotNodes);
     canvasNodes.value = migrateIndependentViewGroups(snapshotNodes.map((n) => cloneCanvasNode(n)));
     if (snapshot.relationships) restoreRelationships(snapshot.relationships);
     else {
@@ -5749,7 +5729,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       historyCommitted: false,
       transformOnly,
     };
-    suppressCanvasPersistence = true;
     attachPointerListeners();
   }
 
@@ -6505,11 +6484,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       }
     }
     interaction.value = null;
-    suppressCanvasPersistence = false;
     resumeCanvasWatchers();
-    if (ai?.type === "move" && ai.historyCommitted && !ai.transformOnly) {
-      persistCanvasState(canvasNodes.value);
-    }
     compositionDragSourceId.value = null;
     clearNestedEnterHover();
     activeDropZone.value = null;
@@ -7048,7 +7023,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   onMounted(() => {
     window.addEventListener("keydown", onWindowKeyDown);
     window.addEventListener("click", closeContextMenu);
-    window.addEventListener("pagehide", flushPendingCanvasPersistence);
   });
   watch(datasets, () => {
     const selectedCompositionGroup = walkCanvasNodes().find((node): node is CanvasGroupNode =>
@@ -7074,41 +7048,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       renderSemanticNode(node);
       registerChartRelationship(node);
     });
-    if (!restoredCanvas && datasets.value.length > 0) {
-      restoredCanvas = true;
-      try {
-        const raw = localStorage.getItem("cv-author-canvas-v1");
-        if (raw) {
-          const saved = JSON.parse(raw) as {
-            instanceDocument?: ChartInstanceDocument;
-            nodes?: CanvasNode[];
-            relationships?: ChartRelationshipState;
-          };
-          const savedNodes = saved.instanceDocument?.version === 1
-            ? restoreCanvasNodesFromChartInstanceDocument(saved.instanceDocument)
-            : saved.nodes;
-          if (Array.isArray(savedNodes)) {
-            canvasNodes.value = migrateIndependentViewGroups(savedNodes
-              .filter((node) => node.id !== "llm-demo-node" && node.chartSpec?.datasetId !== "dataset:llm-demo")
-              .map((node) => cloneCanvasNode(node)));
-            chartInstanceDocument.value = saved.instanceDocument?.version === 1
-              ? saved.instanceDocument
-              : createChartInstanceDocument(canvasNodes.value);
-            if (saved.relationships?.version === 1) restoreRelationships(saved.relationships);
-            else dispatchRelationship({ type: "clear" });
-            walkCanvasNodes().forEach((node) => {
-              node.coordinateSystem = node.coordinateSystem ?? standaloneCoordinateSystem(node);
-              registerChartRelationship(node);
-              if (node.llmRenderer?.status === "ready") return;
-              renderChartNode(node);
-              renderSemanticNode(node);
-              registerChartRelationship(node);
-            });
-            reconcileRelationshipNodes(canvasNodes.value);
-          }
-        }
-      } catch { /* ignore malformed saved projects */ }
-    }
   }, { deep: true, immediate: true });
   let nestedLayoutScheduled = false;
   function scheduleNestedChildLayout() {
@@ -7169,65 +7108,15 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       });
     });
   }
-  // Serialization and storage are intentionally kept off pointer-event paths.
-  function persistCanvasStateNow(nodes: CanvasNode[]) {
-    chartInstanceDocument.value = createChartInstanceDocument(canvasNodesWithRestoredCompositionLayout(nodes));
-    try {
-      localStorage.setItem("cv-author-canvas-v1", JSON.stringify({
-        version: 3,
-        instanceDocument: chartInstanceDocument.value,
-        relationships: snapshotRelationships(false),
-      }));
-    } catch { /* storage is optional */ }
-  }
-  function runScheduledCanvasPersistence() {
-    canvasPersistenceHandle = null;
-    canvasPersistenceUsesIdleCallback = false;
-    const nodes = pendingCanvasPersistenceNodes;
-    pendingCanvasPersistenceNodes = null;
-    if (nodes) persistCanvasStateNow(nodes);
-  }
-  function persistCanvasState(nodes: CanvasNode[]) {
-    pendingCanvasPersistenceNodes = nodes;
-    if (canvasPersistenceHandle !== null) return;
-    const idleWindow = window as IdleWindow;
-    if (typeof idleWindow.requestIdleCallback === "function") {
-      canvasPersistenceUsesIdleCallback = true;
-      canvasPersistenceHandle = idleWindow.requestIdleCallback(runScheduledCanvasPersistence, { timeout: 1000 });
-      return;
-    }
-    canvasPersistenceHandle = window.setTimeout(runScheduledCanvasPersistence, 0);
-  }
-  function flushPendingCanvasPersistence() {
-    if (canvasPersistenceHandle !== null) {
-      const idleWindow = window as IdleWindow;
-      if (canvasPersistenceUsesIdleCallback && typeof idleWindow.cancelIdleCallback === "function") {
-        idleWindow.cancelIdleCallback(canvasPersistenceHandle);
-      } else {
-        window.clearTimeout(canvasPersistenceHandle);
-      }
-      canvasPersistenceHandle = null;
-      canvasPersistenceUsesIdleCallback = false;
-    }
-    const nodes = pendingCanvasPersistenceNodes;
-    pendingCanvasPersistenceNodes = null;
-    if (nodes) persistCanvasStateNow(nodes);
-  }
   function pauseCanvasWatchers() {
     if (canvasWatchersPaused) return;
     stopNestedChildLayoutWatch?.();
-    stopCanvasPersistenceWatch?.();
     stopNestedChildLayoutWatch = null;
-    stopCanvasPersistenceWatch = null;
     canvasWatchersPaused = true;
   }
   function resumeCanvasWatchers() {
-    if (!canvasWatchersPaused && stopNestedChildLayoutWatch && stopCanvasPersistenceWatch) return;
+    if (!canvasWatchersPaused && stopNestedChildLayoutWatch) return;
     stopNestedChildLayoutWatch = watch([canvasNodes, chartRelationships], scheduleNestedChildLayout, { deep: true });
-    stopCanvasPersistenceWatch = watch([canvasNodes, chartRelationships], ([nodes]) => {
-      if (suppressCanvasPersistence) return;
-      persistCanvasState(nodes);
-    }, { deep: true });
     canvasWatchersPaused = false;
   }
   watch(chartRelationships, projectRelationshipStateToCanvas, { deep: true });
@@ -7237,10 +7126,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (moveUpdateFrame !== null) cancelAnimationFrame(moveUpdateFrame);
     pendingMoveUpdate = null;
     pauseCanvasWatchers();
-    flushPendingCanvasPersistence();
     window.removeEventListener("keydown", onWindowKeyDown);
     window.removeEventListener("click", closeContextMenu);
-    window.removeEventListener("pagehide", flushPendingCanvasPersistence);
     if (importNoticeTimer !== null) window.clearTimeout(importNoticeTimer);
     generatedCandidates.value.forEach((candidate) => URL.revokeObjectURL(candidate.src));
   });
@@ -7252,7 +7139,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     compositionCandidates,
     filteredCandidates,
     canvasNodes,
-    chartInstanceDocument,
     chartRelationships,
     relationshipStore,
     selectedRelationshipEntity,

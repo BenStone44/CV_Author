@@ -1,4 +1,4 @@
-import { computed, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import Papa from "papaparse";
 import type {
   DataColumn,
@@ -15,60 +15,13 @@ type ParsedCsv = {
   errors: Papa.ParseError[];
 };
 
-function resolvedPrimaryKey(dataset: Dataset) {
-  const available = new Set(dataset.columns.map((column) => column.name));
-  const preferredKey = dataset.primaryKey ?? [];
-  const keyValues = preferredKey.length > 0
-    ? dataset.rows.map((row) => preferredKey.map((field) => row[field]?.trim() ?? ""))
-    : [];
-  const preferredKeyIsValid = keyValues.length > 0
-    && preferredKey.every((field) => available.has(field))
-    && keyValues.every((values) => values.every(Boolean))
-    && new Set(keyValues.map((values) => JSON.stringify(values))).size === dataset.rows.length;
-  return preferredKeyIsValid ? preferredKey : inferCsvPrimaryKey(dataset);
-}
-
-function normalizeStoredDataset(dataset: Dataset): Dataset {
-  if (dataset.graph) return dataset;
-  const legacy = dataset as Dataset & {
-    sourceRows?: DataRow[];
-    sourceColumns?: DataColumn[];
-    transforms?: unknown[];
-  };
-  const {
-    sourceRows,
-    sourceColumns,
-    transforms: _legacyTransforms,
-    ...storedDataset
-  } = legacy;
-  void _legacyTransforms;
-  const normalized: Dataset = {
-    ...storedDataset,
-    columns: sourceColumns ?? dataset.columns,
-    rows: sourceRows ?? dataset.rows,
-  };
-  return { ...normalized, primaryKey: resolvedPrimaryKey(normalized) };
-}
-
-const datasets = ref<Dataset[]>((() => {
-  try {
-    const raw = localStorage.getItem("cv-author-datasets-v1");
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed)
-      ? parsed
-        .filter((dataset) => dataset?.id !== "dataset:llm-demo")
-        .map((dataset) => normalizeStoredDataset(dataset as Dataset))
-      : [];
-  } catch { return []; }
-})());
+// Datasets are session-scoped. Keep the store focused on the live source of
+// truth and let callers import/load data explicitly when a new session starts.
+const datasets = ref<Dataset[]>([]);
 const activeDatasetId = ref<string | null>(datasets.value[0]?.id ?? null);
 const parseError = ref("");
 const parseWarning = ref("");
 const isLoading = ref(false);
-
-watch(datasets, (value) => {
-  try { localStorage.setItem("cv-author-datasets-v1", JSON.stringify(value)); } catch { /* storage is optional */ }
-}, { deep: true, immediate: true });
 
 const activeDataset = computed(() =>
   datasets.value.find((dataset) => dataset.id === activeDatasetId.value) ?? null,
