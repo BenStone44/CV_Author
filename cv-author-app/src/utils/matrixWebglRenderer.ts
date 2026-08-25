@@ -1,7 +1,7 @@
 import type { ChartPlotArea } from "../types";
 
-/** Keep small matrices in SVG; switch to WebGL once the logical grid exceeds 5x5. */
-export const MATRIX_WEBGL_CELL_BUDGET = 25 * 25;
+/** Matrix cells are submitted as two triangles per cell in one WebGL draw call. */
+export const MATRIX_WEBGL_CELL_BUDGET = 0;
 
 export type MatrixWebglCell = {
   rowIndex: number;
@@ -18,6 +18,8 @@ export type MatrixWebglInput = {
   xRange: [number, number];
   yRange: [number, number];
   cells: MatrixWebglCell[];
+  /** Transparent SVG marks retain semantic hit targets over the WebGL image. */
+  overlayMarkup?: string;
 };
 
 function escapeXml(value: string) {
@@ -75,8 +77,8 @@ export function renderMatrixWebgl(input: MatrixWebglInput): string | null {
   if (rows === 0 || columns === 0 || cellCount <= MATRIX_WEBGL_CELL_BUDGET) return null;
 
   const canvas = document.createElement("canvas");
-  canvas.width = columns;
-  canvas.height = rows;
+  canvas.width = Math.max(1, Math.ceil(input.plotArea.width));
+  canvas.height = Math.max(1, Math.ceil(input.plotArea.height));
   let gl: WebGL2RenderingContext | null = null;
   try {
     gl = canvas.getContext("webgl2", { preserveDrawingBuffer: true, premultipliedAlpha: false });
@@ -84,24 +86,20 @@ export function renderMatrixWebgl(input: MatrixWebglInput): string | null {
     return null;
   }
   if (!gl) return null;
-  const maxTextureSize = Number(gl.getParameter(gl.MAX_TEXTURE_SIZE));
-  if (columns > maxTextureSize || rows > maxTextureSize) return null;
-
   const vertex = shader(gl, gl.VERTEX_SHADER, `#version 300 es
     in vec2 a_position;
-    in vec2 a_texcoord;
-    out vec2 v_texcoord;
+    in vec4 a_color;
+    out vec4 v_color;
     void main() {
       gl_Position = vec4(a_position, 0.0, 1.0);
-      v_texcoord = a_texcoord;
+      v_color = a_color;
     }
   `);
   const fragment = shader(gl, gl.FRAGMENT_SHADER, `#version 300 es
     precision mediump float;
-    uniform sampler2D u_texture;
-    in vec2 v_texcoord;
+    in vec4 v_color;
     out vec4 outColor;
-    void main() { outColor = texture(u_texture, v_texcoord); }
+    void main() { outColor = v_color; }
   `);
   if (!vertex || !fragment) return null;
   const program = gl.createProgram();
@@ -116,55 +114,64 @@ export function renderMatrixWebgl(input: MatrixWebglInput): string | null {
     return null;
   }
 
-  const positions = gl.createBuffer();
-  const texcoords = gl.createBuffer();
-  const texture = gl.createTexture();
-  if (!positions || !texcoords || !texture) return null;
-
-  const pixels = new Uint8Array(cellCount * 4);
+  const vertices: number[] = [];
   const xReversed = input.xRange[0] > input.xRange[1];
   const yReversed = input.yRange[0] > input.yRange[1];
+  const width = canvas.width;
+  const height = canvas.height;
+  const cellWidth = width / columns;
+  const cellHeight = height / rows;
+
+  const appendVertex = (x: number, y: number, rgba: number[]) => {
+    vertices.push(
+      (x / width) * 2 - 1,
+      1 - (y / height) * 2,
+      (rgba[0] ?? 0) / 255,
+      (rgba[1] ?? 0) / 255,
+      (rgba[2] ?? 0) / 255,
+      (rgba[3] ?? 0) / 255,
+    );
+  };
+
   input.cells.forEach((cell) => {
     if (cell.rowIndex < 0 || cell.rowIndex >= rows || cell.columnIndex < 0 || cell.columnIndex >= columns) return;
     const pixelX = xReversed ? columns - 1 - cell.columnIndex : cell.columnIndex;
     const pixelY = yReversed ? cell.rowIndex : rows - 1 - cell.rowIndex;
-    const offset = (pixelY * columns + pixelX) * 4;
     const rgba = colorToRgba(cell.color, cell.opacity);
-    pixels[offset] = rgba[0]!;
-    pixels[offset + 1] = rgba[1]!;
-    pixels[offset + 2] = rgba[2]!;
-    pixels[offset + 3] = rgba[3]!;
+    const left = pixelX * cellWidth;
+    const right = (pixelX + 1) * cellWidth;
+    const top = pixelY * cellHeight;
+    const bottom = (pixelY + 1) * cellHeight;
+    // A rectangle is two triangles. The interleaved position/color buffer lets
+    // the GPU rasterize every populated cell in a single drawArrays call.
+    appendVertex(left, top, rgba);
+    appendVertex(right, top, rgba);
+    appendVertex(left, bottom, rgba);
+    appendVertex(left, bottom, rgba);
+    appendVertex(right, top, rgba);
+    appendVertex(right, bottom, rgba);
   });
 
+  const buffer = gl.createBuffer();
+  if (!buffer || vertices.length === 0) return null;
   gl.useProgram(program);
-  gl.bindBuffer(gl.ARRAY_BUFFER, positions);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
   const positionLocation = gl.getAttribLocation(program, "a_position");
+  const colorLocation = gl.getAttribLocation(program, "a_color");
   gl.enableVertexAttribArray(positionLocation);
-  gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, texcoords);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
-  const texcoordLocation = gl.getAttribLocation(program, "a_texcoord");
-  gl.enableVertexAttribArray(texcoordLocation);
-  gl.vertexAttribPointer(texcoordLocation, 2, gl.FLOAT, false, 0, 0);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, columns, rows, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-  gl.uniform1i(gl.getUniformLocation(program, "u_texture"), 0);
-  gl.viewport(0, 0, columns, rows);
+  gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 24, 0);
+  gl.enableVertexAttribArray(colorLocation);
+  gl.vertexAttribPointer(colorLocation, 4, gl.FLOAT, false, 24, 8);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.viewport(0, 0, width, height);
   gl.clearColor(0, 0, 0, 0);
   gl.clear(gl.COLOR_BUFFER_BIT);
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 6);
   const src = canvas.toDataURL("image/png");
-  gl.deleteTexture(texture);
-  gl.deleteBuffer(positions);
-  gl.deleteBuffer(texcoords);
+  gl.deleteBuffer(buffer);
   gl.deleteProgram(program);
 
-  return `<g data-chart-id="${escapeXml(input.chartId)}" data-chart-type="matrix" data-mark-role="cell" data-mark-group-id="mark-group:${escapeXml(input.chartId)}:cell" data-renderer="webgl-matrix@1" data-matrix-webgl="true" data-matrix-row-values="${escapeXml(JSON.stringify(input.rowValues))}" data-matrix-column-values="${escapeXml(JSON.stringify(input.columnValues))}"><image href="${escapeXml(src)}" x="${input.plotArea.x}" y="${input.plotArea.y}" width="${input.plotArea.width}" height="${input.plotArea.height}" preserveAspectRatio="none"/></g>`;
+  return `<g data-chart-id="${escapeXml(input.chartId)}" data-chart-type="matrix" data-mark-group-id="mark-group:${escapeXml(input.chartId)}:cell" data-renderer="webgl-matrix@2" data-matrix-webgl="true" data-matrix-row-values="${escapeXml(JSON.stringify(input.rowValues))}" data-matrix-column-values="${escapeXml(JSON.stringify(input.columnValues))}"><image href="${escapeXml(src)}" x="${input.plotArea.x}" y="${input.plotArea.y}" width="${input.plotArea.width}" height="${input.plotArea.height}" preserveAspectRatio="none"/>${input.overlayMarkup ?? ""}</g>`;
 }

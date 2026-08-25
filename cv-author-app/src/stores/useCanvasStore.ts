@@ -329,6 +329,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const redoStack = ref<CanvasHistorySnapshot[]>([]);
   const clipboardNodes = ref<CanvasNode[]>([]);
   const interaction = ref<Interaction | null>(null);
+  let pendingMoveUpdate: { point: Point; interaction: MoveInteraction } | null = null;
+  let moveUpdateFrame: number | null = null;
   const contextMenu = ref<ContextMenuState | null>(null);
   const draggedCandidateId = ref<string | null>(null);
   const activeDropZone = ref<ChartDropZone | null>(null);
@@ -5969,6 +5971,33 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const dy = currentPoint.y - mi.startPoint.y;
     mi.itemIds.forEach((id) => { const item = getSelectionNode(id); const snap = mi.snapshots[id]; if (!item || !snap) return; item.x = snap.x + dx; item.y = snap.y + dy; });
   }
+
+  // Coalesce high-frequency pointer events into one reactive update per frame.
+  // This keeps Vue from diffing the entire SVG tree for every pointer event.
+  function scheduleMoveInteraction(currentPoint: Point, mi: MoveInteraction) {
+    pendingMoveUpdate = { point: currentPoint, interaction: mi };
+    if (moveUpdateFrame !== null) return;
+    moveUpdateFrame = requestAnimationFrame(() => {
+      moveUpdateFrame = null;
+      const pending = pendingMoveUpdate;
+      pendingMoveUpdate = null;
+      if (pending && interaction.value === pending.interaction) {
+        updateMoveInteraction(pending.point, pending.interaction);
+      }
+    });
+  }
+
+  function flushMoveInteraction() {
+    if (moveUpdateFrame !== null) {
+      cancelAnimationFrame(moveUpdateFrame);
+      moveUpdateFrame = null;
+    }
+    const pending = pendingMoveUpdate;
+    pendingMoveUpdate = null;
+    if (pending && interaction.value === pending.interaction) {
+      updateMoveInteraction(pending.point, pending.interaction);
+    }
+  }
   function updateScaleInteraction(currentPoint: Point, si: ScaleInteraction) {
     const scopeGroup = si.scopeGroupId ? getGroupAtPath() : null;
     const canvasBounds = scopeGroup
@@ -6124,6 +6153,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   }
   function onWindowPointerUp() {
     const ai = interaction.value;
+    if (ai?.type === "move") flushMoveInteraction();
     if (ai?.type === "marquee") finalizeMarqueeSelection(ai);
     if (ai?.type === "rotate") rotationInputVisible.value = true;
     if (ai?.type === "polar-angle") polarAngleInputVisible.value = true;
@@ -6155,7 +6185,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         ? toSelectionScopePoint(event.clientX, event.clientY, ai.scopeGroupId)
         : point;
       if (!ai.historyCommitted && (Math.abs(movePoint.x - ai.startPoint.x) > 0.1 || Math.abs(movePoint.y - ai.startPoint.y) > 0.1)) { pushCanvasHistory(); ai.historyCommitted = true; }
-      updateMoveInteraction(movePoint, ai);
+      scheduleMoveInteraction(movePoint, ai);
       activeDropZone.value = compositionDragSourceId.value
         ? compositionDropZoneAtPoint(movePoint, compositionDragSourceId.value)
         : null;

@@ -685,6 +685,7 @@ function renderMatrixChart(input: GenericRenderInput) {
     xRange,
     yRange,
     cells: webglCells,
+    overlayMarkup: cells.replaceAll(/ fill="[^"]*" fill-opacity="[^"]*"/g, ' fill="transparent" pointer-events="all"'),
   });
   if (webglContent) {
     return {

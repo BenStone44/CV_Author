@@ -9,10 +9,9 @@ import {
   GripVertical,
   Sigma,
   Rows3,
-  Trash2,
-  Upload,
 } from "@lucide/vue";
-import defaultCsv from "../../../data/case1.csv?raw";
+import case1Csv from "../../../data/case1.csv?raw";
+import case2Csv from "../../../data/case2.csv?raw";
 import { useDatasetStore } from "../stores/useDatasetStore";
 import type { ChartEncodingChannel, ChartNumericFilter, ChartSpec, DataColumnType, DatasetTable } from "../types";
 import {
@@ -36,25 +35,29 @@ const props = withDefaults(defineProps<{
   selectedChart: null,
 });
 
-const fileInputRef = ref<HTMLInputElement | null>(null);
 const panelRef = ref<HTMLElement | null>(null);
-const isDragging = ref(false);
 const expandedWidth = ref(304);
 const canExpand = ref(false);
 const isExpanded = ref(false);
 const isTransposed = ref(true);
 const {
   activeDataset,
+  datasets,
   parseError,
   parseWarning,
   isLoading,
   importDataset,
-  clearActiveDataset,
+  setActiveDataset,
   setColumnType,
   getDataset,
 } = useDatasetStore();
 
-const fileName = computed(() => activeDataset.value?.name ?? "");
+const presetNames = ["case1.csv", "case2.csv"] as const;
+const presetDatasets = computed(() =>
+  presetNames
+    .map((name) => datasets.value.find((dataset) => dataset.name === name))
+    .filter((dataset): dataset is NonNullable<typeof dataset> => !!dataset),
+);
 const isGraph = computed(() => !!activeDataset.value?.graph);
 const columns = computed(() => activeDataset.value?.columns ?? []);
 const headers = computed(() => columns.value.map((column) => column.name));
@@ -265,34 +268,9 @@ function updateExpandedWidth() {
   if (!canExpand.value) isExpanded.value = false;
 }
 
-function clearData() {
-  clearActiveDataset();
-  expandedWidth.value = 304;
-  canExpand.value = false;
-  isExpanded.value = false;
-  if (fileInputRef.value) fileInputRef.value.value = "";
-}
-
-function openFilePicker() {
-  fileInputRef.value?.click();
-}
-
-function importFile(file: File) {
-  void importDataset(file).then(() => {
-    void nextTick(updateExpandedWidth);
-    if (fileInputRef.value) fileInputRef.value.value = "";
-  });
-}
-
-function onFileChange(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0];
-  if (file) importFile(file);
-}
-
-function onDrop(event: DragEvent) {
-  isDragging.value = false;
-  const file = event.dataTransfer?.files[0];
-  if (file) importFile(file);
+function onDatasetChange(event: Event) {
+  const datasetId = (event.target as HTMLSelectElement).value;
+  if (datasetId) setActiveDataset(datasetId);
 }
 
 function onColumnDragStart(column: { name: string; type: DataColumnType }, event: DragEvent) {
@@ -307,14 +285,6 @@ function onColumnDragStart(column: { name: string; type: DataColumnType }, event
   event.dataTransfer.setData(csvColumnDragMime, encodeCsvColumnDragPayload(columnPayload));
   event.dataTransfer.setData("text/plain", column.name);
   event.dataTransfer.effectAllowed = "copy";
-}
-
-function onPanelDragEnter(event: DragEvent) {
-  if (Array.from(event.dataTransfer?.types ?? []).includes("Files")) isDragging.value = true;
-}
-
-function onPanelDragOver(event: DragEvent) {
-  if (Array.from(event.dataTransfer?.types ?? []).includes("Files")) isDragging.value = true;
 }
 
 function toggleExpanded() {
@@ -337,13 +307,27 @@ function displayColumnType(type: DataColumnType | undefined) {
   return type === "temporal" ? "ordinal" : type;
 }
 
+async function ensurePresetDatasets() {
+  const previousActiveName = activeDataset.value?.name;
+  const presets = [
+    { name: "case1.csv", source: case1Csv },
+    { name: "case2.csv", source: case2Csv },
+  ];
+  for (const preset of presets) {
+    if (!datasets.value.some((dataset) => dataset.name === preset.name)) {
+      await importDataset(new File([preset.source], preset.name, { type: "text/csv" }));
+    }
+  }
+  const preferred = previousActiveName && presetNames.includes(previousActiveName as typeof presetNames[number])
+    ? datasets.value.find((dataset) => dataset.name === previousActiveName)
+    : datasets.value.find((dataset) => dataset.name === "case1.csv") ?? presetDatasets.value[0];
+  if (preferred) setActiveDataset(preferred.id);
+  await nextTick(updateExpandedWidth);
+}
+
 onMounted(() => {
   window.addEventListener("resize", updateExpandedWidth);
-  if (!activeDataset.value) {
-    importFile(new File([defaultCsv], "case1.csv", { type: "text/csv" }));
-  } else {
-    void nextTick(updateExpandedWidth);
-  }
+  void ensurePresetDatasets();
 });
 onBeforeUnmount(() =>
   window.removeEventListener("resize", updateExpandedWidth),
@@ -354,16 +338,9 @@ onBeforeUnmount(() =>
   <aside
     ref="panelRef"
     class="data-panel"
-    :class="{
-      'data-panel--dragging': isDragging,
-      'data-panel--expanded': canExpand && isExpanded,
-    }"
+    :class="{ 'data-panel--expanded': canExpand && isExpanded }"
     :style="panelStyle"
     aria-label="Imported data"
-    @dragenter.prevent="onPanelDragEnter"
-    @dragover.prevent="onPanelDragOver"
-    @dragleave.self.prevent="isDragging = false"
-    @drop.prevent="onDrop"
   >
     <header class="data-panel__header">
       <div class="data-panel__title">
@@ -396,40 +373,24 @@ onBeforeUnmount(() =>
           <ChevronsLeft v-if="isExpanded" :size="15" aria-hidden="true" />
           <ChevronsRight v-else :size="15" aria-hidden="true" />
         </button>
-        <button
-          class="data-panel__import-button"
-          type="button"
-          :disabled="isLoading"
-          @click="openFilePicker"
-        >
-          <Upload :size="14" aria-hidden="true" />
-          <span>{{ isLoading ? "Importing..." : "Import data" }}</span>
-        </button>
-        <button
-          v-if="fileName"
-          class="data-panel__icon-button data-panel__icon-button--danger"
-          type="button"
-          title="Clear data"
-          aria-label="Clear data"
-          @click="clearData"
-        >
-          <Trash2 :size="15" aria-hidden="true" />
-        </button>
       </div>
     </header>
 
-    <input
-      ref="fileInputRef"
-      class="data-panel__file-input"
-      type="file"
-      accept=".csv,.json,text/csv,application/json"
-      @change="onFileChange"
-    />
     <div
       class="data-panel__meta"
-      :class="{ 'data-panel__meta--empty': !fileName }"
+      :class="{ 'data-panel__meta--empty': presetDatasets.length === 0 }"
     >
-      <strong :title="fileName">{{ fileName || "No file selected" }}</strong>
+      <select
+        class="data-panel__dataset-select"
+        :value="activeDataset?.id ?? ''"
+        aria-label="Select dataset"
+        :disabled="isLoading || presetDatasets.length === 0"
+        @change="onDatasetChange"
+      >
+        <option v-for="dataset in presetDatasets" :key="dataset.id" :value="dataset.id">
+          {{ dataset.name }}
+        </option>
+      </select>
       <span>{{ tableStatus }}</span>
     </div>
 
@@ -1151,47 +1112,6 @@ onBeforeUnmount(() =>
   cursor: not-allowed;
 }
 
-.data-panel__file-input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-.data-panel__import-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  width: auto;
-  min-height: 28px;
-  margin: 0;
-  padding: 5px 8px;
-  border: 1px solid rgba(28, 126, 214, 0.22);
-  border-radius: 6px;
-  background: #edf5fc;
-  color: #1554b2;
-  font: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.data-panel__import-button:hover:not(:disabled) {
-  border-color: rgba(28, 126, 214, 0.38);
-  background: #dcecfb;
-}
-
-.data-panel__import-button:disabled {
-  opacity: 0.62;
-  cursor: wait;
-}
-
 .data-panel__meta {
   display: grid;
   gap: 3px;
@@ -1201,18 +1121,31 @@ onBeforeUnmount(() =>
   font-size: 11px;
 }
 
-.data-panel__meta strong {
-  overflow: hidden;
+.data-panel__dataset-select {
+  width: 100%;
+  min-width: 0;
+  padding: 3px 24px 3px 5px;
+  border: 1px solid rgba(28, 126, 214, 0.24);
+  border-radius: 5px;
+  background: #f7fbff;
   color: #27384b;
+  font: inherit;
+  overflow: hidden;
   font-size: 12px;
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
 }
 
-.data-panel__meta--empty strong {
-  color: #6b7788;
-  font-weight: 500;
+.data-panel__dataset-select:focus-visible {
+  outline: 2px solid rgba(28, 126, 214, 0.35);
+  outline-offset: 1px;
+}
+
+.data-panel__dataset-select:disabled {
+  opacity: 0.62;
+  cursor: wait;
 }
 
 .data-panel__message {
