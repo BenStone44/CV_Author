@@ -64,6 +64,51 @@ export type DataColumn = {
 
 export type DataRow = Record<string, string>;
 
+export type ChartValueFilterTransform = {
+  id: string;
+  kind: "filter";
+  mode: "values";
+  field: string;
+  values: string[];
+  single: boolean;
+};
+
+export type ChartNumericFilterTransform = {
+  id: string;
+  kind: "filter";
+  mode: "numeric";
+  field: string;
+  operator: "top" | "bottom" | "gte" | "gt" | "lte" | "lt" | "eq" | "between";
+  value: number;
+  upperValue?: number;
+};
+
+export type ChartGroupAggregateTransform = {
+  id: string;
+  kind: "aggregate";
+  mode: "group";
+  groupField: string;
+  valueField: string;
+  operation: "sum" | "avg";
+  outputField: string;
+};
+
+export type ChartBinAggregateTransform = {
+  id: string;
+  kind: "aggregate";
+  mode: "bin";
+  field: string;
+  method: "equal-width" | "fixed-width" | "quantile";
+  parameter: number;
+  outputField: string;
+};
+
+export type ChartDataTransform =
+  | ChartValueFilterTransform
+  | ChartNumericFilterTransform
+  | ChartGroupAggregateTransform
+  | ChartBinAggregateTransform;
+
 export type DatasetTable = {
   columns: DataColumn[];
   rows: DataRow[];
@@ -267,6 +312,7 @@ export type ChartSpec = {
   filters?: Record<string, string>;
   valueFilters?: Record<string, string[]>;
   numericFilters?: Record<string, ChartNumericFilter>;
+  dataTransforms?: ChartDataTransform[];
   markGroups?: MarkGroupSpec[];
   dimensionRecommendations?: DimensionRecommendation[];
   dimensionDecisions?: Record<string, "aggregate" | "series" | "flatten" | "facet" | "nested">;

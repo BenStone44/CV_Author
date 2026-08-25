@@ -73,6 +73,176 @@ The sampled `data/VisAnatomy/data_tables` audit found no correctness failure in 
 
 Remaining non-data issues are narrow temporal inference for formats such as `M/D/YYYY`, misleading `UndetectableDelimiter` warnings for valid one-column CSVs, and unproven scale limits. Conflict-pair construction is quadratic within a key group, while complete minimal hitting-set enumeration and chart role assignment can have exponential output or search size. Add resource safeguards and worst-case tests without replacing the requirement to return every inclusion-minimal repair.
 
+## Chart-Local Data Operations and Structural Composition
+
+Filter, aggregate, facet, chart upgrade, and nested relationships must form one
+coherent chart-local workflow. Keep the following three concerns distinct:
+
+1. Data-view transforms: ordered filters, aggregates, and bins materialize a
+   chart-specific view from the raw CSV without mutating the dataset.
+2. Structural operations: facet, chart upgrade, and nested composition consume
+   explicit user intent and change chart structure, role bindings, or
+   relationships.
+3. Lineage and context: record whether a field/value is a hard filter, facet
+   clue, inherited parent constraint, structural binding, or derived output.
+
+The conceptual execution path is:
+
+```text
+raw CSV
+  -> inherited relationship context
+  -> chart-local filters
+  -> chart-local aggregate/bin transforms
+  -> structural bindings and encoding
+  -> rendering
+```
+
+`ChartSpec.dataTransforms` is the ordered chart-local transform source. Raw CSV
+rows remain the source of truth. Legacy `filters`, `valueFilters`, and
+`numericFilters` may remain while existing workflows depend on them, but new
+behavior must not create a third competing transform representation. Migrate or
+adapt legacy state through explicit boundaries.
+
+### Filter Intent and Facet Clues
+
+A categorical or ordinal single-select filter may be either a permanent hard
+filter or a temporary structural clue. Do not infer the distinction from
+`single: true` alone. Add explicit intent metadata equivalent to:
+
+```ts
+purpose?: "filter" | "facet-clue" | "nested-context"
+```
+
+Normal filters constrain only their owning chart. A `facet-clue` temporarily
+constrains the current chart while recording that the exact field can later be
+used for faceting. One clue creates a one-dimensional facet. When two or more
+clues are available, let the user select the row and optional column dimensions;
+do not silently choose, rank, or discard valid clue fields.
+
+Facet creation consumes only the selected clues. Remove their temporary filter
+effect before enumerating facet domains so that all cells can be materialized.
+Preserve every unrelated hard filter and transform. Each generated facet cell
+must carry its fixed field/value context explicitly. Group clue consumption and
+facet creation into one undoable canvas operation.
+
+### Aggregate and Derived-Field Lineage
+
+Categorical or ordinal fields may act as group-by dimensions for numeric
+`sum`/`average` outputs. Numeric fields may produce equal-width, fixed-width, or
+quantile bins. Every derived field must record lineage equivalent to:
+
+```ts
+{
+  outputField: string
+  sourceFields: string[]
+  operation: "sum" | "average" | "bin-equal" | "bin-fixed" | "bin-quantile"
+}
+```
+
+Derived aggregate and bin outputs must be available to encoding and structural
+validation. Group-by fields can remain structural dimensions; aggregate outputs
+are numeric values; bin outputs are categorical or ordinal dimensions. Facet,
+upgrade, and nested resolution must use lineage rather than field-name guessing
+when a source field is replaced or removed by aggregation.
+
+### Chart Upgrade Semantics
+
+Chart upgrade must preserve compatible chart-local transforms. Consume only the
+clue explicitly selected for the new structural role, such as series, group,
+color, or an additional dimension. Preserve unrelated facet clues and hard
+filters. Revalidate the complete proposed binding against the target chart
+contract and current materialized schema. If a transform or derived field is no
+longer compatible, report an explicit conflict or unresolved result; do not
+silently drop it, replace its field, or scan unrelated columns for a substitute.
+
+Facet and chart upgrade must share one clue-consumption mechanism so that undo,
+layer handling, and transform preservation have identical semantics.
+
+### Nested Filter Inheritance
+
+Nested inheritance belongs to the parent-child relationship, not permanently to
+the child's editable local transforms. Extend nested relationship state with an
+explicit resolved context equivalent to:
+
+```ts
+type InheritedFilterContext = {
+  parentChartId: string
+  parentDataKey?: string
+  parentField: string
+  childField: string
+  value: string | number
+  source: "facet-cell" | "parent-row" | "parent-filter"
+}
+```
+
+A child may inherit a constraint only when all of the following hold:
+
+- Parent and child use the same dataset identity, or the relationship declares
+  an explicit parent-field to child-field mapping.
+- Both sides contain the corresponding field and their types are compatible.
+- The parent supplies a concrete constraint or value through a facet cell, the
+  selected parent row/mark, or an explicitly inheritable parent filter.
+- The field remains resolvable through the relevant aggregate lineage.
+
+The mere presence of a field in the parent's raw schema is not enough to create
+an inherited filter. If the parent has an active single-value filter on that
+field and the child has the same or mapped field, the relationship may inherit
+that value. When a child is attached to a specific parent row or mark, that row
+value is more specific than a broad parent filter and is the primary nested
+context.
+
+Initially inherit only categorical/ordinal equality constraints, facet-cell
+fixed values, and concrete parent-row values. Do not blindly copy Top/Bottom N,
+numeric ranges, bins, or aggregates: their meaning depends on transform order
+and the parent's data domain. Add broader inheritance only with an explicit
+cross-chart execution contract.
+
+At child materialization time, combine inherited relationship context with
+child-local filters using logical AND, then run the child's aggregate/bin
+transforms and encodings. If parent and child impose incompatible values on the
+same field, expose a conflict instead of silently overriding either side. Parent
+updates must re-resolve relationship context. Detaching a nested relationship
+removes inherited context while preserving all child-local transforms.
+
+Facet-cell context, parent-row context, and inherited parent filters are all
+relationship inputs. The parent-row value is normally the most specific. Reject
+or surface incompatible broader constraints rather than stacking contradictory
+filters and rendering an unexplained empty child.
+
+### Outstanding Integration Work
+
+The following issues remain to be solved before the workflow is fully unified:
+
+- Replace `single`-only clue detection with explicit transform purpose metadata
+  while preserving existing saved charts.
+- Define one canonical adapter or migration path between `dataTransforms` and
+  legacy `filters`, `valueFilters`, and `numericFilters`.
+- Persist and validate aggregate/bin output lineage through serialization,
+  undo/redo, duplication, layer operations, facet creation, and chart upgrade.
+- Centralize clue consumption for facet and chart upgrade, including layer-child
+  transforms and multi-clue row/column selection.
+- Specify chart-upgrade conflict reporting when a preserved transform references
+  a field absent from the upgraded materialized schema.
+- Add relationship-owned inherited context and optional field mapping to nested
+  relationship types, projection, resolution, serialization, and rendering.
+- Re-resolve nested context when parent filters, facet cells, rows, aggregates,
+  datasets, or upgrades change. Represent missing fields as `UNRESOLVABLE` and
+  contradictory constraints as an explicit conflict state.
+- Decide whether multi-value categorical filters and numeric filters may later
+  be inherited, including precise ordering and domain semantics, before adding
+  that behavior.
+- Ensure nested children inside facet cells inherit both the cell's fixed context
+  and the selected parent-row context without copying either into child-local
+  state.
+- Keep all combined operations atomic in canvas undo history and ensure removing
+  a facet, upgrade, or nested relationship restores only the state owned by that
+  operation.
+- Add focused coverage for filter-to-facet, filter-to-upgrade,
+  aggregate-to-facet, aggregate-to-upgrade, facet-to-nested, filter-to-nested,
+  conflicting parent/child filters, parent updates, unresolved lineage, and
+  nested detachment. Verification remains user-triggered under the repository
+  testing policy.
+
 ## Integration Files
 
 - `src/utils/csvDataEngine.ts`: grain validation, overflow conflict-pair construction, and optional automatic minimal hitting-set enumeration.

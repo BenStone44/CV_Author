@@ -16,12 +16,14 @@ import CsvDataPanel from "./CsvDataPanel.vue";
 import EncodingConfigPanel from "./EncodingConfigPanel.vue";
 import type {
   CanvasNode,
+  ChartDataTransform,
   ChartEncodingChannel,
   CompositionType,
   CoordinateChannel,
   EncodingChannel,
   SvgCandidate,
 } from "../types";
+import { materializeChartDataTransforms } from "../utils/chartDataTransforms";
 import {
   useCanvasStore,
   coordinateOptions,
@@ -44,6 +46,13 @@ const canvasRef = ref<HTMLElement | null>(null);
 const encodingInspectorOpen = ref(true);
 const activeTemplateCategoryId = ref<string | null>(null);
 const templateCategoryMenuPosition = ref({ left: 0, top: 0, width: 560 });
+const facetClueDialog = ref<{
+  nodeId: string;
+  chartName: string;
+  fields: string[];
+  rowField: string;
+  columnField: string;
+} | null>(null);
 
 const {
   selectedCoordinateSystems,
@@ -135,9 +144,6 @@ const {
   onCoordinateAxisScalePointerDown,
   onPolarAnglePointerDown,
   setAxisBindingAggregation,
-  setSelectedChartValueFilter,
-  setSelectedChartNumericFilter,
-  setSelectedChartAggregation,
   setAxisSwap,
   clearSeriesBinding,
   setChartSeries,
@@ -148,6 +154,7 @@ const {
   setValueSeriesFields,
   removeBarItemField,
   setParallelFields,
+  setChartDataTransforms,
   updateAxisBindingMarkGroupConfig,
   updateSelectedChartMarkGroupConfig,
   beginMarkConfigEdit,
@@ -169,6 +176,7 @@ const {
   ungroupSelectedItems,
   dissolveSelectedGroups,
   createCompositionCandidate,
+  createFacetFromFields,
   confirmNestedBinding,
   closeNestedBinding,
   updateNestedPosition,
@@ -184,6 +192,11 @@ const {
 const visibleCanvasNodes = computed(() =>
   canvasNodes.value.filter((node) => !nestedRenderedChildIds.value.has(node.id)),
 );
+const chartTransformNode = computed(() => {
+  if (selectedIds.value.length !== 1) return null;
+  const node = selectedNodes.value[0];
+  return node?.chartSpec ? node : null;
+});
 const implementedTemplateCategories = computed(() =>
   groupChartTemplateCandidates(implementedTemplateCandidates.value.filter((candidate) =>
     selectedCoordinateSystems.value.size === 0
@@ -259,56 +272,14 @@ const { activeDataset, getDataset } = useDatasetStore();
 const axisBindingRows = computed(() => {
   const datasetId = axisBindingNode.value?.chartSpec?.datasetId;
   const dataset = datasetId ? getDataset(datasetId) : activeDataset.value;
-  return dataset?.rows ?? [];
+  return dataset && axisBindingNode.value?.chartSpec
+    ? materializeChartDataTransforms(dataset, axisBindingNode.value.chartSpec.dataTransforms).rows
+    : dataset?.rows ?? [];
 });
-const csvEncodingBindings = computed<Record<string, string[]>>(() => {
-  const node = selectedIds.value.length === 1 ? selectedNodes.value[0] : null;
-  const spec = node?.chartSpec;
-  if (!spec) return {};
-  const bindings: Record<string, string[]> = {};
-  const add = (field: string | undefined, label: string) => {
-    if (!field) return;
-    const current = bindings[field] ?? [];
-    if (!current.includes(label)) bindings[field] = [...current, label];
-  };
-  Object.entries(spec.encodings).forEach(([channel, encoding]) => {
-    if (!encoding) return;
-    if (channel === "y" && spec.valueFields?.length) return;
-    const displayChannel = spec.axisSwapped && (channel === "x" || channel === "y")
-      ? channel === "x" ? "y" : "x"
-      : channel;
-    const label: Record<string, string> = {
-      x: "X",
-      y: "Y",
-      color: "Color",
-      size: "Size",
-      shape: "Shape",
-      theta: "Theta",
-      angle: "Theta",
-      segment: "Segment",
-      radius: "Radius",
-      ring: "Ring",
-      dimensions: "Dimensions",
-    };
-    add(encoding.field, label[displayChannel] ?? displayChannel);
-  });
-
-  const itemBinding = barItemAxisBinding(node);
-  if (itemBinding) {
-    itemBinding.fields.forEach((field) => add(field, itemBinding.label));
-  } else {
-    const seriesFields = spec.seriesFields?.map((encoding) => encoding.field)
-      ?? (spec.series ? [spec.series.field] : []);
-    seriesFields.forEach((field) => add(field, "Series"));
-  }
-
-  return bindings;
-});
-const csvPanelChart = computed(() => {
-  if (selectedNodes.value.length !== 1) return null;
-  const node = selectedNodes.value[0];
-  return node?.chartSpec ?? null;
-});
+function onChartTransformsChange(transforms: ChartDataTransform[]) {
+  const node = chartTransformNode.value;
+  if (node) setChartDataTransforms(node.id, transforms);
+}
 function createSeriesItemPresentation(node: CanvasNode) {
   const spec = node?.chartSpec;
   const itemBinding = node ? barItemAxisBinding(node) : null;
@@ -753,8 +724,54 @@ function toggleSelectedCartesianAxes() {
 
 function openCompositionCandidates(type: CompositionType) {
   closeAxisBinding();
+  if (type === "facet") {
+    const node = chartTransformNode.value;
+    const clueFields = Array.from(new Set(node?.chartSpec?.dataTransforms
+      ?.filter((transform) => transform.kind === "filter"
+        && transform.mode === "values"
+        && transform.single)
+      .map((transform) => transform.mode === "values" ? transform.field : "")
+      .filter(Boolean) ?? []));
+    if (node && clueFields.length === 1) {
+      createFacetFromFields(node.id, { columnField: clueFields[0] });
+      activeCompositionType.value = null;
+      return;
+    }
+    if (node && clueFields.length > 1) {
+      facetClueDialog.value = {
+        nodeId: node.id,
+        chartName: node.name,
+        fields: clueFields,
+        rowField: clueFields[0] ?? "",
+        columnField: clueFields[1] ?? "",
+      };
+      activeCompositionType.value = null;
+      return;
+    }
+  }
   createCompositionCandidate(type);
   activeCompositionType.value = null;
+}
+
+const canConfirmFacetClues = computed(() => {
+  const dialog = facetClueDialog.value;
+  return !!dialog
+    && (!!dialog.rowField || !!dialog.columnField)
+    && (!dialog.rowField || !dialog.columnField || dialog.rowField !== dialog.columnField);
+});
+
+function closeFacetClueDialog() {
+  facetClueDialog.value = null;
+}
+
+function confirmFacetClues() {
+  const dialog = facetClueDialog.value;
+  if (!dialog || !canConfirmFacetClues.value) return;
+  createFacetFromFields(dialog.nodeId, {
+    rowField: dialog.rowField || undefined,
+    columnField: dialog.columnField || undefined,
+  });
+  closeFacetClueDialog();
 }
 
 function closeCompositionCandidates() {
@@ -774,6 +791,7 @@ function onCompositionKeyDown(event: KeyboardEvent) {
     closeAxisBinding();
     closeNestedBinding();
     closeNestedPositionEditor();
+    closeFacetClueDialog();
   }
 }
 
@@ -1044,13 +1062,80 @@ onBeforeUnmount(() => {
       </div>
     </Teleport>
 
+    <Teleport to="body">
+      <div
+        v-if="facetClueDialog"
+        class="facet-clue-backdrop"
+        @mousedown.self="closeFacetClueDialog"
+      >
+        <section
+          class="facet-clue-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="facet-clue-title"
+        >
+          <header class="facet-clue-dialog__header">
+            <div>
+              <strong id="facet-clue-title">Facet dimensions</strong>
+              <span>{{ facetClueDialog.chartName }}</span>
+            </div>
+            <button type="button" title="Close" aria-label="Close" @click="closeFacetClueDialog">
+              <X :size="16" :stroke-width="1.8" aria-hidden="true" />
+            </button>
+          </header>
+          <div class="facet-clue-dialog__body">
+            <label>
+              <span>Row dimension</span>
+              <select v-model="facetClueDialog.rowField">
+                <option value="">None</option>
+                <option
+                  v-for="field in facetClueDialog.fields"
+                  :key="`row-${field}`"
+                  :value="field"
+                  :disabled="field === facetClueDialog.columnField"
+                >
+                  {{ field }}
+                </option>
+              </select>
+            </label>
+            <label>
+              <span>Column dimension</span>
+              <select v-model="facetClueDialog.columnField">
+                <option value="">None</option>
+                <option
+                  v-for="field in facetClueDialog.fields"
+                  :key="`column-${field}`"
+                  :value="field"
+                  :disabled="field === facetClueDialog.rowField"
+                >
+                  {{ field }}
+                </option>
+              </select>
+            </label>
+          </div>
+          <footer class="facet-clue-dialog__footer">
+            <button type="button" class="facet-clue-dialog__cancel" @click="closeFacetClueDialog">
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="facet-clue-dialog__apply"
+              :disabled="!canConfirmFacetClues"
+              @click="confirmFacetClues"
+            >
+              Create facet
+            </button>
+          </footer>
+        </section>
+      </div>
+    </Teleport>
+
     <div class="workbench">
       <CsvDataPanel
-        :encoding-bindings="csvEncodingBindings"
-        :selected-chart="csvPanelChart"
-        :on-set-value-filter="setSelectedChartValueFilter"
-        :on-set-numeric-filter="setSelectedChartNumericFilter"
-        :on-set-aggregation="setSelectedChartAggregation"
+        :chart-id="chartTransformNode?.id"
+        :chart-name="chartTransformNode?.name"
+        :chart-spec="chartTransformNode?.chartSpec"
+        @transforms-change="onChartTransformsChange"
       />
       <main class="workspace">
         <section
@@ -3613,6 +3698,164 @@ onBeforeUnmount(() => {
   background: #e0f2fe;
   color: #075985;
   font-weight: 700;
+}
+
+.facet-clue-backdrop {
+  position: fixed;
+  z-index: 2450;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(17, 24, 34, 0.38);
+}
+
+.facet-clue-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(420px, calc(100vw - 32px));
+  overflow: hidden;
+  border: 1px solid rgba(24, 33, 47, 0.14);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 22px 55px rgba(21, 32, 46, 0.24);
+}
+
+.facet-clue-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 54px;
+  padding: 10px 12px 10px 16px;
+  border-bottom: 1px solid #e4e8ed;
+}
+
+.facet-clue-dialog__header > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.facet-clue-dialog__header strong {
+  color: #202e3d;
+  font-size: 14px;
+}
+
+.facet-clue-dialog__header span {
+  overflow: hidden;
+  color: #738194;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.facet-clue-dialog__header button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #7d8998;
+  cursor: pointer;
+}
+
+.facet-clue-dialog__header button:hover {
+  background: #edf3f8;
+  color: #33495f;
+}
+
+.facet-clue-dialog__body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 18px 16px;
+}
+
+.facet-clue-dialog__body label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.facet-clue-dialog__body label > span {
+  color: #526174;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.facet-clue-dialog__body select {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 6px 9px;
+  border: 1px solid #cfd7e0;
+  border-radius: 6px;
+  background: #fff;
+  color: #253648;
+  font: inherit;
+  font-size: 12px;
+}
+
+.facet-clue-dialog__body select:focus {
+  border-color: #438dcc;
+  outline: 2px solid rgba(28, 126, 214, 0.16);
+}
+
+.facet-clue-dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  min-height: 58px;
+  padding: 11px 16px;
+  border-top: 1px solid #e4e8ed;
+  background: #f8fafc;
+}
+
+.facet-clue-dialog__footer button {
+  min-width: 82px;
+  height: 34px;
+  padding: 6px 13px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.facet-clue-dialog__cancel {
+  border: 1px solid #cfd7e0;
+  background: #fff;
+  color: #526174;
+}
+
+.facet-clue-dialog__apply {
+  border: 1px solid #176eb8;
+  background: #1c7ed6;
+  color: #fff;
+}
+
+.facet-clue-dialog__apply:disabled {
+  border-color: #b9c1ca;
+  background: #c5ccd4;
+  cursor: not-allowed;
+}
+
+@media (max-width: 520px) {
+  .facet-clue-backdrop {
+    align-items: end;
+    padding: 10px;
+  }
+
+  .facet-clue-dialog {
+    width: 100%;
+  }
+
+  .facet-clue-dialog__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .recommendation-option-card__strategy {
   width: fit-content;

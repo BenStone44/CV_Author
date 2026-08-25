@@ -1,6 +1,7 @@
 import { materializeChartStructure } from "./dimensionInference";
 import { normalizeBarChartVariant, normalizeChartTemplate } from "./chartTemplates";
 import { inferCsvPrimaryKey } from "./csvDataEngine";
+import { materializeChartDataTransforms } from "./chartDataTransforms";
 import type { ChartEncoding, ChartSpec, Dataset } from "../types";
 
 export const CSV_MEASURE_ID_FIELD = "__csv_measure__";
@@ -189,7 +190,8 @@ export function prepareChartData(
   spec: ChartSpec,
 ) {
   const filteredDataset = filterDatasetForChart(sourceDataset, spec);
-  const materialized = materializeCsvValueSeries(filteredDataset, spec);
+  const transformedDataset = materializeChartDataTransforms(filteredDataset, spec.dataTransforms);
+  const materialized = materializeCsvValueSeries(transformedDataset, spec);
   const dataset = materializeNumericBins(materialized.dataset, spec);
   const synchronizedSpec = synchronizeChartEncodingTypes(materialized.chartSpec, dataset);
   return {

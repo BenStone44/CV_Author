@@ -15,19 +15,39 @@ type ParsedCsv = {
   errors: Papa.ParseError[];
 };
 
+function resolvedPrimaryKey(dataset: Dataset) {
+  const available = new Set(dataset.columns.map((column) => column.name));
+  const preferredKey = dataset.primaryKey ?? [];
+  const keyValues = preferredKey.length > 0
+    ? dataset.rows.map((row) => preferredKey.map((field) => row[field]?.trim() ?? ""))
+    : [];
+  const preferredKeyIsValid = keyValues.length > 0
+    && preferredKey.every((field) => available.has(field))
+    && keyValues.every((values) => values.every(Boolean))
+    && new Set(keyValues.map((values) => JSON.stringify(values))).size === dataset.rows.length;
+  return preferredKeyIsValid ? preferredKey : inferCsvPrimaryKey(dataset);
+}
+
 function normalizeStoredDataset(dataset: Dataset): Dataset {
   if (dataset.graph) return dataset;
-  const available = new Set(dataset.columns.map((column) => column.name));
-  const storedKeyValues = (dataset.primaryKey?.length ?? 0) > 0
-    ? dataset.rows.map((row) => dataset.primaryKey!.map((field) => row[field]?.trim() ?? ""))
-    : [];
-  const storedKeyIsValid = storedKeyValues.length > 0
-    && dataset.primaryKey!.every((field) => available.has(field))
-    && storedKeyValues.every((values) => values.every(Boolean))
-    && new Set(storedKeyValues.map((values) => JSON.stringify(values))).size === dataset.rows.length;
-  return storedKeyIsValid
-    ? dataset
-    : { ...dataset, primaryKey: inferCsvPrimaryKey(dataset) };
+  const legacy = dataset as Dataset & {
+    sourceRows?: DataRow[];
+    sourceColumns?: DataColumn[];
+    transforms?: unknown[];
+  };
+  const {
+    sourceRows,
+    sourceColumns,
+    transforms: _legacyTransforms,
+    ...storedDataset
+  } = legacy;
+  void _legacyTransforms;
+  const normalized: Dataset = {
+    ...storedDataset,
+    columns: sourceColumns ?? dataset.columns,
+    rows: sourceRows ?? dataset.rows,
+  };
+  return { ...normalized, primaryKey: resolvedPrimaryKey(normalized) };
 }
 
 const datasets = ref<Dataset[]>((() => {

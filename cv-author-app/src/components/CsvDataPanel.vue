@@ -7,13 +7,23 @@ import {
   FileSpreadsheet,
   Filter,
   GripVertical,
-  Sigma,
+  Plus,
   Rows3,
+  Sigma,
+  Trash2,
+  X,
 } from "@lucide/vue";
 import case1Csv from "../../../data/case1.csv?raw";
 import case2Csv from "../../../data/case2.csv?raw";
 import { useDatasetStore } from "../stores/useDatasetStore";
-import type { ChartEncodingChannel, ChartNumericFilter, ChartSpec, DataColumnType, DatasetTable } from "../types";
+import type {
+  ChartDataTransform,
+  ChartNumericFilterTransform,
+  ChartSpec,
+  DataColumnType,
+  DatasetTable,
+} from "../types";
+import { materializeChartDataTransforms } from "../utils/chartDataTransforms";
 import {
   beginCsvColumnDrag,
   csvColumnDragMime,
@@ -23,16 +33,15 @@ import {
 
 const previewRowLimit = 250;
 
-const props = withDefaults(defineProps<{
-  encodingBindings?: Record<string, string[]>;
-  selectedChart?: ChartSpec | null;
-  onSetValueFilter?: (field: string, values: string[]) => void;
-  onSetNumericFilter?: (field: string, patch: ChartNumericFilter) => void;
-  onSetAggregation?: (field: string, aggregation?: "sum" | "avg") => void;
-}>(), {
-  encodingBindings: () => ({}),
-  selectedChart: null,
-});
+const props = defineProps<{
+  chartId?: string;
+  chartName?: string;
+  chartSpec?: ChartSpec | null;
+}>();
+
+const emit = defineEmits<{
+  transformsChange: [transforms: ChartDataTransform[]];
+}>();
 
 const panelRef = ref<HTMLElement | null>(null);
 const expandedWidth = ref(304);
@@ -46,10 +55,25 @@ const {
   parseWarning,
   isLoading,
   importDataset,
+  getDataset,
   setActiveDataset,
   setColumnType,
-  getDataset,
 } = useDatasetStore();
+
+type TransformEditorMode = "filter" | "aggregate";
+
+const transformEditorMode = ref<TransformEditorMode | null>(null);
+const selectedTransformColumn = ref("");
+const singleValueFilter = ref(false);
+const selectedFilterValues = ref<string[]>([]);
+const numericFilterOperator = ref<ChartNumericFilterTransform["operator"]>("top");
+const numericFilterValue = ref(10);
+const numericFilterUpperValue = ref(100);
+const aggregateValueField = ref("");
+const aggregateOperation = ref<"sum" | "avg">("sum");
+const binMethod = ref<"equal-width" | "fixed-width" | "quantile">("equal-width");
+const binParameter = ref(5);
+const outputField = ref("");
 
 const presetNames = ["case1.csv", "case2.csv"] as const;
 const presetDatasets = computed(() =>
@@ -59,6 +83,14 @@ const presetDatasets = computed(() =>
 );
 const isGraph = computed(() => !!activeDataset.value?.graph);
 const columns = computed(() => activeDataset.value?.columns ?? []);
+const chartDataset = computed(() => props.chartSpec ? getDataset(props.chartSpec.datasetId) : null);
+const transformedChartDataset = computed(() => chartDataset.value
+  ? materializeChartDataTransforms(chartDataset.value, props.chartSpec?.dataTransforms)
+  : null);
+const transformColumns = computed(() => transformedChartDataset.value?.columns ?? []);
+const transformRows = computed(() => transformedChartDataset.value?.rows ?? []);
+const transforms = computed(() => props.chartSpec?.dataTransforms ?? []);
+const canEditChartTransforms = computed(() => !!props.chartId && !!chartDataset.value && transformColumns.value.length > 0);
 const headers = computed(() => columns.value.map((column) => column.name));
 const rows = computed(() =>
   activeDataset.value?.rows.map((row) => headers.value.map((header) => row[header] ?? "")) ?? [],
@@ -73,148 +105,42 @@ const graphTables = computed(() => {
   ];
 });
 const hasData = computed(() => isGraph.value || headers.value.length > 0);
-const selectedChartDataset = computed(() => {
-  const chart = props.selectedChart;
-  return chart ? getDataset(chart.datasetId) : null;
+const selectedColumn = computed(() =>
+  transformColumns.value.find((column) => column.name === selectedTransformColumn.value) ?? null,
+);
+const isSelectedColumnQuantitative = computed(() => selectedColumn.value?.type === "quantitative");
+const selectedColumnValues = computed(() => {
+  const field = selectedTransformColumn.value;
+  if (!field) return [];
+  return Array.from(new Set(transformRows.value.map((row) => row[field] ?? "")))
+    .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
 });
-const showChartOperations = computed(() => !!props.selectedChart
-  && props.selectedChart.datasetId === activeDataset.value?.id
-  && !isGraph.value);
-const filterValues = ref<Record<string, string[]>>({});
-type OperationKind = "filter" | "aggregate";
-const addedOperations = ref<Record<string, Partial<Record<OperationKind, boolean>>>>({});
-const operationDragActive = ref(false);
-
-function valuesForColumn(field: string) {
-  return Array.from(new Set(selectedChartDataset.value?.rows.map((row) => row[field] ?? "") ?? []))
-    .filter((value) => value !== "");
-}
-
-function resetChartControls(chart: ChartSpec | null) {
-  const dataset = chart ? getDataset(chart.datasetId) : null;
-  const next: Record<string, string[]> = {};
-  (dataset?.columns ?? [])
-    .filter((column) => column.type === "nominal" || column.type === "ordinal" || column.type === "temporal")
-    .forEach((column) => {
-      next[column.name] = chart?.valueFilters?.[column.name]?.slice() ?? valuesForColumnFrom(dataset, column.name);
-    });
-  filterValues.value = next;
-}
-
-function valuesForColumnFrom(dataset: ReturnType<typeof getDataset>, field: string) {
-  return Array.from(new Set(dataset?.rows.map((row) => row[field] ?? "") ?? [])).filter(Boolean);
-}
-
-watch(() => props.selectedChart, (chart) => resetChartControls(chart), { deep: true, immediate: true });
-
-watch(() => props.selectedChart, (chart) => {
-  const next: Record<string, Partial<Record<OperationKind, boolean>>> = {};
-  if (chart) {
-    Object.entries(chart.valueFilters ?? {}).forEach(([field]) => { next[field] = { ...next[field], filter: true }; });
-    Object.entries(chart.numericFilters ?? {}).forEach(([field]) => { next[field] = { ...next[field], filter: true }; });
-    Object.entries(chart.dimensionAggregations ?? {}).forEach(([field]) => { next[field] = { ...next[field], aggregate: true }; });
-    Object.entries(chart.encodings).forEach(([channel, encoding]) => {
-      if (encoding?.field && chart.aggregations?.[channel as ChartEncodingChannel]) {
-        next[encoding.field] = { ...next[encoding.field], aggregate: true };
-      }
-    });
+const quantitativeColumns = computed(() =>
+  transformColumns.value.filter((column) => column.type === "quantitative"),
+);
+const outputFieldIsAvailable = computed(() => {
+  const name = outputField.value.trim();
+  return !!name && !transformColumns.value.some((column) => column.name === name);
+});
+const canApplyTransform = computed(() => {
+  if (!selectedColumn.value) return false;
+  if (transformEditorMode.value === "filter") {
+    if (!isSelectedColumnQuantitative.value) return selectedFilterValues.value.length > 0;
+    if (!Number.isFinite(numericFilterValue.value)) return false;
+    if (numericFilterOperator.value === "between") {
+      return Number.isFinite(numericFilterUpperValue.value);
+    }
+    return numericFilterOperator.value !== "top"
+      && numericFilterOperator.value !== "bottom"
+      || numericFilterValue.value >= 1;
   }
-  addedOperations.value = next;
-}, { deep: true, immediate: true });
-
-function onOperationDragStart(kind: OperationKind, event: DragEvent) {
-  if (!event.dataTransfer) return;
-  event.dataTransfer.setData("application/x-cv-chart-operation", kind);
-  event.dataTransfer.setData("text/plain", kind);
-  event.dataTransfer.effectAllowed = "copy";
-  operationDragActive.value = true;
-}
-
-function onOperationDragEnd() {
-  operationDragActive.value = false;
-}
-
-function isFieldBound(field: string) {
-  return (props.encodingBindings[field]?.length ?? 0) > 0;
-}
-
-function isCategoricalType(type: DataColumnType) {
-  return type === "nominal" || type === "ordinal" || type === "temporal";
-}
-
-function onOperationDragOver(field: string, event: DragEvent) {
-  if (isFieldBound(field)) event.preventDefault();
-}
-
-function onOperationDrop(field: string, event: DragEvent) {
-  event.preventDefault();
-  operationDragActive.value = false;
-  if (!isFieldBound(field)) return;
-  const kind = event.dataTransfer?.getData("application/x-cv-chart-operation") as OperationKind;
-  if (kind !== "filter" && kind !== "aggregate") return;
-  addedOperations.value = {
-    ...addedOperations.value,
-    [field]: { ...addedOperations.value[field], [kind]: true },
-  };
-}
-
-function operationAdded(field: string, kind: OperationKind) {
-  return addedOperations.value[field]?.[kind] === true;
-}
-
-function isValueSelected(field: string, value: string) {
-  return filterValues.value[field]?.includes(value) ?? true;
-}
-
-function areAllValuesSelected(field: string) {
-  const values = valuesForColumn(field);
-  return values.length > 0 && values.every((value) => isValueSelected(field, value));
-}
-
-function areSomeValuesSelected(field: string) {
-  const values = valuesForColumn(field);
-  return values.some((value) => isValueSelected(field, value)) && !areAllValuesSelected(field);
-}
-
-function toggleAllValueFilters(field: string, event: Event) {
-  if (!isFieldBound(field)) return;
-  const values = (event.target as HTMLInputElement).checked ? valuesForColumn(field) : [];
-  filterValues.value = { ...filterValues.value, [field]: values };
-  props.onSetValueFilter?.(field, values);
-}
-
-function toggleValueFilter(field: string, value: string, event: Event) {
-  if (!isFieldBound(field)) return;
-  const selected = new Set(filterValues.value[field] ?? valuesForColumn(field));
-  if ((event.target as HTMLInputElement).checked) selected.add(value);
-  else selected.delete(value);
-  const values = Array.from(selected);
-  filterValues.value = { ...filterValues.value, [field]: values };
-  props.onSetValueFilter?.(field, values);
-}
-
-function numericFilterValue(field: string, key: "topN" | "binCount") {
-  return props.selectedChart?.numericFilters?.[field]?.[key] ?? "";
-}
-
-function updateNumericFilter(field: string, key: "topN" | "binCount", event: Event) {
-  const raw = Number((event.target as HTMLInputElement).value);
-  props.onSetNumericFilter?.(field, { [key]: Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : undefined });
-}
-
-function aggregationValue(field: string) {
-  const chart = props.selectedChart;
-  const channel = chart
-    ? (Object.entries(chart.encodings) as Array<[string, { field: string } | undefined]>)
-      .find(([, encoding]) => encoding?.field === field)?.[0]
-    : undefined;
-  return channel ? chart?.aggregations?.[channel as ChartEncodingChannel] ?? "" : chart?.dimensionAggregations?.[field] ?? "";
-}
-
-function updateAggregation(field: string, event: Event) {
-  const value = (event.target as HTMLSelectElement).value as "sum" | "avg" | "";
-  props.onSetAggregation?.(field, value || undefined);
-}
+  if (!outputFieldIsAvailable.value) return false;
+  if (isSelectedColumnQuantitative.value) {
+    return Number.isFinite(binParameter.value)
+      && (binMethod.value === "fixed-width" ? binParameter.value > 0 : binParameter.value >= 2);
+  }
+  return !!aggregateValueField.value;
+});
 const tableStatus = computed(() => {
   if (isGraph.value) {
     const [nodes, edges] = graphTables.value;
@@ -225,9 +151,6 @@ const tableStatus = computed(() => {
   const columnLabel = headers.value.length === 1 ? "column" : "columns";
   return `${rows.value.length} ${rowLabel} / ${headers.value.length} ${columnLabel}`;
 });
-function encodingLabels(field: string) {
-  return props.encodingBindings[field] ?? [];
-}
 function tableHeaders(table: DatasetTable) {
   return table.columns.map((column) => column.name);
 }
@@ -311,6 +234,173 @@ function displayColumnType(type: DataColumnType | undefined) {
   return type === "temporal" ? "ordinal" : type;
 }
 
+function uniqueOutputField(baseName: string) {
+  const names = new Set(transformColumns.value.map((column) => column.name));
+  if (!names.has(baseName)) return baseName;
+  let suffix = 2;
+  while (names.has(`${baseName}_${suffix}`)) suffix += 1;
+  return `${baseName}_${suffix}`;
+}
+
+function resetTransformForm(mode: TransformEditorMode) {
+  transformEditorMode.value = mode;
+  selectedTransformColumn.value = "";
+  singleValueFilter.value = false;
+  selectedFilterValues.value = [];
+  numericFilterOperator.value = "top";
+  numericFilterValue.value = 10;
+  numericFilterUpperValue.value = 100;
+  aggregateValueField.value = "";
+  aggregateOperation.value = "sum";
+  binMethod.value = "equal-width";
+  binParameter.value = 5;
+  outputField.value = "";
+}
+
+function closeTransformEditor() {
+  transformEditorMode.value = null;
+}
+
+function onTransformColumnChange() {
+  selectedFilterValues.value = [];
+  singleValueFilter.value = false;
+  const column = selectedColumn.value;
+  if (!column) {
+    outputField.value = "";
+    aggregateValueField.value = "";
+    return;
+  }
+  if (column.type === "quantitative") {
+    outputField.value = uniqueOutputField(`${column.name}_bin`);
+    return;
+  }
+  aggregateValueField.value = quantitativeColumns.value[0]?.name ?? "";
+  updateAggregateOutputField();
+}
+
+function updateAggregateOutputField() {
+  if (!selectedTransformColumn.value || !aggregateValueField.value) return;
+  outputField.value = uniqueOutputField(
+    `${aggregateValueField.value}_${aggregateOperation.value}_by_${selectedTransformColumn.value}`,
+  );
+}
+
+function setSingleValueFilter(event: Event) {
+  singleValueFilter.value = (event.target as HTMLInputElement).checked;
+  if (singleValueFilter.value && selectedFilterValues.value.length > 1) {
+    selectedFilterValues.value = selectedFilterValues.value.slice(0, 1);
+  }
+}
+
+function toggleFilterValue(value: string, event: Event) {
+  const checked = (event.target as HTMLInputElement).checked;
+  selectedFilterValues.value = checked
+    ? [...selectedFilterValues.value, value]
+    : selectedFilterValues.value.filter((item) => item !== value);
+}
+
+function selectAllFilterValues() {
+  selectedFilterValues.value = [...selectedColumnValues.value];
+}
+
+function clearFilterValues() {
+  selectedFilterValues.value = [];
+}
+
+function transformSummary(transform: ChartDataTransform) {
+  if (transform.kind === "filter" && transform.mode === "values") {
+    return `${transform.field}: ${transform.values.length} selected${transform.single ? " · Facet clue" : ""}`;
+  }
+  if (transform.kind === "filter") {
+    const operatorLabels: Record<ChartNumericFilterTransform["operator"], string> = {
+      top: "Top",
+      bottom: "Bottom",
+      gte: "≥",
+      gt: ">",
+      lte: "≤",
+      lt: "<",
+      eq: "=",
+      between: "Range",
+    };
+    return transform.operator === "between"
+      ? `${transform.field}: ${transform.value}–${transform.upperValue}`
+      : `${transform.field}: ${operatorLabels[transform.operator]} ${transform.value}`;
+  }
+  if (transform.mode === "group") {
+    return `${transform.operation.toUpperCase()} ${transform.valueField} by ${transform.groupField} → ${transform.outputField}`;
+  }
+  const methodLabels = {
+    "equal-width": "Equal width",
+    "fixed-width": "Fixed width",
+    quantile: "Quantile",
+  };
+  return `${transform.field}: ${methodLabels[transform.method]} → ${transform.outputField}`;
+}
+
+function applyTransform() {
+  const column = selectedColumn.value;
+  if (!props.chartId || !column || !canApplyTransform.value) return;
+  const id = `transform:${crypto.randomUUID()}`;
+  let transform: ChartDataTransform;
+
+  if (transformEditorMode.value === "filter") {
+    transform = column.type === "quantitative"
+      ? {
+        id,
+        kind: "filter",
+        mode: "numeric",
+        field: column.name,
+        operator: numericFilterOperator.value,
+        value: numericFilterValue.value,
+        upperValue: numericFilterOperator.value === "between"
+          ? numericFilterUpperValue.value
+          : undefined,
+      }
+      : {
+        id,
+        kind: "filter",
+        mode: "values",
+        field: column.name,
+        values: [...selectedFilterValues.value],
+        single: singleValueFilter.value,
+      };
+  } else if (column.type === "quantitative") {
+    transform = {
+      id,
+      kind: "aggregate",
+      mode: "bin",
+      field: column.name,
+      method: binMethod.value,
+      parameter: binParameter.value,
+      outputField: outputField.value.trim(),
+    };
+  } else {
+    transform = {
+      id,
+      kind: "aggregate",
+      mode: "group",
+      groupField: column.name,
+      valueField: aggregateValueField.value,
+      operation: aggregateOperation.value,
+      outputField: outputField.value.trim(),
+    };
+  }
+
+  emit("transformsChange", [...transforms.value, transform]);
+  closeTransformEditor();
+  void nextTick(updateExpandedWidth);
+}
+
+function removeTransform(transformId: string) {
+  if (!props.chartId) return;
+  emit("transformsChange", transforms.value.filter((transform) => transform.id !== transformId));
+  void nextTick(updateExpandedWidth);
+}
+
+function onWindowKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape" && transformEditorMode.value) closeTransformEditor();
+}
+
 async function ensurePresetDatasets() {
   const presets = [
     { name: "case1.csv", source: case1Csv },
@@ -328,11 +418,16 @@ async function ensurePresetDatasets() {
 
 onMounted(() => {
   window.addEventListener("resize", updateExpandedWidth);
+  window.addEventListener("keydown", onWindowKeydown);
   void ensurePresetDatasets();
 });
-onBeforeUnmount(() =>
-  window.removeEventListener("resize", updateExpandedWidth),
-);
+onBeforeUnmount(() => {
+  window.removeEventListener("resize", updateExpandedWidth);
+  window.removeEventListener("keydown", onWindowKeydown);
+});
+
+watch(() => props.chartId, closeTransformEditor);
+watch(headers, () => void nextTick(updateExpandedWidth));
 </script>
 
 <template>
@@ -438,82 +533,6 @@ onBeforeUnmount(() =>
               </select>
             </th>
           </tr>
-          <tr v-if="Object.keys(props.encodingBindings).length > 0" class="data-table__binding-row">
-            <th class="data-table__binding-label" scope="row">Encoding</th>
-            <th
-              v-for="header in headers"
-              :key="`encoding-${header}`"
-              class="data-table__binding-cell"
-              scope="col"
-            >
-              <span v-if="encodingLabels(header).length === 0" class="data-table__binding-empty">-</span>
-              <span v-else class="data-table__binding-values">
-                <span v-for="label in encodingLabels(header)" :key="`${header}-${label}`" class="data-table__binding-value">{{ label }}</span>
-              </span>
-            </th>
-          </tr>
-          <tr v-if="showChartOperations" class="data-table__operation-row">
-            <th class="data-table__binding-label data-table__operation-header" scope="row">
-              <div class="data-table__operation-tools">
-                <span>Operation</span>
-                <button class="data-table__drag-tool data-table__drag-tool--icon" type="button" title="Filter" aria-label="Filter" draggable="true" @dragstart="onOperationDragStart('filter', $event)" @dragend="onOperationDragEnd"><Filter :size="12" aria-hidden="true" /></button>
-                <button class="data-table__drag-tool data-table__drag-tool--icon" type="button" title="Aggregate" aria-label="Aggregate" draggable="true" @dragstart="onOperationDragStart('aggregate', $event)" @dragend="onOperationDragEnd"><Sigma :size="13" aria-hidden="true" /></button>
-              </div>
-            </th>
-            <th
-              v-for="column in columns"
-              :key="`operation-${column.name}`"
-              class="data-table__operation-cell"
-              :class="{ 'data-table__operation-cell--target': operationDragActive && isFieldBound(column.name) }"
-              scope="col"
-              @dragover="onOperationDragOver(column.name, $event)"
-              @drop="onOperationDrop(column.name, $event)"
-            >
-              <div v-if="isFieldBound(column.name) && column.type === 'quantitative'" class="data-table__operation-actions">
-                <details v-if="operationAdded(column.name, 'filter')" class="data-table__operation-menu">
-                  <summary class="data-table__operation-label" title="Filter" aria-label="Filter"><Filter :size="12" aria-hidden="true" /></summary>
-                  <div class="data-table__menu-popover">
-                    <label>Top N<input type="number" min="1" step="1" :value="numericFilterValue(column.name, 'topN')" @change="updateNumericFilter(column.name, 'topN', $event)" /></label>
-                    <label>Bins<input type="number" min="2" step="1" :value="numericFilterValue(column.name, 'binCount')" @change="updateNumericFilter(column.name, 'binCount', $event)" /></label>
-                  </div>
-                </details>
-                <details v-if="operationAdded(column.name, 'aggregate')" class="data-table__operation-menu">
-                  <summary class="data-table__operation-label" title="Aggregate" aria-label="Aggregate"><Sigma :size="13" aria-hidden="true" /></summary>
-                  <div class="data-table__menu-popover">
-                    <select aria-label="Aggregation" :value="aggregationValue(column.name)" @change="updateAggregation(column.name, $event)"><option value="">None</option><option value="sum">Sum</option><option value="avg">Average</option></select>
-                  </div>
-                </details>
-              </div>
-              <div
-                v-else-if="isCategoricalType(column.type)"
-                class="data-table__categorical-controls"
-                :class="{ 'data-table__categorical-controls--readonly': !isFieldBound(column.name) }"
-              >
-                <div class="data-table__categorical-options">
-                  <label class="data-panel__value-option data-panel__value-option--all">
-                    <input
-                      type="checkbox"
-                      :checked="areAllValuesSelected(column.name)"
-                      :indeterminate="areSomeValuesSelected(column.name)"
-                      :disabled="!isFieldBound(column.name) || valuesForColumn(column.name).length === 0"
-                      @change="toggleAllValueFilters(column.name, $event)"
-                    />
-                    <span>All</span>
-                  </label>
-                  <label v-for="value in valuesForColumn(column.name)" :key="`${column.name}-${value}`" class="data-panel__value-option">
-                    <input type="checkbox" :checked="isValueSelected(column.name, value)" :disabled="!isFieldBound(column.name)" @change="toggleValueFilter(column.name, value, $event)" />
-                    <span :title="value">{{ value }}</span>
-                  </label>
-                </div>
-                <details v-if="isFieldBound(column.name) && operationAdded(column.name, 'aggregate')" class="data-table__operation-menu">
-                  <summary class="data-table__operation-label" title="Aggregate" aria-label="Aggregate"><Sigma :size="13" aria-hidden="true" /></summary>
-                  <div class="data-table__menu-popover">
-                    <select aria-label="Aggregation" :value="aggregationValue(column.name)" @change="updateAggregation(column.name, $event)"><option value="">Group</option><option value="sum">Sum</option><option value="avg">Average</option></select>
-                  </div>
-                </details>
-              </div>
-            </th>
-          </tr>
         </thead>
         <tbody>
           <tr v-for="(row, rowIndex) in previewRows" :key="rowIndex">
@@ -533,21 +552,10 @@ onBeforeUnmount(() =>
       <table
         v-else
         class="data-table data-table--transposed"
-        :class="{
-          'data-table--has-encoding': Object.keys(props.encodingBindings).length > 0,
-          'data-table--has-operations': showChartOperations,
-        }"
       >
         <thead>
           <tr>
             <th class="data-table__field-name" scope="col">Field</th>
-            <th v-if="Object.keys(props.encodingBindings).length > 0" class="data-table__binding-cell data-table__fixed-column" scope="col">Encoding</th>
-            <th v-if="showChartOperations" class="data-table__operation-cell data-table__operation-header data-table__fixed-column" scope="col">
-              <div class="data-table__operation-tools">
-                <button class="data-table__drag-tool data-table__drag-tool--icon" type="button" title="Filter" aria-label="Filter" draggable="true" @dragstart="onOperationDragStart('filter', $event)" @dragend="onOperationDragEnd"><Filter :size="12" aria-hidden="true" /></button>
-                <button class="data-table__drag-tool data-table__drag-tool--icon" type="button" title="Aggregate" aria-label="Aggregate" draggable="true" @dragstart="onOperationDragStart('aggregate', $event)" @dragend="onOperationDragEnd"><Sigma :size="13" aria-hidden="true" /></button>
-              </div>
-            </th>
             <th
               v-for="(_, rowIndex) in previewRows"
               :key="rowIndex"
@@ -587,41 +595,6 @@ onBeforeUnmount(() =>
                 <option value="quantitative">quantitative</option>
               </select>
             </th>
-            <td v-if="Object.keys(props.encodingBindings).length > 0" class="data-table__binding-cell data-table__fixed-column">
-              <span v-if="encodingLabels(column.name).length === 0" class="data-table__binding-empty">-</span>
-              <span v-else class="data-table__binding-values">
-                <span v-for="label in encodingLabels(column.name)" :key="`${column.name}-${label}`" class="data-table__binding-value">{{ label }}</span>
-              </span>
-            </td>
-            <td v-if="showChartOperations" class="data-table__operation-cell data-table__fixed-column" :class="{ 'data-table__operation-cell--target': operationDragActive && isFieldBound(column.name) }" @dragover="onOperationDragOver(column.name, $event)" @drop="onOperationDrop(column.name, $event)">
-              <div v-if="isFieldBound(column.name) && column.type === 'quantitative'" class="data-table__operation-actions">
-                <details v-if="operationAdded(column.name, 'filter')" class="data-table__operation-menu"><summary class="data-table__operation-label" title="Filter" aria-label="Filter"><Filter :size="12" aria-hidden="true" /></summary><div class="data-table__menu-popover"><label>Top N<input type="number" min="1" step="1" :value="numericFilterValue(column.name, 'topN')" @change="updateNumericFilter(column.name, 'topN', $event)" /></label><label>Bins<input type="number" min="2" step="1" :value="numericFilterValue(column.name, 'binCount')" @change="updateNumericFilter(column.name, 'binCount', $event)" /></label></div></details>
-                <details v-if="operationAdded(column.name, 'aggregate')" class="data-table__operation-menu"><summary class="data-table__operation-label" title="Aggregate" aria-label="Aggregate"><Sigma :size="13" aria-hidden="true" /></summary><div class="data-table__menu-popover"><select aria-label="Aggregation" :value="aggregationValue(column.name)" @change="updateAggregation(column.name, $event)"><option value="">None</option><option value="sum">Sum</option><option value="avg">Average</option></select></div></details>
-              </div>
-              <div
-                v-else-if="isCategoricalType(column.type)"
-                class="data-table__categorical-controls"
-                :class="{ 'data-table__categorical-controls--readonly': !isFieldBound(column.name) }"
-              >
-                <div class="data-table__categorical-options">
-                  <label class="data-panel__value-option data-panel__value-option--all">
-                    <input
-                      type="checkbox"
-                      :checked="areAllValuesSelected(column.name)"
-                      :indeterminate="areSomeValuesSelected(column.name)"
-                      :disabled="!isFieldBound(column.name) || valuesForColumn(column.name).length === 0"
-                      @change="toggleAllValueFilters(column.name, $event)"
-                    />
-                    <span>All</span>
-                  </label>
-                  <label v-for="value in valuesForColumn(column.name)" :key="`${column.name}-${value}`" class="data-panel__value-option">
-                    <input type="checkbox" :checked="isValueSelected(column.name, value)" :disabled="!isFieldBound(column.name)" @change="toggleValueFilter(column.name, value, $event)" />
-                    <span :title="value">{{ value }}</span>
-                  </label>
-                </div>
-                <details v-if="isFieldBound(column.name) && operationAdded(column.name, 'aggregate')" class="data-table__operation-menu"><summary class="data-table__operation-label" title="Aggregate" aria-label="Aggregate"><Sigma :size="13" aria-hidden="true" /></summary><div class="data-table__menu-popover"><select aria-label="Aggregation" :value="aggregationValue(column.name)" @change="updateAggregation(column.name, $event)"><option value="">Group</option><option value="sum">Sum</option><option value="avg">Average</option></select></div></details>
-              </div>
-            </td>
             <td
               v-for="(row, rowIndex) in previewRows"
               :key="rowIndex"
@@ -745,302 +718,253 @@ onBeforeUnmount(() =>
     <footer v-if="!isGraph && rows.length > previewRowLimit" class="data-panel__footer">
       Showing {{ previewRowLimit }} of {{ rows.length }} rows
     </footer>
+
+    <section v-if="!isGraph" class="transform-panel" aria-label="Filter and aggregate">
+      <header class="transform-panel__header">
+        <div>
+          <h3>Chart transform</h3>
+          <small>{{ chartName || "Select a chart" }}</small>
+        </div>
+        <span v-if="transforms.length">{{ transforms.length }}</span>
+      </header>
+      <div v-if="transforms.length" class="transform-panel__list">
+        <div
+          v-for="transform in transforms"
+          :key="transform.id"
+          class="transform-panel__item"
+        >
+          <Filter v-if="transform.kind === 'filter'" :size="14" aria-hidden="true" />
+          <Sigma v-else :size="14" aria-hidden="true" />
+          <span :title="transformSummary(transform)">{{ transformSummary(transform) }}</span>
+          <button
+            type="button"
+            title="Remove transform"
+            aria-label="Remove transform"
+            @click="removeTransform(transform.id)"
+          >
+            <Trash2 :size="13" aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+      <div class="transform-panel__actions">
+        <button
+          type="button"
+          :disabled="!canEditChartTransforms"
+          @click="resetTransformForm('filter')"
+        >
+          <Filter :size="14" aria-hidden="true" />
+          <span>Filter</span>
+          <Plus :size="12" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          :disabled="!canEditChartTransforms"
+          @click="resetTransformForm('aggregate')"
+        >
+          <Sigma :size="14" aria-hidden="true" />
+          <span>Aggregate</span>
+          <Plus :size="12" aria-hidden="true" />
+        </button>
+      </div>
+    </section>
   </aside>
+
+  <Teleport to="body">
+    <div
+      v-if="transformEditorMode"
+      class="transform-dialog-backdrop"
+      @mousedown.self="closeTransformEditor"
+    >
+      <section
+        class="transform-dialog"
+        role="dialog"
+        aria-modal="true"
+        :aria-labelledby="`${transformEditorMode}-dialog-title`"
+      >
+        <header class="transform-dialog__header">
+          <div class="transform-dialog__title">
+            <Filter v-if="transformEditorMode === 'filter'" :size="17" aria-hidden="true" />
+            <Sigma v-else :size="17" aria-hidden="true" />
+            <h2 :id="`${transformEditorMode}-dialog-title`">
+              Add {{ transformEditorMode === "filter" ? "filter" : "aggregate" }}
+            </h2>
+          </div>
+          <button
+            class="transform-dialog__close"
+            type="button"
+            title="Close"
+            aria-label="Close"
+            @click="closeTransformEditor"
+          >
+            <X :size="16" aria-hidden="true" />
+          </button>
+        </header>
+
+        <div class="transform-dialog__body">
+          <label class="transform-control">
+            <span>Column</span>
+            <select v-model="selectedTransformColumn" autofocus @change="onTransformColumnChange">
+              <option value="" disabled>Select a column</option>
+              <option v-for="column in transformColumns" :key="column.name" :value="column.name">
+                {{ column.name }} · {{ displayColumnType(column.type) }}
+              </option>
+            </select>
+          </label>
+
+          <template v-if="transformEditorMode === 'filter' && selectedColumn">
+            <template v-if="!isSelectedColumnQuantitative">
+              <div class="transform-dialog__inline-header">
+                <label class="transform-toggle">
+                  <input
+                    type="checkbox"
+                    :checked="singleValueFilter"
+                    @change="setSingleValueFilter"
+                  />
+                  <span>Single value · Facet clue</span>
+                </label>
+                <div v-if="!singleValueFilter" class="transform-dialog__text-actions">
+                  <button type="button" @click="selectAllFilterValues">All</button>
+                  <button type="button" @click="clearFilterValues">Clear</button>
+                </div>
+              </div>
+              <div class="transform-value-list">
+                <label v-for="value in selectedColumnValues" :key="value">
+                  <input
+                    v-if="singleValueFilter"
+                    type="radio"
+                    name="filter-value"
+                    :value="value"
+                    :checked="selectedFilterValues[0] === value"
+                    @change="selectedFilterValues = [value]"
+                  />
+                  <input
+                    v-else
+                    type="checkbox"
+                    :checked="selectedFilterValues.includes(value)"
+                    @change="toggleFilterValue(value, $event)"
+                  />
+                  <span>{{ value || "(empty)" }}</span>
+                </label>
+              </div>
+            </template>
+
+            <template v-else>
+              <label class="transform-control">
+                <span>Condition</span>
+                <select v-model="numericFilterOperator">
+                  <option value="top">Top N</option>
+                  <option value="bottom">Bottom N</option>
+                  <option value="gte">≥ Greater than or equal</option>
+                  <option value="gt">&gt; Greater than</option>
+                  <option value="lte">≤ Less than or equal</option>
+                  <option value="lt">&lt; Less than</option>
+                  <option value="eq">= Equal</option>
+                  <option value="between">Range</option>
+                </select>
+              </label>
+              <div class="transform-number-row" :class="{ 'transform-number-row--range': numericFilterOperator === 'between' }">
+                <label class="transform-control">
+                  <span>{{ numericFilterOperator === "top" || numericFilterOperator === "bottom" ? "Count" : numericFilterOperator === "between" ? "Minimum" : "Value" }}</span>
+                  <input
+                    v-model.number="numericFilterValue"
+                    type="number"
+                    :min="numericFilterOperator === 'top' || numericFilterOperator === 'bottom' ? 1 : undefined"
+                    :step="numericFilterOperator === 'top' || numericFilterOperator === 'bottom' ? 1 : 'any'"
+                  />
+                </label>
+                <label v-if="numericFilterOperator === 'between'" class="transform-control">
+                  <span>Maximum</span>
+                  <input v-model.number="numericFilterUpperValue" type="number" step="any" />
+                </label>
+              </div>
+            </template>
+          </template>
+
+          <template v-if="transformEditorMode === 'aggregate' && selectedColumn">
+            <template v-if="!isSelectedColumnQuantitative">
+              <label class="transform-control">
+                <span>Value column</span>
+                <select v-model="aggregateValueField" @change="updateAggregateOutputField">
+                  <option value="" disabled>Select a quantitative column</option>
+                  <option v-for="column in quantitativeColumns" :key="column.name" :value="column.name">
+                    {{ column.name }}
+                  </option>
+                </select>
+              </label>
+              <fieldset class="transform-segmented">
+                <legend>Operation</legend>
+                <div class="transform-segmented__options">
+                  <label :class="{ 'transform-segmented__active': aggregateOperation === 'sum' }">
+                    <input
+                      v-model="aggregateOperation"
+                      type="radio"
+                      value="sum"
+                      @change="updateAggregateOutputField"
+                    />
+                    <span>Sum</span>
+                  </label>
+                  <label :class="{ 'transform-segmented__active': aggregateOperation === 'avg' }">
+                    <input
+                      v-model="aggregateOperation"
+                      type="radio"
+                      value="avg"
+                      @change="updateAggregateOutputField"
+                    />
+                    <span>Average</span>
+                  </label>
+                </div>
+              </fieldset>
+            </template>
+
+            <template v-else>
+              <label class="transform-control">
+                <span>Binning</span>
+                <select v-model="binMethod" @change="binParameter = binMethod === 'fixed-width' ? 10 : 5">
+                  <option value="equal-width">Equal width</option>
+                  <option value="fixed-width">Fixed width</option>
+                  <option value="quantile">Quantile</option>
+                </select>
+              </label>
+              <label class="transform-control">
+                <span>{{ binMethod === "fixed-width" ? "Bin width" : "Number of bins" }}</span>
+                <input
+                  v-model.number="binParameter"
+                  type="number"
+                  :min="binMethod === 'fixed-width' ? 0 : 2"
+                  :step="binMethod === 'fixed-width' ? 'any' : 1"
+                />
+              </label>
+            </template>
+
+            <label class="transform-control">
+              <span>New column</span>
+              <input v-model="outputField" type="text" spellcheck="false" />
+              <small v-if="outputField.trim() && !outputFieldIsAvailable">
+                Choose a unique column name.
+              </small>
+            </label>
+          </template>
+        </div>
+
+        <footer class="transform-dialog__footer">
+          <button type="button" class="transform-dialog__cancel" @click="closeTransformEditor">
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="transform-dialog__apply"
+            :disabled="!canApplyTransform"
+            @click="applyTransform"
+          >
+            Apply
+          </button>
+        </footer>
+      </section>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
-.data-panel__value-option {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  padding: 1px 2px 1px 0;
-  color: #526174;
-  font-size: 10px;
-  line-height: 1.2;
-}
-
-.data-panel__value-option input {
-  width: 12px;
-  height: 12px;
-  flex: 0 0 12px;
-  margin: 0;
-}
-
-.data-panel__value-option span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.data-panel__value-option--all {
-  color: #18212f;
-  font-weight: 600;
-}
-
-.data-panel__numeric-operation,
-.data-panel__aggregate-row,
-.data-table__numeric-controls,
-.data-table__categorical-controls,
-.data-table__operation-actions {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 54px 54px 88px;
-  align-items: center;
-  gap: 5px;
-  margin-bottom: 6px;
-  color: #526174;
-  font-size: 10px;
-}
-
-.data-panel__numeric-operation strong,
-.data-panel__aggregate-row > span,
-.data-table__operation-cell {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.data-table__operation-cell--target {
-  background: #eef6ff;
-  outline: 1px dashed #6aa9df;
-  outline-offset: -2px;
-}
-
-.data-table__operation-tools {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 4px;
-  white-space: normal;
-}
-
-.data-table__operation-header {
-  position: sticky;
-  top: 0;
-  z-index: 4;
-  background: #e5edf4;
-}
-
-.data-table:not(.data-table--transposed) .data-table__operation-header {
-  left: 0;
-}
-
-.data-table__drag-tool {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 3px 6px;
-  border: 1px solid #cbd5e1;
-  border-radius: 4px;
-  background: #fff;
-  color: #526174;
-  cursor: grab;
-  font-size: 10px;
-}
-
-.data-table__drag-tool--icon {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  justify-content: center;
-}
-
-.data-table__drag-tool:active {
-  cursor: grabbing;
-}
-
-.data-table__drag-tool:hover {
-  border-color: #1c7ed6;
-  color: #1554b2;
-}
-
-.data-table__operation-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  width: 24px;
-  height: 24px;
-  margin-bottom: 2px;
-  justify-content: center;
-  color: #526174;
-  cursor: pointer;
-  font-size: 10px;
-  list-style: none;
-}
-
-.data-table__operation-label::-webkit-details-marker {
-  display: none;
-}
-
-.data-panel__numeric-operation label,
-.data-table__numeric-controls label {
-  display: grid;
-  gap: 2px;
-}
-
-.data-panel__numeric-operation input,
-.data-panel__numeric-operation select,
-.data-panel__aggregate-row select,
-.data-table__operation-cell input,
-.data-table__operation-cell select {
-  width: 100%;
-  min-width: 0;
-  height: 24px;
-  padding: 2px 4px;
-  border: 1px solid #cbd5e1;
-  border-radius: 4px;
-  background: #fff;
-  color: #253247;
-  font-size: 11px;
-}
-
-.data-panel__aggregate-row {
-  grid-template-columns: minmax(0, 1fr) 88px;
-}
-
-.data-table__operation-cell {
-  min-width: 92px;
-  vertical-align: top;
-  overflow: visible;
-  white-space: normal;
-}
-
-.data-table__operation-actions {
-  display: flex;
-  gap: 4px;
-  min-width: 40px;
-  margin: 0;
-}
-
-.data-table__operation-menu {
-  position: relative;
-}
-
-.data-table__menu-popover {
-  position: absolute;
-  z-index: 5;
-  top: 27px;
-  left: 0;
-  display: grid;
-  gap: 6px;
-  min-width: 112px;
-  padding: 7px;
-  border: 1px solid #cbd5e1;
-  border-radius: 5px;
-  background: #fff;
-  box-shadow: 0 5px 16px rgba(24, 33, 47, .16);
-}
-
-.data-table__menu-popover label {
-  display: grid;
-  gap: 2px;
-  color: #526174;
-  font-size: 10px;
-}
-
-.data-table__menu-popover--values {
-  max-height: 180px;
-  overflow-y: auto;
-}
-
-.data-table__categorical-options {
-  display: grid;
-  grid-template-rows: repeat(4, max-content);
-  grid-auto-flow: column;
-  grid-auto-columns: max-content;
-  align-content: start;
-  align-items: center;
-  gap: 2px 8px;
-  height: 80px;
-  min-height: 120px;
-  max-height: 120px;
-  margin-bottom: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
-}
-
-.data-table__categorical-options .data-panel__value-option {
-  width: max-content;
-  max-width: 92px;
-}
-
-.data-table__numeric-controls {
-  grid-template-columns: 42px 42px;
-  min-width: 116px;
-}
-
-.data-table__numeric-controls select {
-  grid-column: 1 / -1;
-}
-
-.data-table__categorical-controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  min-width: 108px;
-}
-
-.data-table__categorical-controls--readonly .data-panel__value-option {
-  color: #8a98a8;
-  cursor: not-allowed;
-}
-
-.data-table__categorical-controls--readonly input {
-  cursor: not-allowed;
-}
-
-.data-table__categorical-controls details {
-  position: relative;
-}
-
-.data-table__categorical-controls summary {
-  cursor: pointer;
-  color: #526174;
-  font-size: 10px;
-}
-
-.data-table__categorical-controls select {
-  margin-top: 4px;
-}
-
-.data-table--transposed .data-table__operation-tools {
-  flex-direction: row;
-  align-items: center;
-  justify-content: flex-start;
-}
-
-.data-table--transposed .data-table__operation-tools .data-table__drag-tool {
-  width: 24px;
-  min-width: 0;
-  justify-content: center;
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-.data-table--transposed .data-table__operation-actions {
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.data-panel--expanded .data-table--transposed .data-table__operation-cell.data-table__fixed-column {
-  width: 280px;
-  min-width: 280px;
-  max-width: 280px;
-}
-
-@media (max-width: 760px) {
-  .data-panel__numeric-operation {
-    grid-template-columns: minmax(0, 1fr) 54px 54px;
-  }
-
-  .data-panel__numeric-operation label:last-child {
-    grid-column: 1 / -1;
-    grid-template-columns: 70px minmax(0, 1fr);
-    align-items: center;
-  }
-}
-
 .data-panel {
   --data-panel-width: 340px;
   --data-panel-max-width: 912px;
@@ -1361,59 +1285,6 @@ onBeforeUnmount(() =>
   text-align: left;
 }
 
-.data-table__binding-row {
-  background: #f8fbfe;
-}
-
-.data-table__binding-label,
-.data-table__binding-cell {
-  height: auto !important;
-  min-height: 28px;
-  padding: 4px 9px !important;
-  background: #f8fbfe;
-  color: #52657a;
-  font-size: 9px;
-  font-weight: 600;
-  text-align: left;
-  vertical-align: middle;
-}
-
-.data-table__binding-label {
-  min-width: 42px !important;
-  color: #33465b;
-}
-
-.data-table__binding-cell {
-  min-width: 90px;
-  max-width: 140px;
-  overflow: visible;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  text-overflow: clip;
-}
-
-.data-table__binding-values {
-  display: grid;
-  gap: 2px;
-}
-
-.data-table__binding-value {
-  display: block;
-  max-width: none;
-  padding: 0;
-  color: #1554b2;
-  font-size: 9px;
-  font-weight: 650;
-  line-height: 1.2;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
-.data-table__binding-empty {
-  color: #9aa8b7;
-  font-weight: 500;
-}
-
 .data-table tbody tr:nth-child(even) td,
 .data-table tbody tr:nth-child(even) th {
   background: #f8fafc;
@@ -1449,49 +1320,12 @@ onBeforeUnmount(() =>
   font-weight: 700;
 }
 
-/* Keep the field controls visible while preview values scroll horizontally. */
-.data-table--transposed .data-table__fixed-column {
-  position: sticky;
-  z-index: 1;
-  background: #f1f5f8;
-}
-
 .data-table--transposed .data-table__field-name {
   width: var(--data-table-field-width);
   min-width: var(--data-table-field-width) !important;
   max-width: var(--data-table-field-width) !important;
 }
 
-.data-table--transposed thead .data-table__fixed-column {
-  z-index: 3;
-  background: #e5edf4;
-}
-
-.data-table--transposed thead .data-table__operation-header {
-  top: 0;
-  z-index: 4;
-}
-
-.data-table--transposed .data-table__binding-cell.data-table__fixed-column {
-  left: var(--data-table-field-width);
-  width: 92px;
-  min-width: 92px;
-  max-width: 92px;
-  overflow: hidden;
-}
-
-.data-table--transposed .data-table__operation-cell.data-table__fixed-column {
-  left: calc(var(--data-table-field-width) + 92px);
-  width: 116px;
-  min-width: 116px;
-  max-width: 116px;
-}
-
-.data-table--transposed:not(.data-table--has-encoding) .data-table__operation-cell.data-table__fixed-column {
-  left: var(--data-table-field-width);
-}
-
-.data-table--transposed .data-table__fixed-column::after,
 .data-table--transposed .data-table__field-name::after {
   position: absolute;
   top: 0;
@@ -1560,6 +1394,406 @@ onBeforeUnmount(() =>
   font-size: 10px;
 }
 
+.transform-panel {
+  flex: 0 0 auto;
+  border-top: 1px solid rgba(24, 33, 47, 0.1);
+  background: #f8fafc;
+}
+
+.transform-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 32px;
+  padding: 7px 12px 5px;
+}
+
+.transform-panel__header h3 {
+  margin: 0;
+  color: #516176;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.transform-panel__header > div {
+  min-width: 0;
+}
+
+.transform-panel__header small {
+  display: block;
+  max-width: 240px;
+  margin-top: 2px;
+  overflow: hidden;
+  color: #7a8797;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transform-panel__header span {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: #e2e8ef;
+  color: #5d6c7d;
+  font-size: 9px;
+  text-align: center;
+}
+
+.transform-panel__list {
+  display: grid;
+  gap: 4px;
+  max-height: 112px;
+  padding: 0 8px 6px;
+  overflow-y: auto;
+}
+
+.transform-panel__item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 24px;
+  align-items: center;
+  min-height: 30px;
+  padding: 2px 2px 2px 7px;
+  border: 1px solid #dfe5eb;
+  border-radius: 5px;
+  background: #fff;
+  color: #52657a;
+}
+
+.transform-panel__item > svg {
+  color: #75869a;
+}
+
+.transform-panel__item > span {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transform-panel__item button,
+.transform-dialog__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #8491a0;
+  cursor: pointer;
+}
+
+.transform-panel__item button:hover,
+.transform-dialog__close:hover {
+  background: #fff0f0;
+  color: #b42f2f;
+}
+
+.transform-panel__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 0 8px 9px;
+}
+
+.transform-panel__actions button {
+  display: grid;
+  grid-template-columns: 16px 1fr 12px;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid #cfd9e3;
+  border-radius: 6px;
+  background: #fff;
+  color: #40566d;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.transform-panel__actions button:hover:not(:disabled) {
+  border-color: rgba(28, 126, 214, 0.42);
+  background: #edf5fc;
+  color: #1554b2;
+}
+
+.transform-panel__actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.transform-dialog-backdrop {
+  position: fixed;
+  z-index: 2400;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(17, 24, 34, 0.38);
+}
+
+.transform-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(440px, calc(100vw - 32px));
+  max-height: min(680px, calc(100vh - 40px));
+  overflow: hidden;
+  border: 1px solid rgba(24, 33, 47, 0.14);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 22px 55px rgba(21, 32, 46, 0.24);
+}
+
+.transform-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 52px;
+  padding: 10px 12px 10px 16px;
+  border-bottom: 1px solid #e4e8ed;
+}
+
+.transform-dialog__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #42586f;
+}
+
+.transform-dialog__title h2 {
+  margin: 0;
+  color: #202e3d;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.transform-dialog__body {
+  display: grid;
+  gap: 16px;
+  min-height: 160px;
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.transform-control {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.transform-control > span,
+.transform-segmented legend {
+  color: #526174;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.transform-control select,
+.transform-control input {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 6px 9px;
+  border: 1px solid #cfd7e0;
+  border-radius: 6px;
+  background: #fff;
+  color: #253648;
+  font: inherit;
+  font-size: 12px;
+}
+
+.transform-control select:focus,
+.transform-control input:focus {
+  border-color: #438dcc;
+  outline: 2px solid rgba(28, 126, 214, 0.16);
+  outline-offset: 0;
+}
+
+.transform-control small {
+  color: #b23a3a;
+  font-size: 10px;
+}
+
+.transform-dialog__inline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 24px;
+}
+
+.transform-toggle,
+.transform-value-list label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #34495e;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.transform-toggle input,
+.transform-value-list input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #1c7ed6;
+}
+
+.transform-dialog__text-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.transform-dialog__text-actions button {
+  padding: 2px 5px;
+  border: 0;
+  background: transparent;
+  color: #1b67a6;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.transform-dialog__text-actions button:hover {
+  text-decoration: underline;
+}
+
+.transform-value-list {
+  display: grid;
+  gap: 1px;
+  max-height: 230px;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid #dce2e8;
+  border-radius: 6px;
+  background: #f9fafb;
+}
+
+.transform-value-list label {
+  min-height: 30px;
+  padding: 4px 7px;
+  border-radius: 4px;
+}
+
+.transform-value-list label:hover {
+  background: #edf3f8;
+}
+
+.transform-value-list label span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.transform-number-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.transform-number-row--range {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.transform-segmented {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.transform-segmented legend {
+  margin-bottom: 6px;
+  padding: 0;
+}
+
+.transform-segmented__options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.transform-segmented__options label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  border: 1px solid #cfd7e0;
+  background: #fff;
+  color: #526174;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.transform-segmented__options label:first-of-type {
+  border-radius: 6px 0 0 6px;
+}
+
+.transform-segmented__options label:last-of-type {
+  border-left: 0;
+  border-radius: 0 6px 6px 0;
+}
+
+.transform-segmented__options label.transform-segmented__active {
+  border-color: #438dcc;
+  background: #e5f1fb;
+  color: #1554b2;
+  font-weight: 700;
+}
+
+.transform-segmented input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.transform-dialog__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-height: 58px;
+  padding: 10px 16px;
+  border-top: 1px solid #e4e8ed;
+  background: #f8fafc;
+}
+
+.transform-dialog__footer button {
+  min-width: 76px;
+  height: 34px;
+  padding: 6px 13px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.transform-dialog__cancel {
+  border: 1px solid #cfd7e0;
+  background: #fff;
+  color: #526174;
+}
+
+.transform-dialog__apply {
+  border: 1px solid #176eb8;
+  background: #1c7ed6;
+  color: #fff;
+}
+
+.transform-dialog__apply:disabled {
+  border-color: #b9c1ca;
+  background: #c5ccd4;
+  cursor: not-allowed;
+}
+
 @media (max-width: 1100px) {
   .data-panel {
     --data-panel-width: 264px;
@@ -1581,6 +1815,16 @@ onBeforeUnmount(() =>
   .data-panel--expanded {
     flex-basis: auto;
     width: auto;
+  }
+
+  .transform-dialog-backdrop {
+    align-items: end;
+    padding: 10px;
+  }
+
+  .transform-dialog {
+    width: 100%;
+    max-height: calc(100vh - 20px);
   }
 }
 </style>

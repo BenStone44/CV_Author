@@ -1521,6 +1521,73 @@ describe("dimension overflow decisions", () => {
     });
   });
 
+  it("consumes single-value filter clues when creating a two-dimensional facet", () => {
+    const dataset: Dataset = {
+      ...layerDataset,
+      id: "facet-filter-clue-dataset",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "region", type: "nominal" },
+        { name: "time", type: "temporal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: ["A", "B"].flatMap((person) => ["East", "West"].map((region, index) => ({
+        person,
+        region,
+        time: "2026-01-01",
+        value: String(10 + index),
+      }))),
+    };
+    const chart = lineChart("facet-filter-clue-source", 100, false);
+    chart.chartSpec = {
+      ...chart.chartSpec!,
+      datasetId: dataset.id,
+      dataTransforms: [
+        {
+          id: "person-clue",
+          kind: "filter",
+          mode: "values",
+          field: "person",
+          values: ["A"],
+          single: true,
+        },
+        {
+          id: "region-clue",
+          kind: "filter",
+          mode: "values",
+          field: "region",
+          values: ["East"],
+          single: true,
+        },
+      ],
+    };
+    const canvasRef = ref({
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 800 }),
+      querySelectorAll: () => [],
+    } as unknown as HTMLElement);
+    const store = useCanvasStore(canvasRef);
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [chart];
+    store.selectedIds.value = [chart.id];
+
+    expect(store.createFacetFromFields(chart.id, {
+      rowField: "person",
+      columnField: "region",
+    })).toBe(true);
+
+    expect(store.canvasNodes.value).toHaveLength(4);
+    expect(store.canvasNodes.value[0]?.compositionSpec?.facetGrid).toMatchObject({
+      rowField: "person",
+      columnField: "region",
+      rowValues: ["A", "B"],
+      columnValues: ["East", "West"],
+    });
+    expect(store.canvasNodes.value.every((node) => node.chartSpec?.dataTransforms === undefined)).toBe(true);
+    expect(new Set(store.canvasNodes.value.map((node) => JSON.stringify(node.chartSpec?.filters))).size).toBe(4);
+    expect(dataset.rows).toHaveLength(4);
+  });
+
   it("synchronizes facet fields and resolve channels across the composition", () => {
     const dataset: Dataset = {
       ...layerDataset,
