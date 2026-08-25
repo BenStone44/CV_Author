@@ -236,6 +236,63 @@ describe("semantic Case 1 renderers", () => {
     expect(result.content).toContain('fill="#ffffff"');
   });
 
+  it("uses each bar encoding's aggregation result for color and size", () => {
+    const aggregatedDataset: Dataset = {
+      id: "aggregated-mapped-bars",
+      name: "aggregated-mapped-bars.csv",
+      columns: [
+        { name: "category", type: "nominal" },
+        { name: "value", type: "quantitative" },
+        { name: "color", type: "quantitative" },
+        { name: "size", type: "quantitative" },
+      ],
+      rows: [
+        { category: "A", value: "4", color: "0", size: "10" },
+        { category: "A", value: "6", color: "100", size: "20" },
+        { category: "B", value: "8", color: "100", size: "40" },
+      ],
+    };
+    const result = renderDeterministicChart({
+      chartId: "aggregated-mapped-bars",
+      width: 500,
+      height: 300,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Cartesian", origin: { x: 0, y: 300 }, xDirection: 1, yDirection: -1 },
+      chartSpec: {
+        chartType: "SingleBarChart",
+        datasetId: aggregatedDataset.id,
+        encodings: {
+          x: { field: "category", type: "nominal" },
+          y: { field: "value", type: "quantitative" },
+          color: { field: "color", type: "quantitative" },
+          size: { field: "size", type: "quantitative" },
+        },
+        aggregations: { y: "sum", color: "avg", size: "sum" },
+        markGroups: [{
+          id: "mark-group:aggregated-mapped-bars:bar",
+          chartId: "aggregated-mapped-bars",
+          role: "bar",
+          memberKeys: [],
+          sharedConfig: {
+            colorMapping: { type: "linear", stops: [{ offset: 0, color: "#000000" }, { offset: 1, color: "#ffffff" }] },
+            sizeMapping: { type: "linear", stops: [{ offset: 0, size: 10 }, { offset: 1, size: 30 }] },
+          },
+        }],
+      },
+      dataset: aggregatedDataset,
+    });
+
+    const bars = Array.from(result.content.matchAll(
+      /<rect[^>]*data-category-key="([^"]+)"[^>]*width="([^"]+)"[^>]*height="[^"]+"[^>]*fill="([^"]+)"/g,
+    ));
+    expect(bars).toHaveLength(2);
+    expect(bars.find((bar) => bar[1] === "A")?.[3]).toBe("#000000");
+    expect(bars.find((bar) => bar[1] === "B")?.[3]).toBe("#ffffff");
+    expect(bars.find((bar) => bar[1] === "A")?.[2]).toBe("20");
+    expect(bars.find((bar) => bar[1] === "B")?.[2]).toBe("30");
+  });
+
   it("uses Matrix value for intensity and Color for categorical cell color", () => {
     const matrixDataset: Dataset = {
       id: "matrix-color",

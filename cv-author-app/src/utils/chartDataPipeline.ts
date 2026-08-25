@@ -1,8 +1,8 @@
 import { materializeChartStructure } from "./dimensionInference";
-import { normalizeBarChartVariant, normalizeChartTemplate } from "./chartTemplates";
+import { getChartTemplateContract, normalizeBarChartVariant, normalizeChartTemplate } from "./chartTemplates";
 import { inferCsvPrimaryKey } from "./csvDataEngine";
 import { materializeChartDataTransforms } from "./chartDataTransforms";
-import type { ChartEncoding, ChartSpec, Dataset } from "../types";
+import type { ChartEncoding, ChartEncodingChannel, ChartSpec, Dataset } from "../types";
 
 export const CSV_MEASURE_ID_FIELD = "__csv_measure__";
 export const CSV_MEASURE_VALUE_FIELD = "__csv_value__";
@@ -184,6 +184,87 @@ export function synchronizeChartEncodingTypes(spec: ChartSpec, dataset: Dataset)
   };
 }
 
+function encodingsForChannel(spec: ChartSpec, channel: ChartEncodingChannel, role: string) {
+  if (role === "series") {
+    return spec.seriesFields?.length
+      ? spec.seriesFields
+      : spec.series
+        ? [spec.series]
+        : spec.encodings[channel]
+          ? [spec.encodings[channel]!]
+          : [];
+  }
+  if (channel === "y" && spec.valueFields?.length) return spec.valueFields;
+  if (channel === "segment") {
+    return spec.encodings.segment ? [spec.encodings.segment] : [];
+  }
+  if ((channel === "theta" || channel === "angle") && spec.angleFields?.length) return spec.angleFields;
+  const encoding = spec.encodings[channel];
+  return encoding ? [encoding] : [];
+}
+
+function visualKeyFields(spec: ChartSpec) {
+  const contract = getChartTemplateContract(spec.chartType);
+  if (!contract) return [];
+  return Array.from(new Set(contract.channels.flatMap((mapping) => {
+    // A categorical style/color binding creates separate marks, while a
+    // quantitative style only changes appearance and must not split values.
+    if (mapping.role === "measure") return [];
+    return encodingsForChannel(spec, mapping.channel, mapping.role)
+      .filter((encoding) => encoding.type !== "quantitative")
+      .map((encoding) => encoding.field);
+  })));
+}
+
+function hasRepeatedVisualKey(dataset: Dataset, fields: string[]) {
+  if (dataset.rows.length < 2) return false;
+  const keys = new Set<string>();
+  for (const row of dataset.rows) {
+    const key = fields.map((field) => row[field] ?? "").join("\u0000");
+    if (keys.has(key)) return true;
+    keys.add(key);
+  }
+  return false;
+}
+
+/**
+ * Detects duplicate visual keys after chart-local transforms. The inferred
+ * sum is persisted as metadata so renderers and the encoding inspector share
+ * one aggregation decision; explicit user choices always take precedence.
+ */
+export function applyAutomaticAggregations(dataset: Dataset, input: ChartSpec): ChartSpec {
+  const contract = getChartTemplateContract(input.chartType);
+  if (!contract || contract.aggregationPolicy !== "allowed") return input;
+  const dimensions = visualKeyFields(input);
+  const repeated = hasRepeatedVisualKey(dataset, dimensions);
+  const previousAuto = input.autoAggregations ?? {};
+  const aggregations = { ...input.aggregations };
+  Object.keys(previousAuto).forEach((channel) => {
+    if (aggregations[channel as ChartEncodingChannel] === previousAuto[channel as ChartEncodingChannel]) {
+      delete aggregations[channel as ChartEncodingChannel];
+    }
+  });
+  const autoAggregations: Partial<Record<ChartEncodingChannel, "sum" | "avg">> = {};
+  contract.channels.forEach((mapping) => {
+    if (mapping.role !== "measure") return;
+    const encodings = encodingsForChannel(input, mapping.channel, mapping.role)
+      .filter((encoding) => encoding.type === "quantitative");
+    if (encodings.length === 0) return;
+    if (repeated && aggregations[mapping.channel] === undefined) {
+      aggregations[mapping.channel] = "sum";
+      autoAggregations[mapping.channel] = "sum";
+    }
+  });
+  const next: ChartSpec = {
+    ...input,
+  };
+  if (Object.keys(aggregations).length > 0) next.aggregations = aggregations;
+  else delete next.aggregations;
+  if (Object.keys(autoAggregations).length > 0) next.autoAggregations = autoAggregations;
+  else delete next.autoAggregations;
+  return next;
+}
+
 export function prepareChartData(
   chartId: string,
   sourceDataset: Dataset,
@@ -193,7 +274,10 @@ export function prepareChartData(
   const transformedDataset = materializeChartDataTransforms(filteredDataset, spec.dataTransforms);
   const materialized = materializeCsvValueSeries(transformedDataset, spec);
   const dataset = materializeNumericBins(materialized.dataset, spec);
-  const synchronizedSpec = synchronizeChartEncodingTypes(materialized.chartSpec, dataset);
+  const synchronizedSpec = applyAutomaticAggregations(
+    dataset,
+    synchronizeChartEncodingTypes(materialized.chartSpec, dataset),
+  );
   return {
     dataset,
     chartSpec: materializeChartStructure(chartId, dataset, synchronizedSpec),

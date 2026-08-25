@@ -59,6 +59,7 @@ const emit = defineEmits<{
   valueSeriesFieldsChange: [fields: string[]];
   segmentFieldsChange: [fields: string[]];
   parallelFieldsChange: [fields: string[]];
+  aggregationChange: [channel: ChartEncodingChannel, aggregation?: "sum" | "avg"];
   markConfigChange: [patch: MarkGroupSharedConfig];
   markConfigEditStart: [field: string];
   markConfigEditEnd: [];
@@ -147,6 +148,13 @@ const seriesStyleMapping = computed<SeriesStyleMapping>(() => {
 });
 const legendVisible = computed(() => props.markConfig.legendVisible === true);
 const quantitativeColumns = computed(() => props.columns.filter((column) => column.type === "quantitative"));
+const aggregationEntries = computed(() => Object.entries(props.chartSpec.aggregations ?? {})
+  .flatMap(([channel, aggregation]) => {
+    const encoding = props.chartSpec.encodings[channel as ChartEncodingChannel];
+    return aggregation && encoding?.type === "quantitative"
+      ? [{ channel: channel as ChartEncodingChannel, aggregation, automatic: props.chartSpec.autoAggregations?.[channel as ChartEncodingChannel] !== undefined }]
+      : [];
+  }));
 const selectedSegmentFields = computed(() => props.chartSpec.encodings.segment?.field
   ? [props.chartSpec.encodings.segment.field]
   : props.chartSpec.angleFields?.map((encoding) => encoding.field) ?? []);
@@ -429,6 +437,24 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
           @change="updateMappingDefaults(config.channel, $event)"
         />
       </template>
+
+      <section v-if="aggregationEntries.length" class="encoding-config__aggregation" aria-label="Automatic aggregation">
+        <header>
+          <span>Aggregation</span>
+          <small>Repeated visual keys are reduced before rendering.</small>
+        </header>
+        <label v-for="entry in aggregationEntries" :key="entry.channel">
+          <span>{{ entry.channel.toUpperCase() }}<em v-if="entry.automatic">Auto</em></span>
+          <select
+            :value="entry.aggregation"
+            :aria-label="`${entry.channel} aggregation`"
+            @change="emit('aggregationChange', entry.channel, ($event.target as HTMLSelectElement).value as 'sum' | 'avg')"
+          >
+            <option value="sum">Sum</option>
+            <option value="avg">Average</option>
+          </select>
+        </label>
+      </section>
 
       <section
         v-if="supportsSeriesItems"
@@ -721,6 +747,14 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
 .encoding-config__axis-switch button.is-active { border-color: #1554b2; background: #1554b2; color: #fff; }
 .encoding-config__summary { margin: 0; padding: 8px 9px; border-left: 3px solid #1980bd; background: #f3f7fa; color: #334155; font-size: 11px; line-height: 1.45; }
 .encoding-config__derived-series { margin: -4px 0 0; color: #1554b2; font-size: 11px; }
+.encoding-config__aggregation { display: grid; gap: 7px; padding: 8px; border: 1px solid rgba(21, 84, 178, 0.2); border-radius: 6px; background: #f8fbff; color: #334155; }
+.encoding-config__aggregation header { display: grid; gap: 2px; }
+.encoding-config__aggregation header span { font-size: 11px; font-weight: 700; }
+.encoding-config__aggregation header small { color: #718096; font-size: 9px; line-height: 1.35; }
+.encoding-config__aggregation label { display: grid; grid-template-columns: minmax(0, 1fr) 108px; align-items: center; gap: 8px; font-size: 10px; }
+.encoding-config__aggregation label > span { display: inline-flex; align-items: center; gap: 6px; }
+.encoding-config__aggregation em { padding: 2px 4px; border-radius: 3px; background: #e0efff; color: #1554b2; font-size: 8px; font-style: normal; font-weight: 700; text-transform: uppercase; }
+.encoding-config__aggregation select { width: 100%; height: 28px; padding: 0 6px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 5px; background: #fff; color: #223041; font: inherit; font-size: 10px; }
 .encoding-config__angle { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; padding-top: 2px; color: #516176; font-size: 11px; }
 .encoding-config__angle > span { grid-column: 1 / -1; }
 .encoding-config__angle abbr { color: #b42318; text-decoration: none; }

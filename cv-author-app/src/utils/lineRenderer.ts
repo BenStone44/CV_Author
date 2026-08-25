@@ -405,15 +405,19 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
     .y((datum) => yAxisScale.position(datum.y));
   const colorEncoding = isMultiLine ? undefined : chartSpec.encodings.color;
   const sizeEncoding = isMultiLine ? undefined : chartSpec.encodings.size;
-  const colorDomain = visualDomain(dataset.rows, colorEncoding);
-  const sizeDomain = visualDomain(dataset.rows, sizeEncoding);
-  const mappedAverage = (values: LineDatum[], encoding: ChartEncoding | undefined) => {
+  const mappedAggregate = (
+    values: LineDatum[],
+    encoding: ChartEncoding | undefined,
+    operation?: "sum" | "avg",
+  ) => {
     if (!encoding) return null;
     const parsed = values.flatMap((datum) => datum.sourceRows.flatMap((row) => {
       const value = parseVisualValue(row[encoding.field] ?? "", encoding);
       return value === null ? [] : [value];
     }));
-    return parsed.length > 0 ? parsed.reduce((sum, value) => sum + value, 0) / parsed.length : null;
+    if (parsed.length === 0) return null;
+    const total = parsed.reduce((sum, value) => sum + value, 0);
+    return operation === "sum" ? total : total / parsed.length;
   };
   let maximumLineWidth = tokens.lineWidth;
   const seriesStyles = isSeriesStyleMapping(lineConfig?.seriesStyleMapping)
@@ -422,7 +426,21 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
   const legacySeriesColors = isCategoricalColorMapping(lineConfig?.seriesColorMapping)
     ? lineConfig.seriesColorMapping.values
     : {};
+  const colorAggregation = chartSpec.aggregations?.color;
+  const sizeAggregation = chartSpec.aggregations?.size;
   const series: LineSeriesGeometry[] = [];
+  const colorDomain = colorAggregation
+    ? extent(groupedRows.flatMap(([, values]) => {
+      const value = mappedAggregate(values, colorEncoding, colorAggregation);
+      return value === null ? [] : [value];
+    })) as [number | undefined, number | undefined]
+    : visualDomain(dataset.rows, colorEncoding);
+  const sizeDomain = sizeAggregation
+    ? extent(groupedRows.flatMap(([, values]) => {
+      const value = mappedAggregate(values, sizeEncoding, sizeAggregation);
+      return value === null ? [] : [value];
+    })) as [number | undefined, number | undefined]
+    : visualDomain(dataset.rows, sizeEncoding);
   const seriesMarkup = groupedRows.map(([seriesKey, values], index) => {
     const ordered = progressionEncoding.type === "nominal" || progressionEncoding.type === "ordinal"
       ? [...values]
@@ -432,13 +450,15 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
     const fallbackColor = tokens.palette[index % tokens.palette.length] ?? fallbackPalette[index % fallbackPalette.length]!;
     const memberStyle = seriesStyles[seriesKey];
     const memberColor = memberStyle?.color ?? legacySeriesColors[seriesKey];
-    const averageColorValue = mappedAverage(values, colorEncoding);
-    const color = memberColor ?? (colorDomain && averageColorValue !== null && isLinearColorMapping(lineConfig?.colorMapping)
-      ? mapColorValue(averageColorValue, colorDomain, lineConfig.colorMapping)
+    const aggregatedColorValue = mappedAggregate(values, colorEncoding, colorAggregation);
+    const color = memberColor ?? (colorDomain && colorDomain[0] !== undefined && colorDomain[1] !== undefined
+      && aggregatedColorValue !== null && isLinearColorMapping(lineConfig?.colorMapping)
+      ? mapColorValue(aggregatedColorValue, colorDomain as [number, number], lineConfig.colorMapping)
       : fallbackColor);
-    const averageSizeValue = mappedAverage(values, sizeEncoding);
-    const lineWidth = memberStyle?.strokeWidth ?? (sizeDomain && averageSizeValue !== null && isLinearSizeMapping(lineConfig?.sizeMapping)
-      ? mapSizeValue(averageSizeValue, sizeDomain, lineConfig.sizeMapping)
+    const aggregatedSizeValue = mappedAggregate(values, sizeEncoding, sizeAggregation);
+    const lineWidth = memberStyle?.strokeWidth ?? (sizeDomain && sizeDomain[0] !== undefined && sizeDomain[1] !== undefined
+      && aggregatedSizeValue !== null && isLinearSizeMapping(lineConfig?.sizeMapping)
+      ? mapSizeValue(aggregatedSizeValue, sizeDomain as [number, number], lineConfig.sizeMapping)
       : !isMultiLine && typeof lineConfig?.size === "number" ? lineConfig.size : tokens.lineWidth);
     const lineStyle = memberStyle?.shape ?? "solid";
     const dasharray = lineStyle === "dashed"

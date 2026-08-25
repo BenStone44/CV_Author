@@ -363,7 +363,7 @@ export type InputColumnDropContext =
 
 export type InputColumnIntent = {
   id: string;
-  kind: "bind" | "aggregate" | "facet" | "series" | "upgrade";
+  kind: "bind" | "aggregate" | "facet" | "series" | "upgrade" | "filter";
   status: "VALID";
   inputColumn: string;
   label: string;
@@ -373,6 +373,7 @@ export type InputColumnIntent = {
   facetDirection?: "row" | "column";
   semanticRole?: string;
   targetChartType?: string;
+  filterValues?: string[];
 };
 
 export type InputColumnIntentAnalysis = {
@@ -538,6 +539,20 @@ export function inferColumnIntents(
       binding: { ...binding, facet: [inputColumn.name] },
       facetDirection,
     }));
+  }
+  if (isLegalDimension) {
+    const filterValues = Array.from(inputColumnValues(dataset, inputColumn.name))
+      .filter((value) => value !== "")
+      .sort((left, right) => left.localeCompare(right, "en", { numeric: true }));
+    if (filterValues.length > 0) intents.push({
+      id: `filter:${inputColumn.name}`,
+      kind: "filter",
+      status: "VALID",
+      inputColumn: inputColumn.name,
+      label: `Keep one ${inputColumn.name} value`,
+      binding: { ...binding, filter: [inputColumn.name] },
+      filterValues,
+    });
   }
   const seriesRole = contract.channels.find((mapping) =>
     mapping.role === "series" && mapping.configurable !== false);

@@ -187,8 +187,10 @@ describe("card encoding configuration", () => {
 
   it("derives type compatibility from the channel contract", () => {
     const barY = getEncodingChannelConfigs("SingleBarChart").find((config) => config.channel === "y")!;
+    const barColor = getEncodingChannelConfigs("SingleBarChart").find((config) => config.channel === "color")!;
     expect(isEncodingColumnCompatible(barY, "quantitative")).toBe(true);
     expect(isEncodingColumnCompatible(barY, "nominal")).toBe(false);
+    expect(isEncodingColumnCompatible(barColor, "quantitative")).toBe(true);
   });
 
   it("maps renderer channels to template semantic slots", () => {

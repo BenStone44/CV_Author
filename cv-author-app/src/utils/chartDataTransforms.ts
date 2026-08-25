@@ -49,16 +49,18 @@ function displayNumber(value: number) {
   return Number.parseFloat(value.toPrecision(6)).toString();
 }
 
-function binLabel(value: number, values: number[], transform: ChartBinAggregateTransform) {
+function createBinLabeler(values: number[], transform: ChartBinAggregateTransform) {
   const minimum = Math.min(...values);
   const maximum = Math.max(...values);
   const parameter = Math.max(1, transform.parameter);
 
   if (transform.method === "fixed-width") {
     const width = parameter;
-    const lower = Math.floor((value - minimum) / width) * width + minimum;
-    const upper = lower + width;
-    return `[${displayNumber(lower)}, ${displayNumber(upper)}${value === maximum ? "]" : ")"}`;
+    return (value: number) => {
+      const lower = Math.floor((value - minimum) / width) * width + minimum;
+      const upper = lower + width;
+      return `[${displayNumber(lower)}, ${displayNumber(upper)}${value === maximum ? "]" : ")"}`;
+    };
   }
 
   if (transform.method === "quantile") {
@@ -68,21 +70,28 @@ function binLabel(value: number, values: number[], transform: ChartBinAggregateT
       sorted[Math.min(sorted.length - 1, Math.floor(index * sorted.length / binCount))] ?? minimum);
     thresholds[0] = minimum;
     thresholds[thresholds.length - 1] = maximum;
-    let index = thresholds.findIndex((threshold, thresholdIndex) =>
-      thresholdIndex > 0 && value <= threshold);
-    if (index < 1) index = binCount;
-    const lower = thresholds[index - 1] ?? minimum;
-    const upper = thresholds[index] ?? maximum;
-    return `[${displayNumber(lower)}, ${displayNumber(upper)}]`;
+    return (value: number) => {
+      let index = thresholds.findIndex((threshold, thresholdIndex) =>
+        thresholdIndex > 0 && value <= threshold);
+      if (index < 1) index = binCount;
+      const lower = thresholds[index - 1] ?? minimum;
+      const upper = thresholds[index] ?? maximum;
+      return `[${displayNumber(lower)}, ${displayNumber(upper)}]`;
+    };
   }
 
   const binCount = Math.max(2, Math.floor(parameter));
-  if (minimum === maximum) return `[${displayNumber(minimum)}, ${displayNumber(maximum)}]`;
+  if (minimum === maximum) {
+    const label = `[${displayNumber(minimum)}, ${displayNumber(maximum)}]`;
+    return () => label;
+  }
   const width = (maximum - minimum) / binCount;
-  const index = Math.min(binCount - 1, Math.floor((value - minimum) / width));
-  const lower = minimum + index * width;
-  const upper = index === binCount - 1 ? maximum : minimum + (index + 1) * width;
-  return `[${displayNumber(lower)}, ${displayNumber(upper)}${index === binCount - 1 ? "]" : ")"}`;
+  return (value: number) => {
+    const index = Math.min(binCount - 1, Math.floor((value - minimum) / width));
+    const lower = minimum + index * width;
+    const upper = index === binCount - 1 ? maximum : minimum + (index + 1) * width;
+    return `[${displayNumber(lower)}, ${displayNumber(upper)}${index === binCount - 1 ? "]" : ")"}`;
+  };
 }
 
 function applyTransform(
@@ -128,6 +137,9 @@ function applyTransform(
   const numericValues = materialized.rows
     .map((row) => numericValue(row, transform.field))
     .filter((value): value is number => value !== null);
+  const labelForValue = numericValues.length > 0
+    ? createBinLabeler(numericValues, transform)
+    : null;
   const columns: DataColumn[] = [
     ...materialized.columns.filter((column) => column.name !== transform.outputField),
     { name: transform.outputField, type: "ordinal" },
@@ -138,7 +150,7 @@ function applyTransform(
       ...row,
       [transform.outputField]: value === null || numericValues.length === 0
         ? ""
-        : binLabel(value, numericValues, transform),
+        : labelForValue?.(value) ?? "",
     };
   });
   return { columns, rows };

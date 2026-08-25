@@ -368,6 +368,8 @@ export function cloneChartSpec(chartSpec: ChartSpec | null | undefined) {
         encoding ? { ...encoding } : encoding,
       ]),
     ) as ChartSpec["encodings"],
+    aggregations: chartSpec.aggregations ? { ...chartSpec.aggregations } : undefined,
+    autoAggregations: chartSpec.autoAggregations ? { ...chartSpec.autoAggregations } : undefined,
     angleFields: chartSpec.angleFields?.map((encoding) => ({ ...encoding })),
     flattenFields: chartSpec.flattenFields ? [...chartSpec.flattenFields] : undefined,
     componentRadiusFields: chartSpec.componentRadiusFields

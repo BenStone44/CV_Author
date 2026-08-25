@@ -667,6 +667,72 @@ const dimensionDropNode = computed(() => dimensionDropTarget.value
   ? selectedNodes.value.find((node) => node.id === dimensionDropTarget.value?.nodeId) ?? null
   : null);
 const dimensionDropField = computed(() => dimensionDropTarget.value?.fieldName ?? "");
+const dimensionIntentSelection = ref<Record<string, string>>({});
+const dimensionFilterSelection = ref<Record<string, string>>({});
+const dimensionIntentGroups = computed(() => {
+  const intents = dimensionDropTarget.value?.analysis.intents ?? [];
+  const groups = [
+    {
+      id: "aggregate",
+      kicker: "01 / REDUCE",
+      title: "Aggregate repeated values",
+      description: "Keep the current visual key and reduce duplicate measures.",
+      intents: intents.filter((intent) => intent.kind === "aggregate"),
+    },
+    {
+      id: "facet",
+      kicker: "02 / PARTITION",
+      title: "Facet into views",
+      description: "Turn the dropped column into a row or column partition.",
+      intents: intents.filter((intent) => intent.kind === "facet"),
+    },
+    {
+      id: "upgrade",
+      kicker: "03 / COMPOSE",
+      title: "Upgrade chart structure",
+      description: "Use the column as a series or move to a richer chart form.",
+      intents: intents.filter((intent) => intent.kind === "upgrade" || intent.kind === "series"),
+    },
+    {
+      id: "filter",
+      kicker: "04 / FOCUS",
+      title: "Filter to one value",
+      description: "Keep one value locally while leaving the dataset unchanged.",
+      intents: intents.filter((intent) => intent.kind === "filter"),
+    },
+  ];
+  return groups;
+});
+
+watch(dimensionDropTarget, (target) => {
+  if (!target) return;
+  dimensionIntentSelection.value = {};
+  dimensionFilterSelection.value = {};
+  dimensionIntentGroups.value.forEach((group) => {
+    if (group.intents[0]) {
+      dimensionIntentSelection.value[group.id] = group.intents[0].id;
+    }
+    const filterIntent = group.intents.find((intent) => intent.kind === "filter");
+    if (filterIntent?.filterValues?.[0]) {
+      dimensionFilterSelection.value[group.id] = filterIntent.filterValues[0];
+    }
+  });
+}, { immediate: true });
+
+function selectedDimensionIntent(group: { id: string; intents: Array<{ id: string }> }) {
+  return dimensionIntentSelection.value[group.id] ?? group.intents[0]?.id ?? "";
+}
+
+function chooseDimensionIntent(groupId: string, intentId: string) {
+  dimensionIntentSelection.value[groupId] = intentId;
+}
+
+function applyDimensionIntentGroup(group: { id: string; intents: Array<{ id: string; kind: string; filterValues?: string[] }> }) {
+  const intentId = selectedDimensionIntent(group);
+  if (!intentId) return;
+  const filterValue = group.id === "filter" ? dimensionFilterSelection.value[group.id] : undefined;
+  applyInputColumnIntent(intentId, filterValue);
+}
 
 function defaultEncodingChannel(node: CanvasNode): CoordinateChannel {
   return isPolarChartType(node.chartSpec?.chartType ?? "") ? "angle" : "x";
@@ -729,7 +795,7 @@ function openCompositionCandidates(type: CompositionType) {
     const clueFields = Array.from(new Set(node?.chartSpec?.dataTransforms
       ?.filter((transform) => transform.kind === "filter"
         && transform.mode === "values"
-        && transform.single)
+        && (transform.purpose === "facet-clue" || (transform.purpose === undefined && transform.single)))
       .map((transform) => transform.mode === "values" ? transform.field : "")
       .filter(Boolean) ?? []));
     if (node && clueFields.length === 1) {
@@ -1364,6 +1430,7 @@ onBeforeUnmount(() => {
               @value-series-fields-change="setValueSeriesFields"
               @segment-fields-change="setPolarSegmentFields"
               @parallel-fields-change="setParallelFields"
+              @aggregation-change="setAxisBindingAggregation"
               @mark-config-change="updateAxisBindingMarkGroupConfig"
               @mark-config-edit-start="onMarkConfigEditStart"
               @mark-config-edit-end="commitMarkConfigEdit"
@@ -1386,6 +1453,7 @@ onBeforeUnmount(() => {
           >
             <header class="recommendation-popup__header">
               <div>
+                <span class="dimension-drop-popup__eyebrow">AI STRUCTURAL SUGGESTIONS</span>
                 <strong>Use {{ dimensionDropField }}</strong>
                 <span>{{ dimensionDropNode?.chartSpec?.chartType }}</span>
               </div>
@@ -1401,13 +1469,45 @@ onBeforeUnmount(() => {
             </header>
             <div class="recommendation-popup__options dimension-drop-popup__options">
               <article
-                v-for="intent in dimensionDropTarget.analysis.intents"
-                :key="intent.id"
-                class="recommendation-option-card"
+                v-for="group in dimensionIntentGroups"
+                :key="group.id"
+                class="dimension-intent-card"
+                :class="{ 'dimension-intent-card--disabled': group.intents.length === 0 }"
               >
-                <span class="recommendation-option-card__strategy">{{ intent.kind }}</span>
-                <strong>{{ intent.label }}</strong>
-                <button type="button" @click="applyInputColumnIntent(intent.id)">Apply</button>
+                <header class="dimension-intent-card__header">
+                  <span class="dimension-intent-card__kicker">{{ group.kicker }}</span>
+                  <strong>{{ group.title }}</strong>
+                  <p>{{ group.description }}</p>
+                </header>
+                <template v-if="group.intents.length">
+                  <select
+                    :value="selectedDimensionIntent(group)"
+                    :aria-label="`${group.title} option`"
+                    @change="chooseDimensionIntent(group.id, ($event.target as HTMLSelectElement).value)"
+                  >
+                    <option v-for="intent in group.intents" :key="intent.id" :value="intent.id">
+                      {{ intent.label }}
+                    </option>
+                  </select>
+                  <select
+                    v-if="group.id === 'filter'"
+                    :value="dimensionFilterSelection[group.id]"
+                    aria-label="Filter value"
+                    @change="dimensionFilterSelection[group.id] = ($event.target as HTMLSelectElement).value"
+                  >
+                    <option
+                      v-for="value in group.intents[0]?.filterValues ?? []"
+                      :key="value"
+                      :value="value"
+                    >
+                      {{ value }}
+                    </option>
+                  </select>
+                  <button type="button" @click="applyDimensionIntentGroup(group)">
+                    Apply choice
+                  </button>
+                </template>
+                <span v-else class="dimension-intent-card__empty">Not available for this chart</span>
               </article>
             </div>
           </aside>
@@ -1875,9 +1975,9 @@ onBeforeUnmount(() => {
               />
               <g v-if="activeDropZone" :transform="editingGroupTransform" class="composition-drop-zone-layer">
                 <foreignObject
-                  v-if="activeDropZone.enterBounds && (activeDropZone.type === 'layer' || activeDropZone.nestedAction === 'enter')"
+                  v-if="activeDropZone.enterBounds && (activeDropZone.enterCompositionId || activeDropZone.type === 'layer' || activeDropZone.nestedAction === 'enter')"
                   class="composition-mode-veil"
-                  :class="{ 'composition-mode-veil--nested': activeDropZone.nestedAction === 'enter' }"
+                  :class="{ 'composition-mode-veil--nested': activeDropZone.nestedAction === 'enter' || activeDropZone.enterCompositionId }"
                   :x="activeDropZone.bounds.minX"
                   :y="activeDropZone.bounds.minY"
                   :width="activeDropZone.bounds.width"
@@ -3506,11 +3606,11 @@ onBeforeUnmount(() => {
   width: min(760px, calc(100% - 48px));
   max-height: min(620px, calc(100% - 48px));
   box-sizing: border-box;
-  padding: 18px;
-  border: 1px solid rgba(24, 33, 47, 0.14);
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 28px 70px rgba(15, 23, 42, 0.24);
+  padding: 16px;
+  border: 1px solid rgba(80, 173, 255, 0.34);
+  border-radius: 12px;
+  background: #f7faff;
+  box-shadow: 0 28px 70px rgba(15, 23, 42, 0.3), 0 0 0 1px rgba(112, 208, 255, 0.08);
   transform: translate(-50%, -50%);
 }
 .recommendation-popup__header {
@@ -3529,8 +3629,9 @@ onBeforeUnmount(() => {
   gap: 2px;
 }
 .recommendation-popup__header strong {
-  color: #18212f;
-  font-size: 16px;
+  color: #12243a;
+  font-size: 17px;
+  letter-spacing: 0.01em;
 }
 .recommendation-popup__header span {
   color: #6b7889;
@@ -3653,9 +3754,76 @@ onBeforeUnmount(() => {
   width: min(720px, calc(100% - 48px));
   max-height: min(520px, calc(100% - 48px));
 }
-.dimension-drop-popup__options {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.dimension-drop-popup__eyebrow {
+  color: #2381c6 !important;
+  font-size: 9px !important;
+  font-weight: 800;
+  letter-spacing: 0.15em;
 }
+.dimension-drop-popup__options {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  overflow: visible;
+}
+.dimension-intent-card {
+  display: grid;
+  align-content: start;
+  gap: 11px;
+  min-width: 0;
+  min-height: 176px;
+  padding: 15px;
+  border: 1px solid #d9e5f2;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 5px 16px rgba(38, 83, 126, 0.07);
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+.dimension-intent-card:hover {
+  border-color: #54a9e9;
+  box-shadow: 0 10px 24px rgba(28, 126, 214, 0.14);
+  transform: translateY(-2px);
+}
+.dimension-intent-card--disabled {
+  opacity: 0.52;
+  background: #f3f6fa;
+  box-shadow: none;
+}
+.dimension-intent-card--disabled:hover { border-color: #d9e5f2; transform: none; }
+.dimension-intent-card__header { display: grid; gap: 4px; }
+.dimension-intent-card__kicker {
+  color: #2381c6;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+.dimension-intent-card__header strong { color: #19324b; font-size: 13px; }
+.dimension-intent-card__header p { margin: 0; color: #71839a; font-size: 10px; line-height: 1.45; }
+.dimension-intent-card select {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 9px;
+  border: 1px solid #cfdeec;
+  border-radius: 7px;
+  background: #f9fcff;
+  color: #27415b;
+  font: inherit;
+  font-size: 11px;
+}
+.dimension-intent-card select:focus { border-color: #2e91d1; outline: 2px solid rgba(46, 145, 209, 0.16); }
+.dimension-intent-card button {
+  min-height: 34px;
+  border: 1px solid #1976b9;
+  border-radius: 7px;
+  background: #1976b9;
+  color: #fff;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.dimension-intent-card button:hover { background: #145f96; }
+.dimension-intent-card__empty { align-self: center; color: #98a8b8; font-size: 10px; }
 .dimension-drop-popup__actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

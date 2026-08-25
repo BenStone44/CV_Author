@@ -346,12 +346,25 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   // Position changes are persisted once after a move, never for every frame.
   let suppressCanvasPersistence = false;
   let canvasWatchersPaused = false;
+  type IdleWindow = Window & {
+    requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+    cancelIdleCallback?: (id: number) => void;
+  };
+  let pendingCanvasPersistenceNodes: CanvasNode[] | null = null;
+  let canvasPersistenceHandle: number | null = null;
+  let canvasPersistenceUsesIdleCallback = false;
   let stopNestedChildLayoutWatch: (() => void) | null = null;
   let stopCanvasPersistenceWatch: (() => void) | null = null;
   const contextMenu = ref<ContextMenuState | null>(null);
   const draggedCandidateId = ref<string | null>(null);
   const activeDropZone = ref<ChartDropZone | null>(null);
   const compositionDragSourceId = ref<string | null>(null);
+  type CompositionEditFrame = Pick<CanvasNode, "x" | "y" | "width" | "height" | "scaleX" | "scaleY" | "rotation">;
+  let compositionEditLayout: {
+    compositionId: string;
+    type: "layer";
+    frames: Record<string, CompositionEditFrame>;
+  } | null = null;
   let nestedEnterHover: { key: string; timeoutId: number } | null = null;
   function clearNestedEnterHover() {
     if (nestedEnterHover) window.clearTimeout(nestedEnterHover.timeoutId);
@@ -803,6 +816,100 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function getSelectionNode(nodeId: string) {
     return getSelectionScopeNodes().find((node) => node.id === nodeId) ?? null;
   }
+
+  function canvasNodesWithRestoredCompositionLayout(nodes = canvasNodes.value) {
+    if (!compositionEditLayout) return nodes;
+    const clones = nodes.map((node) => cloneCanvasNode(node));
+    const visit = (items: CanvasNode[]) => items.forEach((node) => {
+      const frame = compositionEditLayout?.frames[node.id];
+      if (frame) Object.assign(node, frame);
+      if (node.kind === "group") visit(node.children);
+    });
+    visit(clones);
+    return clones;
+  }
+
+  function restoreCompositionEditLayout() {
+    const layout = compositionEditLayout;
+    compositionEditLayout = null;
+    if (!layout) return;
+    Object.entries(layout.frames).forEach(([nodeId, frame]) => {
+      const node = findCanvasNode(nodeId);
+      if (node) Object.assign(node, frame);
+    });
+  }
+
+  function spreadLayerCompositionForEditing(composition: NonNullable<CanvasNode["compositionSpec"]>) {
+    const members = composition.members
+      .map((member) => getSelectionNode(member.nodeId))
+      .filter((member): member is CanvasNode => !!member);
+    if (members.length < 2) return;
+    const frames = Object.fromEntries(members.map((member) => [member.id, {
+      x: member.x,
+      y: member.y,
+      width: member.width,
+      height: member.height,
+      scaleX: member.scaleX,
+      scaleY: member.scaleY,
+      rotation: member.rotation,
+    }]));
+    compositionEditLayout = { compositionId: composition.id, type: "layer", frames };
+    const widths = members.map((member) => collectNodeSelectionBounds(member).width);
+    const gap = Math.max(24, Math.min(72, Math.max(...widths) * 0.16));
+    const anchor = collectNodeSelectionBounds(members[0]!);
+    const totalWidth = widths.reduce((sum, width) => sum + width, 0) + gap * (members.length - 1);
+    let cursor = anchor.minX + anchor.width / 2 - totalWidth / 2;
+    members.forEach((member, index) => {
+      const bounds = collectNodeSelectionBounds(member);
+      member.x += cursor - bounds.minX;
+      cursor += widths[index]! + gap;
+      renderChartNode(member, false);
+    });
+  }
+
+  function beginCompositionEditing(composition: NonNullable<CanvasNode["compositionSpec"]>) {
+    if (composition.type !== "layer" && composition.type !== "concat") return false;
+    if (editingCompositionId.value === composition.id) return true;
+    restoreCompositionEditLayout();
+    editingCompositionId.value = composition.id;
+    if (composition.type === "layer") spreadLayerCompositionForEditing(composition);
+    selectedIds.value = [];
+    semanticSelection.value = null;
+    chartDrilldown.value = null;
+    axisBindingTarget.value = null;
+    return true;
+  }
+
+  function finishCompositionEditing(selectParent = true) {
+    const compositionId = editingCompositionId.value;
+    if (!compositionId) return false;
+    restoreCompositionEditLayout();
+    editingCompositionId.value = null;
+    const member = getSelectionScopeNodes().find((candidate) => candidate.compositionSpec?.id === compositionId);
+    setSelection(selectParent && member ? [member.id] : []);
+    semanticSelection.value = null;
+    axisBindingTarget.value = null;
+    if (member) renderSharedCoordinateComposition(member);
+    return true;
+  }
+
+  function editingCartesianConcat(node: CanvasNode | null | undefined) {
+    const composition = node?.compositionSpec;
+    return node?.coordinateGuide?.type === "Cartesian"
+      && composition?.type === "concat"
+      && editingCompositionId.value === composition.id
+      && (composition.direction === "horizontal" || composition.direction === "vertical")
+      ? composition
+      : null;
+  }
+
+  function concatEditableAxis(node: CanvasNode | null | undefined): "x" | "y" | null {
+    const composition = editingCartesianConcat(node);
+    return composition?.direction === "horizontal"
+      ? "x"
+      : composition?.direction === "vertical" ? "y" : null;
+  }
+
   function coordinateTransformItemIds(itemIds: string[]) {
     const expanded = new Set<string>();
     itemIds.forEach((id) => {
@@ -1737,6 +1844,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   });
   const rotateHandle = computed(() => {
     if (!canTransformSelection.value) return null;
+    if (selectedNodes.value.some((node) => !!editingCartesianConcat(node))) return null;
     const frame = selectionFrame.value;
     if (!frame) return null;
     const radians = frame.rotation * Math.PI / 180;
@@ -1797,7 +1905,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   // --- history ---
   function captureCanvasHistory(relationships = snapshotRelationships()): CanvasHistorySnapshot {
     return {
-      instanceDocument: createChartInstanceDocument(canvasNodes.value),
+      instanceDocument: createChartInstanceDocument(canvasNodesWithRestoredCompositionLayout()),
       selectedIds: [...selectedIds.value],
       editingGroupPath: [...editingGroupPath.value],
       relationships,
@@ -1811,6 +1919,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function restoreCanvasHistory(snapshot: CanvasHistorySnapshot) {
     interaction.value = null;
     detachPointerListeners();
+    compositionEditLayout = null;
     editingCompositionId.value = null;
     nestedPositionRelationshipIds.value = [];
     chartDrilldown.value = null;
@@ -2568,7 +2677,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const withoutConsumedClues = (transforms: ChartDataTransform[] | undefined) => transforms?.filter((transform) =>
       !(transform.kind === "filter"
         && transform.mode === "values"
-        && transform.single
+        && (transform.purpose === "facet-clue" || (transform.purpose === undefined && transform.single))
         && clueFields.has(transform.field)));
     const remainingTransforms = withoutConsumedClues(node.chartSpec.dataTransforms);
 
@@ -2613,7 +2722,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     dimensionDropTarget.value = null;
   }
 
-  function applyInputColumnIntent(intentId: string) {
+  function applyInputColumnIntent(intentId: string, selectedFilterValue?: string) {
     const target = dimensionDropTarget.value;
     const node = target ? findCanvasNode(target.nodeId) : null;
     const dataset = node?.chartSpec ? getDataset(node.chartSpec.datasetId) : null;
@@ -2634,6 +2743,44 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           ? applyDimensionChartUpgrade(target.fieldName, intent.targetChartType)
           : intent.kind === "series"
             ? setSeriesFields([target.fieldName])
+          : intent.kind === "filter"
+            ? (() => {
+              const filterValue = selectedFilterValue ?? intent.filterValues?.[0];
+              const currentSpec = node.chartSpec;
+              if (!filterValue || !currentSpec) return false;
+              pushCanvasHistory();
+              const filterTransform: ChartDataTransform = {
+                id: `intent-filter:${node.id}:${target.fieldName}`,
+                kind: "filter",
+                mode: "values",
+                field: target.fieldName,
+                values: [filterValue],
+                single: false,
+                purpose: "filter",
+              };
+              const transforms = [
+                ...(currentSpec.dataTransforms ?? []).filter((transform) =>
+                  !(transform.kind === "filter" && transform.mode === "values" && transform.field === target.fieldName)),
+                filterTransform,
+              ];
+              node.chartSpec = {
+                ...currentSpec,
+                dataTransforms: transforms,
+                dimensionDecisions: {
+                  ...currentSpec.dimensionDecisions,
+                  [target.fieldName]: "filter",
+                },
+                dimensionRecommendations: undefined,
+                scales: undefined,
+                plotArea: undefined,
+                polarArea: undefined,
+                renderer: undefined,
+              };
+              renderChartNode(node);
+              registerChartRelationship(node);
+              setImportNotice(`${target.fieldName} filtered to ${filterValue}.`);
+              return true;
+            })()
           : false;
     if (applied) closeDimensionDropDecision();
     return applied;
@@ -3520,6 +3667,13 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     return true;
   }
 
+  function enterCompositionDropLevel(zone: ChartDropZone) {
+    if (!zone.enterCompositionId) return false;
+    const member = getSelectionScopeNodes().find((node) =>
+      node.compositionSpec?.id === zone.enterCompositionId);
+    return !!member?.compositionSpec && beginCompositionEditing(member.compositionSpec);
+  }
+
   function localRectDropGeometry(node: CanvasNode, rect: ChartPlotArea) {
     const outline = [
       { x: rect.x, y: rect.y },
@@ -3740,6 +3894,21 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         width: diameter,
         height: diameter,
       };
+      const composition = target.compositionSpec;
+      if (pointInBounds(point, enterBounds)
+        && (composition?.type === "layer" || composition?.type === "concat")
+        && editingCompositionId.value !== composition.id) {
+        return {
+          targetNodeId: target.id,
+          type: composition.type,
+          sharedChannels: [...composition.sharedChannels],
+          ...geometry,
+          compatible: true,
+          enterCompositionId: composition.id,
+          enterBounds,
+          direction: composition.direction,
+        };
+      }
       const nodeElement = Array.from(canvasRef.value?.querySelectorAll<SVGGraphicsElement>("[data-node-id]") ?? [])
         .find((element) => element.dataset.nodeId === target.id);
       const markIndexes = nodeElement
@@ -3765,7 +3934,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       }
       const enterZone = chartEnterZone(target);
       if (!enterZone) continue;
-      if (enterZone.nestedAction === "enter") return enterZone;
+      if (enterZone.enterCompositionId || enterZone.nestedAction === "enter") return enterZone;
       nestedEnterCandidates.set(target.id, enterZone);
     }
     const targets = chartTargets.filter((node) => !!node.coordinateGuide);
@@ -3907,6 +4076,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const source = findCanvasNode(sourceNodeId);
     const target = findCanvasNode(zone.targetNodeId);
     if (!source || !target || !zone.compatible || !source.chartSpec || !target.chartSpec) return false;
+    if (zone.enterCompositionId) {
+      const entered = enterCompositionDropLevel(zone);
+      if (entered) selectedIds.value = [];
+      return entered;
+    }
     if (zone.type === "nested") {
       if (zone.nestedAction === "enter") {
         enterNestedDropLevel(zone);
@@ -4152,18 +4326,25 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       };
     });
   }
-  function setAxisBindingAggregation(channel: EncodingChannel, aggregation?: "sum" | "avg") {
+  function setAxisBindingAggregation(channel: ChartEncodingChannel, aggregation?: "sum" | "avg") {
     const node = axisBindingNode.value;
-    const mappedChannel = node ? mappedEncodingChannel(node, channel) : channel;
+    const mappedChannel = node && (channel === "x" || channel === "y")
+      ? mappedEncodingChannel(node, channel)
+      : channel;
     if (!node?.chartSpec || node.chartSpec.encodings[mappedChannel]?.type !== "quantitative") return;
     updateEncodingTargets(node, (member, spec) => {
-      const memberChannel = mappedEncodingChannel(member, channel);
+      const memberChannel = (channel === "x" || channel === "y")
+        ? mappedEncodingChannel(member, channel)
+        : channel;
       const aggregations = { ...spec.aggregations };
+      const autoAggregations = { ...spec.autoAggregations };
       if (aggregation) aggregations[memberChannel] = aggregation;
       else delete aggregations[memberChannel];
+      delete autoAggregations[memberChannel];
       return {
         ...spec,
         aggregations: Object.keys(aggregations).length ? aggregations : undefined,
+        autoAggregations: Object.keys(autoAggregations).length ? autoAggregations : undefined,
         renderer: undefined,
       };
     });
@@ -5655,12 +5836,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     }
     const composition = node?.compositionSpec;
     if (composition && editingCompositionId.value !== composition.id) {
-      editingCompositionId.value = composition.id;
-      selectedIds.value = [];
-      semanticSelection.value = null;
-      chartDrilldown.value = null;
-      axisBindingTarget.value = null;
-      return true;
+      return beginCompositionEditing(composition);
     }
     if (selectedIds.value.length === 1 && node?.chartSpec && node.renderedContent) {
       chartDrilldown.value = { nodeId: node.id, level: "item" };
@@ -5798,6 +5974,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function exitGroupEditing(selectExitedGroup = true) {
     const exitedGroupId = editingGroupPath.value.at(-1);
     if (!exitedGroupId) return false;
+    restoreCompositionEditLayout();
     editingGroupPath.value = editingGroupPath.value.slice(0, -1);
     editingCompositionId.value = null;
     setSelection(selectExitedGroup ? [exitedGroupId] : []);
@@ -5836,13 +6013,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       if (activeGroup?.compositionSpec?.id === compositionId) {
         return exitGroupEditing(selectParent);
       }
-      editingCompositionId.value = null;
-      const member = getSelectionScopeNodes().find((candidate) => candidate.compositionSpec?.id === compositionId);
-      setSelection(selectParent && member ? [member.id] : []);
-      semanticSelection.value = null;
-      axisBindingTarget.value = null;
-      if (member) renderSharedCoordinateComposition(member);
-      return true;
+      return finishCompositionEditing(selectParent);
     }
     return exitGroupEditing(selectParent);
   }
@@ -5882,7 +6053,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       semanticSelection.value = null;
     }
     if (editingCompositionId.value && node.compositionSpec?.id !== editingCompositionId.value) {
-      editingCompositionId.value = null;
+      finishCompositionEditing(false);
     }
     event.stopPropagation();
     if (editingGroupPath.value.length > 0 && !getSelectionNode(node.id)) {
@@ -6025,7 +6196,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       && !node.compositionSpec.sharedChannels.includes(axis)) return;
     if (guide.type === "Cartesian"
       && node.compositionSpec?.type === "concat"
-      && !node.compositionSpec.sharedChannels.includes(axis)) return;
+      && editingCompositionId.value === node.compositionSpec.id
+      && node.compositionSpec.sharedChannels.includes(axis)) return;
     polarAngleInputVisible.value = false;
     const scopeGroupId = editingGroupPath.value.at(-1);
     interaction.value = {
@@ -6092,6 +6264,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   }
   function setSelectionRotation(value: number) {
     if (!Number.isFinite(value) || selectedIds.value.length === 0) return;
+    if (selectedNodes.value.some((node) => !!editingCartesianConcat(node))) return;
     pushCanvasHistory();
     const next = value % 360;
     coordinateTransformItemIds(selectedIds.value).forEach((id) => {
@@ -6124,7 +6297,14 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function updateMoveInteraction(currentPoint: Point, mi: MoveInteraction) {
     const dx = currentPoint.x - mi.startPoint.x;
     const dy = currentPoint.y - mi.startPoint.y;
-    mi.itemIds.forEach((id) => { const item = getSelectionNode(id); const snap = mi.snapshots[id]; if (!item || !snap) return; item.x = snap.x + dx; item.y = snap.y + dy; });
+    mi.itemIds.forEach((id) => {
+      const item = getSelectionNode(id);
+      const snap = mi.snapshots[id];
+      if (!item || !snap) return;
+      const editableAxis = concatEditableAxis(item);
+      item.x = snap.x + (editableAxis === "y" ? 0 : dx);
+      item.y = snap.y + (editableAxis === "x" ? 0 : dy);
+    });
   }
 
   // Coalesce high-frequency pointer events into one reactive update per frame.
@@ -6174,8 +6354,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const minScaleY = Math.max(minH / start.height, 0.01);
     const maxScaleX = Math.max(availW / start.width, 0.01);
     const maxScaleY = Math.max(availH / start.height, 0.01);
-    const scaleX = clamp(1 + hChange, Math.min(minScaleX, maxScaleX), maxScaleX);
-    const scaleY = clamp(1 + vChange, Math.min(minScaleY, maxScaleY), maxScaleY);
+    const editableAxis = si.itemIds
+      .map((id) => concatEditableAxis(getSelectionNode(id)))
+      .find((axis): axis is "x" | "y" => !!axis);
+    const scaleX = editableAxis === "y" ? 1 : clamp(1 + hChange, Math.min(minScaleX, maxScaleX), maxScaleX);
+    const scaleY = editableAxis === "x" ? 1 : clamp(1 + vChange, Math.min(minScaleY, maxScaleY), maxScaleY);
     si.itemIds.forEach((id) => {
       const item = getSelectionNode(id);
       const snap = si.snapshots[id];
@@ -6324,7 +6507,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     interaction.value = null;
     suppressCanvasPersistence = false;
     resumeCanvasWatchers();
-    if (ai?.type === "move" && !ai.transformOnly) persistCanvasState(canvasNodes.value);
+    if (ai?.type === "move" && ai.historyCommitted && !ai.transformOnly) {
+      persistCanvasState(canvasNodes.value);
+    }
     compositionDragSourceId.value = null;
     clearNestedEnterHover();
     activeDropZone.value = null;
@@ -6359,22 +6544,29 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         ? compositionDropZoneAtPoint(movePoint, compositionDragSourceId.value)
         : null;
       const dropZone = activeDropZone.value;
-      if (dropZone?.type === "nested" && dropZone.nestedAction === "enter") {
-        const key = `${dropZone.targetNodeId}:${dropZone.targetElementId ?? "item"}`;
+      const enteringComposition = !!dropZone?.enterCompositionId;
+      const enteringNested = dropZone?.type === "nested" && dropZone.nestedAction === "enter";
+      if (dropZone && (enteringComposition || enteringNested)) {
+        const key = enteringComposition
+          ? `composition:${dropZone.enterCompositionId}`
+          : `${dropZone.targetNodeId}:${dropZone.targetElementId ?? "item"}`;
         if (nestedEnterHover?.key !== key) {
           clearNestedEnterHover();
           const sourceNodeId = compositionDragSourceId.value;
           if (sourceNodeId) {
             const timeoutId = window.setTimeout(() => {
               const currentZone = activeDropZone.value;
-              const currentKey = currentZone?.type === "nested" && currentZone.nestedAction === "enter"
-                ? `${currentZone.targetNodeId}:${currentZone.targetElementId ?? "item"}`
-                : null;
+              const currentKey = currentZone?.enterCompositionId
+                ? `composition:${currentZone.enterCompositionId}`
+                : currentZone?.type === "nested" && currentZone.nestedAction === "enter"
+                  ? `${currentZone.targetNodeId}:${currentZone.targetElementId ?? "item"}`
+                  : null;
               if (interaction.value?.type === "move"
                 && compositionDragSourceId.value === sourceNodeId
                 && currentKey === key
                 && currentZone) {
-                enterNestedDropLevel(currentZone);
+                if (currentZone.enterCompositionId) enterCompositionDropLevel(currentZone);
+                else enterNestedDropLevel(currentZone);
                 activeDropZone.value = compositionDropZoneAtPoint(movePoint, sourceNodeId);
               }
               nestedEnterHover = null;
@@ -6856,6 +7048,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   onMounted(() => {
     window.addEventListener("keydown", onWindowKeyDown);
     window.addEventListener("click", closeContextMenu);
+    window.addEventListener("pagehide", flushPendingCanvasPersistence);
   });
   watch(datasets, () => {
     const selectedCompositionGroup = walkCanvasNodes().find((node): node is CanvasGroupNode =>
@@ -6976,8 +7169,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       });
     });
   }
-  function persistCanvasState(nodes: CanvasNode[]) {
-    chartInstanceDocument.value = createChartInstanceDocument(nodes);
+  // Serialization and storage are intentionally kept off pointer-event paths.
+  function persistCanvasStateNow(nodes: CanvasNode[]) {
+    chartInstanceDocument.value = createChartInstanceDocument(canvasNodesWithRestoredCompositionLayout(nodes));
     try {
       localStorage.setItem("cv-author-canvas-v1", JSON.stringify({
         version: 3,
@@ -6985,6 +7179,39 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         relationships: snapshotRelationships(false),
       }));
     } catch { /* storage is optional */ }
+  }
+  function runScheduledCanvasPersistence() {
+    canvasPersistenceHandle = null;
+    canvasPersistenceUsesIdleCallback = false;
+    const nodes = pendingCanvasPersistenceNodes;
+    pendingCanvasPersistenceNodes = null;
+    if (nodes) persistCanvasStateNow(nodes);
+  }
+  function persistCanvasState(nodes: CanvasNode[]) {
+    pendingCanvasPersistenceNodes = nodes;
+    if (canvasPersistenceHandle !== null) return;
+    const idleWindow = window as IdleWindow;
+    if (typeof idleWindow.requestIdleCallback === "function") {
+      canvasPersistenceUsesIdleCallback = true;
+      canvasPersistenceHandle = idleWindow.requestIdleCallback(runScheduledCanvasPersistence, { timeout: 1000 });
+      return;
+    }
+    canvasPersistenceHandle = window.setTimeout(runScheduledCanvasPersistence, 0);
+  }
+  function flushPendingCanvasPersistence() {
+    if (canvasPersistenceHandle !== null) {
+      const idleWindow = window as IdleWindow;
+      if (canvasPersistenceUsesIdleCallback && typeof idleWindow.cancelIdleCallback === "function") {
+        idleWindow.cancelIdleCallback(canvasPersistenceHandle);
+      } else {
+        window.clearTimeout(canvasPersistenceHandle);
+      }
+      canvasPersistenceHandle = null;
+      canvasPersistenceUsesIdleCallback = false;
+    }
+    const nodes = pendingCanvasPersistenceNodes;
+    pendingCanvasPersistenceNodes = null;
+    if (nodes) persistCanvasStateNow(nodes);
   }
   function pauseCanvasWatchers() {
     if (canvasWatchersPaused) return;
@@ -7010,8 +7237,10 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (moveUpdateFrame !== null) cancelAnimationFrame(moveUpdateFrame);
     pendingMoveUpdate = null;
     pauseCanvasWatchers();
+    flushPendingCanvasPersistence();
     window.removeEventListener("keydown", onWindowKeyDown);
     window.removeEventListener("click", closeContextMenu);
+    window.removeEventListener("pagehide", flushPendingCanvasPersistence);
     if (importNoticeTimer !== null) window.clearTimeout(importNoticeTimer);
     generatedCandidates.value.forEach((candidate) => URL.revokeObjectURL(candidate.src));
   });

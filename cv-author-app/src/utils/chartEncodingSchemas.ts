@@ -59,7 +59,7 @@ type SchemaDefaults = Omit<ChartEncodingSchema, "chartType" | "label" | "channel
 const commonStrategies: ChartEncodingSchema["unusedDimensionStrategies"] = ["flatten", "facet", "nested"];
 
 const familyDefaults: Record<ChartTemplateKind, SchemaDefaults> = {
-  line: { id: "line", family: "line", renderer: "line", rendererVersion: 3, coordinateSystem: "Cartesian", markRole: "line", aggregationPolicy: "forbidden", requiresFunctionalDependency: true, requiresIndependentDimensions: true, allowFieldReuse: false, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  line: { id: "line", family: "line", renderer: "line", rendererVersion: 3, coordinateSystem: "Cartesian", markRole: "line", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
   scatter: { id: "scatter", family: "scatter", renderer: "scatter", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "point", aggregationPolicy: "forbidden", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
   bar: { id: "bar", family: "bar", renderer: "bar", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "bar", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
   pie: { id: "pie", family: "pie", renderer: "pie", rendererVersion: 1, coordinateSystem: "Polar", markRole: "arc", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: true, shareableChannels: ["angle", "radius"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
@@ -93,7 +93,7 @@ const lineShape = { channel: "shape", label: "Shape", role: "style", required: f
 const lineSeries = { channel: "color", label: "Color", semanticLabel: "Series", role: "series", required: false, accepts: ["nominal", "temporal", "ordinal"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
 const barX = { channel: "x", label: "X", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
 const barY = { channel: "y", label: "Y", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
-const barStyle = { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "temporal", "ordinal"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
+const barStyle = { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
 const barSeries = { channel: "color", label: "Color", semanticLabel: "Series", role: "series", required: true, accepts: ["nominal", "temporal", "ordinal"], emptyLabel: "Static", multiple: true } satisfies ChartEncodingChannelSchema;
 const barSize = { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
 const areaChannels = (requiresSeries: boolean): ChartEncodingChannelSchema[] => [
@@ -159,8 +159,8 @@ export const chartEncodingSchemas = {
     { channel: "color", label: "Color", role: "measure", required: false, accepts: ["quantitative", "nominal"], emptyLabel: "Static" },
   ]),
   AreaChart: defineSchema("AreaChart", "Area Chart", "area", areaChannels(false), {
-    aggregationPolicy: "forbidden",
-    requiresFunctionalDependency: true,
+    aggregationPolicy: "allowed",
+    requiresFunctionalDependency: false,
     dimensionUpgrades: [{ chartType: "StackedAreaChart", label: "Stacked area", role: "series" }],
   }),
   StackedAreaChart: defineSchema("StackedAreaChart", "Stacked Area", "area", areaChannels(true)),

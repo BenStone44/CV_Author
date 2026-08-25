@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isCategoricalColorMapping,
+  isLinearColorMapping,
   isSeriesStyleMapping,
   interpolateLinearColor,
   interpolateLinearSize,
@@ -31,6 +32,12 @@ describe("visual mapping", () => {
     expect(interpolateLinearColor(colorMapping, 0.25)).toBe("#800000");
     expect(interpolateLinearColor(colorMapping, 0.75)).toBe("#ff8080");
     expect(mapColorValue(25, [0, 100], colorMapping)).toBe("#800000");
+  });
+
+  it("uses an explicit color domain when stop values are configured outside the data domain", () => {
+    const configured = { ...colorMapping, domain: [-100, 100] as [number, number] };
+    expect(isLinearColorMapping(configured)).toBe(true);
+    expect(mapColorValue(0, [0, 50], configured)).toBe("#800000");
   });
 
   it("interpolates multi-stop pixel sizes and clamps outside the domain", () => {

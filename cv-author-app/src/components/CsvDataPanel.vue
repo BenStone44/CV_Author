@@ -363,6 +363,7 @@ function applyTransform() {
         field: column.name,
         values: [...selectedFilterValues.value],
         single: singleValueFilter.value,
+        purpose: singleValueFilter.value ? "facet-clue" : "filter",
       };
   } else if (column.type === "quantitative") {
     transform = {

@@ -48,6 +48,10 @@ export function isLinearColorMapping(value: unknown): value is LinearColorMappin
   const candidate = value as Partial<LinearColorMapping>;
   return candidate.type === "linear"
     && Array.isArray(candidate.stops)
+    && (candidate.domain === undefined
+      || (Array.isArray(candidate.domain)
+        && candidate.domain.length === 2
+        && candidate.domain.every((entry) => Number.isFinite(entry))))
     && normalizedColorStops(candidate.stops).length >= 2;
 }
 
@@ -143,7 +147,7 @@ export function interpolateLinearSize(mapping: LinearSizeMapping, offset: number
 }
 
 export function mapColorValue(value: number, domain: [number, number], mapping: LinearColorMapping) {
-  return interpolateLinearColor(mapping, normalizeVisualValue(value, domain));
+  return interpolateLinearColor(mapping, normalizeVisualValue(value, mapping.domain ?? domain));
 }
 
 export function mapSizeValue(value: number, domain: [number, number], mapping: LinearSizeMapping) {

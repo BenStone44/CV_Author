@@ -71,6 +71,7 @@ export type ChartValueFilterTransform = {
   field: string;
   values: string[];
   single: boolean;
+  purpose?: "filter" | "facet-clue" | "nested-context";
 };
 
 export type ChartNumericFilterTransform = {
@@ -218,6 +219,8 @@ export type LinearSizeStop = {
 export type LinearColorMapping = {
   type: "linear";
   stops: LinearColorStop[];
+  /** Optional explicit numeric domain for continuous color values. */
+  domain?: [number, number];
 };
 
 export type LinearSizeMapping = {
@@ -295,6 +298,8 @@ export type ChartSpec = {
   axisSwapped?: boolean;
   encodings: Partial<Record<ChartEncodingChannel, ChartEncoding>>;
   aggregations?: Partial<Record<ChartEncodingChannel, "sum" | "avg">>;
+  /** Aggregations inferred from repeated visual keys during data preparation. */
+  autoAggregations?: Partial<Record<ChartEncodingChannel, "sum" | "avg">>;
   dimensionAggregations?: Record<string, "sum" | "avg">;
   valueFields?: ChartEncoding[];
   angleFields?: ChartEncoding[];
@@ -315,7 +320,7 @@ export type ChartSpec = {
   dataTransforms?: ChartDataTransform[];
   markGroups?: MarkGroupSpec[];
   dimensionRecommendations?: DimensionRecommendation[];
-  dimensionDecisions?: Record<string, "aggregate" | "series" | "flatten" | "facet" | "nested">;
+  dimensionDecisions?: Record<string, "aggregate" | "series" | "flatten" | "facet" | "nested" | "filter">;
 };
 
 export type MarkGroupSpec = {
@@ -415,6 +420,8 @@ export type ChartDropZone = {
   targetMarkGroupId?: string;
   targetDataKey?: string;
   nestedAction?: "embed" | "enter";
+  /** Hovering this portal edits an existing concat/layer before resolving the drop. */
+  enterCompositionId?: string;
   enterBounds?: Bounds;
   targetChildMarkIndexes?: number[];
   nestedTargets?: Array<{

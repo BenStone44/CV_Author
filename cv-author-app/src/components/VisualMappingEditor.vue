@@ -38,6 +38,8 @@ const colorGradient = computed(() => `linear-gradient(90deg, ${colorStops.value
   .map((stop) => `${stop.color} ${Math.round(stop.offset * 100)}%`)
   .join(", ")})`);
 const usableColorDomain = computed(() => {
+  const configured = props.colorMapping.domain;
+  if (configured && configured.length === 2 && configured.every(Number.isFinite)) return configured;
   const domain = props.colorDomain;
   if (!domain || !domain.every(Number.isFinite)) return null;
   return domain;
@@ -55,16 +57,28 @@ function colorStopValue(offset: number) {
   return Number(value.toPrecision(12));
 }
 
-function colorStopOffset(value: string, fallback: number) {
+function updateColorStopValue(index: number, rawValue: string) {
   const domain = usableColorDomain.value;
-  const number = Number(value);
-  if (!domain || !Number.isFinite(number) || domain[0] === domain[1]) return fallback;
-  return Math.max(0, Math.min(1, (number - domain[0]) / (domain[1] - domain[0])));
+  const value = Number(rawValue);
+  if (!domain || !Number.isFinite(value)) return;
+  const values = colorStops.value.map((stop) => colorStopValue(stop.offset));
+  values[index] = value;
+  const minimum = Math.min(...values);
+  const maximum = Math.max(...values);
+  const nextDomain: [number, number] = minimum === maximum
+    ? [minimum - 0.5, maximum + 0.5]
+    : [minimum, maximum];
+  const span = nextDomain[1] - nextDomain[0];
+  const stops = colorStops.value.map((stop, stopIndex) => ({
+    ...stop,
+    offset: (values[stopIndex]! - nextDomain[0]) / span,
+  }));
+  emit("colorChange", { ...props.colorMapping, type: "linear", domain: nextDomain, stops });
 }
 
 function updateColorStop(index: number, changes: Partial<LinearColorStop>) {
   const stops = colorStops.value.map((stop, stopIndex) => stopIndex === index ? { ...stop, ...changes } : stop);
-  emit("colorChange", { type: "linear", stops });
+  emit("colorChange", { ...props.colorMapping, type: "linear", stops });
 }
 
 function updateSizeStop(index: number, changes: Partial<LinearSizeStop>) {
@@ -90,7 +104,7 @@ function addColorStop() {
     offset: insertion.offset,
     color: interpolateLinearColor(props.colorMapping, insertion.offset),
   });
-  emit("colorChange", { type: "linear", stops });
+  emit("colorChange", { ...props.colorMapping, type: "linear", stops });
 }
 
 function addSizeStop() {
@@ -105,7 +119,7 @@ function addSizeStop() {
 
 function removeColorStop(index: number) {
   if (colorStops.value.length <= 2) return;
-  emit("colorChange", { type: "linear", stops: colorStops.value.filter((_, stopIndex) => stopIndex !== index) });
+  emit("colorChange", { ...props.colorMapping, type: "linear", stops: colorStops.value.filter((_, stopIndex) => stopIndex !== index) });
 }
 
 function removeSizeStop(index: number) {
@@ -133,16 +147,12 @@ function removeSizeStop(index: number) {
           <input
             :class="usableColorDomain ? 'value-input' : 'offset-input'"
             type="number"
-            :min="usableColorDomain?.[0] ?? 0"
-            :max="usableColorDomain?.[1] ?? 100"
             :step="usableColorDomain ? 'any' : 1"
             :value="colorStopValue(stop.offset)"
             :aria-label="usableColorDomain ? `Color stop ${index + 1} value` : `Color stop ${index + 1} position`"
-            @change="updateColorStop(index, {
-              offset: usableColorDomain
-                ? colorStopOffset(($event.target as HTMLInputElement).value, stop.offset)
-                : boundedOffset(($event.target as HTMLInputElement).value),
-            })"
+            @change="usableColorDomain
+              ? updateColorStopValue(index, ($event.target as HTMLInputElement).value)
+              : updateColorStop(index, { offset: boundedOffset(($event.target as HTMLInputElement).value) })"
           />
           <span v-if="!usableColorDomain">%</span>
         </label>

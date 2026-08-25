@@ -81,6 +81,26 @@ function visualSize(
   return typeof config.size === "number" ? config.size : fallback;
 }
 
+function aggregateEncodingRow(
+  rows: Dataset["rows"],
+  spec: ChartSpec,
+) {
+  const representative = rows[0];
+  if (!representative) return {};
+  const row = { ...representative };
+  Object.entries(spec.aggregations ?? {}).forEach(([channel, operation]) => {
+    const encoding = spec.encodings[channel as keyof ChartSpec["encodings"]];
+    if (!encoding || encoding.type !== "quantitative") return;
+    const values = rows
+      .map((source) => Number(source[encoding.field] ?? ""))
+      .filter(Number.isFinite);
+    if (values.length === 0) return;
+    const total = values.reduce((sum, value) => sum + value, 0);
+    row[encoding.field] = String(operation === "avg" ? total / values.length : total);
+  });
+  return row;
+}
+
 export function chartScalePosition(spec: ChartScaleSpec) {
   if (spec.type === "utc") {
     const scale = scaleUtc().domain((spec.domain as [string, string]).map((value) => new Date(value)) as [Date, Date]).range(spec.range);
@@ -168,8 +188,8 @@ function barData(input: GenericRenderInput, xField: string, yField: string, seri
       ? [{ category, series, value, rows: [row] }]
       : [];
   });
-  const aggregation = input.chartSpec.aggregations?.y;
-  if (!aggregation) return rows;
+  const hasAggregation = Object.keys(input.chartSpec.aggregations ?? {}).length > 0;
+  if (!hasAggregation) return rows;
   const groups = new Map<string, BarDatum>();
   rows.forEach((datum) => {
     const groupKey = `${datum.category}\u0000${datum.series}`;
@@ -182,7 +202,8 @@ function barData(input: GenericRenderInput, xField: string, yField: string, seri
     }
   });
   const data = Array.from(groups.values());
-  if (aggregation === "avg") data.forEach((datum) => { datum.value /= datum.rows.length; });
+  const yAggregation = input.chartSpec.aggregations?.y;
+  if (yAggregation === "avg") data.forEach((datum) => { datum.value /= datum.rows.length; });
   return data;
 }
 
@@ -285,8 +306,13 @@ function renderBarChart(input: GenericRenderInput) {
   const config = groupConfig(input.chartSpec, "bar");
   const colorEncoding = input.chartSpec.encodings.color;
   const sizeEncoding = input.chartSpec.encodings.size;
-  const colorDomain = visualDomain(input.dataset.rows, colorEncoding);
-  const sizeDomain = visualDomain(input.dataset.rows, sizeEncoding);
+  const visualRows = data.map((datum) => aggregateEncodingRow(datum.rows, input.chartSpec));
+  const colorDomain = input.chartSpec.aggregations?.color
+    ? visualDomain(visualRows, colorEncoding)
+    : visualDomain(input.dataset.rows, colorEncoding);
+  const sizeDomain = input.chartSpec.aggregations?.size
+    ? visualDomain(visualRows, sizeEncoding)
+    : visualDomain(input.dataset.rows, sizeEncoding);
   const stackOffsets = new Map<string, { positive: number; negative: number }>(
     categoryValues.map((category) => [category, { positive: 0, negative: 0 }]),
   );
@@ -295,7 +321,7 @@ function renderBarChart(input: GenericRenderInput) {
     const categoryCenter = categoryPosition(datum.category);
     if (!Number.isFinite(categoryCenter)) return "";
     const seriesIndex = Math.max(0, seriesValues.indexOf(datum.series));
-    const representative = datum.rows[0] ?? {};
+    const representative = aggregateEncodingRow(datum.rows, input.chartSpec);
     const fallbackColor = palette[seriesIndex % palette.length]!;
     const color = visualColor(representative, colorEncoding, colorDomain, config, fallbackColor);
     const mappedWidth = visualSize(representative, sizeEncoding, sizeDomain, config, defaultWidth);
@@ -361,6 +387,9 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
   const cx = input.coordinateGuide?.type === "Polar" ? input.coordinateGuide.origin.x : minX + input.width / 2;
   const cy = input.coordinateGuide?.type === "Polar" ? input.coordinateGuide.origin.y : minY + input.height / 2;
   const config = groupConfig(input.chartSpec, "arc");
+  const valueAggregation = input.chartSpec.aggregations?.theta
+    ?? input.chartSpec.aggregations?.angle
+    ?? input.chartSpec.aggregations?.y;
   const staticRadiusRatio = typeof config.outerRadius === "number"
     ? Math.max(0.15, Math.min(config.outerRadius, 1))
     : 1;
@@ -413,12 +442,18 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
         .filter(Boolean)
         .map((segmentValue) => {
           const rows = input.dataset.rows.filter((row) => (row[segment.field] ?? "") === segmentValue);
+          const numericValues = rows
+            .map((row) => Number(row[segmentThetaField] ?? ""))
+            .filter(Number.isFinite);
+          const total = numericValues.reduce((sum, current) => sum + Math.max(0, current), 0);
           return {
             field: segmentValue,
             thetaField: segmentThetaField,
             flattenValues: [] as string[],
             rows,
-            value: rows.reduce((sum, row) => sum + Math.max(0, Number(row[segmentThetaField] ?? "0")), 0),
+            value: valueAggregation === "avg" && numericValues.length > 0
+              ? total / numericValues.length
+              : total,
           };
         })
       : Array.from(flattenedGroups.values()).flatMap((flattened) =>
@@ -427,7 +462,15 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
           thetaField: encoding.field,
           flattenValues: flattened.values,
           rows: flattened.rows,
-          value: flattened.rows.reduce((sum, row) => sum + Math.max(0, Number(row[encoding.field] ?? "0")), 0),
+          value: (() => {
+            const numericValues = flattened.rows
+              .map((row) => Number(row[encoding.field] ?? ""))
+              .filter(Number.isFinite);
+            const total = numericValues.reduce((sum, current) => sum + Math.max(0, current), 0);
+            return valueAggregation === "avg" && numericValues.length > 0
+              ? total / numericValues.length
+              : total;
+          })(),
         })),
       );
     const componentValues = components.map((component) => component.value);
@@ -478,7 +521,18 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
   if (!value) throw new Error(`${donut ? "Donut" : "Pie"} renderer requires an angle/value encoding.`);
   // With no Segment binding, each source row remains one arc. Radius still uses
   // one shared domain so the outer extents are comparable across all arcs.
-  const rows = input.dataset.rows;
+  const sourceRows = input.dataset.rows;
+  const numericValues = sourceRows
+    .map((row) => Number(row[value.field] ?? ""))
+    .filter(Number.isFinite);
+  const rows = valueAggregation
+    ? [{
+      ...(sourceRows[0] ?? {}),
+      [value.field]: String(valueAggregation === "avg" && numericValues.length > 0
+        ? numericValues.reduce((sum, current) => sum + current, 0) / numericValues.length
+        : numericValues.reduce((sum, current) => sum + current, 0)),
+    }]
+    : sourceRows;
   const values = rows.map((row) => Math.max(0, Number(row[value.field] ?? "0")));
   const layout = pie<number>()
     .sort(null)
@@ -579,6 +633,7 @@ function renderMatrixChart(input: GenericRenderInput) {
     : undefined;
   const aggregation = input.chartSpec.aggregations?.value
     ?? input.chartSpec.aggregations?.y
+    ?? input.chartSpec.aggregations?.color
     ?? colorAggregation;
   type MatrixCellDatum = {
     rowKey: string;
@@ -642,7 +697,10 @@ function renderMatrixChart(input: GenericRenderInput) {
     ? () => 0.72
     : scaleLinear().domain(domain as [number, number]).range([0.18, 0.95]);
   const config = groupConfig(input.chartSpec, "cell");
-  const colorDomain = visualDomain(input.dataset.rows, colorEncoding);
+  const visualRows = cellData.map((cell) => aggregateEncodingRow(cell.rows, input.chartSpec));
+  const colorDomain = input.chartSpec.aggregations?.color
+    ? visualDomain(visualRows, colorEncoding)
+    : visualDomain(input.dataset.rows, colorEncoding);
   const colorValues = colorEncoding?.type === "nominal" || colorEncoding?.type === "ordinal" || colorEncoding?.type === "temporal"
     ? Array.from(new Set(input.dataset.rows.map((row) => row[colorEncoding.field] ?? "")))
     : [];
@@ -653,7 +711,7 @@ function renderMatrixChart(input: GenericRenderInput) {
     const rowIndex = rowIndexByValue.get(rowKey) ?? -1;
     const columnIndex = columnIndexByValue.get(columnKey) ?? -1;
     if (rowIndex < 0 || columnIndex < 0) return "";
-    const representative = cell.rows[0];
+    const representative = aggregateEncodingRow(cell.rows, input.chartSpec);
     if (!representative) return "";
     const alpha = cell.value === undefined ? 0.72 : opacity(cell.value);
     const colorIndex = colorEncoding
