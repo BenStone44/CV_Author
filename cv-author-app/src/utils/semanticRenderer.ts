@@ -18,6 +18,7 @@ import {
 } from "./visualMapping";
 import { renderAdvancedChart } from "./advancedRenderer";
 import { csvRowKey } from "./csvDataEngine";
+import { renderMatrixWebgl, type MatrixWebglCell } from "./matrixWebglRenderer";
 
 function esc(value: string) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
@@ -570,7 +571,73 @@ function renderMatrixChart(input: GenericRenderInput) {
   const yPosition = chartScalePosition(yScale);
   const cellWidth = plotArea.width / Math.max(columnValues.length, 1);
   const cellHeight = plotArea.height / Math.max(rowValues.length, 1);
-  const numeric = valueEncoding ? input.dataset.rows.map((row) => Number(row[valueEncoding.field] ?? "")).filter(Number.isFinite) : [];
+  const rowIndexByValue = new Map(rowValues.map((value, index) => [value, index]));
+  const columnIndexByValue = new Map(columnValues.map((value, index) => [value, index]));
+  const xPositionByValue = new Map(columnValues.map((value) => [value, xPosition(value)]));
+  const yPositionByValue = new Map(rowValues.map((value) => [value, yPosition(value)]));
+  const colorAggregation = valueEncoding?.field
+    ? input.chartSpec.dimensionAggregations?.[valueEncoding.field]
+    : undefined;
+  const aggregation = input.chartSpec.aggregations?.value
+    ?? input.chartSpec.aggregations?.y
+    ?? colorAggregation;
+  type MatrixCellDatum = {
+    rowKey: string;
+    columnKey: string;
+    rows: Dataset["rows"];
+    rowIndexes: number[];
+    value?: number;
+    valueCount: number;
+  };
+  const cellData: MatrixCellDatum[] = aggregation
+    ? (() => {
+      const grouped = new Map<string, MatrixCellDatum>();
+      input.dataset.rows.forEach((row, rowIndex) => {
+        const rowKey = row[rowEncoding.field] ?? "";
+        const columnKey = row[columnEncoding.field] ?? "";
+        if (!rowKey || !columnKey) return;
+        const groupKey = `${rowKey}\u0000${columnKey}`;
+        const value = valueEncoding ? Number(row[valueEncoding.field] ?? "") : Number.NaN;
+        const current = grouped.get(groupKey);
+        if (current) {
+          current.rows.push(row);
+          current.rowIndexes.push(rowIndex);
+          if (Number.isFinite(value)) {
+            current.value = (current.value ?? 0) + value;
+            current.valueCount += 1;
+          }
+          return;
+        }
+        grouped.set(groupKey, {
+          rowKey,
+          columnKey,
+          rows: [row],
+          rowIndexes: [rowIndex],
+          value: Number.isFinite(value) ? value : undefined,
+          valueCount: Number.isFinite(value) ? 1 : 0,
+        });
+      });
+      const cells = Array.from(grouped.values());
+      if (aggregation === "avg") {
+        cells.forEach((cell) => {
+          if (cell.value !== undefined && cell.valueCount > 0) cell.value /= cell.valueCount;
+        });
+      }
+      return cells;
+    })()
+    : input.dataset.rows.map((row, rowIndex) => ({
+      rowKey: row[rowEncoding.field] ?? "",
+      columnKey: row[columnEncoding.field] ?? "",
+      rows: [row],
+      rowIndexes: [rowIndex],
+      value: valueEncoding
+        ? Number.isFinite(Number(row[valueEncoding.field] ?? ""))
+          ? Number(row[valueEncoding.field] ?? "")
+          : undefined
+        : undefined,
+      valueCount: valueEncoding && Number.isFinite(Number(row[valueEncoding.field] ?? "")) ? 1 : 0,
+    }));
+  const numeric = cellData.flatMap((cell) => cell.value === undefined ? [] : [cell.value]);
   const domain = extent(numeric) as [number | undefined, number | undefined];
   const opacity = domain[0] === undefined || domain[1] === undefined || domain[0] === domain[1]
     ? () => 0.72
@@ -580,20 +647,52 @@ function renderMatrixChart(input: GenericRenderInput) {
   const colorValues = colorEncoding?.type === "nominal" || colorEncoding?.type === "ordinal" || colorEncoding?.type === "temporal"
     ? Array.from(new Set(input.dataset.rows.map((row) => row[colorEncoding.field] ?? "")))
     : [];
-  const cells = input.dataset.rows.map((row, index) => {
-    const rowKey = row[rowEncoding.field] ?? "";
-    const columnKey = row[columnEncoding.field] ?? "";
-    const rowIndex = rowValues.indexOf(rowKey);
-    const columnIndex = columnValues.indexOf(columnKey);
+  const colorIndexByValue = new Map(colorValues.map((value, index) => [value, index]));
+  const webglCells: MatrixWebglCell[] = [];
+  const cells = cellData.map((cell) => {
+    const rowKey = cell.rowKey;
+    const columnKey = cell.columnKey;
+    const rowIndex = rowIndexByValue.get(rowKey) ?? -1;
+    const columnIndex = columnIndexByValue.get(columnKey) ?? -1;
     if (rowIndex < 0 || columnIndex < 0) return "";
-    const alpha = valueEncoding ? opacity(Number(row[valueEncoding.field] ?? "")) : 0.72;
-    const colorIndex = colorEncoding ? Math.max(0, colorValues.indexOf(row[colorEncoding.field] ?? "")) : 0;
-    const color = visualColor(row, colorEncoding, colorDomain, config, palette[colorIndex % palette.length] ?? "#2563eb");
-    const centerX = xPosition(columnKey);
-    const centerY = yPosition(rowKey);
+    const representative = cell.rows[0];
+    if (!representative) return "";
+    const alpha = cell.value === undefined ? 0.72 : opacity(cell.value);
+    const colorIndex = colorEncoding
+      ? Math.max(0, colorIndexByValue.get(representative[colorEncoding.field] ?? "") ?? 0)
+      : 0;
+    const color = visualColor(representative, colorEncoding, colorDomain, config, palette[colorIndex % palette.length] ?? "#2563eb");
+    const centerX = xPositionByValue.get(columnKey);
+    const centerY = yPositionByValue.get(rowKey);
     if (!Number.isFinite(centerX) || !Number.isFinite(centerY)) return "";
-    return `<rect data-chart-id="${esc(input.chartId)}" data-mark-role="cell" data-mark-group-id="mark-group:${esc(input.chartId)}:cell" data-row-key="${esc(key(input.dataset, row) || String(index))}" data-row-value="${esc(rowKey)}" data-column-value="${esc(columnKey)}" x="${centerX - cellWidth / 2 + 0.5}" y="${centerY - cellHeight / 2 + 0.5}" width="${Math.max(1, cellWidth - 1)}" height="${Math.max(1, cellHeight - 1)}" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? alpha)}"/>`;
+    const renderedOpacity = Number(config.opacity ?? alpha);
+    webglCells.push({ rowIndex, columnIndex, color, opacity: renderedOpacity });
+    const rowKeys = cell.rows
+      .map((row, rowIndex) => key(input.dataset, row, cell.rowIndexes[rowIndex] ?? rowIndex))
+      .filter(Boolean);
+    const rowKeyAttribute = rowKeys.length === 1
+      ? ` data-row-key="${esc(rowKeys[0]!)}"`
+      : rowKeys.length > 1
+        ? ` data-row-keys="${esc(rowKeys.join(","))}"`
+        : "";
+    return `<rect data-chart-id="${esc(input.chartId)}" data-mark-role="cell" data-mark-group-id="mark-group:${esc(input.chartId)}:cell"${rowKeyAttribute} data-row-value="${esc(rowKey)}" data-column-value="${esc(columnKey)}" x="${centerX - cellWidth / 2 + 0.5}" y="${centerY - cellHeight / 2 + 0.5}" width="${Math.max(1, cellWidth - 1)}" height="${Math.max(1, cellHeight - 1)}" fill="${esc(color)}" fill-opacity="${renderedOpacity}"/>`;
   }).join("");
+  const webglContent = renderMatrixWebgl({
+    chartId: input.chartId,
+    plotArea,
+    rowValues,
+    columnValues,
+    xRange,
+    yRange,
+    cells: webglCells,
+  });
+  if (webglContent) {
+    return {
+      content: webglContent,
+      plotArea,
+      scales: { x: xScale, y: yScale },
+    };
+  }
   return {
     content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="matrix" data-renderer="deterministic-chart@1">${cells}</g>`,
     plotArea,
@@ -711,8 +810,14 @@ export function renderLayerChart(input: LineRenderInput & { layerSpec: LayerSpec
     sharedPlotArea: line.plotArea,
     sharedScales: line.scales,
   });
-  const markerGroup = `<g data-mark-role="points" data-point-count="${input.dataset.rows.length}">${scatterResult.content}</g>`;
-  const content = line.content.replace(/<\/g><\/g>\s*$/, `${markerGroup}</g></g>`);
+  // The scatter renderer already returns a dedicated root group. Reuse it as
+  // the layer's point mark instead of adding a wrapper that has no visual or
+  // interaction state of its own.
+  const markerContent = scatterResult.content.replace(
+    /^<g\b/,
+    `<g data-mark-role="points" data-point-count="${input.dataset.rows.length}"`,
+  );
+  const content = line.content.replace(/<\/g>\s*$/, `${markerContent}</g>`);
   return { ...line, content, layerSpec: input.layerSpec };
 }
 

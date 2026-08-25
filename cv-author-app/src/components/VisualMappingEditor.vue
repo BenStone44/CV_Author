@@ -18,6 +18,7 @@ const props = withDefaults(defineProps<{
   showColor?: boolean;
   showSize?: boolean;
   colorMapping?: LinearColorMapping;
+  colorDomain?: [number, number] | null;
   sizeMapping?: LinearSizeMapping;
 }>(), {
   showColor: false,
@@ -36,10 +37,29 @@ const sizeStops = computed(() => [...props.sizeMapping.stops].sort((a, b) => a.o
 const colorGradient = computed(() => `linear-gradient(90deg, ${colorStops.value
   .map((stop) => `${stop.color} ${Math.round(stop.offset * 100)}%`)
   .join(", ")})`);
+const usableColorDomain = computed(() => {
+  const domain = props.colorDomain;
+  if (!domain || !domain.every(Number.isFinite)) return null;
+  return domain;
+});
 
 function boundedOffset(value: string) {
   const number = Number(value);
   return Number.isFinite(number) ? Math.max(0, Math.min(1, number / 100)) : 0;
+}
+
+function colorStopValue(offset: number) {
+  const domain = usableColorDomain.value;
+  if (!domain) return Math.round(offset * 100);
+  const value = domain[0] + offset * (domain[1] - domain[0]);
+  return Number(value.toPrecision(12));
+}
+
+function colorStopOffset(value: string, fallback: number) {
+  const domain = usableColorDomain.value;
+  const number = Number(value);
+  if (!domain || !Number.isFinite(number) || domain[0] === domain[1]) return fallback;
+  return Math.max(0, Math.min(1, (number - domain[0]) / (domain[1] - domain[0])));
 }
 
 function updateColorStop(index: number, changes: Partial<LinearColorStop>) {
@@ -104,7 +124,28 @@ function removeSizeStop(index: number) {
         </button>
       </header>
       <div class="color-gradient" :style="{ background: colorGradient }" aria-hidden="true"></div>
+      <div class="color-stop-heading" aria-hidden="true">
+        <span>{{ usableColorDomain ? "Value" : "Position" }}</span>
+        <span>Color</span>
+      </div>
       <div v-for="(stop, index) in colorStops" :key="`color-${index}`" class="stop-row">
+        <label>
+          <input
+            :class="usableColorDomain ? 'value-input' : 'offset-input'"
+            type="number"
+            :min="usableColorDomain?.[0] ?? 0"
+            :max="usableColorDomain?.[1] ?? 100"
+            :step="usableColorDomain ? 'any' : 1"
+            :value="colorStopValue(stop.offset)"
+            :aria-label="usableColorDomain ? `Color stop ${index + 1} value` : `Color stop ${index + 1} position`"
+            @change="updateColorStop(index, {
+              offset: usableColorDomain
+                ? colorStopOffset(($event.target as HTMLInputElement).value, stop.offset)
+                : boundedOffset(($event.target as HTMLInputElement).value),
+            })"
+          />
+          <span v-if="!usableColorDomain">%</span>
+        </label>
         <input
           class="color-input"
           type="color"
@@ -112,19 +153,6 @@ function removeSizeStop(index: number) {
           :aria-label="`Color stop ${index + 1}`"
           @input="updateColorStop(index, { color: ($event.target as HTMLInputElement).value })"
         />
-        <label>
-          <input
-            class="offset-input"
-            type="number"
-            min="0"
-            max="100"
-            step="1"
-            :value="Math.round(stop.offset * 100)"
-            :aria-label="`Color stop ${index + 1} position`"
-            @change="updateColorStop(index, { offset: boundedOffset(($event.target as HTMLInputElement).value) })"
-          />
-          <span>%</span>
-        </label>
         <button
           type="button"
           title="Remove color stop"
@@ -243,6 +271,8 @@ button:disabled {
 }
 
 .stop-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px 26px;
   gap: 7px;
 }
 
@@ -256,7 +286,8 @@ button:disabled {
 }
 
 .color-input {
-  width: 32px;
+  box-sizing: border-box;
+  width: 100%;
   height: 26px;
   padding: 2px;
   border: 1px solid #dce3ea;
@@ -271,6 +302,26 @@ button:disabled {
   border: 1px solid #dce3ea;
   border-radius: 4px;
   font: inherit;
+}
+
+.value-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 3px 6px;
+  border: 1px solid #dce3ea;
+  border-radius: 4px;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.color-stop-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px 26px;
+  gap: 7px;
+  color: #687585;
+  font-size: 9px;
 }
 
 .size-stop-row {

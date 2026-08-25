@@ -947,6 +947,23 @@ export type CanvasHistorySnapshot = {
   relationships?: ChartRelationshipState;
 };
 
+export type CanvasHistoryPatchChange = {
+  nodeId: string;
+  role: string;
+  field: string;
+  before: MarkGroupConfigValue;
+  after: MarkGroupConfigValue;
+};
+
+export type CanvasHistoryPatch = {
+  kind: "mark-config";
+  changes: CanvasHistoryPatchChange[];
+  selectedIds: string[];
+  editingGroupPath?: string[];
+};
+
+export type CanvasHistoryEntry = CanvasHistorySnapshot | CanvasHistoryPatch;
+
 export type ContextMenuState = {
   x: number;
   y: number;

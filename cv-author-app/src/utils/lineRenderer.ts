@@ -457,10 +457,17 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
       lineWidth,
       lineStyle,
     });
-    return `<g data-chart-id="${escapeXml(chartId)}" data-mark-role="line" data-mark-group-id="mark-group:${escapeXml(chartId)}:line" data-series-key="${escapeXml(seriesKey)}" data-line-style="${lineStyle}" data-point-count="${ordered.length}" data-row-keys="${escapeXml(keys.join(","))}" opacity="${Number(lineConfig?.opacity ?? 1)}"><path d="${path}" fill="none" stroke="${escapeXml(color)}" stroke-width="${lineWidth}" stroke-dasharray="${dasharray}" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" style="stroke: ${escapeXml(color)}; stroke-width: ${lineWidth}px; stroke-dasharray: ${dasharray}; stroke-linecap: round; stroke-linejoin: round; fill: none;"/></g>`;
+    const markAttributes = `data-chart-id="${escapeXml(chartId)}" data-mark-role="line" data-mark-group-id="mark-group:${escapeXml(chartId)}:line" data-series-key="${escapeXml(seriesKey)}" data-line-style="${lineStyle}" data-point-count="${ordered.length}" data-row-keys="${escapeXml(keys.join(","))}" opacity="${Number(lineConfig?.opacity ?? 1)}"`;
+    const pathAttributes = isMultiLine ? "" : `${markAttributes} `;
+    const pathMarkup = `<path ${pathAttributes}d="${path}" fill="none" stroke="${escapeXml(color)}" stroke-width="${lineWidth}" stroke-dasharray="${dasharray}" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" style="stroke: ${escapeXml(color)}; stroke-width: ${lineWidth}px; stroke-dasharray: ${dasharray}; stroke-linecap: round; stroke-linejoin: round; fill: none;"/>`;
+    // A single line has no group-level state. Put its metadata on the visible
+    // path so the SVG tree contains one mark element instead of two.
+    return isMultiLine ? `<g ${markAttributes}>${pathMarkup}</g>` : pathMarkup;
   }).join("");
   const clipPadding = Math.max(3, maximumLineWidth * 2);
-  const content = `<g data-chart-id="${escapeXml(chartId)}" data-chart-type="line" data-renderer="deterministic-line-marks@3"><defs><clipPath id="${clipId}"><rect x="${plotArea.x - clipPadding}" y="${plotArea.y - clipPadding}" width="${plotArea.width + clipPadding * 2}" height="${plotArea.height + clipPadding * 2}"/></clipPath></defs><g data-mark-role="plot" clip-path="url(#${clipId})">${seriesMarkup}</g></g>`;
+  // Apply clipping to the chart root. The former plot-only wrapper carried no
+  // state beyond this clip path and added an element for every line chart.
+  const content = `<g data-chart-id="${escapeXml(chartId)}" data-chart-type="line" data-renderer="deterministic-line-marks@3" clip-path="url(#${clipId})"><defs><clipPath id="${clipId}"><rect x="${plotArea.x - clipPadding}" y="${plotArea.y - clipPadding}" width="${plotArea.width + clipPadding * 2}" height="${plotArea.height + clipPadding * 2}"/></clipPath></defs>${seriesMarkup}</g>`;
   return {
     content,
     plotArea,

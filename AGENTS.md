@@ -14,6 +14,13 @@ Run commands from `cv-author-app/` with Node `^22.18.0` or `>=24.12.0`:
 - `npm run type-check`: validate Vue and TypeScript.
 - `npm run build`: create the production bundle.
 
+## Development Server Ownership
+
+The user owns both development services. The user starts and stops the Vite
+frontend and the FastAPI backend, and provides the ports to use. Agents must
+not start, stop, restart, or choose ports for either service; use only
+user-provided running endpoints for integration checks.
+
 ## Coding Conventions
 
 Use Vue 3 Composition API, TypeScript, and two-space indentation. Use PascalCase components, camelCase functions/variables, and `use` prefixes for stores/composables. Preserve `noUncheckedIndexedAccess`.

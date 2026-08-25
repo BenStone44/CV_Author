@@ -150,6 +150,8 @@ const {
   setParallelFields,
   updateAxisBindingMarkGroupConfig,
   updateSelectedChartMarkGroupConfig,
+  beginMarkConfigEdit,
+  commitMarkConfigEdit,
   closeAxisBinding,
   setSelectionRotation,
   setPolarAngleSpan,
@@ -779,6 +781,13 @@ function onEncodingChannelChange(channel: ChartEncodingChannel, field: string) {
   setChartEncoding(channel, field);
 }
 
+function onMarkConfigEditStart(field: string) {
+  const node = axisBindingNode.value;
+  if (!node?.chartSpec) return;
+  const role = node.chartSpec.markGroups?.[0]?.role ?? "arc";
+  beginMarkConfigEdit(node.id, role, field);
+}
+
 function onSeriesItemStyleChange(memberId: string, patch: { color?: string; strokeWidth?: number; shape?: "solid" | "dashed" | "dotted" }) {
   const node = selectedIds.value.length === 1 ? selectedNodes.value[0] : null;
   if (!node?.chartSpec) return;
@@ -1271,6 +1280,8 @@ onBeforeUnmount(() => {
               @segment-fields-change="setPolarSegmentFields"
               @parallel-fields-change="setParallelFields"
               @mark-config-change="updateAxisBindingMarkGroupConfig"
+              @mark-config-edit-start="onMarkConfigEditStart"
+              @mark-config-edit-end="commitMarkConfigEdit"
             />
           </aside>
 
@@ -1760,7 +1771,7 @@ onBeforeUnmount(() => {
                 :interactive="true"
                 :editing-group-path="editingGroupPath"
                 :editing-chart-id="chartDrilldown?.nodeId ?? null"
-                :dragging-node-id="compositionDragSourceId"
+                :dragging-node-id="activeDropZone ? compositionDragSourceId : null"
                 :selected-ids="selectedIds"
                 :nested-placements="nestedRenderPlacements"
                 :nested-rendered-child-ids="nestedRenderedChildIds"
@@ -1774,7 +1785,7 @@ onBeforeUnmount(() => {
                 v-for="node in visibleCanvasNodes"
                 :key="`coordinate-system-${node.id}`"
                 :node="node"
-                :dragging-node-id="compositionDragSourceId"
+                :dragging-node-id="activeDropZone ? compositionDragSourceId : null"
                 :hidden-node-ids="nestedRenderedChildIds"
               />
               <g v-if="activeDropZone" :transform="editingGroupTransform" class="composition-drop-zone-layer">

@@ -32,6 +32,7 @@ import {
   isLinearColorMapping,
   isLinearSizeMapping,
   isSeriesStyleMapping,
+  visualDomain,
 } from "../utils/visualMapping";
 import {
   csvColumnDragMime,
@@ -59,6 +60,8 @@ const emit = defineEmits<{
   segmentFieldsChange: [fields: string[]];
   parallelFieldsChange: [fields: string[]];
   markConfigChange: [patch: MarkGroupSharedConfig];
+  markConfigEditStart: [field: string];
+  markConfigEditEnd: [];
   axisSwap: [swapped: boolean];
   compositionChange: [patch: {
     facetField?: string;
@@ -177,6 +180,11 @@ const supportsLegend = computed(() => (isPolar.value && polarSegmentMembers.valu
   || supportsSeriesItems.value
   || (template.value === "scatter" && colorColumn.value?.type === "nominal"));
 const showColorMapping = computed(() => !!colorColumn.value && colorColumn.value.type !== "nominal");
+const colorDomain = computed(() => {
+  const column = colorColumn.value;
+  if (!colorField.value || column?.type !== "quantitative") return null;
+  return visualDomain(props.rows, { field: colorField.value, type: column.type });
+});
 const showSizeMapping = computed(() => !!sizeField.value);
 const staticColor = computed(() => typeof props.markConfig.color === "string" ? props.markConfig.color : "#2563eb");
 const staticSize = computed(() => typeof props.markConfig.size === "number" ? props.markConfig.size : 4);
@@ -513,6 +521,12 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
             max="1"
             step="0.05"
             :value="staticOuterRadius"
+            @pointerdown="emit('markConfigEditStart', 'outerRadius')"
+            @focus="emit('markConfigEditStart', 'outerRadius')"
+            @pointerup="emit('markConfigEditEnd')"
+            @pointercancel="emit('markConfigEditEnd')"
+            @blur="emit('markConfigEditEnd')"
+            @change="emit('markConfigEditEnd')"
             @input="emit('markConfigChange', { outerRadius: Number(($event.target as HTMLInputElement).value) })"
           />
           <output>{{ Math.round(staticOuterRadius * 100) }}%</output>
@@ -589,6 +603,7 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
           :show-color="showColorMapping"
           :show-size="showSizeMapping"
           :color-mapping="colorMapping"
+          :color-domain="colorDomain"
           :size-mapping="sizeMapping"
           @color-change="(mapping: LinearColorMapping) => emit('markConfigChange', { colorMapping: mapping })"
           @size-change="(mapping: LinearSizeMapping) => emit('markConfigChange', { sizeMapping: mapping })"
