@@ -263,6 +263,7 @@ export function getFilterIconSvg(icon: IconKind): string {
 
 export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   type DragTestStage = "transform" | "position" | "position-dropzone" | "full" | null;
+  type SelectionTestStage = "cleanup" | "transient" | "drilldown" | "composition-edit" | "scope" | "normalize" | "move" | "relationship" | "selection" | "axis-binding" | "composition" | "full" | null;
   const dragTestStage: DragTestStage = typeof window === "undefined"
     ? null
     : (() => {
@@ -273,6 +274,66 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         ? value
         : null;
     })();
+  const selectionTestConfig: { stage: SelectionTestStage; profile: boolean } = typeof window === "undefined"
+    ? { stage: null, profile: false }
+    : (() => {
+      const params = new URLSearchParams(window.location.search);
+      const value = params.get("selection-stage");
+      const stage: SelectionTestStage = value === "cleanup"
+        || value === "transient"
+        || value === "drilldown"
+        || value === "composition-edit"
+        || value === "scope"
+        || value === "normalize"
+        || value === "move"
+        || value === "relationship"
+        || value === "selection"
+        || value === "axis-binding"
+        || value === "composition"
+        || value === "full"
+        ? value
+        : null;
+      return { stage, profile: params.has("selection-profile") || stage !== null };
+    })();
+  type SelectionDiagnosticEntry = {
+    nodeId: string;
+    stage: Exclude<SelectionTestStage, null>;
+    phase: "sync" | "flush";
+    duration: number;
+    recordedAt: number;
+  };
+  const selectionDiagnosticLog = typeof window === "undefined"
+    ? null
+    : ((window as Window & { __CV_AUTHOR_SELECTION_LOG__?: SelectionDiagnosticEntry[] }).__CV_AUTHOR_SELECTION_LOG__
+      ??= []);
+  function measureSelectionStage<T>(nodeId: string, stage: Exclude<SelectionTestStage, null>, action: () => T): T {
+    if (!selectionTestConfig.profile) return action();
+    const startedAt = performance.now();
+    const result = action();
+    const duration = performance.now() - startedAt;
+    const entry: SelectionDiagnosticEntry = { nodeId, stage, phase: "sync", duration, recordedAt: Date.now() };
+    selectionDiagnosticLog?.push(entry);
+    console.info(`[selection-test] ${stage} sync ${duration.toFixed(2)}ms`, { nodeId });
+    if (selectionTestConfig.stage === stage) {
+      void nextTick(() => {
+        const flushDuration = performance.now() - startedAt;
+        const flushEntry: SelectionDiagnosticEntry = {
+          nodeId,
+          stage,
+          phase: "flush",
+          duration: flushDuration,
+          recordedAt: Date.now(),
+        };
+        selectionDiagnosticLog?.push(flushEntry);
+        console.info(`[selection-test] ${stage} flush ${flushDuration.toFixed(2)}ms`, { nodeId });
+      });
+    }
+    return result;
+  }
+  function selectionTestOnly(stage: Exclude<SelectionTestStage, null>) {
+    return selectionTestConfig.stage !== null && selectionTestConfig.stage !== "full"
+      && selectionTestConfig.stage === stage;
+  }
   const { datasets, activeDataset, getDataset } = useDatasetStore();
   const relationshipStore = useChartRelationshipStore();
   const {
@@ -367,6 +428,12 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const loadingDrop = ref(false);
   const importNotice = ref<string | null>(null);
   const axisBindingTarget = ref<AxisBindingTarget | null>(null);
+  // Pointer coordinates are only metadata; keep the reactive target stable for repeated clicks.
+  function setAxisBindingTarget(target: AxisBindingTarget) {
+    const current = axisBindingTarget.value;
+    if (current?.nodeId === target.nodeId && current.channel === target.channel) return;
+    axisBindingTarget.value = target;
+  }
   const semanticSelection = ref<SemanticSelection | null>(null);
   const activeNestedRelationshipId = ref<string | null>(null);
   let importNoticeTimer: number | null = null;
@@ -2204,12 +2271,12 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     });
     if (node.chartSpec) {
       const template = normalizeChartTemplate(node.chartSpec.chartType);
-      axisBindingTarget.value = {
+      setAxisBindingTarget({
         nodeId: node.id,
         channel: template === "pie" || template === "donut" ? "y" : "x",
         clientX: event.clientX,
         clientY: event.clientY,
-      };
+      });
     } else {
       axisBindingTarget.value = null;
     }
@@ -6002,6 +6069,35 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     event.stopPropagation();
     enterCanvasGroup(node);
   }
+  function clearTransientChartSelectionState(node: CanvasNode) {
+    clearSelectionTransientState();
+    clearSelectionDrilldown(node);
+    finishSelectionComposition(node);
+    resetSelectionScope(node);
+  }
+  function clearSelectionTransientState() {
+    contextMenu.value = null;
+    compositionDragSourceId.value = null;
+    activeDropZone.value = null;
+  }
+  function clearSelectionDrilldown(node: CanvasNode) {
+    if (chartDrilldown.value && chartDrilldown.value.nodeId !== node.id) {
+      chartDrilldown.value = null;
+      nestedDropPath = [];
+      semanticSelection.value = null;
+    }
+  }
+  function finishSelectionComposition(node: CanvasNode) {
+    if (editingCompositionId.value && node.compositionSpec?.id !== editingCompositionId.value) {
+      finishCompositionEditing(false);
+    }
+  }
+  function resetSelectionScope(node: CanvasNode) {
+    if (editingGroupPath.value.length > 0 && !getSelectionNode(node.id)) {
+      editingGroupPath.value = [];
+      selectedIds.value = [];
+    }
+  }
   function onCanvasNodePointerDown(node: CanvasNode, event: PointerEvent) {
     if (event.button !== 0) return;
     if (dragTestStage === "transform") {
@@ -6023,50 +6119,125 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       compositionDragSourceId.value = node.id;
       return;
     }
-    contextMenu.value = null;
-    compositionDragSourceId.value = null;
-    activeDropZone.value = null;
-    if (chartDrilldown.value && chartDrilldown.value.nodeId !== node.id) {
-      chartDrilldown.value = null;
-      nestedDropPath = [];
-      semanticSelection.value = null;
+    if (selectionTestOnly("cleanup")) {
+      event.stopPropagation();
+      measureSelectionStage(node.id, "cleanup", () => clearTransientChartSelectionState(node));
+      return;
     }
-    if (editingCompositionId.value && node.compositionSpec?.id !== editingCompositionId.value) {
-      finishCompositionEditing(false);
+    if (selectionTestOnly("transient")) {
+      event.stopPropagation();
+      measureSelectionStage(node.id, "transient", clearSelectionTransientState);
+      return;
     }
+    if (selectionTestOnly("drilldown")) {
+      event.stopPropagation();
+      measureSelectionStage(node.id, "drilldown", () => clearSelectionDrilldown(node));
+      return;
+    }
+    if (selectionTestOnly("composition-edit")) {
+      event.stopPropagation();
+      measureSelectionStage(node.id, "composition-edit", () => finishSelectionComposition(node));
+      return;
+    }
+    if (selectionTestOnly("scope")) {
+      event.stopPropagation();
+      measureSelectionStage(node.id, "scope", () => resetSelectionScope(node));
+      return;
+    }
+    if (selectionTestOnly("normalize")) {
+      event.stopPropagation();
+      measureSelectionStage(node.id, "normalize", () => normalizeSelection([node.id]));
+      return;
+    }
+    if (selectionTestOnly("move")) {
+      event.preventDefault();
+      event.stopPropagation();
+      measureSelectionStage(node.id, "move", () => startMove([node.id], event));
+      return;
+    }
+    if (selectionTestOnly("relationship")) {
+      event.stopPropagation();
+      if (node.chartSpec) {
+        measureSelectionStage(node.id, "relationship", () =>
+          dispatchRelationship({ type: "select-entity", selection: { type: "chart", id: node.id } }));
+      }
+      return;
+    }
+    if (selectionTestOnly("selection")) {
+      event.stopPropagation();
+      measureSelectionStage(node.id, "selection", () => {
+        setSelection([node.id]);
+        semanticSelection.value = null;
+      });
+      return;
+    }
+    if (selectionTestOnly("axis-binding")) {
+      event.stopPropagation();
+      if (node.chartSpec) {
+        measureSelectionStage(node.id, "axis-binding", () => {
+          const template = normalizeChartTemplate(node.chartSpec!.chartType);
+          setAxisBindingTarget({
+            nodeId: node.id,
+            channel: template === "pie" || template === "donut" ? "y" : "x",
+            clientX: event.clientX,
+            clientY: event.clientY,
+          });
+        });
+      }
+      return;
+    }
+    if (selectionTestOnly("composition")) {
+      event.stopPropagation();
+      if (node.chartSpec) measureSelectionStage(node.id, "composition", () => {
+        compositionDragSourceId.value = node.id;
+      });
+      return;
+    }
+    measureSelectionStage(node.id, "transient", clearSelectionTransientState);
+    measureSelectionStage(node.id, "drilldown", () => clearSelectionDrilldown(node));
+    measureSelectionStage(node.id, "composition-edit", () => finishSelectionComposition(node));
     event.stopPropagation();
-    if (editingGroupPath.value.length > 0 && !getSelectionNode(node.id)) {
-      editingGroupPath.value = [];
-      selectedIds.value = [];
-    }
-    const targetIds = normalizeSelection([node.id]);
+    measureSelectionStage(node.id, "scope", () => resetSelectionScope(node));
+    const targetIds = measureSelectionStage(node.id, "normalize", () => normalizeSelection([node.id]));
     const hasModifier = event.shiftKey || event.metaKey || event.ctrlKey;
-    if (hasModifier) { toggleSelection(targetIds); return; }
+    if (hasModifier) {
+      measureSelectionStage(node.id, "selection", () => toggleSelection(targetIds));
+      return;
+    }
     const nextSelection = selectedIds.value.includes(node.id) ? selectedIds.value : targetIds;
     // Read the pointer origin before selection updates can trigger an SVG layout.
-    startMove(nextSelection, event);
-    if (node.chartSpec) dispatchRelationship({ type: "select-entity", selection: { type: "chart", id: node.id } });
-    setSelection(nextSelection);
-    semanticSelection.value = null;
+    measureSelectionStage(node.id, "move", () => startMove(nextSelection, event));
     if (node.chartSpec) {
-      const template = normalizeChartTemplate(node.chartSpec.chartType);
-      axisBindingTarget.value = {
-        nodeId: node.id,
-        channel: template === "pie" || template === "donut" ? "y" : "x",
-        clientX: event.clientX,
-        clientY: event.clientY,
-      };
+      measureSelectionStage(node.id, "relationship", () =>
+        dispatchRelationship({ type: "select-entity", selection: { type: "chart", id: node.id } }));
     }
-    const repeatableComposition = node.compositionSpec?.type === "layer" || node.compositionSpec?.type === "concat"
-      ? node.compositionSpec
-      : null;
-    const draggingWholeComposition = !!repeatableComposition
-      && editingCompositionId.value !== repeatableComposition.id
-      && repeatableComposition.members.length === nextSelection.length
-      && repeatableComposition.members.every((member) => nextSelection.includes(member.nodeId));
-    if (node.chartSpec && (nextSelection.length === 1 || draggingWholeComposition)) {
-      compositionDragSourceId.value = node.id;
+    measureSelectionStage(node.id, "selection", () => {
+      setSelection(nextSelection);
+      semanticSelection.value = null;
+    });
+    if (node.chartSpec) {
+      measureSelectionStage(node.id, "axis-binding", () => {
+        const template = normalizeChartTemplate(node.chartSpec!.chartType);
+        setAxisBindingTarget({
+          nodeId: node.id,
+          channel: template === "pie" || template === "donut" ? "y" : "x",
+          clientX: event.clientX,
+          clientY: event.clientY,
+        });
+      });
     }
+    measureSelectionStage(node.id, "composition", () => {
+      const repeatableComposition = node.compositionSpec?.type === "layer" || node.compositionSpec?.type === "concat"
+        ? node.compositionSpec
+        : null;
+      const draggingWholeComposition = !!repeatableComposition
+        && editingCompositionId.value !== repeatableComposition.id
+        && repeatableComposition.members.length === nextSelection.length
+        && repeatableComposition.members.every((member) => nextSelection.includes(member.nodeId));
+      if (node.chartSpec && (nextSelection.length === 1 || draggingWholeComposition)) {
+        compositionDragSourceId.value = node.id;
+      }
+    });
   }
   function openContextMenu(event: MouseEvent) {
     if (!canvasRef.value) return;

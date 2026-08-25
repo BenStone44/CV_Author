@@ -10,6 +10,19 @@ import { inferCsvPrimaryKey } from "./csvDataEngine";
 
 type MaterializedChartData = Pick<Dataset, "columns" | "rows">;
 
+type TransformCacheEntry = {
+  rows: Dataset["rows"];
+  columns: Dataset["columns"];
+  signature: string;
+  result: Dataset;
+};
+
+const transformCache = new WeakMap<object, TransformCacheEntry[]>();
+
+function transformSignature(transforms: ChartDataTransform[]) {
+  return JSON.stringify(transforms);
+}
+
 function numericValue(row: DataRow, field: string) {
   const rawValue = row[field]?.trim() ?? "";
   if (!rawValue) return null;
@@ -172,10 +185,21 @@ export function materializeChartDataTransforms(
   transforms: ChartDataTransform[] | undefined,
 ): Dataset {
   if (!transforms?.length) return dataset;
+  const signature = transformSignature(transforms);
+  const cached = transformCache.get(dataset as object)?.find((entry) =>
+    entry.rows === dataset.rows
+      && entry.columns === dataset.columns
+      && entry.signature === signature,
+  );
+  if (cached) return cached.result;
   const materialized = transforms.reduce<MaterializedChartData>(applyTransform, {
     columns: dataset.columns.map((column) => ({ ...column })),
-    rows: dataset.rows.map((row) => ({ ...row })),
+    rows: dataset.rows,
   });
   const transformed = { ...dataset, ...materialized };
-  return { ...transformed, primaryKey: retainedPrimaryKey(transformed) };
+  const result = { ...transformed, primaryKey: retainedPrimaryKey(transformed) };
+  const entries = transformCache.get(dataset as object) ?? [];
+  entries.push({ rows: dataset.rows, columns: dataset.columns, signature, result });
+  transformCache.set(dataset as object, entries);
+  return result;
 }
