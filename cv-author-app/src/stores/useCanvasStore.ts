@@ -54,6 +54,7 @@ import type {
   NestedBindingTarget,
   ChartDrilldown,
   ChartRelationshipState,
+  InheritedFilterContext,
   NestedRelationship,
   NestedRenderPlacement,
   RelativeNestedParameters,
@@ -63,6 +64,8 @@ import type {
   ChartScaleSpec,
   DimensionRecommendation,
   ChartDataTransform,
+  GeographicLayerConfig,
+  GeographicMapViewState,
 } from "../types";
 import { isDataColumnTypeCompatible } from "../types";
 import { useDatasetStore } from "./useDatasetStore";
@@ -122,7 +125,10 @@ import {
 } from "../utils/csvColumnDrag";
 import { advancedTemplateDefinitions } from "../utils/advancedChartCards";
 import { withD3GalleryThumbnail } from "../utils/d3GalleryThumbnails";
-import { geographicLayerDefinitions } from "../utils/geographicLayerCards";
+import {
+  geographicLayerDefinitions,
+  getGeographicLayerFamily,
+} from "../utils/geographicLayerCards";
 import {
   getEncodingChannelConfigsForSpec,
   resolvedEncodingField,
@@ -138,6 +144,7 @@ import {
   inferColumnIntents,
   type InputColumnIntentAnalysis,
 } from "../utils/dimensionInference";
+import { geoJsonFeatureIds } from "../utils/geoJsonGeometry";
 
 const historyLimit = 50;
 export const MIN_ZOOM = 0.25;
@@ -206,6 +213,15 @@ export const coordinateOptions: Array<{
   { value: "Geographic", label: "Geographic", icon: "geographic" },
   { value: "CoordinateFree", label: "Free", icon: "coordinate-free" },
 ];
+
+const defaultGeographicLayerConfig = (layerType: string): GeographicLayerConfig => {
+  const family = getGeographicLayerFamily(layerType);
+  return family === "point"
+    ? { size: 8, color: "#2563eb" }
+    : family === "area"
+      ? { color: "#2563eb" }
+      : {};
+};
 
 export const compositionOptions: Array<{
   value: CompositionType;
@@ -336,7 +352,12 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     return selectionTestConfig.stage !== null && selectionTestConfig.stage !== "full"
       && selectionTestConfig.stage === stage;
   }
-  const { datasets, activeDataset, getDataset } = useDatasetStore();
+  const {
+    datasets,
+    activeDataset,
+    getDataset,
+    activeGeometrySource,
+  } = useDatasetStore();
   const relationshipStore = useChartRelationshipStore();
   const {
     state: chartRelationships,
@@ -1212,6 +1233,37 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   }
 
   function dataBindingDropZoneAtPoint(point: Point, payload: CsvColumnDragPayload): DataBindingDropZone | null {
+    const geographicTarget = [...getSelectionScopeNodes()].reverse().find((node) => {
+      if (node.layerKind !== "deckgl") return false;
+      const supportedLayer = node.deckglLayerType === "GeoJsonLayer"
+        || node.deckglLayerType === "PolygonLayer"
+        || node.deckglLayerType === "SolidPolygonLayer"
+        || node.deckglLayerType === "ScatterplotLayer";
+      if (!supportedLayer) return false;
+      const local = toNodeLocalPoint(node, point);
+      const minX = node.kind === "leaf" ? node.contentMinX : 0;
+      const minY = node.kind === "leaf" ? node.contentMinY : 0;
+      return local.x >= minX && local.x <= minX + node.width
+        && local.y >= minY && local.y <= minY + node.height;
+    });
+    if (geographicTarget) {
+      const dataset = getDataset(payload.datasetId);
+      const source = activeGeometrySource.value;
+      const column = dataset?.columns.find((item) => item.name === payload.field);
+      const usableFeatures = source?.features.filter((feature) =>
+        geographicTarget.deckglLayerType === "ScatterplotLayer"
+          || feature.geometry.type === "Polygon"
+          || feature.geometry.type === "MultiPolygon") ?? [];
+      const geometryIds = new Set(usableFeatures.flatMap(geoJsonFeatureIds));
+      const hasMatch = !!dataset && !!column && dataset.rows.some((row) => geometryIds.has((row[payload.field] ?? "").trim()));
+      return {
+        type: "geographic-body",
+        targetNodeId: geographicTarget.id,
+        fieldName: payload.field,
+        compatible: !!source && column?.type === payload.type && hasMatch,
+        bounds: collectNodeSelectionBounds(geographicTarget),
+      };
+    }
     const threshold = 18 / Math.max(viewZoom.value, 0.0001);
     let nearestZone: DataBindingDropZone | null = null;
     let nearestDistance = Number.POSITIVE_INFINITY;
@@ -2101,11 +2153,12 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const sourceDataset = getDataset(node.layerSpec.datasetId);
     if (!sourceDataset) return;
     const dataTransforms = node.chartSpec?.dataTransforms;
+    const effectiveDataTransforms = transformsWithNestedContext(node, dataTransforms);
     const filteredDataset = node.chartSpec
       ? { ...sourceDataset, rows: sourceDataset.rows.filter((row) => rowMatchesChartFilters(row, node.chartSpec!)) }
       : sourceDataset;
     const dataset = node.chartSpec
-      ? materializeChartDataTransforms(filteredDataset, dataTransforms)
+      ? materializeChartDataTransforms(filteredDataset, effectiveDataTransforms)
       : filteredDataset;
     const lineChild = node.layerSpec.children.find((child) => child.role === "line");
     if (!lineChild) return;
@@ -2709,6 +2762,126 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     return (spec?.dataTransforms ?? []).filter(isFacetClueTransform);
   }
 
+  function nestClueTransforms(spec: ChartSpec | undefined) {
+    return (spec?.dataTransforms ?? []).filter((transform): transform is Extract<ChartDataTransform, { kind: "filter"; mode: "values" }> =>
+      transform.kind === "filter"
+        && transform.mode === "values"
+        && transform.purpose === "nest-clue");
+  }
+
+  function transformsWithNestedContext(node: CanvasNode, transforms: ChartDataTransform[] | undefined) {
+    const contexts = Object.values(chartRelationships.value.nestedRelationships)
+      .filter((relationship) => relationship.status === "active" && relationship.childChartId === node.id)
+      .flatMap((relationship) => relationship.inheritedFilterContexts ?? []);
+    if (contexts.length === 0) return transforms;
+    const sourceTransforms = transforms ?? [];
+    const consumedFields = new Set<string>();
+    const resolved = sourceTransforms.map((transform) => {
+      if (transform.kind !== "filter" || transform.mode !== "values" || transform.purpose !== "nest-clue") {
+        return transform;
+      }
+      const context = contexts.find((candidate) => candidate.childField === transform.field);
+      if (!context) return transform;
+      consumedFields.add(context.childField);
+      if (context.filterMode === "numeric") {
+        return transform;
+      }
+      return { ...transform, values: [String(context.value)] };
+    });
+    const generated = contexts
+      .filter((context) => !consumedFields.has(context.childField))
+      .map((context): ChartDataTransform => context.filterMode === "numeric"
+        ? {
+          id: `nested-filter:${context.parentChartId}:${context.childField}`,
+          kind: "filter",
+          mode: "numeric",
+          field: context.childField,
+          operator: "eq",
+          value: Number(context.value),
+        }
+        : {
+          id: `nested-filter:${context.parentChartId}:${context.childField}`,
+          kind: "filter",
+          mode: "values",
+          field: context.childField,
+          values: [String(context.value)],
+          single: true,
+          purpose: "nested-context",
+        });
+    return [...resolved, ...generated];
+  }
+
+  function resolveNestedFilterContexts(
+    parent: CanvasNode,
+    child: CanvasNode,
+    parentDataKey: string,
+    rowKey?: string,
+  ) {
+    const parentSpec = parent.chartSpec;
+    const childSpec = child.chartSpec;
+    const parentDataset = parentSpec ? getDataset(parentSpec.datasetId) : null;
+    const childDataset = childSpec ? getDataset(childSpec.datasetId) : null;
+    if (!parentSpec || !childSpec || !parentDataset || !childDataset || parentDataset.id !== childDataset.id) {
+      return { contexts: [] as InheritedFilterContext[], unresolvedFields: ["x", "y"] };
+    }
+    const parentXField = parentSpec.encodings.x?.field ?? parentSpec.encodings.column?.field;
+    const parentYField = parentSpec.encodings.y?.field ?? parentSpec.encodings.row?.field;
+    const clues = nestClueTransforms(child.chartSpec);
+    const fieldsToResolve = clues.length > 0
+      ? clues.map((clue) => clue.field)
+      : [parentXField, parentYField].filter((field): field is string => !!field);
+    const parentFields = new Set([parentXField, parentYField]
+      .filter((field): field is string => !!field));
+    let identity: { rowKey?: string; rowValue?: string; columnValue?: string } = {};
+    try {
+      identity = JSON.parse(parentDataKey) as typeof identity;
+    } catch {
+      identity = { rowKey: parentDataKey };
+    }
+    const resolvedRowKey = rowKey ?? identity.rowKey;
+    const materializedParent = prepareChartData(parent.id, parentDataset, parentSpec).dataset;
+    const parentRow = resolvedRowKey === undefined
+      ? undefined
+      : materializedParent.rows.find((row, index) => csvRowKey(materializedParent, row, index) === resolvedRowKey);
+    const contexts: InheritedFilterContext[] = [];
+    const unresolvedFields: string[] = [];
+    const markValuesByField = new Map<string, string>();
+    if (parentXField && identity.columnValue !== undefined) {
+      markValuesByField.set(parentXField, identity.columnValue);
+    }
+    if (parentYField && identity.rowValue !== undefined) {
+      markValuesByField.set(parentYField, identity.rowValue);
+    }
+    fieldsToResolve.forEach((field) => {
+      const parentColumn = materializedParent.columns.find((column) => column.name === field);
+      const childColumn = childDataset.columns.find((column) => column.name === field);
+      const value = (parentRow?.[field] ?? markValuesByField.get(field) ?? "").trim();
+      if (!parentFields.has(field)
+        || !parentColumn
+        || !childColumn
+        || !isDataColumnTypeCompatible([childColumn.type], parentColumn.type)
+        || !value) {
+        unresolvedFields.push(field);
+        return;
+      }
+      const numeric = parentColumn.type === "quantitative";
+      if (numeric && !Number.isFinite(Number(value))) {
+        unresolvedFields.push(field);
+        return;
+      }
+      contexts.push({
+        parentChartId: parent.id,
+        parentDataKey,
+        parentField: field,
+        childField: field,
+        value: numeric ? Number(value) : value,
+        filterMode: numeric ? "numeric" : "values",
+        source: "parent-row",
+      });
+    });
+    return { contexts, unresolvedFields };
+  }
+
   /** Keep a clue available on the composition owner when all members supplied it. */
   function retainSharedFacetClues(owner: CanvasNode, members: CanvasNode[]) {
     if (!owner.chartSpec || members.length < 2) return;
@@ -2736,7 +2909,10 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const parentClues = facetClueTransforms(parent.chartSpec);
     if (parentClues.length === 0) return;
     const childTransforms = child.chartSpec.dataTransforms ?? [];
-    const childFields = new Set(facetClueTransforms(child.chartSpec).map((clue) => clue.field));
+    const childFields = new Set([
+      ...facetClueTransforms(child.chartSpec),
+      ...nestClueTransforms(child.chartSpec),
+    ].map((clue) => clue.field));
     const inherited = parentClues
       .filter((clue) => !childFields.has(clue.field))
       .map((clue) => ({ ...clue, purpose: "nested-context" as const }));
@@ -3767,10 +3943,16 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       rowKey: categoryOnly ? undefined : element.getAttribute("data-row-key") ?? undefined,
       categoryKey: element.getAttribute("data-category-key") ?? undefined,
       seriesKey: categoryOnly ? undefined : element.getAttribute("data-series-key") ?? undefined,
+      rowValue: element.getAttribute("data-row-value") ?? undefined,
+      columnValue: element.getAttribute("data-column-value") ?? undefined,
       role: element.getAttribute("data-mark-role") ?? undefined,
       fallbackIndex: undefined as number | undefined,
     };
-    if (!identity.rowKey && !identity.categoryKey && !identity.seriesKey) identity.fallbackIndex = fallbackIndex;
+    if (!identity.rowKey
+      && !identity.categoryKey
+      && !identity.seriesKey
+      && !identity.rowValue
+      && !identity.columnValue) identity.fallbackIndex = fallbackIndex;
     return JSON.stringify(identity);
   }
 
@@ -3780,12 +3962,16 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         rowKey?: string;
         categoryKey?: string;
         seriesKey?: string;
+        rowValue?: string;
+        columnValue?: string;
         role?: string;
         fallbackIndex?: number;
       };
       return (identity.rowKey === undefined || element.getAttribute("data-row-key") === identity.rowKey)
         && (identity.categoryKey === undefined || element.getAttribute("data-category-key") === identity.categoryKey)
         && (identity.seriesKey === undefined || element.getAttribute("data-series-key") === identity.seriesKey)
+        && (identity.rowValue === undefined || element.getAttribute("data-row-value") === identity.rowValue)
+        && (identity.columnValue === undefined || element.getAttribute("data-column-value") === identity.columnValue)
         && (identity.role === undefined || element.getAttribute("data-mark-role") === identity.role)
         && (identity.fallbackIndex === undefined || fallbackIndex === identity.fallbackIndex);
     } catch {
@@ -4345,6 +4531,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const parentSpec = parent.chartSpec;
     if (!childSpec || !parentSpec) return false;
     if (childSpec.datasetId !== parentSpec.datasetId) return false;
+    if (nestClueTransforms(childSpec).length > 0) return false;
     inheritParentFacetClues(parent, child);
     const childTemplate = normalizeChartTemplate(childSpec.chartType);
     if (childTemplate !== "pie" && childTemplate !== "donut") return false;
@@ -4392,6 +4579,13 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           }]
           : [];
       if (nestedTargets.length === 0 || !source.chartSpec || !target.chartSpec) return false;
+      const nestedContextResults = nestedTargets.map((nestedTarget) =>
+        resolveNestedFilterContexts(target, source, nestedTarget.dataKey, nestedTarget.rowKey));
+      const unresolvedFields = Array.from(new Set(nestedContextResults.flatMap((result) => result.unresolvedFields)));
+      if (unresolvedFields.length > 0) {
+        setImportNotice(`Nested context could not resolve parent x/y values for: ${unresolvedFields.join(", ")}.`);
+        return false;
+      }
       const sourceName = source.name;
       const batchId = `nested-batch:${crypto.randomUUID()}`;
       const sourceFrame = {
@@ -4425,6 +4619,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
             parentMarkGroupId: nestedTarget.markGroupId,
             parentDataKey: nestedTarget.dataKey,
             childChartId: child.id,
+            inheritedFilterContexts: nestedContextResults[index]?.contexts,
             relationType: "relative-position",
             parameters: {
               ...defaultRelativeParameters(),
@@ -4438,6 +4633,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           },
         });
         dispatchRelationship({ type: "commit-nested", relationshipId });
+        if (child.layerSpec) renderSemanticNode(child);
+        else renderChartNode(child);
         return { child, relationshipId };
       });
       replaceSelectionScopeNodes([
@@ -4527,6 +4724,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     }));
   }
   function setCoordinateGuideAppearance(patch: {
+    showAllAxes?: boolean;
     showXLine?: boolean;
     showYLine?: boolean;
     showThetaLine?: boolean;
@@ -4539,7 +4737,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (!node?.coordinateGuide) return;
     pushCanvasHistory();
     Object.assign(node.coordinateGuide, patch);
-    if (patch.xDiscreteSpacing !== undefined || patch.yDiscreteSpacing !== undefined) {
+    if (patch.showAllAxes !== undefined
+      || patch.showXLine !== undefined
+      || patch.showYLine !== undefined
+      || patch.xDiscreteSpacing !== undefined
+      || patch.yDiscreteSpacing !== undefined) {
       renderChartNode(node);
     }
     registerChartRelationship(node);
@@ -5459,21 +5661,26 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       };
       return;
     }
+    const effectiveDataTransforms = transformsWithNestedContext(node, chartSpec.dataTransforms);
+    const materializationSpec = effectiveDataTransforms === chartSpec.dataTransforms
+      ? chartSpec
+      : { ...chartSpec, dataTransforms: effectiveDataTransforms };
     const { dataset, chartSpec: syncedChartSpec } = prepareChartData(
       node.id,
       sourceDataset,
-      chartSpec,
+      materializationSpec,
     );
     const usesDerivedValueSeries = (chartSpec.valueFields?.length ?? 0) > 1;
     const persistedSyncedChartSpec = usesDerivedValueSeries
       ? {
         ...syncedChartSpec,
+        dataTransforms: chartSpec.dataTransforms,
         encodings: chartSpec.encodings,
         series: chartSpec.series,
         seriesFields: chartSpec.seriesFields,
         valueFields: chartSpec.valueFields,
       }
-      : syncedChartSpec;
+      : { ...syncedChartSpec, dataTransforms: chartSpec.dataTransforms };
     const ownerScales = coordinateOwner ? mergedCompositionScales(coordinateOwner) : undefined;
     const ownerPlotArea = coordinateOwner?.chartSpec?.plotArea;
     const memberLocalOrigin = {
@@ -5867,6 +6074,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const styleTokens = chartType && isLineChartType(chartType)
       ? { ...extractChartStyleTokens(template), lineWidth: 2.5 }
       : undefined;
+    const initialDeckglConfig = layerKind === "deckgl"
+      ? defaultGeographicLayerConfig(deckglLayerType ?? name)
+      : undefined;
     const instantiateNode = (node: import("../types").ParsedSvgTemplateNode, parentBounds: import("../types").Bounds | null): CanvasNode => {
       const isRoot = !parentBounds;
       const id = crypto.randomUUID();
@@ -5904,11 +6114,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         : undefined;
       if (node.kind === "leaf") {
         nameCounters.leaf += 1;
-        return { kind: "leaf", id, candidateId: sourceId, name: `${name}-${nameCounters.leaf}`, content: scopeSvgContent(node.content, id), viewBox: node.viewBox, width: Math.max(node.bounds.width, 1), height: Math.max(node.bounds.height, 1), x: nodeX, y: nodeY, scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, contentMinX: node.contentMinX, contentMinY: node.contentMinY, coordinateGuide, chartSpec, layerKind, deckglLayerType, mapStyleUrl } satisfies CanvasLeafNode;
+        return { kind: "leaf", id, candidateId: sourceId, name: `${name}-${nameCounters.leaf}`, content: scopeSvgContent(node.content, id), viewBox: node.viewBox, width: Math.max(node.bounds.width, 1), height: Math.max(node.bounds.height, 1), x: nodeX, y: nodeY, scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, contentMinX: node.contentMinX, contentMinY: node.contentMinY, coordinateGuide, chartSpec, layerKind, deckglLayerType, mapStyleUrl, deckglConfig: initialDeckglConfig ? { ...initialDeckglConfig } : undefined } satisfies CanvasLeafNode;
       }
       nameCounters.group += 1;
       const groupName = node.name ? `${name}-${node.name}` : `${name}-group-${nameCounters.group}`;
-      return { kind: "group", id, name: groupName, x: nodeX, y: nodeY, width: Math.max(node.bounds.width, 1), height: Math.max(node.bounds.height, 1), scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, coordinateGuide, chartSpec, layerKind, deckglLayerType, mapStyleUrl, children: node.children.map((c) => instantiateNode(c, node.bounds)) } satisfies CanvasGroupNode;
+      return { kind: "group", id, name: groupName, x: nodeX, y: nodeY, width: Math.max(node.bounds.width, 1), height: Math.max(node.bounds.height, 1), scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, coordinateGuide, chartSpec, layerKind, deckglLayerType, mapStyleUrl, deckglConfig: initialDeckglConfig ? { ...initialDeckglConfig } : undefined, children: node.children.map((c) => instantiateNode(c, node.bounds)) } satisfies CanvasGroupNode;
     };
     let nextItems = template.nodes.map((n) => instantiateNode(n, null));
     if (forceOuterGroup && (nextItems.length !== 1 || nextItems[0]?.kind !== "group")) {
@@ -5928,6 +6138,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           layerKind,
           deckglLayerType,
           mapStyleUrl,
+          deckglConfig: initialDeckglConfig ? { ...initialDeckglConfig } : undefined,
           children: nextItems.map((node) => ({
             ...node,
             x: node.x - outerBounds.minX,
@@ -5981,6 +6192,42 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const node = findCanvasNode(nodeId);
     if (node?.layerKind !== "deckgl" || node.mapStyleUrl === mapStyleUrl) return;
     node.mapStyleUrl = mapStyleUrl;
+  }
+  function setDeckglMapViewState(nodeId: string, mapViewState: GeographicMapViewState) {
+    const node = findCanvasNode(nodeId);
+    if (node?.layerKind !== "deckgl") return;
+    node.mapViewState = { ...mapViewState };
+  }
+  function setDeckglConfig(nodeId: string, patch: GeographicLayerConfig) {
+    const node = findCanvasNode(nodeId);
+    if (node?.layerKind !== "deckgl") return;
+    const layerType = node.deckglLayerType ?? node.name;
+    node.deckglConfig = {
+      ...defaultGeographicLayerConfig(layerType),
+      ...node.deckglConfig,
+      ...patch,
+    };
+  }
+  function setDeckglEncoding(nodeId: string, channel: "color" | "size", field: string) {
+    const node = findCanvasNode(nodeId);
+    const binding = node?.deckglBinding;
+    const dataset = binding ? getDataset(binding.datasetId) : null;
+    if (!node || !binding || !dataset) return;
+    const column = dataset.columns.find((item) => item.name === field);
+    if (field && column?.type !== "quantitative") return;
+    node.deckglBinding = {
+      ...binding,
+      [channel === "color" ? "colorField" : "sizeField"]: field || undefined,
+    };
+  }
+  function selectCanvasNode(nodeId: string) {
+    const node = findCanvasNode(nodeId);
+    if (!node) return;
+    if (!selectedIds.value.includes(nodeId)) setSelection([nodeId]);
+    semanticSelection.value = null;
+    axisBindingTarget.value = node.layerKind === "deckgl"
+      ? { nodeId, channel: "x" }
+      : null;
   }
   async function insertCompositionCandidate(candidate: SvgCandidate) {
     if (candidate.unavailable) return;
@@ -7157,7 +7404,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         return;
       }
       if (!zone.compatible) {
-        setImportNotice(zone.type === "chart-body"
+        setImportNotice(zone.type === "geographic-body"
+          ? `${csvPayload.field} has no matching ID in the active GeoJSON source.`
+          : zone.type === "chart-body"
           ? `No supported use of ${csvPayload.field} was found for this chart.`
           : zone.type === "series-item"
             ? `${csvPayload.field} is not compatible with the current ${zone.label} mode.`
@@ -7165,6 +7414,27 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         return;
       }
       const target = findCanvasNode(zone.targetNodeId);
+      if (zone.type === "geographic-body") {
+        const source = activeGeometrySource.value;
+        if (!target || target.layerKind !== "deckgl" || !source) return;
+        pushCanvasHistory();
+        target.deckglBinding = {
+          datasetId: csvPayload.datasetId,
+          geometrySourceId: source.id,
+          idField: csvPayload.field,
+          aggregation: "sum",
+        };
+        setSelection([target.id]);
+        axisBindingTarget.value = { nodeId: target.id, channel: "x" };
+        const dataset = getDataset(csvPayload.datasetId);
+        const datasetIds = new Set(dataset?.rows
+          .map((row) => (row[csvPayload.field] ?? "").trim())
+          .filter(Boolean) ?? []);
+        const matchedFeatureCount = source.features.filter((feature) =>
+          geoJsonFeatureIds(feature).some((id) => datasetIds.has(id))).length;
+        setImportNotice(`${csvPayload.field} joined to ${matchedFeatureCount} GeoJSON geometries.`);
+        return;
+      }
       if (!target?.chartSpec) return;
       if (zone.type === "chart-body") {
         const dataset = getDataset(target.chartSpec.datasetId);
@@ -7745,6 +8015,10 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     setValueFilters,
     setChartDataTransforms,
     setDeckglMapStyle,
+    setDeckglMapViewState,
+    setDeckglConfig,
+    setDeckglEncoding,
+    selectCanvasNode,
     clearMarkField,
     clearAxisBinding: clearMarkField,
     confirmSeriesField,

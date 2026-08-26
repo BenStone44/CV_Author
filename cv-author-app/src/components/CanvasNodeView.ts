@@ -27,6 +27,7 @@ function cartesianCoordinateOverlay(
 ) {
   const guide = node.coordinateGuide;
   if (guide?.type !== "Cartesian") return null;
+  if (guide.showAllAxes === false) return null;
   const minX = node.kind === "leaf" ? node.contentMinX : 0;
   const minY = node.kind === "leaf" ? node.contentMinY : 0;
   const maxX = minX + node.width;
@@ -114,20 +115,6 @@ function cartesianCoordinateOverlay(
       }
       : undefined,
   });
-  const encodingLabel = (channel: EncodingChannel, field: string) => {
-    const isX = channel === "x";
-    const x = isX ? (minX + maxX) / 2 : guide.origin.x - 25 / renderedScale;
-    const y = isX ? guide.origin.y + 25 / renderedScale : (minY + maxY) / 2;
-    return h("text", {
-      class: ["coordinate-axis-binding-label", `coordinate-axis-binding-label--${channel}`],
-      x,
-      y,
-      "font-size": 12 / renderedScale,
-      "text-anchor": "middle",
-      "dominant-baseline": "middle",
-      transform: isX ? undefined : `rotate(-90 ${x} ${y})`,
-    }, field);
-  };
   if (node.renderedContent) {
     return h("g", { class: "coordinate-guide coordinate-guide--cartesian coordinate-guide--semantic" }, [
       axisHitTarget("x", xStart, xEnd),
@@ -175,8 +162,6 @@ function cartesianCoordinateOverlay(
       "pointer-events": "none",
       "vector-effect": "non-scaling-stroke",
     }),
-    ...(xEncoding ? [encodingLabel("x", xEncoding.field)] : []),
-    ...(yEncoding ? [encodingLabel("y", yEncoding.field)] : []),
   ]);
 }
 

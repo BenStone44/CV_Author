@@ -88,10 +88,6 @@ function axisTicks(spec: ChartScaleSpec, maximum: number): AxisTick[] {
   }));
 }
 
-function fieldLabel(field: string | undefined) {
-  return field?.replaceAll("_", " ") ?? "";
-}
-
 export function createCartesianAxisModel(node: CanvasNode): CartesianAxisModel | null {
   const guide = node.coordinateGuide;
   const plot = node.chartSpec?.plotArea;
@@ -121,15 +117,11 @@ export function createCartesianAxisModel(node: CanvasNode): CartesianAxisModel |
     yEnd: { x: origin.x, y: guide.yDirection === -1 ? top : bottom },
     xTicks: axisTicks(xScale, Math.max(2, Math.min(6, Math.floor(plot.width / 80)))),
     yTicks: axisTicks(yScale, Math.max(2, Math.min(6, Math.floor(plot.height / 42)))),
-    // A shared axis represents several independent Mark Encodings. Showing
-    // only the owner's field would incorrectly assign that meaning to every
-    // member of the composition.
-    xTitle: node.coordinateSystem?.sharedChannels.includes("x")
-      ? ""
-      : fieldLabel(node.chartSpec?.encodings.x?.field),
-    yTitle: node.coordinateSystem?.sharedChannels.includes("y")
-      ? ""
-      : fieldLabel(node.chartSpec?.encodings.y?.field),
+    // Axis titles duplicated the bound CSV column names. The encoding panel
+    // remains the source of truth for those bindings, so keep the canvas axes
+    // free of field-name labels.
+    xTitle: "",
+    yTitle: "",
     fontFamily: tokens?.fontFamily ?? "Inter, ui-sans-serif, system-ui, sans-serif",
     fontSize,
     axisColor: tokens?.axisColor ?? "#64748b",
@@ -184,9 +176,11 @@ export const CartesianCoordinateSystem = defineComponent({
       const showXLine = guide.showXLine !== false;
       const showYLine = guide.showYLine !== false;
       const showDiscreteLabels = guide.showDiscreteLabels !== false;
+      const showAllAxes = guide.showAllAxes !== false;
+      const renderAxes = props.showAxis && showAllAxes;
       const axisNodes = [] as ReturnType<typeof h>[];
 
-      if (props.showAxis && model) {
+      if (renderAxes && model) {
         if (includes("y")) {
           if (showYLine) axisNodes.push(h("line", {
             class: "cartesian-axis-domain",
@@ -269,7 +263,7 @@ export const CartesianCoordinateSystem = defineComponent({
             "text-anchor": "middle",
           }, caption(verticalField)));
         }
-      } else if (props.showAxis) {
+      } else if (renderAxes) {
         if (includes("x") && showXLine) axisNodes.push(
           h("line", { class: "cartesian-axis-line", x1: origin.x, y1: origin.y, x2: xEnd.x, y2: xEnd.y, "vector-effect": "non-scaling-stroke" }),
           h("path", { class: "cartesian-axis-arrow", d: arrowHead(xEnd, { x: guide.xDirection, y: 0 }, arrowSize), "vector-effect": "non-scaling-stroke" }),

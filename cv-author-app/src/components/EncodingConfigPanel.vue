@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { X } from "@lucide/vue";
+import { ArrowLeftRight, X } from "@lucide/vue";
 import EncodingChannelField from "./EncodingChannelField.vue";
 import VisualMappingEditor from "./VisualMappingEditor.vue";
 import {
@@ -69,12 +69,14 @@ const emit = defineEmits<{
   coordinateGuideChange: [patch: {
     showXLine?: boolean;
     showYLine?: boolean;
+    showAllAxes?: boolean;
     showThetaLine?: boolean;
     showRadiusLine?: boolean;
     showDiscreteLabels?: boolean;
     xDiscreteSpacing?: number;
     yDiscreteSpacing?: number;
   }];
+  coordinateAxisReverse: [axis: "x" | "y"];
   compositionChange: [patch: {
     facetField?: string;
     facetDirection?: "row" | "column";
@@ -461,6 +463,10 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
         <strong>Axis display</strong>
         <div class="encoding-config__axis-toggles">
           <label v-if="coordinateGuide.type === 'Cartesian'">
+            <input type="checkbox" :checked="coordinateGuide.showAllAxes === false" @change="emit('coordinateGuideChange', { showAllAxes: !($event.target as HTMLInputElement).checked })" />
+            <span>Hide all</span>
+          </label>
+          <label v-if="coordinateGuide.type === 'Cartesian'">
             <input type="checkbox" :checked="coordinateGuide.showXLine !== false" @change="emit('coordinateGuideChange', { showXLine: ($event.target as HTMLInputElement).checked })" />
             <span>X line</span>
           </label>
@@ -480,6 +486,19 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
             <input type="checkbox" :checked="coordinateGuide.showDiscreteLabels !== false" @change="emit('coordinateGuideChange', { showDiscreteLabels: ($event.target as HTMLInputElement).checked })" />
             <span>Nominal / ordinal labels</span>
           </label>
+        </div>
+        <div v-if="coordinateGuide.type === 'Cartesian'" class="encoding-config__axis-directions">
+          <span>Axis direction</span>
+          <div>
+            <button type="button" title="Reverse X-axis direction" aria-label="Reverse X-axis direction" @click="emit('coordinateAxisReverse', 'x')">
+              <ArrowLeftRight :size="13" :stroke-width="1.8" aria-hidden="true" />
+              <span>X</span>
+            </button>
+            <button type="button" title="Reverse Y-axis direction" aria-label="Reverse Y-axis direction" @click="emit('coordinateAxisReverse', 'y')">
+              <ArrowLeftRight :size="13" :stroke-width="1.8" aria-hidden="true" class="encoding-config__axis-directions-y-icon" />
+              <span>Y</span>
+            </button>
+          </div>
         </div>
         <template v-if="coordinateGuide.type === 'Cartesian'">
           <label v-if="isDiscreteAxis('x')" class="encoding-config__axis-spacing">
@@ -841,6 +860,11 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
 .encoding-config__axis-toggles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; }
 .encoding-config__axis-toggles label { display: flex; align-items: center; gap: 6px; min-width: 0; color: #526174; font-size: 10px; }
 .encoding-config__axis-toggles label:last-child { grid-column: 1 / -1; }
+.encoding-config__axis-directions { display: grid; gap: 5px; color: #526174; font-size: 10px; }
+.encoding-config__axis-directions > div { display: flex; gap: 6px; }
+.encoding-config__axis-directions button { display: inline-flex; min-width: 0; min-height: 26px; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 5px; background: #fff; color: #516176; font: inherit; font-size: 10px; cursor: pointer; }
+.encoding-config__axis-directions button:hover { border-color: rgba(21, 84, 178, 0.4); background: #edf5fc; color: #1554b2; }
+.encoding-config__axis-directions-y-icon { transform: rotate(90deg); }
 .encoding-config__axis-spacing { display: grid; grid-template-columns: minmax(0, 1fr) 88px 28px; align-items: center; gap: 6px; color: #526174; font-size: 10px; }
 .encoding-config__axis-spacing input { width: 100%; min-width: 0; }
 .encoding-config__axis-spacing output { color: #294a6d; text-align: right; }

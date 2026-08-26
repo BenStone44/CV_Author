@@ -80,6 +80,7 @@ export function cloneChartRelationshipState(source: ChartRelationshipState): Cha
     }])),
     nestedRelationships: Object.fromEntries(Object.entries(source.nestedRelationships).map(([id, relationship]) => [id, {
       ...relationship,
+      inheritedFilterContexts: relationship.inheritedFilterContexts?.map((context) => ({ ...context })),
       parameters: clonePlainValue(relationship.parameters),
     }])),
   };

@@ -455,7 +455,10 @@ export function cloneCanvasNode(node: CanvasNode): CanvasNode {
         : undefined,
     }
     : node.compositionSpec;
-  if (node.kind === "leaf") return { ...node, coordinateGuide, coordinateSystem, chartSpec, layerSpec, nestedSpec, compositionSpec, llmRenderer };
+  const deckglConfig = node.deckglConfig ? { ...node.deckglConfig } : node.deckglConfig;
+  const deckglBinding = node.deckglBinding ? { ...node.deckglBinding } : node.deckglBinding;
+  const mapViewState = node.mapViewState ? { ...node.mapViewState } : node.mapViewState;
+  if (node.kind === "leaf") return { ...node, coordinateGuide, coordinateSystem, chartSpec, layerSpec, nestedSpec, compositionSpec, llmRenderer, deckglConfig, deckglBinding, mapViewState };
   return {
     ...node,
     coordinateGuide,
@@ -465,6 +468,9 @@ export function cloneCanvasNode(node: CanvasNode): CanvasNode {
     layerSpec,
     nestedSpec,
     compositionSpec,
+    deckglConfig,
+    deckglBinding,
+    mapViewState,
     children: node.children.map((child) => cloneCanvasNode(child)),
   };
 }

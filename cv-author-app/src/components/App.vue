@@ -23,6 +23,7 @@ import type {
   CompositionType,
   CoordinateChannel,
   EncodingChannel,
+  GeographicMapViewState,
   SvgCandidate,
 } from "../types";
 import { materializeChartDataTransforms } from "../utils/chartDataTransforms";
@@ -43,6 +44,7 @@ import {
   groupChartTemplateCandidates,
   type ChartTemplateCategory,
 } from "../utils/chartTemplateCategories";
+import { getGeographicLayerFamily } from "../utils/geographicLayerCards";
 
 const canvasRef = ref<HTMLElement | null>(null);
 const encodingInspectorOpen = ref(true);
@@ -162,6 +164,10 @@ const {
   setParallelFields,
   setChartDataTransforms,
   setDeckglMapStyle,
+  setDeckglMapViewState,
+  setDeckglConfig,
+  setDeckglEncoding,
+  selectCanvasNode,
   updateAxisBindingMarkGroupConfig,
   updateSelectedChartMarkGroupConfig,
   beginMarkConfigEdit,
@@ -242,6 +248,36 @@ function deckglLayerType(node: CanvasNode) {
   return node.name.replace(/-(?:group|leaf)-\d+$/, "");
 }
 
+function deckglLayerFamily(node: CanvasNode) {
+  return getGeographicLayerFamily(deckglLayerType(node));
+}
+
+function deckglLayerConfig(node: CanvasNode) {
+  const family = deckglLayerFamily(node);
+  return node.deckglConfig ?? (family === "point"
+    ? { size: 8, color: "#2563eb" }
+    : family === "area"
+      ? { color: "#2563eb" }
+      : {});
+}
+
+function deckglLayerDataset(node: CanvasNode) {
+  return node.deckglBinding ? getDataset(node.deckglBinding.datasetId) : null;
+}
+
+function deckglLayerGeometrySource(node: CanvasNode) {
+  return node.deckglBinding ? getGeometrySource(node.deckglBinding.geometrySourceId) : null;
+}
+
+function onDeckglMapInteraction(node: CanvasNode, event: PointerEvent) {
+  if (event.button !== 0) return;
+  selectCanvasNode(node.id);
+}
+
+function onDeckglMapViewStateChange(node: CanvasNode, state: GeographicMapViewState) {
+  setDeckglMapViewState(node.id, state);
+}
+
 function deckglLayerStyle(node: CanvasNode) {
   const width = Math.max(node.width * Math.abs(node.scaleX), 1);
   const height = Math.max(node.height * Math.abs(node.scaleY), 1);
@@ -314,7 +350,7 @@ function onTemplateCandidateDragEnd() {
   closeTemplateCategoryMenu();
 }
 
-const { activeDataset, getDataset } = useDatasetStore();
+const { activeDataset, getDataset, getGeometrySource } = useDatasetStore();
 const axisBindingRows = computed(() => {
   const datasetId = axisBindingNode.value?.chartSpec?.datasetId;
   const dataset = datasetId ? getDataset(datasetId) : activeDataset.value;
@@ -985,6 +1021,12 @@ function onCoordinateGuideChange(patch: Parameters<typeof setCoordinateGuideAppe
   setCoordinateGuideAppearance(patch);
 }
 
+function onCoordinateAxisReverse(axis: "x" | "y") {
+  const node = axisBindingNode.value;
+  if (!node) return;
+  reverseCoordinateAxis(node, axis);
+}
+
 function onSeriesFieldChange(field: string) {
   setChartSeries(field);
 }
@@ -1521,6 +1563,7 @@ onBeforeUnmount(() => {
               @composition-change="onCompositionEncodingChange"
               @axis-swap="onAxisSwap"
               @coordinate-guide-change="onCoordinateGuideChange"
+              @coordinate-axis-reverse="onCoordinateAxisReverse"
               @series-field-change="onSeriesFieldChange"
               @series-fields-change="onSeriesFieldsChange"
               @value-series-fields-change="setValueSeriesFields"
@@ -1534,9 +1577,15 @@ onBeforeUnmount(() => {
             <DeckglEncodingConfigPanel
               v-else-if="axisBindingNode?.layerKind === 'deckgl'"
               :layer-name="deckglLayerType(axisBindingNode)"
+              :layer-family="deckglLayerFamily(axisBindingNode)"
               :map-style-url="axisBindingNode.mapStyleUrl ?? ''"
+              :config="deckglLayerConfig(axisBindingNode)"
+              :binding="axisBindingNode.deckglBinding"
+              :columns="deckglLayerDataset(axisBindingNode)?.columns ?? []"
               @close="closeEncodingInspector"
               @map-style-change="setDeckglMapStyle(axisBindingNode.id, $event)"
+              @config-change="setDeckglConfig(axisBindingNode.id, $event)"
+              @encoding-change="(channel, field) => setDeckglEncoding(axisBindingNode.id, channel, field)"
             />
           </aside>
 
@@ -2057,8 +2106,20 @@ onBeforeUnmount(() => {
                 :key="`${node.id}:${node.mapStyleUrl ?? 'example-default'}`"
                 :layer-type="deckglLayerType(node)"
                 :map-style-url="node.mapStyleUrl ?? ''"
+                :map-view-state="node.mapViewState"
+                :config="deckglLayerConfig(node)"
+                :binding="node.deckglBinding"
+                :dataset-rows="deckglLayerDataset(node)?.rows ?? []"
+                :geometry-features="deckglLayerGeometrySource(node)?.features ?? []"
                 :width="deckglLayerWidth(node)"
                 :height="deckglLayerHeight(node)"
+                @interaction-start="onDeckglMapInteraction(node, $event)"
+                @view-state-change="onDeckglMapViewStateChange(node, $event)"
+              />
+              <div
+                v-if="selectedIds.includes(node.id)"
+                class="deckgl-layer-selection-frame"
+                aria-hidden="true"
               />
               <div class="deckgl-layer-frame" aria-hidden="true">
                 <span
@@ -2342,8 +2403,9 @@ onBeforeUnmount(() => {
                   </g>
                 </template>
                 <rect
-                  v-else-if="activeDataBindingDropZone.type === 'chart-body'"
+                  v-else-if="activeDataBindingDropZone.type === 'chart-body' || activeDataBindingDropZone.type === 'geographic-body'"
                   class="data-binding-chart-drop-zone"
+                  :class="{ 'data-binding-drop-zone--invalid': !activeDataBindingDropZone.compatible }"
                   :x="activeDataBindingDropZone.bounds.minX"
                   :y="activeDataBindingDropZone.bounds.minY"
                   :width="activeDataBindingDropZone.bounds.width"
@@ -4832,6 +4894,16 @@ onBeforeUnmount(() => {
   position: absolute;
   transform-origin: 0 0;
   pointer-events: none;
+}
+.deckgl-layer-selection-frame {
+  position: absolute;
+  inset: 0;
+  border: 1.5px dashed #1c7ed6;
+  border-radius: 2px;
+  box-sizing: border-box;
+  background: rgba(28, 126, 214, 0.035);
+  pointer-events: none;
+  z-index: 1;
 }
 .deckgl-layer-frame {
   position: absolute;

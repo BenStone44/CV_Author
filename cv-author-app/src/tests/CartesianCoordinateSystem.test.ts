@@ -73,8 +73,8 @@ describe("independent Cartesian axis component", () => {
       origin: { x: 192, y: 389 },
       xEnd: { x: 892, y: 389 },
       yEnd: { x: 192, y: 73 },
-      xTitle: "observed at",
-      yTitle: "weight kg",
+      xTitle: "",
+      yTitle: "",
       fontFamily: "Inter, sans-serif",
       fontSize: 9,
       axisColor: "#586474",
@@ -164,8 +164,8 @@ describe("independent Cartesian axis component", () => {
     const model = createCartesianAxisModel(node)!;
     expect(model.xTicks.map((tick) => tick.label)).toEqual(["Jan", "Feb"]);
     expect(model.yTicks.map((tick) => tick.label)).toEqual(["North", "South"]);
-    expect(model.xTitle).toBe("month");
-    expect(model.yTitle).toBe("region");
+    expect(model.xTitle).toBe("");
+    expect(model.yTitle).toBe("");
   });
 
   it("uses the shared Cartesian component for Bar axes", () => {
@@ -190,8 +190,8 @@ describe("independent Cartesian axis component", () => {
     const model = createCartesianAxisModel(node)!;
     expect(model.xTicks.map((tick) => tick.label)).toEqual(["Q1", "Q2", "Q3"]);
     expect(model.yTicks.length).toBeGreaterThan(0);
-    expect(model.xTitle).toBe("quarter");
-    expect(model.yTitle).toBe("revenue");
+    expect(model.xTitle).toBe("");
+    expect(model.yTitle).toBe("");
   });
 
   it("renders an independent static coordinate axis for every facet cell", () => {

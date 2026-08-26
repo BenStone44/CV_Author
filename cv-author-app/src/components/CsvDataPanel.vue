@@ -11,10 +11,12 @@ import {
   Rows3,
   Sigma,
   Trash2,
+  Upload,
   X,
 } from "@lucide/vue";
 import case1Csv from "../../../data/case1.csv?raw";
 import case2Csv from "../../../data/case2.csv?raw";
+import case3Csv from "../../../data/case3.csv?raw";
 import { useDatasetStore } from "../stores/useDatasetStore";
 import type {
   ChartDataTransform,
@@ -44,6 +46,7 @@ const emit = defineEmits<{
 }>();
 
 const panelRef = ref<HTMLElement | null>(null);
+const geometryFileInput = ref<HTMLInputElement | null>(null);
 const expandedWidth = ref(304);
 const canExpand = ref(false);
 const isExpanded = ref(false);
@@ -58,13 +61,23 @@ const {
   getDataset,
   setActiveDataset,
   setColumnType,
+  geometrySources,
+  activeGeometrySource,
+  importGeometrySource,
+  setActiveGeometrySource,
 } = useDatasetStore();
 
 type TransformEditorMode = "filter" | "aggregate";
+type ValueFilterPurpose = "filter" | "facet-clue" | "nest-clue";
+const valueFilterPurposeOptions = [
+  { value: "filter", label: "Filter" },
+  { value: "facet-clue", label: "Facet clue" },
+  { value: "nest-clue", label: "Nest clue" },
+] as const;
 
 const transformEditorMode = ref<TransformEditorMode | null>(null);
 const selectedTransformColumn = ref("");
-const singleValueFilter = ref(false);
+const valueFilterPurpose = ref<ValueFilterPurpose>("filter");
 const selectedFilterValues = ref<string[]>([]);
 const numericFilterOperator = ref<ChartNumericFilterTransform["operator"]>("top");
 const numericFilterValue = ref(10);
@@ -75,7 +88,7 @@ const binMethod = ref<"equal-width" | "fixed-width" | "quantile">("equal-width")
 const binParameter = ref(5);
 const outputField = ref("");
 
-const presetNames = ["case1.csv", "case2.csv"] as const;
+const presetNames = ["case1.csv", "case2.csv", "case3.csv"] as const;
 const presetDatasets = computed(() =>
   presetNames
     .map((name) => datasets.value.find((dataset) => dataset.name === name))
@@ -125,7 +138,11 @@ const outputFieldIsAvailable = computed(() => {
 const canApplyTransform = computed(() => {
   if (!selectedColumn.value) return false;
   if (transformEditorMode.value === "filter") {
-    if (!isSelectedColumnQuantitative.value) return selectedFilterValues.value.length > 0;
+    if (!isSelectedColumnQuantitative.value) {
+      return valueFilterPurpose.value === "filter"
+        ? selectedFilterValues.value.length > 0
+        : selectedFilterValues.value.some((value) => value.trim().length > 0);
+    }
     if (!Number.isFinite(numericFilterValue.value)) return false;
     if (numericFilterOperator.value === "between") {
       return Number.isFinite(numericFilterUpperValue.value);
@@ -200,6 +217,18 @@ function onDatasetChange(event: Event) {
   if (datasetId) setActiveDataset(datasetId);
 }
 
+function onGeometrySourceChange(event: Event) {
+  const sourceId = (event.target as HTMLSelectElement).value;
+  if (sourceId) setActiveGeometrySource(sourceId);
+}
+
+async function onGeometryFileChange(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (file) await importGeometrySource(file);
+  input.value = "";
+}
+
 function onColumnDragStart(column: { name: string; type: DataColumnType }, event: DragEvent) {
   const dataset = activeDataset.value;
   if (!dataset || !event.dataTransfer) return;
@@ -245,7 +274,7 @@ function uniqueOutputField(baseName: string) {
 function resetTransformForm(mode: TransformEditorMode) {
   transformEditorMode.value = mode;
   selectedTransformColumn.value = "";
-  singleValueFilter.value = false;
+  valueFilterPurpose.value = "filter";
   selectedFilterValues.value = [];
   numericFilterOperator.value = "top";
   numericFilterValue.value = 10;
@@ -263,7 +292,7 @@ function closeTransformEditor() {
 
 function onTransformColumnChange() {
   selectedFilterValues.value = [];
-  singleValueFilter.value = false;
+  valueFilterPurpose.value = "filter";
   const column = selectedColumn.value;
   if (!column) {
     outputField.value = "";
@@ -285,11 +314,14 @@ function updateAggregateOutputField() {
   );
 }
 
-function setSingleValueFilter(event: Event) {
-  singleValueFilter.value = (event.target as HTMLInputElement).checked;
-  if (singleValueFilter.value && selectedFilterValues.value.length > 1) {
-    selectedFilterValues.value = selectedFilterValues.value.slice(0, 1);
-  }
+function setValueFilterPurpose(purpose: ValueFilterPurpose) {
+  valueFilterPurpose.value = purpose;
+  if (purpose === "filter") return;
+  const field = selectedTransformColumn.value;
+  const firstValue = transformRows.value
+    .map((row) => row[field] ?? "")
+    .find((value) => value.trim().length > 0);
+  selectedFilterValues.value = firstValue === undefined ? [] : [firstValue];
 }
 
 function toggleFilterValue(value: string, event: Event) {
@@ -309,7 +341,14 @@ function clearFilterValues() {
 
 function transformSummary(transform: ChartDataTransform) {
   if (transform.kind === "filter" && transform.mode === "values") {
-    return `${transform.field}: ${transform.values.length} selected${transform.single ? " · Facet clue" : ""}`;
+    const purposeLabel = transform.purpose === "nest-clue"
+      ? "Nest clue"
+      : transform.purpose === "facet-clue" || (transform.purpose === undefined && transform.single)
+        ? "Facet clue"
+        : null;
+    return purposeLabel
+      ? `${transform.field} · ${purposeLabel}`
+      : `${transform.field}: ${transform.values.length} selected`;
   }
   if (transform.kind === "filter") {
     const operatorLabels: Record<ChartNumericFilterTransform["operator"], string> = {
@@ -362,8 +401,8 @@ function applyTransform() {
         mode: "values",
         field: column.name,
         values: [...selectedFilterValues.value],
-        single: singleValueFilter.value,
-        purpose: singleValueFilter.value ? "facet-clue" : "filter",
+        single: valueFilterPurpose.value !== "filter",
+        purpose: valueFilterPurpose.value,
       };
   } else if (column.type === "quantitative") {
     transform = {
@@ -406,6 +445,7 @@ async function ensurePresetDatasets() {
   const presets = [
     { name: "case1.csv", source: case1Csv },
     { name: "case2.csv", source: case2Csv },
+    { name: "case3.csv", source: case3Csv },
   ];
   for (const preset of presets) {
     if (!datasets.value.some((dataset) => dataset.name === preset.name)) {
@@ -417,10 +457,26 @@ async function ensurePresetDatasets() {
   await nextTick(updateExpandedWidth);
 }
 
+async function ensurePresetGeometrySource() {
+  if (geometrySources.value.some((source) => source.name === "nyc-zip-boundaries.geojson")) return;
+  try {
+    const response = await fetch("/geodata/nyc-zip-boundaries.geojson");
+    if (!response.ok) return;
+    await importGeometrySource(new File(
+      [await response.blob()],
+      "nyc-zip-boundaries.geojson",
+      { type: "application/geo+json" },
+    ));
+  } catch {
+    // Custom GeoJSON can still be imported from the data panel.
+  }
+}
+
 onMounted(() => {
   window.addEventListener("resize", updateExpandedWidth);
   window.addEventListener("keydown", onWindowKeydown);
   void ensurePresetDatasets();
+  void ensurePresetGeometrySource();
 });
 onBeforeUnmount(() => {
   window.removeEventListener("resize", updateExpandedWidth);
@@ -444,6 +500,22 @@ watch(headers, () => void nextTick(updateExpandedWidth));
         <h2>Data</h2>
       </div>
       <div class="data-panel__actions">
+        <input
+          ref="geometryFileInput"
+          class="data-panel__file-input"
+          type="file"
+          accept=".geojson,.json,application/geo+json,application/json"
+          @change="onGeometryFileChange"
+        />
+        <button
+          class="data-panel__icon-button"
+          type="button"
+          title="Import GeoJSON geometry"
+          aria-label="Import GeoJSON geometry"
+          @click="geometryFileInput?.click()"
+        >
+          <Upload :size="15" aria-hidden="true" />
+        </button>
         <button
           class="data-panel__icon-button"
           :class="{ 'data-panel__icon-button--active': isTransposed }"
@@ -489,6 +561,17 @@ watch(headers, () => void nextTick(updateExpandedWidth));
         </option>
       </select>
       <span>{{ tableStatus }}</span>
+      <select
+        v-if="geometrySources.length"
+        class="data-panel__dataset-select data-panel__geometry-select"
+        :value="activeGeometrySource?.id ?? ''"
+        aria-label="Select GeoJSON geometry source"
+        @change="onGeometrySourceChange"
+      >
+        <option v-for="source in geometrySources" :key="source.id" :value="source.id">
+          {{ source.name }} · {{ source.features.length }} geometries
+        </option>
+      </select>
     </div>
 
     <p v-if="parseError" class="data-panel__message data-panel__message--error">
@@ -814,32 +897,34 @@ watch(headers, () => void nextTick(updateExpandedWidth));
 
           <template v-if="transformEditorMode === 'filter' && selectedColumn">
             <template v-if="!isSelectedColumnQuantitative">
-              <div class="transform-dialog__inline-header">
-                <label class="transform-toggle">
-                  <input
-                    type="checkbox"
-                    :checked="singleValueFilter"
-                    @change="setSingleValueFilter"
-                  />
-                  <span>Single value · Facet clue</span>
-                </label>
-                <div v-if="!singleValueFilter" class="transform-dialog__text-actions">
+              <fieldset class="transform-segmented">
+                <legend>Purpose</legend>
+                <div class="transform-segmented__options transform-segmented__options--purpose">
+                  <label
+                    v-for="option in valueFilterPurposeOptions"
+                    :key="option.value"
+                    :class="{ 'transform-segmented__active': valueFilterPurpose === option.value }"
+                  >
+                    <input
+                      :checked="valueFilterPurpose === option.value"
+                      type="radio"
+                      name="value-filter-purpose"
+                      :value="option.value"
+                      @change="setValueFilterPurpose(option.value)"
+                    />
+                    <span>{{ option.label }}</span>
+                  </label>
+                </div>
+              </fieldset>
+              <div v-if="valueFilterPurpose === 'filter'" class="transform-dialog__inline-header">
+                <div class="transform-dialog__text-actions">
                   <button type="button" @click="selectAllFilterValues">All</button>
                   <button type="button" @click="clearFilterValues">Clear</button>
                 </div>
               </div>
-              <div class="transform-value-list">
+              <div v-if="valueFilterPurpose === 'filter'" class="transform-value-list">
                 <label v-for="value in selectedColumnValues" :key="value">
                   <input
-                    v-if="singleValueFilter"
-                    type="radio"
-                    name="filter-value"
-                    :value="value"
-                    :checked="selectedFilterValues[0] === value"
-                    @change="selectedFilterValues = [value]"
-                  />
-                  <input
-                    v-else
                     type="checkbox"
                     :checked="selectedFilterValues.includes(value)"
                     @change="toggleFilterValue(value, $event)"
@@ -1033,6 +1118,10 @@ watch(headers, () => void nextTick(updateExpandedWidth));
   min-width: 0;
 }
 
+.data-panel__file-input {
+  display: none;
+}
+
 .data-panel__icon-button {
   display: inline-flex;
   align-items: center;
@@ -1105,6 +1194,12 @@ watch(headers, () => void nextTick(updateExpandedWidth));
 .data-panel__dataset-select:disabled {
   opacity: 0.62;
   cursor: wait;
+}
+
+.data-panel__geometry-select {
+  margin-top: 4px;
+  border-color: rgba(5, 150, 105, 0.24);
+  background: #f5fbf8;
 }
 
 .data-panel__message {
@@ -1721,6 +1816,10 @@ watch(headers, () => void nextTick(updateExpandedWidth));
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.transform-segmented__options--purpose {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .transform-segmented__options label {
   display: flex;
   align-items: center;
@@ -1737,8 +1836,11 @@ watch(headers, () => void nextTick(updateExpandedWidth));
   border-radius: 6px 0 0 6px;
 }
 
-.transform-segmented__options label:last-of-type {
+.transform-segmented__options label + label {
   border-left: 0;
+}
+
+.transform-segmented__options label:last-of-type {
   border-radius: 0 6px 6px 0;
 }
 

@@ -366,7 +366,8 @@ function renderBarChart(input: GenericRenderInput) {
     const height = swapped ? barWidth : valueLength;
     return `<rect data-chart-id="${esc(input.chartId)}" data-mark-role="bar" data-mark-group-id="mark-group:${esc(input.chartId)}:bar" data-row-keys="${esc(keys)}" data-category-key="${esc(datum.category)}" data-series-key="${esc(datum.series)}" data-value="${datum.value}" x="${x}" y="${y}" width="${width}" height="${height}" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 0.9)}"/>`;
   }).join("");
-  const showZeroLine = swapped ? guide?.showYLine !== false : guide?.showXLine !== false;
+  const showZeroLine = guide?.showAllAxes !== false
+    && (swapped ? guide?.showYLine !== false : guide?.showXLine !== false);
   const zeroLine = (variant === "divergent" || variant === "divergent-stacked") && Number.isFinite(zeroPosition) && showZeroLine
     ? swapped
       ? `<line data-mark-role="zero-line" x1="${zeroPosition}" y1="${plotArea.y}" x2="${zeroPosition}" y2="${plotArea.y + plotArea.height}" stroke="${esc(input.chartSpec.styleTokens?.axisColor ?? "#64748b")}" stroke-width="1" vector-effect="non-scaling-stroke"/>`

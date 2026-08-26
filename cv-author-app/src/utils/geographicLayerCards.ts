@@ -157,7 +157,9 @@ export const geographicLayerDefinitions: SvgCandidate[] = layerNames.map((layerT
     svgMarkup: canvasPlaceholder,
     library: "deck.gl",
     layerType,
-    mapStyleUrl: deckglOriginalMapStyleUrl,
+    // Start geographic templates with the neutral light basemap. Users can
+    // switch to the dark basemap from the encoding inspector.
+    mapStyleUrl: deckglLightMapStyleUrl,
     renderMode: "static-layer",
     defaultWidth: 480,
   } satisfies SvgCandidate;

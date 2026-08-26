@@ -15,6 +15,48 @@ export type SvgCandidate = {
   layerType?: string;
 };
 
+/** Appearance controls shared by the editable geographic point/area templates. */
+export type GeographicLayerConfig = {
+  size?: number;
+  color?: string;
+};
+
+/** Persisted Mapbox camera state for geographic canvas nodes. */
+export type GeographicMapViewState = {
+  longitude: number;
+  latitude: number;
+  zoom: number;
+  pitch: number;
+  bearing: number;
+};
+
+export type GeoJsonGeometry = {
+  type: "Point" | "MultiPoint" | "Polygon" | "MultiPolygon";
+  coordinates: unknown;
+};
+
+export type GeoJsonFeature = {
+  type: "Feature";
+  id: string;
+  properties: Record<string, unknown>;
+  geometry: GeoJsonGeometry;
+};
+
+export type GeometrySource = {
+  id: string;
+  name: string;
+  features: GeoJsonFeature[];
+};
+
+export type GeographicLayerBinding = {
+  datasetId: string;
+  geometrySourceId: string;
+  idField: string;
+  colorField?: string;
+  sizeField?: string;
+  aggregation: "sum";
+};
+
 export type CartesianCoordinateGuide = {
   type: "Cartesian";
   origin: Point;
@@ -22,6 +64,8 @@ export type CartesianCoordinateGuide = {
   yDirection: 1 | -1;
   xScale?: number;
   yScale?: number;
+  /** Whether Cartesian axes (lines, ticks, labels, and titles) are rendered. */
+  showAllAxes?: boolean;
   showXLine?: boolean;
   showYLine?: boolean;
   showDiscreteLabels?: boolean;
@@ -85,7 +129,7 @@ export type ChartValueFilterTransform = {
   field: string;
   values: string[];
   single: boolean;
-  purpose?: "filter" | "facet-clue" | "nested-context";
+  purpose?: "filter" | "facet-clue" | "nest-clue" | "nested-context";
 };
 
 export type ChartNumericFilterTransform = {
@@ -457,6 +501,13 @@ export type ChartDropZone = {
 
 export type DataBindingDropZone =
   | {
+    type: "geographic-body";
+    targetNodeId: string;
+    fieldName: string;
+    compatible: boolean;
+    bounds: Bounds;
+  }
+  | {
     type: "chart-body";
     targetNodeId: string;
     fieldName: string;
@@ -636,6 +687,16 @@ export type RelativeNestedParameters = {
 
 export type NestedRelationParameters = RelativeNestedParameters | Record<string, unknown>;
 
+export type InheritedFilterContext = {
+  parentChartId: string;
+  parentDataKey?: string;
+  parentField: string;
+  childField: string;
+  value: string | number;
+  filterMode?: "values" | "numeric";
+  source: "facet-cell" | "parent-row" | "parent-filter";
+};
+
 export type NestedRelationship = {
   id: string;
   parentChartId: string;
@@ -643,6 +704,7 @@ export type NestedRelationship = {
   parentMarkGroupId?: string;
   parentDataKey?: string;
   childChartId: string;
+  inheritedFilterContexts?: InheritedFilterContext[];
   relationType: "relative-position" | (string & {});
   parameters: NestedRelationParameters;
   resolverVersion: number;
@@ -763,6 +825,12 @@ export type CanvasBaseNode = {
   deckglLayerType?: string;
   /** Mapbox style used by a geographic deck.gl visual object. */
   mapStyleUrl?: string;
+  /** User-controlled Mapbox camera, preserved across remounts. */
+  mapViewState?: GeographicMapViewState;
+  /** User-editable appearance for geographic point and area templates. */
+  deckglConfig?: GeographicLayerConfig;
+  /** CSV-to-GeoJSON join and optional aggregate visual channels. */
+  deckglBinding?: GeographicLayerBinding;
 };
 
 export type CanvasLeafNode = CanvasBaseNode & {

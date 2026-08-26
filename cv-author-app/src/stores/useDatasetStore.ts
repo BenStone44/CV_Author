@@ -6,6 +6,9 @@ import type {
   DataRow,
   Dataset,
   DatasetTable,
+  GeoJsonFeature,
+  GeoJsonGeometry,
+  GeometrySource,
   GraphTables,
 } from "../types";
 import { inferCsvPrimaryKey } from "../utils/csvDataEngine";
@@ -22,9 +25,14 @@ const activeDatasetId = ref<string | null>(datasets.value[0]?.id ?? null);
 const parseError = ref("");
 const parseWarning = ref("");
 const isLoading = ref(false);
+const geometrySources = ref<GeometrySource[]>([]);
+const activeGeometrySourceId = ref<string | null>(null);
 
 const activeDataset = computed(() =>
   datasets.value.find((dataset) => dataset.id === activeDatasetId.value) ?? null,
+);
+const activeGeometrySource = computed(() =>
+  geometrySources.value.find((source) => source.id === activeGeometrySourceId.value) ?? null,
 );
 
 function isNumeric(value: string) {
@@ -83,6 +91,72 @@ function jsonValueToString(value: unknown) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isSupportedGeoJsonGeometry(value: unknown): value is GeoJsonGeometry {
+  if (!isRecord(value) || typeof value.type !== "string" || !("coordinates" in value)) return false;
+  return value.type === "Point"
+    || value.type === "MultiPoint"
+    || value.type === "Polygon"
+    || value.type === "MultiPolygon";
+}
+
+export function parseGeometrySource(source: string, name = "geometry.geojson"): GeometrySource {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(source) as unknown;
+  } catch {
+    throw new Error("Unable to read the GeoJSON file.");
+  }
+  if (!isRecord(payload) || payload.type !== "FeatureCollection" || !Array.isArray(payload.features)) {
+    throw new Error("GeoJSON must be a FeatureCollection.");
+  }
+  const features = payload.features.map((value, index) => {
+    const geometry = isRecord(value) ? value.geometry : null;
+    if (!isRecord(value) || value.type !== "Feature" || !isSupportedGeoJsonGeometry(geometry)) {
+      throw new Error(`GeoJSON feature ${index + 1} has an unsupported geometry.`);
+    }
+    const properties = isRecord(value.properties) ? value.properties : {};
+    const rawId = value.id ?? properties.id;
+    if (typeof rawId !== "string" && typeof rawId !== "number") {
+      throw new Error(`GeoJSON feature ${index + 1} needs an explicit id.`);
+    }
+    const id = String(rawId).trim();
+    if (!id) throw new Error(`GeoJSON feature ${index + 1} has an empty id.`);
+    return {
+      type: "Feature",
+      id,
+      properties: { ...properties, id },
+      geometry,
+    } satisfies GeoJsonFeature;
+  });
+  const ids = new Set<string>();
+  features.forEach((feature) => {
+    if (ids.has(feature.id)) throw new Error(`GeoJSON contains duplicate feature id ${feature.id}.`);
+    ids.add(feature.id);
+  });
+  return { id: `geometry:${crypto.randomUUID()}`, name, features };
+}
+
+async function importGeometrySource(file: File) {
+  parseError.value = "";
+  try {
+    const geometrySource = parseGeometrySource(await file.text(), file.name);
+    geometrySources.value = [...geometrySources.value, geometrySource];
+    activeGeometrySourceId.value = geometrySource.id;
+    return geometrySource;
+  } catch (error) {
+    parseError.value = error instanceof Error ? error.message : "Unable to read the GeoJSON file.";
+    return null;
+  }
+}
+
+function getGeometrySource(sourceId: string) {
+  return geometrySources.value.find((source) => source.id === sourceId) ?? null;
+}
+
+function setActiveGeometrySource(sourceId: string) {
+  if (getGeometrySource(sourceId)) activeGeometrySourceId.value = sourceId;
 }
 
 function parseGraphTable(value: unknown, label: "nodes" | "edges"): DatasetTable {
@@ -262,6 +336,12 @@ export function useDatasetStore() {
     parseWarning,
     isLoading,
     importDataset,
+    geometrySources,
+    activeGeometrySource,
+    activeGeometrySourceId,
+    importGeometrySource,
+    getGeometrySource,
+    setActiveGeometrySource,
     clearActiveDataset,
   };
 }
