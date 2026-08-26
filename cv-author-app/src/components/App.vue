@@ -10,6 +10,7 @@ import {
 import { ArrowLeftRight, ArrowUp, Check, ChevronDown, Move, RotateCcw, SlidersHorizontal, X } from "@lucide/vue";
 import { CanvasNodeView } from "./CanvasNodeView";
 import DeckglMapLayer from "./DeckglMapLayer.vue";
+import DeckglEncodingConfigPanel from "./DeckglEncodingConfigPanel.vue";
 import AlignmentToolbar from "./AlignmentToolbar.vue";
 import { CanvasCoordinateSystemLayer } from "./CartesianCoordinateSystem";
 import { PolarCoordinateSystem } from "./PolarCoordinateSystem";
@@ -160,6 +161,7 @@ const {
   removeBarItemField,
   setParallelFields,
   setChartDataTransforms,
+  setDeckglMapStyle,
   updateAxisBindingMarkGroupConfig,
   updateSelectedChartMarkGroupConfig,
   beginMarkConfigEdit,
@@ -703,7 +705,7 @@ const llmDataset = computed(() => {
   return datasetId ? getDataset(datasetId) : activeDataset.value;
 });
 const encodingTargetNode = computed(() =>
-  selectedNodes.value.find((node) => !!node.chartSpec)
+  selectedNodes.value.find((node) => !!node.chartSpec || node.layerKind === "deckgl")
   ?? axisBindingNode.value,
 );
 const canToggleEncodingInspector = computed(() => !!encodingTargetNode.value);
@@ -1499,7 +1501,7 @@ onBeforeUnmount(() => {
             class="encoding-inspector"
             role="dialog"
             aria-modal="false"
-            :aria-label="`${axisBindingNode?.chartSpec?.chartType ?? 'Chart'} mark encodings`"
+            :aria-label="`${axisBindingNode?.chartSpec?.chartType ?? axisBindingNode?.deckglLayerType ?? 'Chart'} mark encodings`"
             @click.stop
             @pointerdown.stop
           >
@@ -1528,6 +1530,13 @@ onBeforeUnmount(() => {
               @mark-config-change="updateAxisBindingMarkGroupConfig"
               @mark-config-edit-start="onMarkConfigEditStart"
               @mark-config-edit-end="commitMarkConfigEdit"
+            />
+            <DeckglEncodingConfigPanel
+              v-else-if="axisBindingNode?.layerKind === 'deckgl'"
+              :layer-name="deckglLayerType(axisBindingNode)"
+              :map-style-url="axisBindingNode.mapStyleUrl ?? ''"
+              @close="closeEncodingInspector"
+              @map-style-change="setDeckglMapStyle(axisBindingNode.id, $event)"
             />
           </aside>
 
@@ -2045,7 +2054,9 @@ onBeforeUnmount(() => {
               :style="deckglLayerStyle(node)"
             >
               <DeckglMapLayer
+                :key="`${node.id}:${node.mapStyleUrl ?? 'example-default'}`"
                 :layer-type="deckglLayerType(node)"
+                :map-style-url="node.mapStyleUrl ?? ''"
                 :width="deckglLayerWidth(node)"
                 :height="deckglLayerHeight(node)"
               />

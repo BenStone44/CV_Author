@@ -1,6 +1,9 @@
 import type { SvgCandidate } from "../types";
 
-const mapboxStyleUrl = "mapbox://styles/shifuchen/cm0yq9yda01fh01q03vmn75i5";
+/** The style used by geographic templates before the appearance selector. */
+export const deckglOriginalMapStyleUrl = "mapbox://styles/shifuchen/cm0yq9yda01fh01q03vmn75i5";
+export const deckglLightMapStyleUrl = "https://basemaps.cartocdn.com/gl/positron-nolabels-gl-style/style.json";
+export const deckglDarkMapStyleUrl = "https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json";
 const mapboxAccessToken = import.meta.env.VITE_MAPBOX_TOKEN ?? "";
 const mapboxStaticImageUrl = `https://api.mapbox.com/styles/v1/shifuchen/cm0yq9yda01fh01q03vmn75i5/static/0,20,1.1/640x360?access_token=${mapboxAccessToken}`;
 
@@ -38,60 +41,38 @@ export function getGeographicLayerFamily(layerType: string): GeographicTemplateF
   return geographicLayerFamilies[layerType] ?? "point";
 }
 
+/** Local copies of the deck.gl gallery thumbnails shipped in public/. */
 const deckglExampleImageSlugs: Record<string, string> = {
   ArcLayer: "arc-layer.png",
   BitmapLayer: "bitmap-layer.png",
   ColumnLayer: "column-layer.png",
   ContourLayer: "contour-layer.png",
   GeoJsonLayer: "geojson-layer.jpg",
-  GridCellLayer: "grid-layer.png",
-  GridLayer: "grid-layer.png",
-  HeatmapLayer: "heatmap-layer.png",
+  GridCellLayer: "grid_layer.png",
+  GridLayer: "grid_layer.png",
+  HeatmapLayer: "heatmap_layer.png",
   HexagonLayer: "hexagon-layer.jpg",
   IconLayer: "icon-layer.jpg",
   LineLayer: "line-layer.jpg",
   MVTLayer: "tile-layer.jpg",
-  PathLayer: "path-layer.png",
+  PathLayer: "path_layer.png",
   PointCloudLayer: "point-cloud-layer.jpg",
-  PolygonLayer: "polygon-layer.png",
+  PolygonLayer: "polygon_layer.png",
   ScatterplotLayer: "scatterplot-layer.jpg",
   ScreenGridLayer: "screengrid-layer.jpg",
-  TerrainLayer: "terrain-layer.png",
+  TerrainLayer: "terrain_layer.png",
   TileLayer: "tile-layer.jpg",
-  TripsLayer: "trips-layer.png",
+  TripsLayer: "trips_layer.png",
   GreatCircleLayer: "great-circle-layer.png",
   TextLayer: "text-layer.png",
-  SolidPolygonLayer: "polygon-layer.png",
+  SolidPolygonLayer: "polygon_layer.png",
   SimpleMeshLayer: "column-layer.png",
-  ScenegraphLayer: "scenegraph-layer.png",
+  ScenegraphLayer: "scenegraph_layer.png",
 };
-
-const deckglExampleImageBaseUrl = "https://raw.githubusercontent.com/visgl/deck.gl/master/examples/gallery/images";
-const deckglBindingGalleryBaseUrl = "https://raw.githubusercontent.com/visgl/deck.gl/master/bindings/pydeck/docs/gallery/images";
-const deckglOfficialExampleLayers = new Set([
-  "ArcLayer",
-  "BitmapLayer",
-  "ColumnLayer",
-  "ContourLayer",
-  "GeoJsonLayer",
-  "HexagonLayer",
-  "IconLayer",
-  "LineLayer",
-  "PointCloudLayer",
-  "ScatterplotLayer",
-  "ScreenGridLayer",
-  "GreatCircleLayer",
-  "TextLayer",
-  "TileLayer",
-]);
 
 export function deckglExampleImageUrl(layerType: string) {
   const slug = deckglExampleImageSlugs[layerType];
-  if (!slug) return `${deckglExampleImageBaseUrl}/scatterplot-layer.jpg`;
-  const baseUrl = deckglOfficialExampleLayers.has(layerType)
-    ? deckglExampleImageBaseUrl
-    : deckglBindingGalleryBaseUrl;
-  return `${baseUrl}/${slug}`;
+  return `/deckgl-examples/${slug ?? "scatterplot-layer.jpg"}`;
 }
 
 const mapFrame = (layerType: string, content: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180" font-family="sans-serif">
@@ -167,7 +148,7 @@ export const geographicLayerDefinitions: SvgCandidate[] = layerNames.map((layerT
     name: layerType,
     chartType: layerType,
     coordinateSystem: "Geographic",
-    // Use the corresponding official deck.gl gallery image for the card. The
+    // Use the corresponding official deck.gl/pydeck gallery image for the card. The
     // transparent SVG remains the canvas placeholder because the live map is
     // rendered by Mapbox + deck.gl after insertion.
     src: deckglExampleImageUrl(layerType),
@@ -176,7 +157,7 @@ export const geographicLayerDefinitions: SvgCandidate[] = layerNames.map((layerT
     svgMarkup: canvasPlaceholder,
     library: "deck.gl",
     layerType,
-    mapStyleUrl: mapboxStyleUrl,
+    mapStyleUrl: deckglOriginalMapStyleUrl,
     renderMode: "static-layer",
     defaultWidth: 480,
   } satisfies SvgCandidate;

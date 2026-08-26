@@ -5853,6 +5853,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     datasetId?: string,
     layerKind?: CanvasNode["layerKind"],
     deckglLayerType?: string,
+    mapStyleUrl?: string,
     defaultWidth = 800,
     recordHistory = true,
   ) {
@@ -5903,11 +5904,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         : undefined;
       if (node.kind === "leaf") {
         nameCounters.leaf += 1;
-        return { kind: "leaf", id, candidateId: sourceId, name: `${name}-${nameCounters.leaf}`, content: scopeSvgContent(node.content, id), viewBox: node.viewBox, width: Math.max(node.bounds.width, 1), height: Math.max(node.bounds.height, 1), x: nodeX, y: nodeY, scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, contentMinX: node.contentMinX, contentMinY: node.contentMinY, coordinateGuide, chartSpec, layerKind, deckglLayerType } satisfies CanvasLeafNode;
+        return { kind: "leaf", id, candidateId: sourceId, name: `${name}-${nameCounters.leaf}`, content: scopeSvgContent(node.content, id), viewBox: node.viewBox, width: Math.max(node.bounds.width, 1), height: Math.max(node.bounds.height, 1), x: nodeX, y: nodeY, scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, contentMinX: node.contentMinX, contentMinY: node.contentMinY, coordinateGuide, chartSpec, layerKind, deckglLayerType, mapStyleUrl } satisfies CanvasLeafNode;
       }
       nameCounters.group += 1;
       const groupName = node.name ? `${name}-${node.name}` : `${name}-group-${nameCounters.group}`;
-      return { kind: "group", id, name: groupName, x: nodeX, y: nodeY, width: Math.max(node.bounds.width, 1), height: Math.max(node.bounds.height, 1), scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, coordinateGuide, chartSpec, layerKind, deckglLayerType, children: node.children.map((c) => instantiateNode(c, node.bounds)) } satisfies CanvasGroupNode;
+      return { kind: "group", id, name: groupName, x: nodeX, y: nodeY, width: Math.max(node.bounds.width, 1), height: Math.max(node.bounds.height, 1), scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, coordinateGuide, chartSpec, layerKind, deckglLayerType, mapStyleUrl, children: node.children.map((c) => instantiateNode(c, node.bounds)) } satisfies CanvasGroupNode;
     };
     let nextItems = template.nodes.map((n) => instantiateNode(n, null));
     if (forceOuterGroup && (nextItems.length !== 1 || nextItems[0]?.kind !== "group")) {
@@ -5926,6 +5927,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           rotation: 0,
           layerKind,
           deckglLayerType,
+          mapStyleUrl,
           children: nextItems.map((node) => ({
             ...node,
             x: node.x - outerBounds.minX,
@@ -5968,11 +5970,17 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         activeDataset.value?.id,
         candidate.renderMode === "static-layer" ? "deckgl" : undefined,
         candidate.renderMode === "static-layer" ? candidate.layerType : undefined,
+        candidate.renderMode === "static-layer" ? candidate.mapStyleUrl : undefined,
         candidate.defaultWidth,
         recordHistory,
       );
     }
     finally { loadingDrop.value = false; }
+  }
+  function setDeckglMapStyle(nodeId: string, mapStyleUrl: string) {
+    const node = findCanvasNode(nodeId);
+    if (node?.layerKind !== "deckgl" || node.mapStyleUrl === mapStyleUrl) return;
+    node.mapStyleUrl = mapStyleUrl;
   }
   async function insertCompositionCandidate(candidate: SvgCandidate) {
     if (candidate.unavailable) return;
@@ -7736,6 +7744,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     setAxisBindingAggregation,
     setValueFilters,
     setChartDataTransforms,
+    setDeckglMapStyle,
     clearMarkField,
     clearAxisBinding: clearMarkField,
     confirmSeriesField,

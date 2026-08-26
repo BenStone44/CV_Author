@@ -761,6 +761,8 @@ export type CanvasBaseNode = {
   layerKind?: "deckgl";
   /** Concrete deck.gl layer constructor used by a geographic visual object. */
   deckglLayerType?: string;
+  /** Mapbox style used by a geographic deck.gl visual object. */
+  mapStyleUrl?: string;
 };
 
 export type CanvasLeafNode = CanvasBaseNode & {

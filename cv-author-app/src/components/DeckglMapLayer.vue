@@ -36,6 +36,7 @@ import "mapbox-gl/dist/mapbox-gl.css";
 
 const props = defineProps<{
   layerType: string;
+  mapStyleUrl: string;
   width: number;
   height: number;
 }>();
@@ -376,7 +377,7 @@ onMounted(() => {
   const exampleView = exampleViewStates[props.layerType] ?? exampleViewStates.ScatterplotLayer!;
   map = new mapboxgl.Map({
     container: mapContainer.value,
-    style: exampleView.mapStyle ?? mapboxStyle,
+    style: props.mapStyleUrl || exampleView.mapStyle || mapboxStyle,
     center: [exampleView.longitude, exampleView.latitude],
     zoom: exampleView.zoom,
     minZoom: exampleView.minZoom,
