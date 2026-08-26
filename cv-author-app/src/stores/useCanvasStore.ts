@@ -34,6 +34,7 @@ import type {
   ElementOrientation,
   SvgCandidate,
   CompositionType,
+  CompositionMemberSpec,
   LayerOrderAction,
   AxisBindingTarget,
   EncodingChannel,
@@ -90,7 +91,6 @@ import {
   cloneCanvasNode,
   collectNodeBounds,
   collectNodeSelectionBounds,
-  computeSelectionBounds,
   createCanvasNodesSvgMarkup,
   cloneChartSpec,
   getNodeSelectionBounds,
@@ -913,9 +913,73 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function getSelectionScopeNodes() {
     return getGroupAtPath()?.children ?? canvasNodes.value;
   }
+  function nestedSelectionRelationships(selectionId: string): NestedRelationship[] {
+    const relationships = Object.values(chartRelationships.value.nestedRelationships)
+      .filter((relationship) => relationship.status === "active");
+    const unitKeys = new Map<string, NestedRelationship[]>();
+    relationships.forEach((relationship) => {
+      const parameters = relationship.parameters as Partial<RelativeNestedParameters>;
+      const key = parameters.batchId ?? relationship.id;
+      const current = unitKeys.get(key) ?? [];
+      current.push(relationship);
+      unitKeys.set(key, current);
+    });
+    for (const [key, members] of unitKeys) {
+      if (`nested-unit:${key}` === selectionId) return members;
+    }
+    return [];
+  }
+  function nestedSelectionIdForNode(nodeId: string): string | null {
+    const relationships = Object.values(chartRelationships.value.nestedRelationships)
+      .filter((relationship) => relationship.status === "active"
+        && (relationship.parentChartId === nodeId || relationship.childChartId === nodeId));
+    if (relationships.length === 0) return null;
+    const parameters = relationships[0]!.parameters as Partial<RelativeNestedParameters>;
+    return `nested-unit:${parameters.batchId ?? relationships[0]!.id}`;
+  }
+  function createNestedSelectionNode(selectionId: string): CanvasGroupNode | null {
+    const relationships = nestedSelectionRelationships(selectionId);
+    if (relationships.length === 0) return null;
+    const nodes = relationships.flatMap((relationship) => [
+      findCanvasNode(relationship.parentChartId),
+      findCanvasNode(relationship.childChartId),
+    ]).filter((node): node is CanvasNode => !!node);
+    const uniqueNodes = nodes.filter((node, index, all) => all.findIndex((candidate) => candidate.id === node.id) === index);
+    if (uniqueNodes.length === 0) return null;
+    const bounds = uniqueNodes.reduce<Bounds | null>((current, node) =>
+      mergeBounds(current, collectNodeSelectionBounds(node)), null);
+    if (!bounds) return null;
+    const firstParent = findCanvasNode(relationships[0]!.parentChartId);
+    const members: CompositionMemberSpec[] = uniqueNodes.map((node) => ({
+      nodeId: node.id,
+      sourceNodeId: node.id,
+      chartType: node.chartSpec?.chartType,
+      sharedChannels: [],
+    }));
+    return {
+      kind: "group",
+      id: selectionId,
+      name: `${firstParent?.name ?? "Nested"} nested`,
+      x: 0,
+      y: 0,
+      width: Math.max(bounds.width, 1),
+      height: Math.max(bounds.height, 1),
+      scaleX: 1,
+      scaleY: 1,
+      rotation: 0,
+      children: uniqueNodes,
+      compositionSpec: {
+        id: selectionId,
+        type: "nested",
+        members,
+        sharedChannels: [],
+      },
+    };
+  }
   const selectionScopeNodes = computed(() => getSelectionScopeNodes());
   function getSelectionNode(nodeId: string) {
-    return getSelectionScopeNodes().find((node) => node.id === nodeId) ?? null;
+    return getSelectionScopeNodes().find((node) => node.id === nodeId)
+      ?? createNestedSelectionNode(nodeId);
   }
 
   function canvasNodesWithRestoredCompositionLayout(nodes = canvasNodes.value) {
@@ -1014,6 +1078,14 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function coordinateTransformItemIds(itemIds: string[]) {
     const expanded = new Set<string>();
     itemIds.forEach((id) => {
+      const nestedRelationships = nestedSelectionRelationships(id);
+      if (nestedRelationships.length > 0) {
+        nestedRelationships.forEach((relationship) => {
+          expanded.add(relationship.parentChartId);
+          expanded.add(relationship.childChartId);
+        });
+        return;
+      }
       const node = getSelectionNode(id);
       const composition = node?.compositionSpec;
       if (!node) return;
@@ -1816,9 +1888,14 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const nestedRenderedChildIds = computed<ReadonlySet<string>>(() =>
     new Set(nestedRenderPlacements.value.map((placement) => placement.child.id)),
   );
-  const selectionScopeBounds = computed<Bounds | null>(() =>
-    computeSelectionBounds(getSelectionScopeNodes(), selectedIds.value),
-  );
+  const selectionScopeBounds = computed<Bounds | null>(() => {
+    let bounds: Bounds | null = null;
+    selectedIds.value.forEach((id) => {
+      const node = getSelectionNode(id);
+      if (node) bounds = mergeBounds(bounds, collectNodeSelectionBounds(node));
+    });
+    return bounds;
+  });
   const selectionBounds = computed<Bounds | null>(() => selectionScopeBounds.value);
   const selectionFrame = computed(() => {
     const semanticBounds = semanticSelection.value?.bounds;
@@ -1834,6 +1911,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const bounds = selectionBounds.value;
     const node = selectedIds.value.length === 1 ? getSelectionNode(selectedIds.value[0]!) : null;
     if (!bounds || !node) return bounds ? { x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height, rotation: 0 } : null;
+    if (nestedSelectionRelationships(node.id).length > 0) {
+      return { x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height, rotation: 0 };
+    }
     const visualBounds = getNodeSelectionBounds(node);
     const localMinX = node.kind === "leaf" ? node.contentMinX : 0;
     const localMinY = node.kind === "leaf" ? node.contentMinY : 0;
@@ -2112,13 +2192,22 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   }
   function normalizeSelection(ids: string[]) {
     const normalized = new Set<string>();
+    const nestedIds = new Set<string>();
     const nodes = getSelectionScopeNodes();
     ids.forEach((id) => {
       const node = nodes.find((candidate) => candidate.id === id);
-      if (!node) return;
+      if (!node) {
+        if (nestedSelectionRelationships(id).length > 0) nestedIds.add(id);
+        return;
+      }
+      const nestedId = nestedSelectionIdForNode(node.id);
+      if (nestedId) {
+        nestedIds.add(nestedId);
+        return;
+      }
       scopedCompositionMemberIds(node).forEach((memberId) => normalized.add(memberId));
     });
-    return nodes.filter((n) => normalized.has(n.id)).map((n) => n.id);
+    return [...nodes.filter((n) => normalized.has(n.id)).map((n) => n.id), ...nestedIds];
   }
   function setSelection(ids: string[]) {
     selectedIds.value = normalizeSelection(ids);
@@ -2155,6 +2244,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     activeNestedRelationshipId.value = null;
   }
   function deleteSelectedNodes() {
+    const nestedRelationship = selectedNestedRelationship();
+    if (nestedRelationship && removeNestedComposition(nestedRelationship)) return;
     const sel = new Set(selectedIds.value);
     if (sel.size === 0) return;
     pushCanvasHistory();
@@ -4680,7 +4771,13 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         ...childInstances.map(({ child }) => child),
       ]);
       editingCompositionId.value = `composition:${childInstances[0]!.relationshipId}`;
-      selectedIds.value = childInstances.map(({ child }) => child.id);
+      const firstRelationship = childInstances[0]?.relationshipId;
+      const firstParameters = firstRelationship
+        ? chartRelationships.value.nestedRelationships[firstRelationship]?.parameters as Partial<RelativeNestedParameters> | undefined
+        : undefined;
+      selectedIds.value = firstRelationship
+        ? [`nested-unit:${firstParameters?.batchId ?? firstRelationship}`]
+        : [];
       semanticSelection.value = null;
       axisBindingTarget.value = null;
       openNestedPositionEditor(childInstances.map(({ relationshipId }) => relationshipId));
@@ -6492,6 +6589,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
 
   function selectedNestedRelationship() {
     const selection = new Set(selectedIds.value);
+    const selectedUnitId = [...selection].find((id) => id.startsWith("nested-unit:") && nestedSelectionRelationships(id).length > 0);
+    if (selectedUnitId) return nestedSelectionRelationships(selectedUnitId)[0] ?? null;
     return Object.values(chartRelationships.value.nestedRelationships).find((relationship) =>
       relationship.status === "active" && selection.has(relationship.childChartId),
     ) ?? null;
