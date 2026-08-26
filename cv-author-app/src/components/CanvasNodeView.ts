@@ -258,6 +258,7 @@ function svgTransformMatrix(value: string | null): Matrix {
 }
 
 const parsedMarkupCache = new Map<string, SVGSVGElement | null>();
+const parsedMarkupMarksCache = new WeakMap<SVGSVGElement, SVGGraphicsElement[]>();
 
 function parseSvgMarkup(markup: string) {
   if (parsedMarkupCache.has(markup)) return parsedMarkupCache.get(markup) ?? null;
@@ -270,6 +271,29 @@ function parseSvgMarkup(markup: string) {
   const root = document.querySelector("parsererror") ? null : document.documentElement as unknown as SVGSVGElement;
   parsedMarkupCache.set(markup, root);
   return root;
+}
+
+function parsedMarkupMarks(root: SVGSVGElement) {
+  const cached = parsedMarkupMarksCache.get(root);
+  if (cached) return cached;
+  const marks = Array.from(root.querySelectorAll<SVGGraphicsElement>("[data-mark-role]"));
+  parsedMarkupMarksCache.set(root, marks);
+  return marks;
+}
+
+const nestedPlacementsByParentCache = new WeakMap<readonly NestedRenderPlacement[], Map<string, NestedRenderPlacement[]>>();
+
+function placementsByParent(placements: readonly NestedRenderPlacement[]) {
+  const cached = nestedPlacementsByParentCache.get(placements);
+  if (cached) return cached;
+  const grouped = new Map<string, NestedRenderPlacement[]>();
+  placements.forEach((placement) => {
+    const current = grouped.get(placement.parentChartId) ?? [];
+    current.push(placement);
+    grouped.set(placement.parentChartId, current);
+  });
+  nestedPlacementsByParentCache.set(placements, grouped);
+  return grouped;
 }
 
 function markMatchesPlacement(element: Element, placement: NestedRenderPlacement, fallbackIndex: number) {
@@ -347,9 +371,7 @@ export const CanvasNodeView: any = defineComponent({
           ? (event: MouseEvent) => props.onNodeContextMenu!(props.node, event)
           : undefined,
       };
-      const nodePlacements = props.nestedPlacements.filter((placement) =>
-        placement.parentChartId === props.node.id,
-      );
+      const nodePlacements = placementsByParent(props.nestedPlacements).get(props.node.id) ?? [];
       const renderNestedChild = (placement: NestedRenderPlacement, ancestorMatrix: Matrix) => {
         const inverseAncestor = inverseMatrix(ancestorMatrix);
         const inverseParent = inverseMatrix(nodeTransformMatrix(props.node));
@@ -393,10 +415,17 @@ export const CanvasNodeView: any = defineComponent({
         const anchors = new Map<Element, NestedRenderPlacement[]>();
         const suppressedParentMarks = new Set<Element>();
         const unmatched = new Set(nodePlacements);
-        const marks = Array.from(root.querySelectorAll("[data-mark-role]"));
+        const marks = parsedMarkupMarks(root);
+        const marksByGroup = new Map<string, SVGGraphicsElement[]>();
+        marks.forEach((mark) => {
+          const groupId = mark.getAttribute("data-mark-group-id") ?? "";
+          const group = marksByGroup.get(groupId) ?? [];
+          group.push(mark);
+          marksByGroup.set(groupId, group);
+        });
         nodePlacements.forEach((placement) => {
           const groupMarks = placement.parentMarkGroupId
-            ? marks.filter((element) => element.getAttribute("data-mark-group-id") === placement.parentMarkGroupId)
+            ? marksByGroup.get(placement.parentMarkGroupId) ?? []
             : marks;
           const matchingMarks = groupMarks.filter((element, index) => {
             const role = element.getAttribute("data-mark-role");

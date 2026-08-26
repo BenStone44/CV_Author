@@ -420,6 +420,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const interaction = ref<Interaction | null>(null);
   let pendingMoveUpdate: { point: Point; interaction: MoveInteraction } | null = null;
   let moveUpdateFrame: number | null = null;
+  let pendingDropZoneUpdate: { point: Point; sourceNodeId: string } | null = null;
+  let dropZoneUpdateFrame: number | null = null;
   let canvasWatchersPaused = false;
   let stopNestedChildLayoutWatch: (() => void) | null = null;
   const contextMenu = ref<ContextMenuState | null>(null);
@@ -436,6 +438,30 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function clearNestedEnterHover() {
     if (nestedEnterHover) window.clearTimeout(nestedEnterHover.timeoutId);
     nestedEnterHover = null;
+  }
+
+  function scheduleCompositionDropZone(point: Point, sourceNodeId: string) {
+    pendingDropZoneUpdate = { point, sourceNodeId };
+    if (dropZoneUpdateFrame !== null) return;
+    dropZoneUpdateFrame = requestAnimationFrame(() => {
+      dropZoneUpdateFrame = null;
+      const pending = pendingDropZoneUpdate;
+      pendingDropZoneUpdate = null;
+      if (!pending || compositionDragSourceId.value !== pending.sourceNodeId) return;
+      activeDropZone.value = compositionDropZoneAtPoint(pending.point, pending.sourceNodeId);
+    });
+  }
+
+  function flushCompositionDropZone() {
+    if (dropZoneUpdateFrame !== null) {
+      cancelAnimationFrame(dropZoneUpdateFrame);
+      dropZoneUpdateFrame = null;
+    }
+    const pending = pendingDropZoneUpdate;
+    pendingDropZoneUpdate = null;
+    if (pending && compositionDragSourceId.value === pending.sourceNodeId) {
+      activeDropZone.value = compositionDropZoneAtPoint(pending.point, pending.sourceNodeId);
+    }
   }
   let nestedDropPath: Array<{ nodeId: string; childMarkIndexes: number[]; groupKey?: string }> = [];
   const activeDataBindingDropZone = ref<DataBindingDropZone | null>(null);
@@ -2816,6 +2842,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     child: CanvasNode,
     parentDataKey: string,
     rowKey?: string,
+    materializedParentOverride?: Dataset,
   ) {
     const parentSpec = parent.chartSpec;
     const childSpec = child.chartSpec;
@@ -2839,7 +2866,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       identity = { rowKey: parentDataKey };
     }
     const resolvedRowKey = rowKey ?? identity.rowKey;
-    const materializedParent = prepareChartData(parent.id, parentDataset, parentSpec).dataset;
+    const materializedParent = materializedParentOverride
+      ?? prepareChartData(parent.id, parentDataset, parentSpec).dataset;
     const parentRow = resolvedRowKey === undefined
       ? undefined
       : materializedParent.rows.find((row, index) => csvRowKey(materializedParent, row, index) === resolvedRowKey);
@@ -4317,6 +4345,14 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function compositionDropZoneAtPoint(point: Point, sourceNodeId: string): ChartDropZone | null {
     const source = findCanvasNode(sourceNodeId);
     if (!source?.chartSpec) return null;
+    const nodeElementCache = new Map<string, SVGGraphicsElement | null>();
+    const nodeElementFor = (nodeId: string) => {
+      if (nodeElementCache.has(nodeId)) return nodeElementCache.get(nodeId) ?? null;
+      const element = Array.from(canvasRef.value?.querySelectorAll<SVGGraphicsElement>("[data-node-id]") ?? [])
+        .find((candidate) => candidate.dataset.nodeId === nodeId) ?? null;
+      nodeElementCache.set(nodeId, element);
+      return element;
+    };
     const sourceCompositionMemberIds = new Set(
       source.compositionSpec?.members.map((member) => member.nodeId) ?? [sourceNodeId],
     );
@@ -4377,8 +4413,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           direction: composition.direction,
         };
       }
-      const nodeElement = Array.from(canvasRef.value?.querySelectorAll<SVGGraphicsElement>("[data-node-id]") ?? [])
-        .find((element) => element.dataset.nodeId === target.id);
+      const nodeElement = nodeElementFor(target.id);
       const markIndexes = nodeElement
         ? Array.from(nodeElement.querySelectorAll<SVGGraphicsElement>("[data-mark-role]"))
           .map((_element, index) => index)
@@ -4579,8 +4614,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           }]
           : [];
       if (nestedTargets.length === 0 || !source.chartSpec || !target.chartSpec) return false;
+      const parentDataset = getDataset(target.chartSpec.datasetId);
+      if (!parentDataset) return false;
+      const materializedParent = prepareChartData(target.id, parentDataset, target.chartSpec).dataset;
       const nestedContextResults = nestedTargets.map((nestedTarget) =>
-        resolveNestedFilterContexts(target, source, nestedTarget.dataKey, nestedTarget.rowKey));
+        resolveNestedFilterContexts(target, source, nestedTarget.dataKey, nestedTarget.rowKey, materializedParent));
       const unresolvedFields = Array.from(new Set(nestedContextResults.flatMap((result) => result.unresolvedFields)));
       if (unresolvedFields.length > 0) {
         setImportNotice(`Nested context could not resolve parent x/y values for: ${unresolvedFields.join(", ")}.`);
@@ -4596,7 +4634,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         rotation: source.rotation,
       };
       const childInstances = nestedTargets.map((nestedTarget, index) => {
-        const child = index === 0 ? source : cloneCanvasNodeForPaste(source);
+        const child = index === 0 ? source : cloneCanvasNodeForPaste(source, false);
         inheritParentFacetClues(target, child);
         const fitScale = Math.max(0.01, Math.min(
           nestedTarget.bounds.width * 0.78 / Math.max(child.width, 1),
@@ -5792,7 +5830,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     }
   }
 
-  function cloneCanvasNodeForPaste(node: CanvasNode): CanvasNode {
+  function cloneCanvasNodeForPaste(node: CanvasNode, renderClone = true): CanvasNode {
     const nextId = crypto.randomUUID();
     const coordinateGuide = node.coordinateGuide
       ? { ...node.coordinateGuide, origin: { ...node.coordinateGuide.origin } }
@@ -5801,15 +5839,15 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (node.kind === "leaf") {
       const clone: CanvasLeafNode = { ...node, coordinateGuide, coordinateSystem: null, compositionSpec: null, chartSpec, id: nextId, name: `${node.name} copy`, content: scopeSvgContent(node.content, nextId) };
       clone.coordinateSystem = standaloneCoordinateSystem(clone);
-      if (clone.llmRenderer?.status !== "ready") {
+      if (renderClone && clone.llmRenderer?.status !== "ready") {
         renderChartNode(clone);
         renderSemanticNode(clone);
       }
       return clone;
     }
-    const clone: CanvasGroupNode = { ...node, coordinateGuide, coordinateSystem: null, compositionSpec: null, chartSpec, id: nextId, name: `${node.name} copy`, children: node.children.map((c) => cloneCanvasNodeForPaste(c)) };
+    const clone: CanvasGroupNode = { ...node, coordinateGuide, coordinateSystem: null, compositionSpec: null, chartSpec, id: nextId, name: `${node.name} copy`, children: node.children.map((c) => cloneCanvasNodeForPaste(c, renderClone)) };
     clone.coordinateSystem = standaloneCoordinateSystem(clone);
-    if (clone.llmRenderer?.status !== "ready") {
+    if (renderClone && clone.llmRenderer?.status !== "ready") {
       renderChartNode(clone);
       renderSemanticNode(clone);
     }
@@ -7209,13 +7247,21 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (ai?.type === "rotate") rotationInputVisible.value = true;
     if (ai?.type === "polar-angle") polarAngleInputVisible.value = true;
     if (dragTestStage === null || dragTestStage === "full") {
-      if (ai?.type === "move" && compositionDragSourceId.value && activeDropZone.value) {
-        commitCompositionDrop(activeDropZone.value, compositionDragSourceId.value);
+      if (ai?.type === "move" && compositionDragSourceId.value) {
+        flushCompositionDropZone();
+        if (activeDropZone.value) {
+          commitCompositionDrop(activeDropZone.value, compositionDragSourceId.value);
+        }
       }
     }
     interaction.value = null;
     resumeCanvasWatchers();
     compositionDragSourceId.value = null;
+    pendingDropZoneUpdate = null;
+    if (dropZoneUpdateFrame !== null) {
+      cancelAnimationFrame(dropZoneUpdateFrame);
+      dropZoneUpdateFrame = null;
+    }
     clearNestedEnterHover();
     activeDropZone.value = null;
     detachPointerListeners();
@@ -7245,9 +7291,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       if (!ai.historyCommitted && (Math.abs(movePoint.x - ai.startPoint.x) > 0.1 || Math.abs(movePoint.y - ai.startPoint.y) > 0.1)) ai.historyCommitted = true;
       scheduleMoveInteraction(movePoint, ai);
       if (dragTestStage === "position") return;
-      activeDropZone.value = compositionDragSourceId.value
-        ? compositionDropZoneAtPoint(movePoint, compositionDragSourceId.value)
-        : null;
+      if (compositionDragSourceId.value) {
+        scheduleCompositionDropZone(movePoint, compositionDragSourceId.value);
+      } else {
+        activeDropZone.value = null;
+      }
       const dropZone = activeDropZone.value;
       const enteringComposition = !!dropZone?.enterCompositionId;
       const enteringNested = dropZone?.type === "nested" && dropZone.nestedAction === "enter";
@@ -7812,17 +7860,41 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     nestedLayoutScheduled = true;
     void nextTick(() => {
       nestedLayoutScheduled = false;
+      const parentDomCache = new Map<string, {
+        element: SVGGraphicsElement;
+        marks: SVGGraphicsElement[];
+        marksByGroup: Map<string, SVGGraphicsElement[]>;
+      }>();
+      const targetBoundsCache = new Map<string, Bounds | null>();
+      const nodeElements = Array.from(canvasRef.value?.querySelectorAll<SVGGraphicsElement>("[data-node-id]") ?? []);
+      const nodeElementsById = new Map(nodeElements.map((element) => [element.dataset.nodeId ?? "", element]));
       Object.values(chartRelationships.value.nestedRelationships).forEach((relationship) => {
         if (relationship.status !== "active" || relationship.relationType !== "relative-position") return;
         const parent = findCanvasNode(relationship.parentChartId);
         const child = findCanvasNode(relationship.childChartId);
         if (!parent || !child) return;
-        const parentElement = Array.from(canvasRef.value?.querySelectorAll<SVGGraphicsElement>("[data-node-id]") ?? [])
-          .find((element) => element.dataset.nodeId === parent.id);
-        if (!parentElement) return;
-        const marks = Array.from(parentElement.querySelectorAll<SVGGraphicsElement>("[data-mark-role]"));
+        let parentEntry = parentDomCache.get(parent.id);
+        if (!parentEntry) {
+          const parentElement = nodeElementsById.get(parent.id);
+          if (!parentElement) return;
+          const marks = Array.from(parentElement.querySelectorAll<SVGGraphicsElement>("[data-mark-role]"));
+          const marksByGroup = new Map<string, SVGGraphicsElement[]>();
+          marks.forEach((mark) => {
+            const groupId = mark.getAttribute("data-mark-group-id") ?? "";
+            const group = marksByGroup.get(groupId) ?? [];
+            group.push(mark);
+            marksByGroup.set(groupId, group);
+          });
+          parentEntry = {
+            element: parentElement,
+            marks,
+            marksByGroup,
+          };
+          parentDomCache.set(parent.id, parentEntry);
+        }
+        const { marks } = parentEntry;
         const groupMarks = relationship.parentMarkGroupId
-          ? marks.filter((element) => element.getAttribute("data-mark-group-id") === relationship.parentMarkGroupId)
+          ? parentEntry.marksByGroup.get(relationship.parentMarkGroupId) ?? []
           : marks;
         const identityMarks = relationship.parentDataKey
           ? groupMarks.filter((element, index) => {
@@ -7835,7 +7907,12 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         const targetMarks = identityMarks.length > 0 ? identityMarks : groupMarks;
         if (targetMarks.length === 0) return;
         const scopeGroupId = parentGroupIdForNode(child.id) ?? null;
-        const bounds = semanticSelectionBounds(targetMarks, scopeGroupId);
+        const boundsCacheKey = `${relationship.parentChartId}:${relationship.parentDataKey ?? "*"}:${scopeGroupId ?? ""}`;
+        let bounds = targetBoundsCache.get(boundsCacheKey);
+        if (bounds === undefined) {
+          bounds = semanticSelectionBounds(targetMarks, scopeGroupId);
+          targetBoundsCache.set(boundsCacheKey, bounds);
+        }
         if (!bounds || bounds.width <= 0 || bounds.height <= 0) return;
         const next = resolveNestedRelationship(relationship.id, {
           x: bounds.minX,
@@ -7873,15 +7950,33 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   }
   function resumeCanvasWatchers() {
     if (!canvasWatchersPaused && stopNestedChildLayoutWatch) return;
-    stopNestedChildLayoutWatch = watch([canvasNodes, chartRelationships], scheduleNestedChildLayout, { deep: true });
+    stopNestedChildLayoutWatch = watch(
+      [canvasNodes, () => chartRelationships.value.nestedRelationships],
+      scheduleNestedChildLayout,
+      { deep: true },
+    );
     canvasWatchersPaused = false;
   }
-  watch(chartRelationships, projectRelationshipStateToCanvas, { deep: true });
+  // Nested relationship geometry is resolved by the dedicated layout watcher;
+  // projecting it through every chart on each position update is unnecessary.
+  watch(
+    () => [
+      chartRelationships.value.charts,
+      chartRelationships.value.markGroups,
+      chartRelationships.value.axes,
+      chartRelationships.value.axisBindings,
+      chartRelationships.value.compositions,
+    ],
+    projectRelationshipStateToCanvas,
+    { deep: true },
+  );
   resumeCanvasWatchers();
   onBeforeUnmount(() => {
     detachPointerListeners();
     if (moveUpdateFrame !== null) cancelAnimationFrame(moveUpdateFrame);
+    if (dropZoneUpdateFrame !== null) cancelAnimationFrame(dropZoneUpdateFrame);
     pendingMoveUpdate = null;
+    pendingDropZoneUpdate = null;
     pauseCanvasWatchers();
     window.removeEventListener("keydown", onWindowKeyDown);
     window.removeEventListener("click", closeContextMenu);
