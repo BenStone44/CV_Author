@@ -9,6 +9,7 @@ import {
 } from "vue";
 import { ArrowLeftRight, ArrowUp, Check, ChevronDown, Move, RotateCcw, SlidersHorizontal, X } from "@lucide/vue";
 import { CanvasNodeView } from "./CanvasNodeView";
+import DeckglMapLayer from "./DeckglMapLayer.vue";
 import AlignmentToolbar from "./AlignmentToolbar.vue";
 import { CanvasCoordinateSystemLayer } from "./CartesianCoordinateSystem";
 import { PolarCoordinateSystem } from "./PolarCoordinateSystem";
@@ -197,6 +198,7 @@ const {
 const visibleCanvasNodes = computed(() =>
   canvasNodes.value.filter((node) => !nestedRenderedChildIds.value.has(node.id)),
 );
+const deckglLayerNodes = computed(() => visibleCanvasNodes.value.filter((node) => node.layerKind === "deckgl"));
 const chartTransformNode = computed(() => {
   if (selectedIds.value.length === 1) {
     const node = selectedNodes.value[0];
@@ -229,6 +231,34 @@ const templateCategoryMenuStyle = computed(() => ({
   width: `${templateCategoryMenuPosition.value.width}px`,
   maxHeight: `${Math.max(180, window.innerHeight - templateCategoryMenuPosition.value.top - 16)}px`,
 }));
+
+function deckglLayerType(node: CanvasNode) {
+  if (node.deckglLayerType) return node.deckglLayerType;
+  const candidateId = node.kind === "leaf" ? node.candidateId : "";
+  const candidateLayerType = candidateId.split(":").at(-1);
+  if (candidateLayerType) return candidateLayerType;
+  return node.name.replace(/-(?:group|leaf)-\d+$/, "");
+}
+
+function deckglLayerStyle(node: CanvasNode) {
+  const width = Math.max(node.width * Math.abs(node.scaleX), 1);
+  const height = Math.max(node.height * Math.abs(node.scaleY), 1);
+  const cx = width / 2;
+  const cy = height / 2;
+  return {
+    width: `${width}px`,
+    height: `${height}px`,
+    transform: `translate(${node.x + cx}px, ${node.y + cy}px) rotate(${node.rotation}deg) translate(${-cx}px, ${-cy}px)`,
+  };
+}
+
+function deckglLayerWidth(node: CanvasNode) {
+  return Math.max(node.width * Math.abs(node.scaleX), 1);
+}
+
+function deckglLayerHeight(node: CanvasNode) {
+  return Math.max(node.height * Math.abs(node.scaleY), 1);
+}
 
 function selectionActionPath(radius: number, position: "top" | "bottom" | "left") {
   const innerRadius = radius / 2;
@@ -2001,6 +2031,34 @@ onBeforeUnmount(() => {
           <div v-if="loadingDrop" class="loading-state">Loading SVG...</div>
           <div v-if="importNotice" class="import-notice">
             {{ importNotice }}
+          </div>
+
+          <div
+            class="deckgl-layer-scene"
+            :style="{ transform: `translate(${viewPan.x}px, ${viewPan.y}px) scale(${viewZoom})` }"
+            aria-hidden="true"
+          >
+            <div
+              v-for="node in deckglLayerNodes"
+              :key="`deckgl-layer-${node.id}`"
+              class="deckgl-layer-node"
+              :style="deckglLayerStyle(node)"
+            >
+              <DeckglMapLayer
+                :layer-type="deckglLayerType(node)"
+                :width="deckglLayerWidth(node)"
+                :height="deckglLayerHeight(node)"
+              />
+              <div class="deckgl-layer-frame" aria-hidden="true">
+                <span
+                  v-for="edge in ['top', 'right', 'bottom', 'left']"
+                  :key="`${node.id}-${edge}`"
+                  class="deckgl-layer-frame__edge"
+                  :class="`deckgl-layer-frame__edge--${edge}`"
+                  @pointerdown.stop.prevent="onCanvasNodePointerDown(node, $event)"
+                />
+              </div>
+            </div>
           </div>
 
           <svg
@@ -4749,7 +4807,49 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   overflow: visible;
+  z-index: 1;
 }
+.deckgl-layer-scene {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  transform-origin: 0 0;
+  pointer-events: none;
+  overflow: visible;
+}
+.deckgl-layer-node {
+  position: absolute;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+.deckgl-layer-frame {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.deckgl-layer-frame__edge {
+  position: absolute;
+  display: block;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: move;
+}
+.deckgl-layer-frame__edge--top,
+.deckgl-layer-frame__edge--bottom {
+  left: 0;
+  width: 100%;
+  height: 10px;
+}
+.deckgl-layer-frame__edge--top { top: 0; }
+.deckgl-layer-frame__edge--bottom { bottom: 0; }
+.deckgl-layer-frame__edge--left,
+.deckgl-layer-frame__edge--right {
+  top: 0;
+  width: 10px;
+  height: 100%;
+}
+.deckgl-layer-frame__edge--left { left: 0; }
+.deckgl-layer-frame__edge--right { right: 0; }
 .canvas-object {
   cursor: move;
   user-select: none;

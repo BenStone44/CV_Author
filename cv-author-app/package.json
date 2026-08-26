@@ -17,6 +17,12 @@
     "type-check": "vue-tsc --build"
   },
   "dependencies": {
+    "@deck.gl/aggregation-layers": "^9.3.10",
+    "@deck.gl/core": "^9.3.10",
+    "@deck.gl/geo-layers": "^9.3.10",
+    "@deck.gl/layers": "^9.3.10",
+    "@deck.gl/mapbox": "^9.3.10",
+    "@deck.gl/mesh-layers": "^9.3.10",
     "@lucide/vue": "^1.28.0",
     "@types/d3": "^7.4.3",
     "@types/d3-axis": "^3.0.6",
@@ -27,6 +33,7 @@
     "d3-sankey": "^0.12.3",
     "d3-scale": "^4.0.2",
     "d3-shape": "^3.2.0",
+    "mapbox-gl": "^3.29.0",
     "papaparse": "^5.5.4",
     "svgson": "^5.3.1",
     "vue": "^3.5.40"

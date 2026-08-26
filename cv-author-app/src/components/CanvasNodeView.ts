@@ -340,12 +340,14 @@ export const CanvasNodeView: any = defineComponent({
       const sharedProps = {
         class: [
           "canvas-object",
+          props.node.layerKind === "deckgl" ? "canvas-object--deckgl-layer" : "",
           nodeInteractive ? "canvas-object--interactive" : "",
           isActiveEditingGroup ? "canvas-object--editing-group" : "",
           props.selected ? "canvas-object--selected" : "",
           props.draggingNodeId === props.node.id ? "canvas-object--composition-drag-source" : "",
         ],
         "data-node-id": props.node.id,
+        "data-layer-kind": props.node.layerKind,
         transform: props.node.kind === "leaf"
           ? getLeafNodeTransform(props.node)
           : getNodeTransform(props.node),
@@ -526,9 +528,10 @@ export const CanvasNodeView: any = defineComponent({
           && props.editingChartId === props.node.id
           && !!markHandler;
         const isChartPlaceholder = !!props.node.chartSpec && !props.node.renderedContent;
+        const isDeckglLayer = props.node.layerKind === "deckgl";
         return h("g", { ...sharedProps }, [
           // Keep a stable hit area for thin strokes and hollow SVG shapes.
-          hitTarget(hasInteractiveMarks),
+          ...(!isDeckglLayer ? [hitTarget(hasInteractiveMarks)] : []),
           ...(isChartPlaceholder ? [h("rect", {
             class: "chart-placeholder-frame",
             x: props.node.contentMinX,
@@ -538,7 +541,9 @@ export const CanvasNodeView: any = defineComponent({
             "vector-effect": "non-scaling-stroke",
             "pointer-events": "none",
           })] : []),
-          renderContent(props.node.renderedContent ?? props.node.content, hasInteractiveMarks),
+          ...(props.node.layerKind === "deckgl"
+            ? []
+            : [renderContent(props.node.renderedContent ?? props.node.content, hasInteractiveMarks)]),
         ]);
       }
 

@@ -7,6 +7,12 @@ export type SvgCandidate = {
   compositionType?: CompositionType;
   svgMarkup?: string;
   unavailable?: boolean;
+  renderMode?: "static-layer";
+  defaultWidth?: number;
+  mapStyleUrl?: string;
+  /** Optional source metadata for libraries that provide template components. */
+  library?: string;
+  layerType?: string;
 };
 
 export type CartesianCoordinateGuide = {
@@ -751,6 +757,10 @@ export type CanvasBaseNode = {
   layerSpec?: LayerSpec | null;
   nestedSpec?: NestedSpec | null;
   compositionSpec?: CompositionSpec | null;
+  /** Logical layer kind for non-semantic visual objects. */
+  layerKind?: "deckgl";
+  /** Concrete deck.gl layer constructor used by a geographic visual object. */
+  deckglLayerType?: string;
 };
 
 export type CanvasLeafNode = CanvasBaseNode & {

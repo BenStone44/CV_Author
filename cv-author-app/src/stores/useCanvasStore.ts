@@ -122,6 +122,7 @@ import {
 } from "../utils/csvColumnDrag";
 import { advancedTemplateDefinitions } from "../utils/advancedChartCards";
 import { withD3GalleryThumbnail } from "../utils/d3GalleryThumbnails";
+import { geographicLayerDefinitions } from "../utils/geographicLayerCards";
 import {
   getEncodingChannelConfigsForSpec,
   resolvedEncodingField,
@@ -183,6 +184,7 @@ const implementedTemplateDefinitions: SvgCandidate[] = ([
   { id: "builtin-template:divergent-bar", name: "Divergent Bar", chartType: "DivergentBarChart", coordinateSystem: "Cartesian", svgMarkup: implementedTemplateSvgs.DivergentBarChart, src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(implementedTemplateSvgs.DivergentBarChart)}` },
   { id: "builtin-template:divergent-stacked-bar", name: "Divergent Stacked Bar", chartType: "DivergentStackedBarChart", coordinateSystem: "Cartesian", svgMarkup: implementedTemplateSvgs.DivergentStackedBarChart, src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(implementedTemplateSvgs.DivergentStackedBarChart)}` },
   ...advancedTemplateDefinitions,
+  ...geographicLayerDefinitions,
 ] as SvgCandidate[]).map(withD3GalleryThumbnail);
 
 export function createUnboundChartSpec(chartType: string, datasetId: string): ChartSpec {
@@ -5849,9 +5851,12 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     coordinateSystem: CoordinateSystem = "CoordinateFree",
     chartType?: string,
     datasetId?: string,
+    layerKind?: CanvasNode["layerKind"],
+    deckglLayerType?: string,
+    defaultWidth = 800,
     recordHistory = true,
   ) {
-    const initialWidth = 800;
+    const initialWidth = Math.max(defaultWidth, 160);
     const scale = initialWidth / template.width;
     const size = { width: initialWidth, height: template.height * scale };
     const canvasBounds = getSelectionScopeBounds();
@@ -5898,11 +5903,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         : undefined;
       if (node.kind === "leaf") {
         nameCounters.leaf += 1;
-        return { kind: "leaf", id, candidateId: sourceId, name: `${name}-${nameCounters.leaf}`, content: scopeSvgContent(node.content, id), viewBox: node.viewBox, width: Math.max(node.bounds.width, 1), height: Math.max(node.bounds.height, 1), x: nodeX, y: nodeY, scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, contentMinX: node.contentMinX, contentMinY: node.contentMinY, coordinateGuide, chartSpec } satisfies CanvasLeafNode;
+        return { kind: "leaf", id, candidateId: sourceId, name: `${name}-${nameCounters.leaf}`, content: scopeSvgContent(node.content, id), viewBox: node.viewBox, width: Math.max(node.bounds.width, 1), height: Math.max(node.bounds.height, 1), x: nodeX, y: nodeY, scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, contentMinX: node.contentMinX, contentMinY: node.contentMinY, coordinateGuide, chartSpec, layerKind, deckglLayerType } satisfies CanvasLeafNode;
       }
       nameCounters.group += 1;
       const groupName = node.name ? `${name}-${node.name}` : `${name}-group-${nameCounters.group}`;
-      return { kind: "group", id, name: groupName, x: nodeX, y: nodeY, width: Math.max(node.bounds.width, 1), height: Math.max(node.bounds.height, 1), scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, coordinateGuide, chartSpec, children: node.children.map((c) => instantiateNode(c, node.bounds)) } satisfies CanvasGroupNode;
+      return { kind: "group", id, name: groupName, x: nodeX, y: nodeY, width: Math.max(node.bounds.width, 1), height: Math.max(node.bounds.height, 1), scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, coordinateGuide, chartSpec, layerKind, deckglLayerType, children: node.children.map((c) => instantiateNode(c, node.bounds)) } satisfies CanvasGroupNode;
     };
     let nextItems = template.nodes.map((n) => instantiateNode(n, null));
     if (forceOuterGroup && (nextItems.length !== 1 || nextItems[0]?.kind !== "group")) {
@@ -5919,6 +5924,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           scaleX: 1,
           scaleY: 1,
           rotation: 0,
+          layerKind,
+          deckglLayerType,
           children: nextItems.map((node) => ({
             ...node,
             x: node.x - outerBounds.minX,
@@ -5957,8 +5964,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         point,
         !!candidate.compositionType,
         candidate.coordinateSystem,
-        candidate.chartType,
+        candidate.renderMode === "static-layer" ? undefined : candidate.chartType,
         activeDataset.value?.id,
+        candidate.renderMode === "static-layer" ? "deckgl" : undefined,
+        candidate.renderMode === "static-layer" ? candidate.layerType : undefined,
+        candidate.defaultWidth,
         recordHistory,
       );
     }
@@ -7226,7 +7236,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (!candidateId) return;
     const candidate = getCandidate(candidateId);
     if (!candidate) return;
-    const zone = activeDropZone.value;
+    // Geographic deck.gl examples are visual layers, not semantic chart
+    // members. Always place them as standalone objects, even over a
+    // composition drop zone.
+    const zone = candidate.renderMode === "static-layer" ? null : activeDropZone.value;
+    if (candidate.renderMode === "static-layer") activeDropZone.value = null;
     if (zone) {
       activeDropZone.value = null;
       if (!zone.compatible) {

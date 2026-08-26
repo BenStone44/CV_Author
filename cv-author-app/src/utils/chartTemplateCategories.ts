@@ -1,4 +1,5 @@
 import type { SvgCandidate } from "../types";
+import { getGeographicLayerFamily } from "./geographicLayerCards";
 
 export type ChartTemplateCategory = {
   id: string;
@@ -10,6 +11,7 @@ const familyDefinitions: Array<{
   id: string;
   label: string;
   chartTypes: ReadonlySet<string>;
+  matches?: (candidate: SvgCandidate) => boolean;
 }> = [
   {
     id: "barchart",
@@ -27,6 +29,27 @@ const familyDefinitions: Array<{
     chartTypes: new Set(["areachart", "stackedareachart", "streamgraph", "horizonchart"]),
   },
   { id: "point", label: "Point", chartTypes: new Set(["scatterplot"]) },
+  {
+    id: "geographic-point",
+    label: "Geographic point",
+    chartTypes: new Set(),
+    matches: (candidate) => candidate.coordinateSystem === "Geographic"
+      && getGeographicLayerFamily(candidate.layerType ?? candidate.chartType) === "point",
+  },
+  {
+    id: "geographic-line",
+    label: "Geographic line",
+    chartTypes: new Set(),
+    matches: (candidate) => candidate.coordinateSystem === "Geographic"
+      && getGeographicLayerFamily(candidate.layerType ?? candidate.chartType) === "line",
+  },
+  {
+    id: "geographic-area",
+    label: "Geographic area",
+    chartTypes: new Set(),
+    matches: (candidate) => candidate.coordinateSystem === "Geographic"
+      && getGeographicLayerFamily(candidate.layerType ?? candidate.chartType) === "area",
+  },
   { id: "heatmap", label: "Heatmap", chartTypes: new Set(["matrixdiagram", "contour", "hexbin"]) },
   { id: "arc", label: "Arc", chartTypes: new Set(["piechart", "donutchart"]) },
   { id: "chord", label: "Chord", chartTypes: new Set(["chord"]) },
@@ -45,7 +68,7 @@ export function groupChartTemplateCandidates(candidates: SvgCandidate[]): ChartT
   const grouped = familyDefinitions.map((definition) => ({
     id: definition.id,
     label: definition.label,
-    candidates: candidates.filter((candidate) => definition.chartTypes.has(normalizedChartType(candidate.chartType))),
+    candidates: candidates.filter((candidate) => definition.matches?.(candidate) ?? definition.chartTypes.has(normalizedChartType(candidate.chartType))),
   })).filter((category) => category.candidates.length);
   const assigned = new Set(grouped.flatMap((category) => category.candidates.map((candidate) => candidate.id)));
   const remaining = candidates.filter((candidate) => !assigned.has(candidate.id));
