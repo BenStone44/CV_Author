@@ -1,17 +1,22 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import type { DataColumn } from "../types";
 import type { EncodingChannelConfig } from "../utils/encodingConfig";
 import { isEncodingColumnCompatible } from "../utils/encodingConfig";
 
-defineProps<{
+const props = defineProps<{
   config: EncodingChannelConfig;
   columns: DataColumn[];
+  fatherColumns?: DataColumn[];
   value: string;
 }>();
 
 const emit = defineEmits<{
   change: [field: string];
 }>();
+
+const fatherColumnNames = computed(() => new Set((props.fatherColumns ?? []).map((column) => column.name)));
+const localColumns = computed(() => props.columns.filter((column) => !fatherColumnNames.value.has(column.name)));
 </script>
 
 <template>
@@ -23,7 +28,15 @@ const emit = defineEmits<{
     <select :value="value" @change="emit('change', ($event.target as HTMLSelectElement).value)">
       <option value="">{{ config.emptyLabel }}</option>
       <option
-        v-for="column in columns"
+        v-for="column in fatherColumns ?? []"
+        :key="`father:${column.name}`"
+        :value="column.name"
+        :disabled="!isEncodingColumnCompatible(config, column.type)"
+      >
+        father: {{ column.name }}
+      </option>
+      <option
+        v-for="column in localColumns"
         :key="column.name"
         :value="column.name"
         :disabled="!isEncodingColumnCompatible(config, column.type)"
@@ -37,7 +50,9 @@ const emit = defineEmits<{
 <style scoped>
 .encoding-channel-field {
   display: grid;
-  gap: 5px;
+  grid-template-columns: minmax(70px, 0.42fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
 }
 
 .encoding-channel-field__label {
@@ -47,6 +62,7 @@ const emit = defineEmits<{
   gap: 8px;
   color: #516176;
   font-size: 11px;
+  font-weight: 700;
 }
 
 .encoding-channel-field__label abbr {
@@ -56,7 +72,7 @@ const emit = defineEmits<{
 
 select {
   width: 100%;
-  height: 34px;
+  height: 30px;
   padding: 0 8px;
   border: 1px solid rgba(24, 33, 47, 0.14);
   border-radius: 6px;

@@ -62,6 +62,48 @@ function displayNumber(value: number) {
   return Number.parseFloat(value.toPrecision(6)).toString();
 }
 
+function applyGroupValueOrder(
+  rows: DataRow[],
+  transform: Extract<ChartDataTransform, { kind: "order" }>,
+) {
+  const groups = new Map<string, { sourceIndex: number; total: number; count: number }>();
+  rows.forEach((row, index) => {
+    const group = row[transform.groupField] ?? "";
+    const value = numericValue(row, transform.valueField);
+    if (!group || value === null) return;
+    const current = groups.get(group);
+    if (current) {
+      current.total += value;
+      current.count += 1;
+    } else {
+      groups.set(group, { sourceIndex: index, total: value, count: 1 });
+    }
+  });
+  const groupValue = (entry: [string, { total: number; count: number }]) =>
+    transform.operation === "avg" ? entry[1].total / entry[1].count : entry[1].total;
+  const byValue = (direction: "ascending" | "descending") =>
+    (left: [string, { sourceIndex: number; total: number; count: number }], right: [string, { sourceIndex: number; total: number; count: number }]) => {
+      const difference = groupValue(left) - groupValue(right);
+      return (direction === "ascending" ? difference : -difference)
+        || left[1].sourceIndex - right[1].sourceIndex;
+    };
+  const entries = Array.from(groups.entries());
+  const retained = transform.limit === undefined
+    ? entries
+    : [...entries]
+      .sort(byValue("descending"))
+      .slice(0, Math.max(1, Math.floor(transform.limit)));
+  const ordered = transform.direction === "source"
+    ? [...retained].sort((left, right) => left[1].sourceIndex - right[1].sourceIndex)
+    : [...retained].sort(byValue(transform.direction));
+  const position = new Map(ordered.map(([group], index) => [group, index]));
+  return rows
+    .map((row, sourceIndex) => ({ row, sourceIndex, groupIndex: position.get(row[transform.groupField] ?? "") }))
+    .filter((item): item is { row: DataRow; sourceIndex: number; groupIndex: number } => item.groupIndex !== undefined)
+    .sort((left, right) => left.groupIndex - right.groupIndex || left.sourceIndex - right.sourceIndex)
+    .map((item) => item.row);
+}
+
 function createBinLabeler(values: number[], transform: ChartBinAggregateTransform) {
   const minimum = Math.min(...values);
   const maximum = Math.max(...values);
@@ -119,6 +161,11 @@ function applyTransform(
       ? materialized.rows.filter((row) => transform.values.includes(row[transform.field] ?? ""))
       : applyNumericFilter(materialized.rows, transform);
     return { ...materialized, rows };
+  }
+
+  if (transform.kind === "order") {
+    if (!available.has(transform.groupField) || !available.has(transform.valueField)) return materialized;
+    return { ...materialized, rows: applyGroupValueOrder(materialized.rows, transform) };
   }
 
   if (transform.mode === "group") {

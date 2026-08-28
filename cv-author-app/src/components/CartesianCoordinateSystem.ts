@@ -191,7 +191,8 @@ export const CartesianCoordinateSystem = defineComponent({
             stroke: model.axisColor,
             "vector-effect": "non-scaling-stroke",
           }));
-          const showLabels = props.node.chartSpec?.scales?.y?.type !== "point" || showDiscreteLabels;
+          const showLabels = guide.showYLabels !== false
+            && (props.node.chartSpec?.scales?.y?.type !== "point" || showDiscreteLabels);
           axisNodes.push(...model.yTicks.flatMap((tick) => {
             const tickEnd = model.origin.x + (guide.xDirection === 1 ? -5 : 5);
             const textOffset = model.fontSize * textScale / nodeScaleX * 0.8;
@@ -222,7 +223,8 @@ export const CartesianCoordinateSystem = defineComponent({
             stroke: model.axisColor,
             "vector-effect": "non-scaling-stroke",
           }));
-          const showLabels = props.node.chartSpec?.scales?.x?.type !== "point" || showDiscreteLabels;
+          const showLabels = guide.showXLabels !== false
+            && (props.node.chartSpec?.scales?.x?.type !== "point" || showDiscreteLabels);
           axisNodes.push(...model.xTicks.flatMap((tick) => {
             const tickEnd = model.origin.y + (guide.yDirection === -1 ? 5 : -5);
             const textOffset = model.fontSize * textScale / nodeScaleY;
@@ -362,6 +364,7 @@ export const CanvasCoordinateSystemLayer: any = defineComponent({
   props: {
     node: { type: Object as PropType<CanvasNode>, required: true },
     draggingNodeId: { type: String as PropType<string | null>, default: null },
+    editingCompositionId: { type: String as PropType<string | null>, default: null },
     hiddenNodeIds: { type: Object as PropType<ReadonlySet<string>>, default: () => new Set<string>() },
     allowHiddenNodeId: { type: String as PropType<string | null>, default: null },
   },
@@ -369,13 +372,16 @@ export const CanvasCoordinateSystemLayer: any = defineComponent({
     return () => {
       const node = props.node;
       if (props.hiddenNodeIds.has(node.id) && props.allowHiddenNodeId !== node.id) return null;
-      const channels = getCartesianAxisChannels(node, "static");
+      const editingLayer = node.compositionSpec?.type === "layer"
+        && props.editingCompositionId === node.compositionSpec.id;
+      const channels = editingLayer ? [...cartesianChannels] : getCartesianAxisChannels(node, "static");
       if (node.compositionSpec?.type === "layer" && channels.length === 0) return null;
       const children = node.kind === "group"
         ? node.children.map((child) => h(CanvasCoordinateSystemLayer, {
           key: child.id,
           node: child,
           draggingNodeId: props.draggingNodeId,
+          editingCompositionId: props.editingCompositionId,
           hiddenNodeIds: props.hiddenNodeIds,
         }))
         : [];
@@ -401,6 +407,7 @@ export const CanvasCoordinateSystemLayer: any = defineComponent({
           "canvas-coordinate-system-node",
           props.draggingNodeId === node.id ? "canvas-coordinate-system-node--drag-source" : "",
         ],
+        "data-coordinate-node-id": node.id,
         transform: node.kind === "leaf" ? getLeafNodeTransform(node) : getNodeTransform(node),
         "pointer-events": "none",
       }, [...(axis ? [axis] : []), ...children]);

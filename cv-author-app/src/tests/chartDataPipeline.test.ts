@@ -73,6 +73,49 @@ describe("chart data pipeline", () => {
     expect(prepared.chartSpec.dimensionRecommendations).toBeUndefined();
   });
 
+  it("keeps Pie segments row-level until Theta aggregation is explicit", () => {
+    const pieDataset: Dataset = {
+      id: "pie-segments",
+      name: "pie-segments.csv",
+      columns: [
+        { name: "id", type: "nominal" },
+        { name: "group", type: "nominal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { id: "1", group: "A", value: "10" },
+        { id: "2", group: "A", value: "5" },
+        { id: "3", group: "B", value: "20" },
+      ],
+      primaryKey: ["id"],
+    };
+    const baseSpec: ChartSpec = {
+      chartType: "PieChart",
+      datasetId: pieDataset.id,
+      encodings: {
+        theta: { field: "value", type: "quantitative" },
+        segment: { field: "group", type: "nominal" },
+      },
+    };
+
+    const rowLevel = prepareChartData("pie-row-level", pieDataset, {
+      ...baseSpec,
+      aggregations: { theta: "sum" },
+      autoAggregations: { theta: "sum" },
+    });
+    expect(rowLevel.chartSpec.aggregations).toBeUndefined();
+    expect(rowLevel.chartSpec.autoAggregations).toBeUndefined();
+    expect(rowLevel.chartSpec.markGroups?.[0]?.memberKeys).toEqual(["1", "2", "3"]);
+
+    const aggregated = prepareChartData("pie-aggregated", pieDataset, {
+      ...baseSpec,
+      aggregations: { theta: "sum" },
+    });
+    expect(aggregated.chartSpec.aggregations).toEqual({ theta: "sum" });
+    expect(aggregated.chartSpec.autoAggregations).toBeUndefined();
+    expect(aggregated.chartSpec.markGroups?.[0]?.memberKeys).toEqual(["A", "B"]);
+  });
+
   it("materializes selected wide CSV fields as a reusable value series", () => {
     const wideDataset: Dataset = {
       id: "body-composition",

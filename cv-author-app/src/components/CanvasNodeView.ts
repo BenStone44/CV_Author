@@ -282,6 +282,7 @@ function parsedMarkupMarks(root: SVGSVGElement) {
 }
 
 const nestedPlacementsByParentCache = new WeakMap<readonly NestedRenderPlacement[], Map<string, NestedRenderPlacement[]>>();
+const emptySelectedIds: string[] = [];
 
 function placementsByParent(placements: readonly NestedRenderPlacement[]) {
   const cached = nestedPlacementsByParentCache.get(placements);
@@ -333,12 +334,20 @@ export const CanvasNodeView: any = defineComponent({
     nestedPlacements: { type: Array as PropType<NestedRenderPlacement[]>, default: () => [] },
     nestedRenderedChildIds: { type: Object as PropType<ReadonlySet<string>>, default: () => new Set<string>() },
     onNodePointerDown: { type: Function as PropType<(node: CanvasNode, event: PointerEvent) => void>, default: null },
-    onNodeDoubleClick: { type: Function as PropType<(node: CanvasNode, event: MouseEvent) => void>, default: null },
     onNodeContextMenu: { type: Function as PropType<(node: CanvasNode, event: MouseEvent) => void>, default: null },
     onMarkPointerDown: { type: Function as PropType<(node: CanvasNode, event: PointerEvent) => void>, default: null },
     onEditingBackgroundPointerDown: { type: Function as PropType<(event: PointerEvent) => void>, default: null },
   },
   setup(props): () => any {
+    // Placement assignment depends on mark identity and relationship data, not
+    // on child position/style changes. Cache indexes, while rebuilding VNodes
+    // from the latest child geometry.
+    let nestedMarkupCacheKey: string | null = null;
+    let nestedMarkupCache: {
+      anchors: Map<number, string[]>;
+      suppressedParentMarks: Set<number>;
+      unmatched: Set<string>;
+    } | null = null;
     return () => {
       const NodeView = CanvasNodeView;
       const markHandler = (props as any).onMarkPointerDown as ((node: CanvasNode, event: PointerEvent) => void) | null;
@@ -364,9 +373,6 @@ export const CanvasNodeView: any = defineComponent({
         onPointerdown: nodeInteractive && props.onNodePointerDown
           ? (event: PointerEvent) => props.onNodePointerDown!(props.node, event)
           : undefined,
-        onDblclick: nodeInteractive && props.onNodeDoubleClick
-          ? (event: MouseEvent) => props.onNodeDoubleClick!(props.node, event)
-          : undefined,
         onContextmenu: nodeInteractive && props.onNodeContextMenu
           ? (event: MouseEvent) => props.onNodeContextMenu!(props.node, event)
           : undefined,
@@ -387,15 +393,16 @@ export const CanvasNodeView: any = defineComponent({
             key: child.id,
             node: child,
             interactive: props.interactive,
-            selected: props.selectedIds.includes(child.id),
+            // Nested children are edited/selected through their top-level
+            // parent. Their own geometry remains reactive through `node`.
+            selected: false,
             editingGroupPath: props.editingGroupPath,
             editingChartId: props.editingChartId,
             draggingNodeId: props.draggingNodeId,
-            selectedIds: props.selectedIds,
+            selectedIds: emptySelectedIds,
             nestedPlacements: props.nestedPlacements,
             nestedRenderedChildIds: props.nestedRenderedChildIds,
             onNodePointerDown: props.onNodePointerDown,
-            onNodeDoubleClick: props.onNodeDoubleClick,
             onNodeContextMenu: props.onNodeContextMenu,
             onMarkPointerDown: props.onMarkPointerDown,
             onEditingBackgroundPointerDown: props.onEditingBackgroundPointerDown,
@@ -412,10 +419,25 @@ export const CanvasNodeView: any = defineComponent({
       const renderNestedMarkup = (markup: string) => {
         const root = parseSvgMarkup(markup);
         if (!root) return null;
-        const anchors = new Map<Element, NestedRenderPlacement[]>();
-        const suppressedParentMarks = new Set<Element>();
-        const unmatched = new Set(nodePlacements);
         const marks = parsedMarkupMarks(root);
+        const markIndex = new Map<Element, number>(marks.map((mark, index) => [mark, index] as const));
+        const placementsById = new Map(nodePlacements.map((placement) => [placement.relationshipId, placement]));
+        const markStructureKey = marks.map((mark) => [
+          mark.getAttribute("data-mark-group-id") ?? "",
+          mark.getAttribute("data-mark-role") ?? "",
+          mark.getAttribute("data-row-key") ?? "",
+          mark.getAttribute("data-category-key") ?? "",
+          mark.getAttribute("data-series-key") ?? "",
+          mark.getAttribute("data-row-value") ?? "",
+          mark.getAttribute("data-column-value") ?? "",
+        ].join("\u0001")).join("\u0002");
+        const placementKey = `${markStructureKey}\u0000${nodePlacements.map((placement) => [
+          placement.relationshipId,
+          placement.parentMarkGroupId ?? "",
+          placement.parentDataKey ?? "",
+          placement.retainParent ? "1" : "0",
+          placement.child.id,
+        ].join("\u0001")).join("\u0002")}`;
         const marksByGroup = new Map<string, SVGGraphicsElement[]>();
         marks.forEach((mark) => {
           const groupId = mark.getAttribute("data-mark-group-id") ?? "";
@@ -423,32 +445,58 @@ export const CanvasNodeView: any = defineComponent({
           group.push(mark);
           marksByGroup.set(groupId, group);
         });
-        nodePlacements.forEach((placement) => {
-          const groupMarks = placement.parentMarkGroupId
-            ? marksByGroup.get(placement.parentMarkGroupId) ?? []
-            : marks;
-          const matchingMarks = groupMarks.filter((element, index) => {
-            const role = element.getAttribute("data-mark-role");
-            const roleIndex = groupMarks.slice(0, index)
-              .filter((candidate) => candidate.getAttribute("data-mark-role") === role).length;
-            return markMatchesPlacement(element, placement, roleIndex);
+        const indexRoles = (elements: SVGGraphicsElement[]) => {
+          const indexes = new Map<Element, number>();
+          const counts = new Map<string, number>();
+          elements.forEach((element) => {
+            const role = element.getAttribute("data-mark-role") ?? "";
+            indexes.set(element, counts.get(role) ?? 0);
+            counts.set(role, (counts.get(role) ?? 0) + 1);
           });
-          const anchor = matchingMarks.at(-1) ?? groupMarks.at(-1);
-          if (!anchor) return;
-          if (!placement.retainParent) {
-            matchingMarks.forEach((element) => {
-              suppressedParentMarks.add(element);
+          return indexes;
+        };
+        const allRoleIndexes = indexRoles(marks);
+        const roleIndexesByGroup = new Map<string, Map<Element, number>>(Array.from(marksByGroup.entries())
+          .map(([groupId, groupMarks]) => [groupId, indexRoles(groupMarks)] as const));
+        let anchors: Map<number, string[]>;
+        let suppressedParentMarks: Set<number>;
+        let unmatched: Set<string>;
+        if (nestedMarkupCacheKey === placementKey && nestedMarkupCache) {
+          ({ anchors, suppressedParentMarks, unmatched } = nestedMarkupCache);
+        } else {
+          anchors = new Map<number, string[]>();
+          suppressedParentMarks = new Set<number>();
+          unmatched = new Set(nodePlacements.map((placement) => placement.relationshipId));
+          nodePlacements.forEach((placement) => {
+            const groupMarks = placement.parentMarkGroupId
+              ? marksByGroup.get(placement.parentMarkGroupId) ?? []
+              : marks;
+            const roleIndexes = placement.parentMarkGroupId
+              ? roleIndexesByGroup.get(placement.parentMarkGroupId) ?? allRoleIndexes
+              : allRoleIndexes;
+            const matchingMarks = groupMarks.filter((element) =>
+              markMatchesPlacement(element, placement, roleIndexes.get(element) ?? 0));
+            const anchor = matchingMarks.at(-1) ?? groupMarks.at(-1);
+            if (!anchor) return;
+            if (!placement.retainParent) matchingMarks.forEach((element) => {
+              const index = markIndex.get(element);
+              if (index !== undefined) suppressedParentMarks.add(index);
             });
-          }
-          anchors.set(anchor, [...(anchors.get(anchor) ?? []), placement]);
-          unmatched.delete(placement);
-        });
+            const anchorIndex = markIndex.get(anchor);
+            if (anchorIndex === undefined) return;
+            anchors.set(anchorIndex, [...(anchors.get(anchorIndex) ?? []), placement.relationshipId]);
+            unmatched.delete(placement.relationshipId);
+          });
+          nestedMarkupCacheKey = placementKey;
+          nestedMarkupCache = { anchors, suppressedParentMarks, unmatched };
+        }
 
         const renderElement = (element: Element, path: string, ancestorMatrix: Matrix): any => {
           const attributes: Record<string, string> = {};
           Array.from(element.attributes).forEach((attribute) => { attributes[attribute.name] = attribute.value; });
           attributes.key = path;
-          if (suppressedParentMarks.has(element)) {
+          const elementMarkIndex = markIndex.get(element);
+          if (elementMarkIndex !== undefined && suppressedParentMarks.has(elementMarkIndex)) {
             attributes.style = `${attributes.style ?? ""};visibility:hidden !important;pointer-events:none !important;`;
             attributes["aria-hidden"] = "true";
           }
@@ -458,7 +506,9 @@ export const CanvasNodeView: any = defineComponent({
             if (childNode.nodeType === 1) {
               const childElement = childNode as Element;
               children.push(renderElement(childElement, `${path}.${index}`, elementMatrix));
-              (anchors.get(childElement) ?? []).forEach((placement) => {
+              (anchors.get(markIndex.get(childElement) ?? -1) ?? []).forEach((relationshipId) => {
+                const placement = placementsById.get(relationshipId);
+                if (!placement) return;
                 const nestedChild = renderNestedChild(placement, elementMatrix);
                 if (nestedChild) children.push(nestedChild);
               });
@@ -474,7 +524,9 @@ export const CanvasNodeView: any = defineComponent({
           if (childNode.nodeType === 1) {
             const childElement = childNode as Element;
             content.push(renderElement(childElement, `svg.${index}`, identityMatrix()));
-            (anchors.get(childElement) ?? []).forEach((placement) => {
+            (anchors.get(markIndex.get(childElement) ?? -1) ?? []).forEach((relationshipId) => {
+              const placement = placementsById.get(relationshipId);
+              if (!placement) return;
               const nestedChild = renderNestedChild(placement, identityMatrix());
               if (nestedChild) content.push(nestedChild);
             });
@@ -482,7 +534,9 @@ export const CanvasNodeView: any = defineComponent({
             content.push(childNode.nodeValue);
           }
         });
-        unmatched.forEach((placement) => {
+        unmatched.forEach((relationshipId) => {
+          const placement = placementsById.get(relationshipId);
+          if (!placement) return;
           const nestedChild = renderNestedChild(placement, identityMatrix());
           if (nestedChild) content.push(nestedChild);
         });
@@ -628,7 +682,6 @@ export const CanvasNodeView: any = defineComponent({
                 nestedPlacements: props.nestedPlacements,
                 nestedRenderedChildIds: props.nestedRenderedChildIds,
                 onNodePointerDown: props.onNodePointerDown,
-                onNodeDoubleClick: props.onNodeDoubleClick,
                 onNodeContextMenu: props.onNodeContextMenu,
                 onMarkPointerDown: props.onMarkPointerDown,
                 onEditingBackgroundPointerDown: props.onEditingBackgroundPointerDown,
@@ -682,6 +735,7 @@ export const CanvasCoordinateGuideView = defineComponent({
         "g",
         {
           class: "coordinate-guide-layer",
+          "data-coordinate-node-id": props.node.id,
           transform: props.node.kind === "leaf"
             ? getLeafNodeTransform(props.node)
             : getNodeTransform(props.node),

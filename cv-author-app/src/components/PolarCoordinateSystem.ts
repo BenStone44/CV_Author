@@ -148,8 +148,6 @@ export const PolarCoordinateSystem = defineComponent({
       const showRadiusControl = radialScaleAxis !== null;
       const showAngleControl = props.scaleChannels.includes("angle");
       const guide = props.node.coordinateGuide;
-      const showThetaLine = guide?.type === "Polar" && guide.showThetaLine !== false;
-      const showRadiusLine = guide?.type === "Polar" && guide.showRadiusLine !== false;
       const showDiscreteLabels = guide?.type === "Polar" && guide.showDiscreteLabels !== false;
       const facet = props.node.compositionSpec?.type === "facet" ? props.node.compositionSpec : null;
       const thetaField = facet?.facetCoordinateSystem === "Polar"
@@ -181,34 +179,6 @@ export const PolarCoordinateSystem = defineComponent({
         transform,
         "pointer-events": "none",
       }, [
-        ...(props.showAxis && showRadiusLine ? [
-          h("line", {
-            class: ["polar-coordinate-radius-axis", "polar-coordinate-radius-axis--lower"],
-            x1: model.origin.x,
-            y1: model.origin.y,
-            x2: model.radiusEnd.x,
-            y2: model.radiusEnd.y,
-            "vector-effect": "non-scaling-stroke",
-          }),
-          h("line", {
-            class: ["polar-coordinate-radius-axis", "polar-coordinate-radius-axis--upper"],
-            x1: model.origin.x,
-            y1: model.origin.y,
-            x2: model.upperRadiusEnd.x,
-            y2: model.upperRadiusEnd.y,
-            "vector-effect": "non-scaling-stroke",
-          }),
-        ] : []),
-        ...(props.showAxis && showThetaLine ? [h("path", {
-            class: ["polar-coordinate-angle-axis", "polar-coordinate-angle-axis--upper"],
-            d: model.upperControlArcPath,
-            "vector-effect": "non-scaling-stroke",
-          }),
-          h("path", {
-            class: ["polar-coordinate-angle-axis", "polar-coordinate-angle-axis--lower"],
-            d: model.lowerControlArcPath,
-            "vector-effect": "non-scaling-stroke",
-          })] : []),
         ...(props.showAxis && showDiscreteLabels && fieldLabel(radiusField) ? [h("text", {
           class: "polar-coordinate-axis-label polar-coordinate-axis-label--radius",
           x: model.radiusLabel.x,
@@ -223,14 +193,7 @@ export const PolarCoordinateSystem = defineComponent({
           "font-size": 11 / model.renderedScale,
           "text-anchor": "middle",
         }, fieldLabel(thetaField))] : []),
-        ...(props.interactive && showRadiusControl ? [h("line", {
-          class: "polar-coordinate-radius-handle-stem",
-          x1: model.radiusEnd.x,
-          y1: model.radiusEnd.y,
-          x2: model.radiusControlPoint.x,
-          y2: model.radiusControlPoint.y,
-          "vector-effect": "non-scaling-stroke",
-        }), h("g", {
+        ...(props.interactive && showRadiusControl ? [h("g", {
           class: "polar-coordinate-radius-control",
           transform: `translate(${model.radiusControlPoint.x} ${model.radiusControlPoint.y}) scale(${1 / model.renderedScale})`,
           "pointer-events": "all",

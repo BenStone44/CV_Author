@@ -568,6 +568,9 @@ function dispatch(command: ChartRelationshipCommand): unknown {
       return true;
     }
     case "select-entity":
+      if (selectedEntity.value?.type === command.selection?.type
+        && selectedEntity.value?.id === command.selection?.id) return selectedEntity.value;
+      if (!selectedEntity.value && !command.selection) return null;
       selectedEntity.value = command.selection ? { ...command.selection } : null;
       return selectedEntity.value;
     case "replace-state":

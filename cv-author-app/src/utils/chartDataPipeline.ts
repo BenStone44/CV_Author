@@ -228,13 +228,15 @@ function hasRepeatedVisualKey(dataset: Dataset, fields: string[]) {
 }
 
 /**
- * Detects duplicate visual keys after chart-local transforms. The inferred
- * sum is persisted as metadata so renderers and the encoding inspector share
- * one aggregation decision; explicit user choices always take precedence.
+ * Detects duplicate visual keys after chart-local transforms. Cartesian
+ * renderers retain their legacy automatic reduction; polar aggregation stays
+ * user-triggered because repeated Segment values can represent distinct arcs.
  */
 export function applyAutomaticAggregations(dataset: Dataset, input: ChartSpec): ChartSpec {
   const contract = getChartTemplateContract(input.chartType);
   if (!contract || contract.aggregationPolicy !== "allowed") return input;
+  const template = normalizeChartTemplate(input.chartType);
+  const inferAggregation = template !== "pie" && template !== "donut";
   const dimensions = visualKeyFields(input);
   const repeated = hasRepeatedVisualKey(dataset, dimensions);
   const previousAuto = input.autoAggregations ?? {};
@@ -250,7 +252,7 @@ export function applyAutomaticAggregations(dataset: Dataset, input: ChartSpec): 
     const encodings = encodingsForChannel(input, mapping.channel, mapping.role)
       .filter((encoding) => encoding.type === "quantitative");
     if (encodings.length === 0) return;
-    if (repeated && aggregations[mapping.channel] === undefined) {
+    if (inferAggregation && repeated && aggregations[mapping.channel] === undefined) {
       aggregations[mapping.channel] = "sum";
       autoAggregations[mapping.channel] = "sum";
     }

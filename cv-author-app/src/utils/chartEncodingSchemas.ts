@@ -91,6 +91,7 @@ const multiLineYMeasure = { ...yMeasure, multiple: true } satisfies ChartEncodin
 const lineSize = { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
 const lineShape = { channel: "shape", label: "Shape", role: "style", required: false, accepts: ["nominal"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
 const lineSeries = { channel: "color", label: "Color", semanticLabel: "Series", role: "series", required: false, accepts: ["nominal", "temporal", "ordinal"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
+const scatterColor = { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
 const barX = { channel: "x", label: "X", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
 const barY = { channel: "y", label: "Y", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
 const barStyle = { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
@@ -127,9 +128,8 @@ export const chartEncodingSchemas = {
   Scatterplot: defineSchema("Scatterplot", "Scatterplot", "scatter", [
     xAny,
     { ...yMeasure, accepts: ["quantitative", "temporal", "ordinal", "nominal"] },
-    { ...lineSeries, semanticLabel: "Point type" },
+    scatterColor,
     lineSize,
-    lineShape,
   ]),
   SingleBarChart: defineSchema("SingleBarChart", "Single Bar", "bar", [barX, barY, barStyle, barSize], {
     dimensionUpgrades: [

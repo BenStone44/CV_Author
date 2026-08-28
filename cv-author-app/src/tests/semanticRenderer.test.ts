@@ -440,6 +440,7 @@ describe("semantic Case 1 renderers", () => {
           segment: { field: segment, type },
           radius: { field: "outer", type: "quantitative" },
         },
+        aggregations: { theta: "sum" },
         markGroups: [{
           id: `mark-group:polar-${segment}:arc`,
           chartId: `polar-${segment}`,
@@ -488,12 +489,64 @@ describe("semantic Case 1 renderers", () => {
           segment: { field: "person", type: "nominal" },
           radius: { field: "value", type: "quantitative" },
         },
+        aggregations: { theta: "sum" },
       },
       dataset: polarDataset,
     });
     expect(sharedThetaAndRadius.content.match(/data-mark-role="arc"/g)).toHaveLength(2);
     expect(sharedThetaAndRadius.content).toContain('data-radius-field="value"');
     expect(sharedThetaAndRadius.content).toContain('data-radius-value="15"');
+  });
+
+  it("keeps repeated Segment values as separate arcs without an explicit Theta aggregation", () => {
+    const polarDataset: Dataset = {
+      id: "polar-unaggregated-segments",
+      name: "polar-unaggregated-segments.csv",
+      columns: [
+        { name: "group", type: "nominal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { group: "A", value: "10" },
+        { group: "A", value: "5" },
+        { group: "B", value: "20" },
+      ],
+    };
+    const result = renderDeterministicChart({
+      chartId: "polar-unaggregated-segments",
+      width: 320,
+      height: 180,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Polar", origin: { x: 160, y: 90 } },
+      chartSpec: {
+        chartType: "PieChart",
+        datasetId: polarDataset.id,
+        encodings: {
+          theta: { field: "value", type: "quantitative" },
+          segment: { field: "group", type: "nominal" },
+        },
+        markGroups: [{
+          id: "mark-group:polar-unaggregated-segments:arc",
+          chartId: "polar-unaggregated-segments",
+          role: "arc",
+          memberKeys: [],
+          sharedConfig: {
+            seriesStyleMapping: {
+              type: "series-style",
+              values: { A: { color: "#123456" } },
+            },
+          },
+        }],
+      },
+      dataset: polarDataset,
+    });
+
+    expect(result.content.match(/data-mark-role="arc"/g)).toHaveLength(3);
+    expect(result.content.match(/data-segment-value="A"/g)).toHaveLength(2);
+    expect(result.content.match(/fill="#123456"/g)).toHaveLength(2);
+    expect(result.content).toContain('data-theta-value="10"');
+    expect(result.content).toContain('data-theta-value="5"');
   });
 
   it("renders scatter marks without duplicate axes", () => {

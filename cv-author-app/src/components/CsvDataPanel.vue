@@ -7,6 +7,7 @@ import {
   FileSpreadsheet,
   Filter,
   GripVertical,
+  ListFilter,
   Plus,
   Rows3,
   Sigma,
@@ -17,6 +18,7 @@ import {
 import case1Csv from "../../../data/case1.csv?raw";
 import case2Csv from "../../../data/case2.csv?raw";
 import case3Csv from "../../../data/case3.csv?raw";
+import academicScoresCsv from "../../../data/academic_scores.csv?raw";
 import { useDatasetStore } from "../stores/useDatasetStore";
 import type {
   ChartDataTransform,
@@ -88,7 +90,7 @@ const binMethod = ref<"equal-width" | "fixed-width" | "quantile">("equal-width")
 const binParameter = ref(5);
 const outputField = ref("");
 
-const presetNames = ["case1.csv", "case2.csv", "case3.csv"] as const;
+const presetNames = ["case1.csv", "case2.csv", "case3.csv", "academic_scores.csv"] as const;
 const presetDatasets = computed(() =>
   presetNames
     .map((name) => datasets.value.find((dataset) => dataset.name === name))
@@ -365,6 +367,15 @@ function transformSummary(transform: ChartDataTransform) {
       ? `${transform.field}: ${transform.value}–${transform.upperValue}`
       : `${transform.field}: ${operatorLabels[transform.operator]} ${transform.value}`;
   }
+  if (transform.kind === "order") {
+    const direction = transform.direction === "source"
+      ? "Source order"
+      : transform.direction === "ascending"
+        ? "Ascending"
+        : "Descending";
+    const limit = transform.limit === undefined ? "" : ` · Top ${transform.limit}`;
+    return `${transform.operation.toUpperCase()} ${transform.valueField} by ${transform.groupField} · ${direction}${limit}`;
+  }
   if (transform.mode === "group") {
     return `${transform.operation.toUpperCase()} ${transform.valueField} by ${transform.groupField} → ${transform.outputField}`;
   }
@@ -446,6 +457,7 @@ async function ensurePresetDatasets() {
     { name: "case1.csv", source: case1Csv },
     { name: "case2.csv", source: case2Csv },
     { name: "case3.csv", source: case3Csv },
+    { name: "academic_scores.csv", source: academicScoresCsv },
   ];
   for (const preset of presets) {
     if (!datasets.value.some((dataset) => dataset.name === preset.name)) {
@@ -818,6 +830,7 @@ watch(headers, () => void nextTick(updateExpandedWidth));
           class="transform-panel__item"
         >
           <Filter v-if="transform.kind === 'filter'" :size="14" aria-hidden="true" />
+          <ListFilter v-else-if="transform.kind === 'order'" :size="14" aria-hidden="true" />
           <Sigma v-else :size="14" aria-hidden="true" />
           <span :title="transformSummary(transform)">{{ transformSummary(transform) }}</span>
           <button

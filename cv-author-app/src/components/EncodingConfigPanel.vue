@@ -7,7 +7,6 @@ import {
   getEncodingChannelConfigsForSpec,
   resolvedEncodingField,
   resolvedPolarRadiusMode,
-  resolveChartEncodingIssues,
   resolvedSeriesField,
   resolveChartTemplateVariant,
 } from "../utils/encodingConfig";
@@ -44,17 +43,26 @@ import {
 const props = defineProps<{
   chartName: string;
   chartSpec: ChartSpec;
+  embedded?: boolean;
+  compositionOnly?: boolean;
+  sectionLabel?: string;
+  fatherColumns?: DataColumn[];
   coordinateGuide?: CoordinateGuide | null;
   columns: DataColumn[];
   rows: DataRow[];
   markConfig: MarkGroupSharedConfig;
   rendererError?: string;
   compositionSpec?: CompositionSpec | null;
+  compositionMembers?: Array<{
+    id: string;
+    name: string;
+    chartType: string;
+    encodings: Partial<Record<ChartEncodingChannel, { field: string; type: string }>>;
+  }>;
 }>();
 
 const emit = defineEmits<{
   close: [];
-  confirm: [];
   channelChange: [channel: ChartEncodingChannel, field: string];
   seriesFieldChange: [field: string];
   seriesFieldsChange: [fields: string[]];
@@ -62,6 +70,7 @@ const emit = defineEmits<{
   segmentFieldsChange: [fields: string[]];
   parallelFieldsChange: [fields: string[]];
   aggregationChange: [channel: ChartEncodingChannel, aggregation?: "sum" | "avg"];
+  singleBarValueOrderChange: [direction: "source" | "ascending" | "descending", topN?: number];
   markConfigChange: [patch: MarkGroupSharedConfig];
   markConfigEditStart: [field: string];
   markConfigEditEnd: [];
@@ -69,6 +78,8 @@ const emit = defineEmits<{
   coordinateGuideChange: [patch: {
     showXLine?: boolean;
     showYLine?: boolean;
+    showXLabels?: boolean;
+    showYLabels?: boolean;
     showAllAxes?: boolean;
     showThetaLine?: boolean;
     showRadiusLine?: boolean;
@@ -80,6 +91,8 @@ const emit = defineEmits<{
   compositionChange: [patch: {
     facetField?: string;
     facetDirection?: "row" | "column";
+    facetRowGap?: number;
+    facetColumnGap?: number;
     facetCoordinateSystem?: "Cartesian" | "Polar";
     facetThetaField?: string;
     facetRadiusField?: string;
@@ -88,6 +101,8 @@ const emit = defineEmits<{
 }>();
 
 const template = computed(() => normalizeChartTemplate(props.chartSpec.chartType));
+const fatherColumnNames = computed(() => new Set((props.fatherColumns ?? []).map((column) => column.name)));
+const columnDisplayLabel = (field: string) => fatherColumnNames.value.has(field) ? `father: ${field}` : field;
 const isCartesian = computed(() => getChartTemplateContract(props.chartSpec.chartType)?.coordinateSystem === "Cartesian");
 const axisSwapped = computed(() => props.chartSpec.axisSwapped === true);
 function isDiscreteAxis(axis: "x" | "y") {
@@ -96,6 +111,7 @@ function isDiscreteAxis(axis: "x" | "y") {
   return type === "nominal" || type === "ordinal";
 }
 const normalizedChartType = computed(() => props.chartSpec.chartType.replace(/[\s_-]/g, "").toLowerCase());
+const isSingleBar = computed(() => normalizedChartType.value === "singlebarchart");
 const configs = computed(() => getEncodingChannelConfigsForSpec(props.chartSpec));
 const isPolar = computed(() => template.value === "pie" || template.value === "donut");
 const isMultiLine = computed(() => resolveChartTemplateVariant(props.chartSpec) === "line-multi");
@@ -113,7 +129,6 @@ const areaRequiresSeries = computed(() => {
 });
 const supportsBarValueSeries = computed(() => isGroupedBar.value || barRequiresSegments.value);
 const supportsSeriesItems = computed(() => template.value === "line"
-  || template.value === "scatter"
   || template.value === "area"
   || supportsBarValueSeries.value);
 const seriesRole = computed(() => getChartTemplateContract(props.chartSpec.chartType)?.channels
@@ -123,13 +138,16 @@ const seriesItemsRequired = computed(() => supportsSeriesItems.value
 const seriesItemLabel = computed(() => seriesRole.value?.semanticLabel ?? "Series");
 const isParallel = computed(() => template.value === "parallel");
 const standardConfigs = computed(() => configs.value.filter((config) => {
+  if (isCartesian.value && (config.channel === "x" || config.channel === "y")) return false;
   if (isPolar.value && config.channel === "segment") return false;
   if (isPolar.value && config.channel === "theta" && polarSegmentMode.value === "quantitative") return false;
   if (isParallel.value && config.channel === "dimensions") return false;
-  if (supportsSeriesItems.value && config.role === "series") return false;
+  if (supportsSeriesItems.value && config.role === "series" && template.value !== "scatter") return false;
   if (supportsSeriesItems.value && seriesItemMode.value === "quantitative" && config.channel === "y") return false;
   return true;
 }));
+const compactConfigs = computed(() => standardConfigs.value.filter((config) => config.channel === "color" || config.channel === "size"));
+const otherStandardConfigs = computed(() => standardConfigs.value.filter((config) => config.channel !== "color" && config.channel !== "size"));
 const seriesMembers = computed(() => {
   const field = selectedSeriesFields.value[0] ?? resolvedSeriesField(props.chartSpec);
   if (!field) return [];
@@ -154,6 +172,11 @@ const seriesItemColumns = computed(() => props.columns.filter((column) => templa
   : column.type === "nominal" || column.type === "temporal" || column.type === "quantitative"));
 const seriesItemDropState = ref<"idle" | "valid" | "invalid">("idle");
 const segmentDropState = ref<"idle" | "valid" | "invalid">("idle");
+const detailPanel = ref<"color" | "size" | null>(null);
+const openSlider = ref<string | null>(null);
+function toggleSlider(id: string) {
+  openSlider.value = openSlider.value === id ? null : id;
+}
 const editableSeriesMembers = computed(() => seriesItemMode.value === "quantitative"
   ? selectedValueSeriesFields.value.map((field) => ({ id: field, label: field }))
   : seriesMembers.value);
@@ -169,13 +192,37 @@ const seriesStyleMapping = computed<SeriesStyleMapping>(() => {
 });
 const legendVisible = computed(() => props.markConfig.legendVisible === true);
 const quantitativeColumns = computed(() => props.columns.filter((column) => column.type === "quantitative"));
-const aggregationEntries = computed(() => Object.entries(props.chartSpec.aggregations ?? {})
-  .flatMap(([channel, aggregation]) => {
-    const encoding = props.chartSpec.encodings[channel as ChartEncodingChannel];
-    return aggregation && encoding?.type === "quantitative"
-      ? [{ channel: channel as ChartEncodingChannel, aggregation, automatic: props.chartSpec.autoAggregations?.[channel as ChartEncodingChannel] !== undefined }]
-      : [];
-  }));
+const aggregationEntries = computed(() => {
+  const configured = Object.entries(props.chartSpec.aggregations ?? {})
+    .flatMap(([channel, aggregation]) => {
+      const encoding = props.chartSpec.encodings[channel as ChartEncodingChannel];
+      return aggregation && encoding?.type === "quantitative"
+        ? [{ channel: channel as ChartEncodingChannel, aggregation, automatic: props.chartSpec.autoAggregations?.[channel as ChartEncodingChannel] !== undefined }]
+        : [];
+    });
+  if (!isPolar.value) return configured;
+  const entries = new Map<ChartEncodingChannel, {
+    channel: ChartEncodingChannel;
+    aggregation?: "sum" | "avg";
+    automatic: boolean;
+  }>();
+  configured.forEach((entry) => entries.set(entry.channel, entry));
+  configs.value.forEach((config) => {
+    const encoding = props.chartSpec.encodings[config.channel];
+    if (config.role !== "measure" || encoding?.type !== "quantitative" || entries.has(config.channel)) return;
+    entries.set(config.channel, { channel: config.channel, aggregation: undefined, automatic: false });
+  });
+  return Array.from(entries.values());
+});
+const singleBarValueOrder = computed(() => {
+  const groupField = props.chartSpec.encodings.x?.field;
+  const valueField = props.chartSpec.encodings.y?.field;
+  return props.chartSpec.dataTransforms?.find((transform) => transform.kind === "order"
+    && transform.groupField === groupField
+    && transform.valueField === valueField) ?? null;
+});
+const singleBarSortDirection = computed(() => singleBarValueOrder.value?.direction ?? "source");
+const singleBarTopN = computed(() => singleBarValueOrder.value?.limit);
 const selectedSegmentFields = computed(() => props.chartSpec.encodings.segment?.field
   ? [props.chartSpec.encodings.segment.field]
   : props.chartSpec.angleFields?.map((encoding) => encoding.field) ?? []);
@@ -242,6 +289,8 @@ const facetRowField = computed(() => {
 });
 const facetThetaField = computed(() => composition.value?.facetThetaField ?? facetColumnField.value);
 const facetRadiusField = computed(() => composition.value?.facetRadiusField ?? facetRowField.value);
+const facetRowGap = computed(() => composition.value?.facetRowGap ?? 4);
+const facetColumnGap = computed(() => composition.value?.facetColumnGap ?? 4);
 function updateFacetField(direction: "row" | "column", field: string) {
   const current = composition.value;
   if (!current || current.type !== "facet") return;
@@ -263,6 +312,9 @@ function updateFacetPolarField(channel: "theta" | "radius", field: string) {
   emit("compositionChange", channel === "theta"
     ? { facetCoordinateSystem: "Polar", facetThetaField: field }
     : { facetCoordinateSystem: "Polar", facetRadiusField: field });
+}
+function numericValue(event: Event) {
+  return Number((event.target as HTMLInputElement).value);
 }
 const fallbackSeriesColors = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#4d7c0f"];
 function seriesMemberColor(memberId: string, index: number) {
@@ -287,24 +339,6 @@ function updateSeriesMemberStyle(memberId: string, patch: { color?: string; stro
     },
   });
 }
-const canConfirm = computed(() => resolveChartEncodingIssues(props.chartSpec).length === 0
-  && (!seriesItemsRequired.value
-    || (seriesItemMode.value === "categorical"
-      ? selectedSeriesFields.value.length === 1 && !!resolvedEncodingField(props.chartSpec, "y")
-      : seriesItemMode.value === "quantitative"
-        ? selectedValueSeriesFields.value.length >= (supportsBarValueSeries.value ? 2 : 1)
-        : false))
-  && configs.value.every((config) => {
-    if (!config.required) return true;
-    if (supportsSeriesItems.value && config.role === "series") return seriesItemMode.value !== null;
-    if (config.channel === "y" && seriesItemMode.value === "quantitative") {
-      return selectedValueSeriesFields.value.length > 0;
-    }
-    if (config.channel === "dimensions") return selectedParallelFields.value.length >= 2;
-    if (config.channel === "theta" && polarSegmentMode.value === "quantitative") return true;
-    return !!resolvedEncodingField(props.chartSpec, config.channel);
-}));
-
 function axisChannel(channel: ChartEncodingChannel) {
   if (!axisSwapped.value || (channel !== "x" && channel !== "y")) return channel;
   return channel === "x" ? "y" : "x";
@@ -313,6 +347,34 @@ function axisChannel(channel: ChartEncodingChannel) {
 function axisConfig(config: EncodingChannelConfig) {
   const channel = axisChannel(config.channel);
   return channel === config.channel ? config : { ...config, label: channel.toUpperCase() };
+}
+
+const axisRows = computed(() => (["x", "y"] as const).flatMap((axis) => {
+  if (axis === "y" && seriesItemMode.value === "quantitative" && selectedValueSeriesFields.value.length > 1) return [];
+  const config = configs.value.find((item) => item.channel === axis);
+  return config ? [{ axis, config: { ...config, label: axis.toUpperCase() } }] : [];
+}));
+
+function axisVisibility(axis: "x" | "y") {
+  if (!props.coordinateGuide || props.coordinateGuide.type !== "Cartesian") return true;
+  return axis === "x" ? props.coordinateGuide.showXLine !== false : props.coordinateGuide.showYLine !== false;
+}
+
+function axisLabelsVisible(axis: "x" | "y") {
+  if (!props.coordinateGuide || props.coordinateGuide.type !== "Cartesian") return true;
+  return axis === "x" ? props.coordinateGuide.showXLabels !== false : props.coordinateGuide.showYLabels !== false;
+}
+
+function setAxisVisibility(axis: "x" | "y", visible: boolean) {
+  emit("coordinateGuideChange", axis === "x" ? { showXLine: visible } : { showYLine: visible });
+}
+
+function setAxisLabelsVisible(axis: "x" | "y", visible: boolean) {
+  emit("coordinateGuideChange", axis === "x" ? { showXLabels: visible } : { showYLabels: visible });
+}
+
+function toggleDetailPanel(channel: "color" | "size") {
+  detailPanel.value = detailPanel.value === channel ? null : channel;
 }
 
 function isSeriesItemDisabled(field: string) {
@@ -430,115 +492,198 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
     emit("markConfigChange", { sizeMapping: defaultSizeMapping });
   }
 }
+
+function updateSingleBarTopN(rawValue: string) {
+  const value = Number(rawValue);
+  emit(
+    "singleBarValueOrderChange",
+    singleBarSortDirection.value,
+    Number.isFinite(value) && value >= 1 ? Math.floor(value) : undefined,
+  );
+}
 </script>
 
 <template>
   <div class="encoding-config">
     <header class="encoding-config__header">
       <div>
-        <strong>MARK ENCODINGS</strong>
+        <strong>{{ sectionLabel ?? 'MARK ENCODINGS' }}</strong>
         <span>{{ chartName }}</span>
       </div>
-      <button type="button" title="Close" aria-label="Close encoding panel" @click="emit('close')">
+      <button v-if="!embedded" type="button" title="Close" aria-label="Close encoding panel" @click="emit('close')">
         <X :size="16" :stroke-width="1.6" aria-hidden="true" />
       </button>
     </header>
 
     <div v-if="columns.length" class="encoding-config__channels">
       <div class="encoding-config__columns">
-      <section class="encoding-config__column" aria-label="Chart encodings">
-      <div v-if="isCartesian" class="encoding-config__axis-switch">
-        <span>Cartesian axes</span>
-        <button
-          type="button"
-          role="switch"
-          :aria-checked="axisSwapped"
-          :class="{ 'is-active': axisSwapped }"
-          @click="emit('axisSwap', !axisSwapped)"
-        >
-          {{ axisSwapped ? "Y / X" : "X / Y" }}
-        </button>
-      </div>
-      <section v-if="coordinateGuide" class="encoding-config__axis-options" aria-label="Axis display">
-        <strong>Axis display</strong>
-        <div class="encoding-config__axis-toggles">
-          <label v-if="coordinateGuide.type === 'Cartesian'">
-            <input type="checkbox" :checked="coordinateGuide.showAllAxes === false" @change="emit('coordinateGuideChange', { showAllAxes: !($event.target as HTMLInputElement).checked })" />
-            <span>Hide all</span>
-          </label>
-          <label v-if="coordinateGuide.type === 'Cartesian'">
-            <input type="checkbox" :checked="coordinateGuide.showXLine !== false" @change="emit('coordinateGuideChange', { showXLine: ($event.target as HTMLInputElement).checked })" />
-            <span>X line</span>
-          </label>
-          <label v-if="coordinateGuide.type === 'Cartesian'">
-            <input type="checkbox" :checked="coordinateGuide.showYLine !== false" @change="emit('coordinateGuideChange', { showYLine: ($event.target as HTMLInputElement).checked })" />
-            <span>Y line</span>
-          </label>
-          <label v-if="coordinateGuide.type === 'Polar'">
-            <input type="checkbox" :checked="coordinateGuide.showThetaLine !== false" @change="emit('coordinateGuideChange', { showThetaLine: ($event.target as HTMLInputElement).checked })" />
-            <span>Theta line</span>
-          </label>
-          <label v-if="coordinateGuide.type === 'Polar'">
-            <input type="checkbox" :checked="coordinateGuide.showRadiusLine !== false" @change="emit('coordinateGuideChange', { showRadiusLine: ($event.target as HTMLInputElement).checked })" />
-            <span>R line</span>
-          </label>
-          <label>
-            <input type="checkbox" :checked="coordinateGuide.showDiscreteLabels !== false" @change="emit('coordinateGuideChange', { showDiscreteLabels: ($event.target as HTMLInputElement).checked })" />
-            <span>Nominal / ordinal labels</span>
-          </label>
+      <section
+        v-if="compositionSpec && compositionSpec.type !== 'facet'"
+        class="encoding-config__column encoding-config__column--composition-summary"
+        aria-label="Composite coordinate system"
+      >
+        <div class="encoding-config__column-heading">
+          <strong>Composition</strong>
+          <span>{{ compositionSpec.type }} - {{ coordinateGuide?.type ?? 'CoordinateFree' }}</span>
         </div>
-        <div v-if="coordinateGuide.type === 'Cartesian'" class="encoding-config__axis-directions">
-          <span>Axis direction</span>
-          <div>
-            <button type="button" title="Reverse X-axis direction" aria-label="Reverse X-axis direction" @click="emit('coordinateAxisReverse', 'x')">
-              <ArrowLeftRight :size="13" :stroke-width="1.8" aria-hidden="true" />
-              <span>X</span>
-            </button>
-            <button type="button" title="Reverse Y-axis direction" aria-label="Reverse Y-axis direction" @click="emit('coordinateAxisReverse', 'y')">
-              <ArrowLeftRight :size="13" :stroke-width="1.8" aria-hidden="true" class="encoding-config__axis-directions-y-icon" />
-              <span>Y</span>
+        <p class="encoding-config__composition-summary">
+          Shared {{ compositionSpec.sharedChannels.length ? compositionSpec.sharedChannels.join(' / ').toUpperCase() : 'coordinate frame' }}
+        </p>
+      </section>
+      <section v-if="!compositionOnly" class="encoding-config__column" aria-label="Chart encodings">
+      <div v-if="compositionMembers?.length" class="encoding-config__column-heading">
+        <strong>Composite encodings</strong>
+        <span>{{ compositionSpec?.type ?? 'Composition' }}</span>
+      </div>
+      <section v-if="isCartesian && axisRows.length" class="encoding-config__axis-rows" aria-label="Cartesian axis encodings">
+        <div class="encoding-config__axis-rows-toolbar">
+          <div class="encoding-config__axis-switch">
+            <span>Swap axes</span>
+            <button
+              type="button"
+              role="switch"
+              :aria-checked="axisSwapped"
+              :class="{ 'is-active': axisSwapped }"
+              @click="emit('axisSwap', !axisSwapped)"
+            >
+              {{ axisSwapped ? "Y / X" : "X / Y" }}
             </button>
           </div>
+          <div class="encoding-config__axis-toolbar-options">
+            <span class="encoding-config__axis-toolbar-label">Axes</span>
+            <span class="encoding-config__axis-toolbar-label">Labels</span>
+          </div>
         </div>
-        <template v-if="coordinateGuide.type === 'Cartesian'">
-          <label v-if="isDiscreteAxis('x')" class="encoding-config__axis-spacing">
-            <span>X category spacing</span>
-            <input type="range" min="0.5" max="3" step="0.1" :value="coordinateGuide.xDiscreteSpacing ?? 1" @change="emit('coordinateGuideChange', { xDiscreteSpacing: Number(($event.target as HTMLInputElement).value) })" />
-            <output>{{ (coordinateGuide.xDiscreteSpacing ?? 1).toFixed(1) }}x</output>
-          </label>
-          <label v-if="isDiscreteAxis('y')" class="encoding-config__axis-spacing">
-            <span>Y category spacing</span>
-            <input type="range" min="0.5" max="3" step="0.1" :value="coordinateGuide.yDiscreteSpacing ?? 1" @change="emit('coordinateGuideChange', { yDiscreteSpacing: Number(($event.target as HTMLInputElement).value) })" />
-            <output>{{ (coordinateGuide.yDiscreteSpacing ?? 1).toFixed(1) }}x</output>
-          </label>
-        </template>
+        <div v-for="row in axisRows" :key="row.axis" class="encoding-config__axis-row">
+          <div class="encoding-config__axis-channel-label">
+            <span class="encoding-config__axis-row-label">{{ row.axis.toUpperCase() }}</span>
+            <button
+              type="button"
+              class="encoding-config__axis-direction-button"
+              :title="`Reverse ${row.axis.toUpperCase()}-axis direction`"
+              :aria-label="`Reverse ${row.axis.toUpperCase()}-axis direction`"
+              @click="emit('coordinateAxisReverse', row.axis)"
+            >
+              <ArrowLeftRight :size="12" :stroke-width="1.8" :class="{ 'encoding-config__axis-directions-y-icon': row.axis === 'y' }" aria-hidden="true" />
+            </button>
+          </div>
+          <EncodingChannelField
+            :config="row.config"
+            :columns="columns"
+            :father-columns="fatherColumns"
+            :value="resolvedEncodingField(chartSpec, row.axis)"
+            @change="updateMappingDefaults(row.axis, $event)"
+          />
+          <div class="encoding-config__axis-controls">
+            <label class="encoding-config__axis-toggle">
+              <input
+                type="checkbox"
+                :checked="axisVisibility(row.axis)"
+                :aria-label="`Show ${row.axis.toUpperCase()} axis`"
+                @change="setAxisVisibility(row.axis, ($event.target as HTMLInputElement).checked)"
+              />
+            </label>
+            <label class="encoding-config__axis-label-toggle">
+              <input
+                type="checkbox"
+                :checked="axisLabelsVisible(row.axis)"
+                :aria-label="`Show ${row.axis.toUpperCase()} labels`"
+                @change="setAxisLabelsVisible(row.axis, ($event.target as HTMLInputElement).checked)"
+              />
+            </label>
+          </div>
+        </div>
       </section>
-      <template v-for="config in standardConfigs" :key="config.channel">
-        <EncodingChannelField
-          :config="axisConfig(config)"
-          :columns="columns"
-          :value="resolvedEncodingField(chartSpec, config.channel)"
-          @change="updateMappingDefaults(config.channel, $event)"
-        />
-      </template>
-
-      <section v-if="aggregationEntries.length" class="encoding-config__aggregation" aria-label="Automatic aggregation">
+      <section v-if="compositionMembers?.length" class="encoding-config__member-list" aria-label="Composition chart encodings">
         <header>
-          <span>Aggregation</span>
-          <small>Repeated visual keys are reduced before rendering.</small>
+          <strong>Charts in composition</strong>
+          <span>Enter the composition to edit a chart independently.</span>
         </header>
-        <label v-for="entry in aggregationEntries" :key="entry.channel">
-          <span>{{ entry.channel.toUpperCase() }}<em v-if="entry.automatic">Auto</em></span>
-          <select
-            :value="entry.aggregation"
-            :aria-label="`${entry.channel} aggregation`"
-            @change="emit('aggregationChange', entry.channel, ($event.target as HTMLSelectElement).value as 'sum' | 'avg')"
-          >
-            <option value="sum">Sum</option>
-            <option value="avg">Average</option>
-          </select>
-        </label>
+        <details v-for="member in compositionMembers" :key="member.id" class="encoding-config__member-entry">
+          <summary>
+            <span>{{ member.name }}</span>
+            <small>{{ member.chartType }}</small>
+          </summary>
+          <dl>
+            <template v-for="(encoding, channel) in member.encodings" :key="channel">
+              <dt>{{ channel }}</dt>
+              <dd>{{ encoding?.field }}</dd>
+            </template>
+          </dl>
+        </details>
       </section>
+      <template v-for="config in otherStandardConfigs" :key="config.channel">
+        <div class="encoding-config__channel-row">
+          <EncodingChannelField
+            :config="axisConfig(config)"
+            :columns="columns"
+            :father-columns="fatherColumns"
+            :value="resolvedEncodingField(chartSpec, config.channel)"
+            @change="updateMappingDefaults(config.channel, $event)"
+          />
+        </div>
+      </template>
+      <div v-if="compactConfigs.length" class="encoding-config__detail-fields">
+        <div v-for="config in compactConfigs" :key="config.channel" class="encoding-config__detail-row">
+          <EncodingChannelField
+            :config="axisConfig(config)"
+            :columns="columns"
+            :father-columns="fatherColumns"
+            :value="resolvedEncodingField(chartSpec, config.channel)"
+            @change="updateMappingDefaults(config.channel, $event)"
+          />
+          <div class="encoding-config__detail-control">
+            <input
+              v-if="config.channel === 'color' && !colorField"
+              class="encoding-config__static-color-picker"
+              type="color"
+              :value="staticColor"
+              aria-label="Color value"
+              @input="emit('markConfigChange', { color: ($event.target as HTMLInputElement).value })"
+            />
+            <template v-else-if="config.channel === 'size' && !sizeField">
+              <span class="encoding-config__static-value" aria-label="Size value">{{ staticSize }} px</span>
+              <input
+                class="encoding-config__inline-slider"
+                type="range"
+                min="1"
+                max="48"
+                step="0.5"
+                :value="staticSize"
+                aria-label="Size value"
+                @input="emit('markConfigChange', { size: Number(($event.target as HTMLInputElement).value) })"
+              />
+            </template>
+            <button
+              v-else-if="(config.channel === 'color' && !!colorField) || (config.channel === 'size' && !!sizeField)"
+              type="button"
+              class="encoding-config__details-button"
+              :aria-expanded="detailPanel === config.channel"
+              :aria-label="`${config.label} details`"
+              @click="toggleDetailPanel(config.channel as 'color' | 'size')"
+            >
+              Mapped
+            </button>
+          </div>
+          <div v-if="detailPanel === config.channel" class="encoding-config__details-popover">
+            <div v-if="config.channel === 'size' && !isMultiLine && !sizeField" class="encoding-config__static encoding-config__static-size-editor">
+              <span>Size value</span>
+              <output>{{ staticSize }} px</output>
+              <input type="range" min="1" max="48" step="0.5" :value="staticSize" aria-label="Size value" @input="emit('markConfigChange', { size: Number(($event.target as HTMLInputElement).value) })" />
+            </div>
+            <VisualMappingEditor
+              v-if="!isMultiLine"
+              :show-color="config.channel === 'color' && showColorMapping"
+              :show-size="config.channel === 'size' && showSizeMapping"
+              :color-mapping="colorMapping"
+              :color-domain="colorDomain"
+              :size-mapping="sizeMapping"
+              @color-change="(mapping: LinearColorMapping) => emit('markConfigChange', { colorMapping: mapping })"
+              @size-change="(mapping: LinearSizeMapping) => emit('markConfigChange', { sizeMapping: mapping })"
+            />
+          </div>
+        </div>
+      </div>
 
       <section
         v-if="supportsSeriesItems"
@@ -552,10 +697,20 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
         @dragleave.stop="onSeriesItemDragLeave"
         @drop.stop.prevent="onSeriesItemDrop"
       >
-        <span>
-          {{ seriesItemLabel }}
-          <abbr v-if="seriesItemsRequired" title="At least one required" aria-label="At least one required">*</abbr>
-        </span>
+        <header class="encoding-config__series-header">
+          <span>
+            {{ seriesItemLabel }}
+            <abbr v-if="seriesItemsRequired" title="At least one required" aria-label="At least one required">*</abbr>
+          </span>
+          <label v-if="supportsLegend" class="encoding-config__legend-toggle">
+            <span>Show legend</span>
+            <input
+              type="checkbox"
+              :checked="legendVisible"
+              @change="emit('markConfigChange', { legendVisible: ($event.target as HTMLInputElement).checked })"
+            />
+          </label>
+        </header>
         <label
           v-for="column in seriesItemColumns"
           :key="column.name"
@@ -567,7 +722,7 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
             :disabled="isSeriesItemDisabled(column.name)"
             @change="toggleSeriesItemField(column.name)"
           />
-          <span>{{ column.name }}</span>
+          <span>{{ columnDisplayLabel(column.name) }}</span>
         </label>
       </section>
 
@@ -592,7 +747,7 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
         </header>
         <div v-if="selectedSegmentFields.length" class="encoding-config__segment-fields">
           <span v-for="field in selectedSegmentFields" :key="field">
-            <span :title="field">{{ field }}</span>
+            <span :title="columnDisplayLabel(field)">{{ columnDisplayLabel(field) }}</span>
             <button
               type="button"
               :title="`Remove ${field}`"
@@ -614,7 +769,67 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
             :checked="selectedParallelFields.includes(column.name)"
             @change="toggleParallelField(column.name)"
           />
-          <span>{{ column.name }}</span>
+          <span>{{ columnDisplayLabel(column.name) }}</span>
+        </label>
+      </section>
+
+      <template v-if="!compositionOnly">
+      <section v-if="aggregationEntries.length" class="encoding-config__aggregation" aria-label="Aggregation">
+        <header>
+          <span>Aggregation</span>
+          <small>Repeated visual keys are reduced before rendering.</small>
+        </header>
+        <label v-for="entry in aggregationEntries" :key="entry.channel">
+          <span>{{ entry.channel.toUpperCase() }}<em v-if="entry.automatic">Auto</em></span>
+          <select
+            :value="entry.aggregation ?? 'none'"
+            :aria-label="`${entry.channel} aggregation`"
+            @change="emit(
+              'aggregationChange',
+              entry.channel,
+              ($event.target as HTMLSelectElement).value === 'none'
+                ? undefined
+                : ($event.target as HTMLSelectElement).value as 'sum' | 'avg',
+            )"
+          >
+            <option value="none">None</option>
+            <option value="sum">Sum</option>
+            <option value="avg">Average</option>
+          </select>
+        </label>
+      </section>
+      </template>
+      <section
+        v-if="isSingleBar && chartSpec.encodings.x && chartSpec.encodings.y"
+        class="encoding-config__value-order"
+        aria-label="Sort and filter bars by value"
+      >
+        <header>
+          <span>Sort &amp; filter</span>
+        </header>
+        <label>
+          <span>Sort</span>
+          <select
+            :value="singleBarSortDirection"
+            @change="emit('singleBarValueOrderChange', ($event.target as HTMLSelectElement).value as 'source' | 'ascending' | 'descending', singleBarTopN)"
+          >
+            <option value="source">Source order</option>
+            <option value="descending">Highest first</option>
+            <option value="ascending">Lowest first</option>
+          </select>
+        </label>
+        <label>
+          <span>Top N</span>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            inputmode="numeric"
+            placeholder="All"
+            :value="singleBarTopN ?? ''"
+            aria-label="Top N bars"
+            @change="updateSingleBarTopN(($event.target as HTMLInputElement).value)"
+          />
         </label>
       </section>
 
@@ -623,14 +838,16 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
           <span>R / Outer radius</span>
           <strong>{{ radiusMode === "static" ? "Static" : "Mapped" }}</strong>
         </div>
-        <label v-if="radiusMode === 'static'" class="encoding-config__static encoding-config__static-radius">
+        <div v-if="radiusMode === 'static'" class="encoding-config__static encoding-config__static-radius">
           <span>Outer radius</span>
+          <output>{{ Math.round(staticOuterRadius * 100) }}%</output>
           <input
             type="range"
             min="0.15"
             max="1"
             step="0.05"
             :value="staticOuterRadius"
+            aria-label="Outer radius"
             @pointerdown="emit('markConfigEditStart', 'outerRadius')"
             @focus="emit('markConfigEditStart', 'outerRadius')"
             @pointerup="emit('markConfigEditEnd')"
@@ -639,12 +856,11 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
             @change="emit('markConfigEditEnd')"
             @input="emit('markConfigChange', { outerRadius: Number(($event.target as HTMLInputElement).value) })"
           />
-          <output>{{ Math.round(staticOuterRadius * 100) }}%</output>
-        </label>
+        </div>
       </section>
 
       <section v-if="polarSegmentMembers.length || editableSeriesMembers.length || colorConfig || sizeConfig" class="encoding-config__appearance encoding-config__appearance--chart">
-        <label v-if="supportsLegend" class="encoding-config__option">
+        <label v-if="supportsLegend && !supportsSeriesItems" class="encoding-config__option">
           <span>Show legend</span>
           <input
             type="checkbox"
@@ -699,27 +915,9 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
             </select>
           </label>
         </div>
-        <label v-if="!isMultiLine && colorConfig && !colorField && editableSeriesMembers.length === 0" class="encoding-config__static">
-          <span>Color value</span>
-          <input type="color" :value="staticColor" @input="emit('markConfigChange', { color: ($event.target as HTMLInputElement).value })" />
-        </label>
-        <label v-if="!isMultiLine && sizeConfig && !sizeField" class="encoding-config__static">
-          <span>Size value</span>
-          <input type="range" min="1" max="48" step="0.5" :value="staticSize" @input="emit('markConfigChange', { size: Number(($event.target as HTMLInputElement).value) })" />
-          <output>{{ staticSize }} px</output>
-        </label>
-        <VisualMappingEditor
-          v-if="!isMultiLine"
-          :show-color="showColorMapping"
-          :show-size="showSizeMapping"
-          :color-mapping="colorMapping"
-          :color-domain="colorDomain"
-          :size-mapping="sizeMapping"
-          @color-change="(mapping: LinearColorMapping) => emit('markConfigChange', { colorMapping: mapping })"
-          @size-change="(mapping: LinearSizeMapping) => emit('markConfigChange', { sizeMapping: mapping })"
-        />
       </section>
       </section>
+
 
       <section v-if="isFacetComposition" class="encoding-config__column encoding-config__column--composition" aria-label="Composition encodings">
         <div class="encoding-config__column-heading">
@@ -740,6 +938,7 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
           v-if="facetCoordinateSystem === 'Cartesian'"
           :config="{ channel: 'column', label: 'Facet column', role: 'dimension', required: false, accepts: ['nominal', 'ordinal', 'temporal'], emptyLabel: 'Not bound' }"
           :columns="facetFieldOptions"
+          :father-columns="fatherColumns"
           :value="facetColumnField"
           @change="updateFacetField('column', $event)"
         />
@@ -747,6 +946,7 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
           v-if="facetCoordinateSystem === 'Cartesian'"
           :config="{ channel: 'row', label: 'Facet row', role: 'dimension', required: false, accepts: ['nominal', 'ordinal', 'temporal'], emptyLabel: 'Not bound' }"
           :columns="facetFieldOptions"
+          :father-columns="fatherColumns"
           :value="facetRowField"
           @change="updateFacetField('row', $event)"
         />
@@ -754,6 +954,7 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
           v-if="facetCoordinateSystem === 'Polar'"
           :config="{ channel: 'theta', label: 'Facet theta', role: 'dimension', required: false, accepts: ['nominal', 'ordinal', 'temporal'], emptyLabel: 'Not bound' }"
           :columns="facetFieldOptions"
+          :father-columns="fatherColumns"
           :value="facetThetaField"
           @change="updateFacetPolarField('theta', $event)"
         />
@@ -761,6 +962,7 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
           v-if="facetCoordinateSystem === 'Polar'"
           :config="{ channel: 'radius', label: 'Facet R', role: 'dimension', required: false, accepts: ['nominal', 'ordinal', 'temporal'], emptyLabel: 'Not bound' }"
           :columns="facetFieldOptions"
+          :father-columns="fatherColumns"
           :value="facetRadiusField"
           @change="updateFacetPolarField('radius', $event)"
         />
@@ -774,6 +976,19 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
             <option value="row">{{ facetCoordinateSystem === 'Polar' ? 'R' : 'Rows' }}</option>
           </select>
         </label>
+        <section v-if="facetCoordinateSystem === 'Cartesian'" class="encoding-config__composition-spacing" aria-label="Facet spacing">
+          <strong>Spacing</strong>
+          <label class="encoding-config__static">
+            <span>Column gap</span>
+            <output>{{ facetColumnGap }} px</output>
+            <input type="range" min="0" max="200" step="1" :value="facetColumnGap" aria-label="Column gap" @input="emit('compositionChange', { facetColumnGap: numericValue($event) })" />
+          </label>
+          <label class="encoding-config__static">
+            <span>Row gap</span>
+            <output>{{ facetRowGap }} px</output>
+            <input type="range" min="0" max="200" step="1" :value="facetRowGap" aria-label="Row gap" @input="emit('compositionChange', { facetRowGap: numericValue($event) })" />
+          </label>
+        </section>
       </section>
 
       </div>
@@ -783,8 +998,8 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
     <section v-if="normalizedChartType.includes('horizon')" class="encoding-config__appearance">
       <label class="encoding-config__static">
         <span>Bands</span>
-        <input type="range" min="1" max="9" step="1" :value="horizonBands" @input="emit('markConfigChange', { bands: Number(($event.target as HTMLInputElement).value) })" />
         <output>{{ horizonBands }}</output>
+        <input type="range" min="1" max="9" step="1" :value="horizonBands" aria-label="Bands" @input="emit('markConfigChange', { bands: Number(($event.target as HTMLInputElement).value) })" />
       </label>
     </section>
 
@@ -804,8 +1019,8 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
     <section v-if="normalizedChartType.includes('hexbin')" class="encoding-config__appearance">
       <label class="encoding-config__static">
         <span>Radius</span>
-        <input type="range" min="2" max="20" step="1" :value="hexbinRadius" @input="emit('markConfigChange', { radius: Number(($event.target as HTMLInputElement).value) })" />
         <output>{{ hexbinRadius }} px</output>
+        <input type="range" min="2" max="20" step="1" :value="hexbinRadius" aria-label="Radius" @input="emit('markConfigChange', { radius: Number(($event.target as HTMLInputElement).value) })" />
       </label>
     </section>
 
@@ -831,81 +1046,151 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
     </section>
 
     <p v-if="rendererError" class="encoding-config__error">{{ rendererError }}</p>
-    <div class="encoding-config__actions">
-      <button type="button" :disabled="!canConfirm" @click="emit('confirm')">Confirm encodings</button>
-    </div>
   </div>
 </template>
 
 <style scoped>
-.encoding-config { display: grid; gap: 14px; }
+.encoding-config { --encoding-config-font-size: 11px; display: grid; width: min(100%, 460px); gap: 6px; box-sizing: border-box; font-size: var(--encoding-config-font-size); }
 .encoding-config__header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .encoding-config__header > div { display: grid; min-width: 0; gap: 2px; }
 .encoding-config__header strong { color: #18212f; font-size: 12px; letter-spacing: 0.08em; }
-.encoding-config__header span { overflow: hidden; color: #6b7889; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.encoding-config__header span { overflow: hidden; color: #6b7889; font-size: var(--encoding-config-font-size); text-overflow: ellipsis; white-space: nowrap; }
 .encoding-config__header button { display: inline-grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 6px; background: transparent; color: #5b6a80; cursor: pointer; }
 .encoding-config__header button:hover { background: #edf5fc; color: #1554b2; }
-.encoding-config__channels { display: grid; gap: 12px; }
-.encoding-config__columns { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-items: stretch; padding-bottom: 3px; }
-.encoding-config__column { display: grid; min-width: 0; align-content: start; gap: 10px; padding: 10px; border: 1px solid rgba(24, 33, 47, 0.1); border-radius: 6px; background: #fbfcfe; }
+.encoding-config__channels { display: grid; gap: 5px; }
+.encoding-config__axis-rows { display: grid; gap: 4px; }
+.encoding-config__axis-rows-toolbar { display: grid; grid-template-columns: minmax(52px, 0.2fr) minmax(164px, 0.76fr) minmax(96px, 0.42fr); align-items: center; gap: 2px; color: #516176; font-size: var(--encoding-config-font-size); }
+.encoding-config__axis-toolbar-options { display: contents; }
+.encoding-config__axis-toolbar-label { justify-self: center; white-space: nowrap; }
+.encoding-config__axis-toolbar-options { grid-column: 3; display: grid; grid-template-columns: 38px 48px; justify-content: center; gap: 2px; }
+.encoding-config__axis-switch { grid-column: 1 / span 2; justify-self: start; }
+.encoding-config__axis-row { display: grid; grid-template-columns: minmax(52px, 0.2fr) minmax(164px, 0.76fr) minmax(96px, 0.42fr); position: relative; align-items: center; gap: 2px; padding: 3px 4px; border: 1px solid rgba(24, 33, 47, 0.1); border-radius: 5px; background: #f8fafc; }
+.encoding-config__axis-channel-label { display: inline-flex; align-items: center; justify-content: center; gap: 3px; min-width: 0; }
+.encoding-config__axis-row-label { color: #516176; font-size: var(--encoding-config-font-size); font-weight: 700; }
+.encoding-config__axis-controls { display: grid; grid-template-columns: 38px 48px; justify-content: center; gap: 2px; }
+.encoding-config__axis-toggle,
+.encoding-config__axis-label-toggle { display: inline-flex; justify-content: center; }
+.encoding-config__axis-toggle input,
+.encoding-config__axis-label-toggle input { width: 12px; height: 12px; margin: 0; accent-color: #1554b2; }
+.encoding-config__axis-row :deep(.encoding-channel-field) { display: contents; min-width: 0; }
+.encoding-config__axis-row :deep(.encoding-channel-field__label) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.encoding-config__axis-row :deep(.encoding-channel-field select) { grid-column: 2; min-width: 0; }
+.encoding-config__axis-direction-button { display: inline-grid; width: 22px; height: 22px; padding: 0; place-items: center; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 4px; background: #fff; color: #516176; cursor: pointer; }
+.encoding-config__axis-direction-button:hover { border-color: rgba(21, 84, 178, 0.4); background: #edf5fc; color: #1554b2; }
+.encoding-config__columns { display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; align-items: stretch; }
+.encoding-config__channel-row { display: grid; grid-template-columns: minmax(52px, 0.2fr) minmax(164px, 0.76fr) minmax(96px, 0.42fr); align-items: center; gap: 2px; min-height: 32px; padding: 3px 4px; border: 1px solid rgba(24, 33, 47, 0.1); border-radius: 5px; background: #fbfcfe; }
+.encoding-config__channel-row :deep(.encoding-channel-field) { display: contents; }
+.encoding-config__channel-row :deep(.encoding-channel-field__label) { justify-content: center; min-width: 0; text-align: center; }
+.encoding-config__channel-row :deep(.encoding-channel-field select) { grid-column: 2; min-width: 0; }
+.encoding-config__channel-row::after { content: ""; grid-column: 3; min-width: 0; }
+.encoding-config__column { display: grid; min-width: 0; align-content: start; gap: 7px; padding: 8px; border: 1px solid rgba(24, 33, 47, 0.1); border-radius: 6px; background: #fbfcfe; }
 .encoding-config__column--composition { background: #f8fbff; }
+.encoding-config__column--composition-summary { background: #f4f8fc; }
+.encoding-config__composition-summary { margin: 0; color: #526174; font-size: var(--encoding-config-font-size); line-height: 1.35; }
 .encoding-config__column-heading { display: grid; gap: 2px; padding-bottom: 2px; border-bottom: 1px solid rgba(24, 33, 47, 0.09); }
-.encoding-config__column-heading strong { color: #263548; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
-.encoding-config__column-heading span, .encoding-config__column-empty { color: #718096; font-size: 10px; line-height: 1.35; }
-.encoding-config__axis-switch { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 8px; border: 1px solid rgba(24, 33, 47, 0.1); border-radius: 6px; background: #f8fafc; color: #516176; font-size: 11px; }
-.encoding-config__axis-switch button { min-width: 64px; min-height: 28px; padding: 0 8px; border: 1px solid rgba(28, 126, 214, 0.28); border-radius: 999px; background: #fff; color: #1554b2; font: inherit; font-size: 10px; font-weight: 700; cursor: pointer; }
+.encoding-config__column-heading strong { color: #263548; font-size: var(--encoding-config-font-size); letter-spacing: 0.08em; text-transform: uppercase; }
+.encoding-config__column-heading span, .encoding-config__column-empty { color: #718096; font-size: var(--encoding-config-font-size); line-height: 1.35; }
+.encoding-config__member-list { display: grid; gap: 6px; padding: 8px; border: 1px solid rgba(24, 33, 47, 0.1); border-radius: 6px; background: #f8fafc; }
+.encoding-config__member-list > header { display: grid; gap: 2px; }
+.encoding-config__member-list > header strong { color: #334155; font-size: var(--encoding-config-font-size); }
+.encoding-config__member-list > header span { color: #718096; font-size: var(--encoding-config-font-size); line-height: 1.35; }
+.encoding-config__member-entry { border-top: 1px solid rgba(24, 33, 47, 0.08); }
+.encoding-config__member-entry summary { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 6px 0; color: #334155; font-size: var(--encoding-config-font-size); cursor: pointer; }
+.encoding-config__member-entry summary small { color: #718096; font-size: var(--encoding-config-font-size); }
+.encoding-config__member-entry dl { display: grid; grid-template-columns: 54px minmax(0, 1fr); gap: 3px 8px; margin: 0 0 6px; color: #526174; font-size: var(--encoding-config-font-size); }
+.encoding-config__member-entry dt { color: #718096; text-transform: uppercase; }
+.encoding-config__member-entry dd { margin: 0; overflow: hidden; color: #334155; text-overflow: ellipsis; white-space: nowrap; }
+.encoding-config__axis-switch { display: inline-flex; align-items: center; gap: 7px; color: #516176; font-size: var(--encoding-config-font-size); }
+.encoding-config__axis-switch button { min-width: 64px; min-height: 28px; padding: 0 8px; border: 1px solid rgba(28, 126, 214, 0.28); border-radius: 999px; background: #fff; color: #1554b2; font: inherit; font-size: var(--encoding-config-font-size); font-weight: 700; cursor: pointer; }
 .encoding-config__axis-switch button.is-active { border-color: #1554b2; background: #1554b2; color: #fff; }
-.encoding-config__axis-options { display: grid; gap: 8px; padding: 8px; border: 1px solid rgba(24, 33, 47, 0.1); border-radius: 6px; background: #f8fafc; }
-.encoding-config__axis-options > strong { color: #516176; font-size: 11px; }
+.encoding-config__detail-fields { display: grid; gap: 6px; }
+.encoding-config__detail-row { position: relative; display: grid; grid-template-columns: minmax(52px, 0.2fr) minmax(164px, 0.76fr) minmax(96px, 0.42fr); align-items: center; gap: 2px; min-height: 32px; padding: 3px 4px; border: 1px solid rgba(24, 33, 47, 0.1); border-radius: 5px; background: #fbfcfe; }
+.encoding-config__detail-row :deep(.encoding-channel-field) { display: contents; }
+.encoding-config__detail-row :deep(.encoding-channel-field__label) { justify-content: center; min-width: 0; text-align: center; }
+.encoding-config__detail-row :deep(.encoding-channel-field select) { grid-column: 2; min-width: 0; }
+.encoding-config__detail-control { grid-column: 3; display: flex; min-width: 0; min-height: 28px; align-items: center; justify-content: center; gap: 5px; }
+.encoding-config__appearance--chart { order: 2; }
+.encoding-config__aggregation,
+.encoding-config__value-order,
+.encoding-config__radius { order: 3; }
+.encoding-config__details-button { min-width: 64px; max-width: 120px; height: 30px; overflow: hidden; padding: 0 8px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 5px; background: #f8fafc; color: #526174; font: inherit; font-size: var(--encoding-config-font-size); text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.encoding-config__details-button:hover, .encoding-config__details-button[aria-expanded="true"] { border-color: rgba(21, 84, 178, 0.4); background: #edf5fc; color: #1554b2; }
+.encoding-config__static-color-picker { width: 38px; height: 28px; padding: 2px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 5px; background: #fff; cursor: pointer; }
+.encoding-config__static-value { color: #526174; font-size: var(--encoding-config-font-size); white-space: nowrap; }
+.encoding-config__inline-slider { width: 55px; min-width: 0; accent-color: #1980bd; }
+.encoding-config__details-popover { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 20; display: grid; width: min(320px, calc(100vw - 32px)); max-height: min(440px, 70vh); overflow: auto; gap: 8px; padding: 10px; border: 1px solid rgba(24, 33, 47, 0.16); border-radius: 6px; background: #fff; box-shadow: 0 10px 28px rgba(24, 33, 47, 0.18); }
+.encoding-config__details-popover .visual-mapping-editor { margin: 0; }
+.encoding-config__slider-dot { display: inline-grid; width: 22px; height: 22px; padding: 0; place-items: center; border: 0; border-radius: 50%; background: transparent; cursor: pointer; }
+.encoding-config__slider-dot span { width: 10px; height: 10px; border: 2px solid #1554b2; border-radius: 50%; background: #fff; box-shadow: 0 0 0 2px rgba(21, 84, 178, 0.12); }
+.encoding-config__slider-dot:hover span, .encoding-config__slider-dot[aria-expanded="true"] span { background: #1554b2; }
+.encoding-config__slider-popover { position: absolute; right: 0; bottom: calc(100% + 5px); z-index: 2; display: flex; width: 150px; height: 34px; align-items: center; padding: 6px 9px; border: 1px solid rgba(24, 33, 47, 0.16); border-radius: 6px; background: #fff; box-shadow: 0 8px 20px rgba(24, 33, 47, 0.16); }
+.encoding-config__slider-popover input { width: 100%; accent-color: #1980bd; }
+.encoding-config__static-size { position: relative; grid-template-columns: minmax(72px, 1fr) auto 22px; }
+.encoding-config__axis-options { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 6px 8px; padding: 7px 8px; border: 1px solid rgba(24, 33, 47, 0.1); border-radius: 6px; background: #f8fafc; }
+.encoding-config__axis-options > strong { color: #516176; font-size: var(--encoding-config-font-size); }
 .encoding-config__axis-toggles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; }
-.encoding-config__axis-toggles label { display: flex; align-items: center; gap: 6px; min-width: 0; color: #526174; font-size: 10px; }
+.encoding-config__axis-toggles label { display: flex; align-items: center; gap: 6px; min-width: 0; color: #526174; font-size: var(--encoding-config-font-size); }
 .encoding-config__axis-toggles label:last-child { grid-column: 1 / -1; }
-.encoding-config__axis-directions { display: grid; gap: 5px; color: #526174; font-size: 10px; }
+.encoding-config__axis-directions { display: grid; gap: 5px; color: #526174; font-size: var(--encoding-config-font-size); }
+.encoding-config__axis-directions,
+.encoding-config__axis-spacing { grid-column: 1 / -1; }
 .encoding-config__axis-directions > div { display: flex; gap: 6px; }
-.encoding-config__axis-directions button { display: inline-flex; min-width: 0; min-height: 26px; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 5px; background: #fff; color: #516176; font: inherit; font-size: 10px; cursor: pointer; }
+.encoding-config__axis-directions button { display: inline-flex; min-width: 0; min-height: 26px; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 5px; background: #fff; color: #516176; font: inherit; font-size: var(--encoding-config-font-size); cursor: pointer; }
 .encoding-config__axis-directions button:hover { border-color: rgba(21, 84, 178, 0.4); background: #edf5fc; color: #1554b2; }
 .encoding-config__axis-directions-y-icon { transform: rotate(90deg); }
-.encoding-config__axis-spacing { display: grid; grid-template-columns: minmax(0, 1fr) 88px 28px; align-items: center; gap: 6px; color: #526174; font-size: 10px; }
+.encoding-config__axis-spacing { display: grid; grid-template-columns: minmax(0, 1fr) 88px 28px; align-items: center; gap: 6px; color: #526174; font-size: var(--encoding-config-font-size); }
 .encoding-config__axis-spacing input { width: 100%; min-width: 0; }
 .encoding-config__axis-spacing output { color: #294a6d; text-align: right; }
-.encoding-config__summary { margin: 0; padding: 8px 9px; border-left: 3px solid #1980bd; background: #f3f7fa; color: #334155; font-size: 11px; line-height: 1.45; }
-.encoding-config__derived-series { margin: -4px 0 0; color: #1554b2; font-size: 11px; }
+.encoding-config__summary { margin: 0; padding: 8px 9px; border-left: 3px solid #1980bd; background: #f3f7fa; color: #334155; font-size: var(--encoding-config-font-size); line-height: 1.45; }
+.encoding-config__derived-series { margin: -4px 0 0; color: #1554b2; font-size: var(--encoding-config-font-size); }
 .encoding-config__aggregation { display: grid; gap: 7px; padding: 8px; border: 1px solid rgba(21, 84, 178, 0.2); border-radius: 6px; background: #f8fbff; color: #334155; }
 .encoding-config__aggregation header { display: grid; gap: 2px; }
-.encoding-config__aggregation header span { font-size: 11px; font-weight: 700; }
-.encoding-config__aggregation header small { color: #718096; font-size: 9px; line-height: 1.35; }
-.encoding-config__aggregation label { display: grid; grid-template-columns: minmax(0, 1fr) 108px; align-items: center; gap: 8px; font-size: 10px; }
+.encoding-config__aggregation header span { font-size: var(--encoding-config-font-size); font-weight: 700; }
+.encoding-config__aggregation header small { color: #718096; font-size: var(--encoding-config-font-size); line-height: 1.35; }
+.encoding-config__aggregation label { display: grid; grid-template-columns: minmax(0, 1fr) 108px; align-items: center; gap: 8px; font-size: var(--encoding-config-font-size); }
 .encoding-config__aggregation label > span { display: inline-flex; align-items: center; gap: 6px; }
-.encoding-config__aggregation em { padding: 2px 4px; border-radius: 3px; background: #e0efff; color: #1554b2; font-size: 8px; font-style: normal; font-weight: 700; text-transform: uppercase; }
-.encoding-config__aggregation select { width: 100%; height: 28px; padding: 0 6px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 5px; background: #fff; color: #223041; font: inherit; font-size: 10px; }
-.encoding-config__angle { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; padding-top: 2px; color: #516176; font-size: 11px; }
+.encoding-config__aggregation em { padding: 2px 4px; border-radius: 3px; background: #e0efff; color: #1554b2; font-size: var(--encoding-config-font-size); font-style: normal; font-weight: 700; text-transform: uppercase; }
+.encoding-config__aggregation select { width: 100%; height: 28px; padding: 0 6px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 5px; background: #fff; color: #223041; font: inherit; font-size: var(--encoding-config-font-size); }
+.encoding-config__value-order { display: grid; gap: 7px; padding: 8px; border: 1px solid rgba(24, 33, 47, 0.12); border-radius: 6px; background: #f8fafc; color: #334155; }
+.encoding-config__value-order header { display: grid; gap: 2px; }
+.encoding-config__value-order header span { font-size: var(--encoding-config-font-size); font-weight: 700; }
+.encoding-config__value-order label { display: grid; grid-template-columns: minmax(72px, 1fr) minmax(0, 1.4fr); align-items: center; gap: 8px; font-size: var(--encoding-config-font-size); }
+.encoding-config__value-order select,
+.encoding-config__value-order input { width: 100%; min-width: 0; height: 30px; padding: 0 7px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 5px; background: #fff; color: #223041; font: inherit; font-size: var(--encoding-config-font-size); }
+.encoding-config__angle { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; padding-top: 2px; color: #516176; font-size: var(--encoding-config-font-size); }
 .encoding-config__angle > span { grid-column: 1 / -1; }
+.encoding-config__series-header { display: flex; align-items: center; justify-content: space-between; grid-column: 1 / -1; gap: 8px; }
+.encoding-config__legend-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: transparent; color: #526174; font-size: var(--encoding-config-font-size); white-space: nowrap; }
+.encoding-config__legend-toggle input { width: 12px; height: 12px; margin: 0; accent-color: #1554b2; }
 .encoding-config__angle abbr { color: #b42318; text-decoration: none; }
-.encoding-config__angle label { display: flex; align-items: center; min-width: 0; gap: 6px; padding: 6px 7px; border: 1px solid rgba(24, 33, 47, 0.1); border-radius: 5px; background: #f8fafc; color: #334155; cursor: pointer; }
+.encoding-config__angle label { display: flex; align-items: center; min-width: 0; gap: 6px; padding: 4px 6px; border: 1px solid rgba(24, 33, 47, 0.1); border-radius: 5px; background: #f8fafc; color: #334155; cursor: pointer; }
 .encoding-config__angle label.is-disabled { background: #f1f3f5; color: #97a1ae; cursor: not-allowed; opacity: 0.68; }
 .encoding-config__angle input { width: 14px; height: 14px; flex: 0 0 14px; margin: 0; accent-color: #1554b2; }
 .encoding-config__angle label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .encoding-config__series-drop { padding: 8px; border: 1px dashed rgba(21, 84, 178, 0.28); border-radius: 6px; transition: border-color 120ms ease, background 120ms ease; }
 .encoding-config__series-drop.is-drop-active { border-color: #1554b2; background: #edf6ff; }
 .encoding-config__series-drop.is-drop-invalid { border-color: #b42318; background: #fff1ef; }
-.encoding-config__segment-drop { display: grid; gap: 8px; min-height: 68px; padding: 8px; border: 1px dashed rgba(21, 84, 178, 0.28); border-radius: 6px; background: #fff; color: #516176; font-size: 11px; transition: border-color 120ms ease, background 120ms ease; }
+.encoding-config__segment-drop { display: grid; gap: 6px; min-height: 52px; padding: 7px; border: 1px dashed rgba(21, 84, 178, 0.28); border-radius: 6px; background: #fff; color: #516176; font-size: var(--encoding-config-font-size); transition: border-color 120ms ease, background 120ms ease; }
 .encoding-config__segment-drop.is-drop-active { border-color: #1554b2; background: #edf6ff; }
 .encoding-config__segment-drop.is-drop-invalid { border-color: #b42318; background: #fff1ef; }
 .encoding-config__segment-drop header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .encoding-config__segment-drop header > span { color: #334155; font-weight: 650; }
-.encoding-config__segment-drop p { margin: 0; color: #718096; font-size: 9px; }
+.encoding-config__segment-drop p { margin: 0; color: #718096; font-size: var(--encoding-config-font-size); }
 .encoding-config__segment-fields { display: flex; min-width: 0; flex-wrap: wrap; gap: 5px; }
 .encoding-config__segment-fields > span { display: inline-flex; min-width: 0; max-width: 100%; align-items: center; padding-left: 7px; border: 1px solid rgba(21, 84, 178, 0.2); border-radius: 4px; background: #f8fbff; }
-.encoding-config__segment-fields > span > span { min-width: 0; overflow: hidden; color: #334155; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.encoding-config__segment-fields > span > span { min-width: 0; overflow: hidden; color: #334155; font-size: var(--encoding-config-font-size); text-overflow: ellipsis; white-space: nowrap; }
 .encoding-config__segment-fields button { display: inline-grid; width: 24px; height: 24px; flex: 0 0 24px; padding: 0; place-items: center; border: 0; border-left: 1px solid rgba(21, 84, 178, 0.12); background: transparent; color: #687585; cursor: pointer; }
 .encoding-config__segment-fields button:hover { background: #fff1ef; color: #b42318; }
-.encoding-config__radius, .encoding-config__appearance { display: grid; gap: 9px; padding-top: 12px; border-top: 1px solid rgba(24, 33, 47, 0.1); color: #516176; font-size: 11px; }
+.encoding-config__radius, .encoding-config__appearance { display: grid; gap: 7px; padding-top: 8px; border-top: 1px solid rgba(24, 33, 47, 0.1); color: #516176; font-size: var(--encoding-config-font-size); }
 .encoding-config__radius-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.encoding-config__radius-heading strong { color: #1554b2; font-size: 10px; font-weight: 700; }
+.encoding-config__radius-heading strong { color: #1554b2; font-size: var(--encoding-config-font-size); font-weight: 700; }
+.encoding-config__composition-spacing { display: grid; gap: 7px; padding-top: 8px; border-top: 1px solid rgba(24, 33, 47, 0.1); }
+.encoding-config__composition-spacing > strong { color: #334155; font-size: var(--encoding-config-font-size); }
 .encoding-config__segments { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 3px; border-radius: 6px; background: #edf1f5; }
 .encoding-config__segments button { min-height: 28px; border: 0; border-radius: 4px; background: transparent; color: #5b6878; font: inherit; cursor: pointer; }
 .encoding-config__segments button.is-active { background: #fff; color: #1554b2; box-shadow: 0 1px 2px rgba(24, 33, 47, 0.14); font-weight: 700; }
-.encoding-config__static { display: grid; grid-template-columns: minmax(72px, 1fr) minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.encoding-config__static { position: relative; display: grid; grid-template-columns: minmax(72px, 1fr) auto minmax(80px, 1fr); align-items: center; gap: 8px; }
+.encoding-config__static input[type="range"] { width: 100%; accent-color: #1980bd; }
 .encoding-config__option { display: grid; grid-template-columns: minmax(92px, 1fr) minmax(0, 1.25fr); align-items: center; gap: 8px; }
 .encoding-config__option select { width: 100%; height: 34px; padding: 0 8px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 6px; background: #fff; color: #223041; font: inherit; }
 .encoding-config__member-colors { display: grid; gap: 7px; }
@@ -916,22 +1201,19 @@ function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
 .encoding-config__member-styles { display: grid; gap: 7px; }
 .encoding-config__member-styles header,
 .encoding-config__member-styles label { display: grid; grid-template-columns: minmax(48px, 1fr) 30px 40px 62px; align-items: center; gap: 5px; }
-.encoding-config__member-styles header { color: #687585; font-size: 9px; }
-.encoding-config__member-styles header span:first-child { color: #334155; font-size: 11px; font-weight: 650; }
+.encoding-config__member-styles header { color: #687585; font-size: var(--encoding-config-font-size); }
+.encoding-config__member-styles header span:first-child { color: #334155; font-size: var(--encoding-config-font-size); font-weight: 650; }
 .encoding-config__member-styles label > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .encoding-config__member-styles input[type="color"] { width: 30px; height: 28px; padding: 2px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 5px; background: #fff; }
 .encoding-config__member-styles input[type="number"],
-.encoding-config__member-styles select { width: 100%; min-width: 0; height: 28px; padding: 0 4px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 5px; background: #fff; color: #223041; font: inherit; font-size: 9px; }
+.encoding-config__member-styles select { width: 100%; min-width: 0; height: 28px; padding: 0 4px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 5px; background: #fff; color: #223041; font: inherit; font-size: var(--encoding-config-font-size); }
 .encoding-config__static input[type="color"] { width: 38px; height: 28px; padding: 2px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 5px; background: #fff; }
 .encoding-config__static input[type="range"] { width: 100%; accent-color: #1980bd; }
 .encoding-config__static output { min-width: 40px; color: #687585; font-variant-numeric: tabular-nums; text-align: right; }
-.encoding-config__empty, .encoding-config__error { margin: 0; font-size: 11px; line-height: 1.4; }
+.encoding-config__empty, .encoding-config__error { margin: 0; font-size: var(--encoding-config-font-size); line-height: 1.4; }
 .encoding-config__empty { color: #6b7889; }
 .encoding-config__error { color: #b42318; }
 .encoding-config__facet-directions { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); width: 100%; gap: 4px; }
-.encoding-config__facet-directions button { width: 100%; height: 34px; padding: 0 8px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 6px; background: #fff; color: #516176; font: inherit; font-size: 10px; cursor: pointer; }
+.encoding-config__facet-directions button { width: 100%; height: 34px; padding: 0 8px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 6px; background: #fff; color: #516176; font: inherit; font-size: var(--encoding-config-font-size); cursor: pointer; }
 .encoding-config__facet-directions button.is-active { border-color: #b42318; background: #fff1ef; color: #8c2929; font-weight: 700; }
-.encoding-config__actions { display: flex; justify-content: flex-end; }
-.encoding-config__actions button { min-height: 32px; padding: 0 10px; border: 1px solid #1554b2; border-radius: 6px; background: #1554b2; color: #fff; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
-.encoding-config__actions button:disabled { cursor: default; opacity: 0.45; }
 </style>

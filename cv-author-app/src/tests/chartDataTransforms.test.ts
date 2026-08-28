@@ -60,6 +60,49 @@ describe("chart data transforms", () => {
     expect(top.rows.map((row) => row.sales)).toEqual(["30", "40"]);
   });
 
+  it("selects top bars by their aggregated group value", () => {
+    const groupedDataset: Dataset = {
+      ...dataset,
+      rows: [
+        { region: "East", quarter: "Q1", sales: "30" },
+        { region: "East", quarter: "Q2", sales: "30" },
+        { region: "West", quarter: "Q1", sales: "50" },
+        { region: "West", quarter: "Q2", sales: "1" },
+      ],
+    };
+    const result = materializeChartDataTransforms(groupedDataset, [{
+      id: "single-bar-value-order",
+      kind: "order",
+      mode: "group-value",
+      groupField: "region",
+      valueField: "sales",
+      operation: "sum",
+      direction: "descending",
+      limit: 1,
+    }]);
+
+    expect(result.rows.map((row) => row.region)).toEqual(["East", "East"]);
+  });
+
+  it("orders complete bar groups while preserving row order within each bar", () => {
+    const result = materialize([{
+      id: "single-bar-value-order",
+      kind: "order",
+      mode: "group-value",
+      groupField: "region",
+      valueField: "sales",
+      operation: "sum",
+      direction: "descending",
+    }]);
+
+    expect(result.rows.map((row) => `${row.region}-${row.quarter}`)).toEqual([
+      "West-Q1",
+      "West-Q2",
+      "East-Q1",
+      "East-Q2",
+    ]);
+  });
+
   it("groups a category and calculates a numeric average", () => {
     const result = materialize([{
       id: "average-by-region",

@@ -68,6 +68,9 @@ export type CartesianCoordinateGuide = {
   showAllAxes?: boolean;
   showXLine?: boolean;
   showYLine?: boolean;
+  /** Per-axis tick/label visibility. Falls back to showDiscreteLabels. */
+  showXLabels?: boolean;
+  showYLabels?: boolean;
   showDiscreteLabels?: boolean;
   xDiscreteSpacing?: number;
   yDiscreteSpacing?: number;
@@ -162,11 +165,23 @@ export type ChartBinAggregateTransform = {
   outputField: string;
 };
 
+export type ChartGroupValueOrderTransform = {
+  id: string;
+  kind: "order";
+  mode: "group-value";
+  groupField: string;
+  valueField: string;
+  operation: "sum" | "avg";
+  direction: "source" | "ascending" | "descending";
+  limit?: number;
+};
+
 export type ChartDataTransform =
   | ChartValueFilterTransform
   | ChartNumericFilterTransform
   | ChartGroupAggregateTransform
-  | ChartBinAggregateTransform;
+  | ChartBinAggregateTransform
+  | ChartGroupValueOrderTransform;
 
 export type DatasetTable = {
   columns: DataColumn[];
@@ -461,6 +476,8 @@ export type CompositionSpec = {
   facetField?: string;
   facetValues?: string[];
   facetDirection?: "row" | "column";
+  facetRowGap?: number;
+  facetColumnGap?: number;
   facetCoordinateSystem?: "Cartesian" | "Polar";
   facetThetaField?: string;
   facetRadiusField?: string;
@@ -1021,6 +1038,8 @@ export type MoveInteraction = {
   scopeGroupId?: string;
   historyCommitted: boolean;
   transformOnly?: boolean;
+  deferred?: boolean;
+  nestedRelationshipIds?: string[];
 };
 
 export type MarqueeInteraction = {
@@ -1110,7 +1129,18 @@ export type CanvasHistoryPatch = {
   editingGroupPath?: string[];
 };
 
-export type CanvasHistoryEntry = CanvasHistorySnapshot | CanvasHistoryPatch;
+export type CanvasHistoryPositionChange = {
+  nodeId: string;
+  before: Point;
+  after: Point;
+};
+
+export type CanvasHistoryPositionPatch = {
+  kind: "position";
+  changes: CanvasHistoryPositionChange[];
+};
+
+export type CanvasHistoryEntry = CanvasHistorySnapshot | CanvasHistoryPatch | CanvasHistoryPositionPatch;
 
 export type ContextMenuState = {
   x: number;

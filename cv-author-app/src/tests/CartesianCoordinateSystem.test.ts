@@ -267,5 +267,15 @@ describe("independent Cartesian axis component", () => {
     expect(ownerLayer.children).toHaveLength(1);
     expect(ownerLayer.children[0].type).toBe(CartesianCoordinateSystem);
     expect(memberLayer).toBeNull();
+
+    const editingMemberLayer = (CanvasCoordinateSystemLayer as any).setup({
+      node: member,
+      draggingNodeId: null,
+      editingCompositionId: compositionSpec.id,
+      hiddenNodeIds: new Set<string>(),
+      allowHiddenNodeId: null,
+    })();
+    expect(editingMemberLayer.children).toHaveLength(1);
+    expect(editingMemberLayer.children[0].type).toBe(CartesianCoordinateSystem);
   });
 });

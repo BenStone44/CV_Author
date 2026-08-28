@@ -671,7 +671,7 @@ watch(() => props.layerType, () => {
   fitMapToLayerData();
   void loadExampleData(props.layerType);
 });
-watch(() => props.config, updateOverlay, { deep: true });
+watch(() => [props.config.size, props.config.color], updateOverlay);
 watch(() => [
   props.binding?.datasetId,
   props.binding?.geometrySourceId,

@@ -104,7 +104,7 @@ describe("independent Polar coordinate system component", () => {
     expect(createPolarCoordinateSystemModel(node, 0.5)?.radius).toBe(48);
   });
 
-  it("renders overlapping boundary rays with separate 15-degree control arcs", () => {
+  it("keeps polar controls without rendering boundary rays or control arcs", () => {
     const node = polarNode();
     const render = (PolarCoordinateSystem as any).setup({
       node,
@@ -118,30 +118,17 @@ describe("independent Polar coordinate system component", () => {
 
     expect(coordinateSystem.props.class).toContain("polar-coordinate-system");
     expect(coordinateSystem.props.transform).toBeUndefined();
-    expect(coordinateSystem.children).toHaveLength(7);
+    expect(coordinateSystem.children).toHaveLength(2);
 
     const radiusAxes = coordinateSystem.children.filter((child: any) =>
       classes(child).includes("polar-coordinate-radius-axis"),
     );
-    expect(radiusAxes).toHaveLength(2);
-    expect(radiusAxes[0].props).toMatchObject({
-      x1: 110,
-      y1: 100,
-      x2: 276,
-      y2: 100,
-    });
-    expect(radiusAxes[1].props).toMatchObject({
-      x1: radiusAxes[0].props.x1,
-      y1: radiusAxes[0].props.y1,
-      x2: radiusAxes[0].props.x2,
-      y2: radiusAxes[0].props.y2,
-    });
+    expect(radiusAxes).toHaveLength(0);
 
     const angleAxes = coordinateSystem.children.filter((child: any) =>
       classes(child).includes("polar-coordinate-angle-axis"),
     );
-    expect(angleAxes).toHaveLength(2);
-    expect(angleAxes.every((axis: any) => axis.type === "path")).toBe(true);
+    expect(angleAxes).toHaveLength(0);
 
     const labels = coordinateSystem.children.filter((child: any) => child.type === "text");
     expect(labels).toHaveLength(0);
@@ -292,7 +279,6 @@ describe("independent Polar coordinate system component", () => {
       nestedPlacements: [],
       nestedRenderedChildIds: new Set<string>(),
       onNodePointerDown: vi.fn(),
-      onNodeDoubleClick: null,
       onNodeContextMenu: null,
       onMarkPointerDown: null,
       onEditingBackgroundPointerDown: null,
@@ -329,7 +315,6 @@ describe("independent Polar coordinate system component", () => {
       nestedPlacements: [],
       nestedRenderedChildIds: new Set<string>(),
       onNodePointerDown: vi.fn(),
-      onNodeDoubleClick: null,
       onNodeContextMenu: null,
       onMarkPointerDown: null,
       onEditingBackgroundPointerDown: null,

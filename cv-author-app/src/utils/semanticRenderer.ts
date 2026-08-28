@@ -448,27 +448,43 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
       });
     }
     const components = segment
-      ? Array.from(new Set(input.dataset.rows.map((row) => row[segment.field] ?? "")))
-        .filter(Boolean)
-        .map((segmentValue) => {
-          const rows = input.dataset.rows.filter((row) => (row[segment.field] ?? "") === segmentValue);
-          const numericValues = rows
-            .map((row) => Number(row[segmentThetaField] ?? ""))
-            .filter(Number.isFinite);
-          const total = numericValues.reduce((sum, current) => sum + Math.max(0, current), 0);
-          return {
+      ? valueAggregation
+        ? Array.from(new Set(input.dataset.rows.map((row) => row[segment.field] ?? "")))
+          .filter(Boolean)
+          .map((segmentValue) => {
+            const rows = input.dataset.rows.filter((row) => (row[segment.field] ?? "") === segmentValue);
+            const numericValues = rows
+              .map((row) => Number(row[segmentThetaField] ?? ""))
+              .filter(Number.isFinite);
+            const total = numericValues.reduce((sum, current) => sum + Math.max(0, current), 0);
+            return {
+              field: segmentValue,
+              categoryKey: segmentValue,
+              thetaField: segmentThetaField,
+              flattenValues: [] as string[],
+              rows,
+              value: valueAggregation === "avg" && numericValues.length > 0
+                ? total / numericValues.length
+                : total,
+            };
+          })
+        : input.dataset.rows.flatMap((row, rowIndex) => {
+          const segmentValue = row[segment.field] ?? "";
+          const thetaValue = Number(row[segmentThetaField] ?? "");
+          if (!segmentValue || !Number.isFinite(thetaValue)) return [];
+          return [{
             field: segmentValue,
+            categoryKey: key(input.dataset, row, rowIndex) || String(rowIndex),
             thetaField: segmentThetaField,
             flattenValues: [] as string[],
-            rows,
-            value: valueAggregation === "avg" && numericValues.length > 0
-              ? total / numericValues.length
-              : total,
-          };
+            rows: [row],
+            value: Math.max(0, thetaValue),
+          }];
         })
       : Array.from(flattenedGroups.values()).flatMap((flattened) =>
         angleFields.map((encoding) => ({
           field: encoding.field,
+          categoryKey: [...flattened.values, encoding.field].join(" / "),
           thetaField: encoding.field,
           flattenValues: flattened.values,
           rows: flattened.rows,
@@ -509,15 +525,21 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
     const seriesStyles = isSeriesStyleMapping(config.seriesStyleMapping)
       ? config.seriesStyleMapping.values
       : {};
+    const segmentPaletteIndexes = new Map<string, number>();
+    components.forEach((component) => {
+      if (!segmentPaletteIndexes.has(component.field)) {
+        segmentPaletteIndexes.set(component.field, segmentPaletteIndexes.size);
+      }
+    });
     const arcs = layout.map((datum, index) => {
       const component = components[index];
       const field = component?.field ?? String(index + 1);
-      const categoryKey = [...(component?.flattenValues ?? []), field].join(" / ");
+      const categoryKey = component?.categoryKey ?? [...(component?.flattenValues ?? []), field].join(" / ");
       const radiusValue = componentRadiusValues[index] ?? Number.NaN;
       const componentOuterRadius = Number.isFinite(radiusValue) ? radiusScale(radiusValue) : outerRadius;
       const path = arc<any>().innerRadius(markInnerRadius).outerRadius(componentOuterRadius);
       const color = seriesStyles[field]?.color
-        ?? (palette[index % palette.length]!);
+        ?? palette[(segmentPaletteIndexes.get(field) ?? index) % palette.length]!;
       return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="arc" data-mark-group-id="mark-group:${esc(input.chartId)}:arc" data-category-key="${esc(categoryKey)}" data-segment-value="${esc(field)}" data-theta-field="${esc(component?.thetaField ?? "")}" data-theta-value="${componentValues[index] ?? 0}" data-angle-field="${esc(component?.thetaField ?? "")}" data-angle-value="${componentValues[index] ?? 0}" data-flatten-fields="${esc(flattenFields.join("|"))}" data-flatten-values="${esc((component?.flattenValues ?? []).join("|"))}" data-radius-mode="${radiusMode}" data-radius-field="${esc(radius?.field ?? "")}" data-radius-value="${Number.isFinite(radiusValue) ? radiusValue : ""}" d="${path(datum) ?? ""}" transform="translate(${cx} ${cy})" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 1)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
     }).join("");
     const thetaFields = Array.from(new Set(components.map((component) => component.thetaField)));

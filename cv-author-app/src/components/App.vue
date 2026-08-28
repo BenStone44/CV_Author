@@ -16,6 +16,7 @@ import { CanvasCoordinateSystemLayer } from "./CartesianCoordinateSystem";
 import { PolarCoordinateSystem } from "./PolarCoordinateSystem";
 import CsvDataPanel from "./CsvDataPanel.vue";
 import EncodingConfigPanel from "./EncodingConfigPanel.vue";
+import CompositionConfigPanel from "./CompositionConfigPanel.vue";
 import type {
   CanvasNode,
   ChartDataTransform,
@@ -34,8 +35,6 @@ import {
   getFilterIconSvg,
 } from "../stores/useCanvasStore";
 import { useDatasetStore } from "../stores/useDatasetStore";
-import { useLlmRenderer } from "../stores/useLlmRenderer";
-import { isLineChartType } from "../utils/lineRenderer";
 import {
   isCategoricalColorMapping,
   isSeriesStyleMapping,
@@ -46,8 +45,11 @@ import {
 } from "../utils/chartTemplateCategories";
 import { getGeographicLayerFamily } from "../utils/geographicLayerCards";
 
+const EMPTY_SELECTION_IDS: string[] = [];
+
 const canvasRef = ref<HTMLElement | null>(null);
 const encodingInspectorOpen = ref(true);
+const compositionInspectorOpen = ref(false);
 const activeTemplateCategoryId = ref<string | null>(null);
 const templateCategoryMenuPosition = ref({ left: 0, top: 0, width: 560 });
 const facetClueDialog = ref<{
@@ -67,6 +69,7 @@ const {
   implementedTemplateCandidates,
   compositionCandidates,
   canvasNodes,
+  chartRelationships,
   viewZoom,
   viewPan,
   selectedIds,
@@ -99,6 +102,7 @@ const {
   loadingDrop,
   importNotice,
   selectedNodes,
+  passiveCompositeSelection,
   selectionBounds,
   selectionFrame,
   selectionPolarOutlines,
@@ -137,7 +141,6 @@ const {
   onCanvasWheel,
   onCanvasContextMenu,
   onCanvasNodePointerDown,
-  onCanvasNodeDoubleClick,
   enterSelection,
   configureSelectionComposition,
   exitSelectionHierarchy,
@@ -151,6 +154,7 @@ const {
   onCoordinateAxisScalePointerDown,
   onPolarAnglePointerDown,
   setAxisBindingAggregation,
+  setSingleBarValueOrder,
   setAxisSwap,
   setCoordinateGuideAppearance,
   clearSeriesBinding,
@@ -196,7 +200,6 @@ const {
   updateNestedPosition,
   resetNestedPosition,
   closeNestedPositionEditor,
-  applyLlmRenderer,
   applyInputColumnIntent,
   closeDimensionDropDecision,
   reorderSelectedNodes,
@@ -220,6 +223,21 @@ const chartTransformNode = computed(() => {
   const ownerId = members[0]?.coordinateSystem?.ownerNodeId;
   const owner = members.find((member) => member.id === ownerId) ?? members[0];
   return owner?.chartSpec ? owner : null;
+});
+const selectedCompositionSpec = computed(() => {
+  const selectedNode = selectedNodes.value[0];
+  const composition = selectedNode?.compositionSpec;
+  if (!composition) return null;
+  // Facets are materialized as a group container. The container is the
+  // active composite selection even though its member chart ids are nested
+  // below it and therefore cannot appear in selectedIds.
+  if (selectedNodes.value.length === 1
+    && selectedNode?.kind === "group"
+    && composition.type === "facet") return composition;
+  const selected = new Set(selectedIds.value);
+  return composition.members.every((member) => selected.has(member.nodeId))
+    ? composition
+    : null;
 });
 const implementedTemplateCategories = computed(() =>
   groupChartTemplateCandidates(implementedTemplateCandidates.value.filter((candidate) =>
@@ -358,6 +376,88 @@ const axisBindingRows = computed(() => {
     ? materializeChartDataTransforms(dataset, axisBindingNode.value.chartSpec.dataTransforms).rows
     : dataset?.rows ?? [];
 });
+
+function findCanvasNodeInTree(nodes: CanvasNode[], nodeId: string): CanvasNode | null {
+  for (const node of nodes) {
+    if (node.id === nodeId) return node;
+    if (node.kind === "group") {
+      const child = findCanvasNodeInTree(node.children, nodeId);
+      if (child) return child;
+    }
+  }
+  return null;
+}
+
+function findFirstChartNodeInTree(nodes: CanvasNode[]): CanvasNode | null {
+  for (const node of nodes) {
+    if (node.chartSpec) return node;
+    if (node.kind === "group") {
+      const child = findFirstChartNodeInTree(node.children);
+      if (child) return child;
+    }
+  }
+  return null;
+}
+
+function encodingDatasetFor(node: CanvasNode) {
+  const dataset = node.chartSpec ? getDataset(node.chartSpec.datasetId) : null;
+  return dataset && node.chartSpec
+    ? materializeChartDataTransforms(dataset, node.chartSpec.dataTransforms)
+    : null;
+}
+
+function boundEncodingFields(node: CanvasNode) {
+  const spec = node.chartSpec;
+  if (!spec) return new Set<string>();
+  return new Set([
+    ...Object.values(spec.encodings).flatMap((encoding) => encoding ? [encoding.field] : []),
+    ...(spec.series ? [spec.series.field] : []),
+    ...(spec.seriesFields?.map((encoding) => encoding.field) ?? []),
+    ...(spec.valueFields?.map((encoding) => encoding.field) ?? []),
+    ...(spec.angleFields?.map((encoding) => encoding.field) ?? []),
+    ...(spec.parallelFields?.map((encoding) => encoding.field) ?? []),
+  ]);
+}
+
+const nestedEncodingPair = computed(() => {
+  const focusedId = axisBindingNode.value?.id;
+  if (!focusedId) return null;
+  const relationship = Object.values(chartRelationships.value.nestedRelationships).find((candidate) =>
+    candidate.status === "active"
+      && (candidate.parentChartId === focusedId || candidate.childChartId === focusedId));
+  if (!relationship) return null;
+  const parent = findCanvasNodeInTree(canvasNodes.value, relationship.parentChartId);
+  const child = findCanvasNodeInTree(canvasNodes.value, relationship.childChartId);
+  return parent?.chartSpec && child?.chartSpec
+    ? { parent, child }
+    : null;
+});
+
+const nestedEncodingEntries = computed(() => {
+  const pair = nestedEncodingPair.value;
+  if (!pair) return [];
+  const parentDataset = encodingDatasetFor(pair.parent);
+  const childDataset = encodingDatasetFor(pair.child);
+  const fatherFields = boundEncodingFields(pair.parent);
+  const childFields = new Set(childDataset?.columns.map((column) => column.name) ?? []);
+  const fatherColumns = parentDataset?.columns.filter((column) =>
+    fatherFields.has(column.name) && childFields.has(column.name)) ?? [];
+  return [
+    {
+      role: "Father",
+      node: pair.parent,
+      dataset: parentDataset,
+      fatherColumns: [],
+    },
+    {
+      role: "Child",
+      node: pair.child,
+      dataset: childDataset,
+      fatherColumns,
+    },
+  ];
+});
+
 function onChartTransformsChange(transforms: ChartDataTransform[]) {
   const node = chartTransformNode.value;
   if (node) setChartDataTransforms(node.id, transforms);
@@ -442,15 +542,6 @@ const seriesItemLegends = computed(() => seriesItemPresentations.value.flatMap((
     },
   }];
 }));
-const llmRenderer = useLlmRenderer();
-const {
-  status: llmStatus,
-  error: llmError,
-  provenance: llmProvenance,
-} = llmRenderer;
-// Keep the experimental renderer disabled while template rendering is the default.
-const llmRendererPaused = true;
-const encodingReviewApprovedKey = ref("");
 const nestedBindingPopupRef = ref<HTMLElement | null>(null);
 const nestedBindingPopupPosition = ref<{ left: number; top: number } | null>(null);
 const nestedPointXField = ref("");
@@ -702,21 +793,6 @@ function isPolarChartType(chartType: string) {
   return type.includes("pie") || type.includes("donut");
 }
 
-function encodingReviewKey(node: CanvasNode | null) {
-  if (!node?.chartSpec) return "";
-  const { encodings, series, angleFields, parallelFields } = node.chartSpec;
-  return [
-    node.id,
-    node.chartSpec.chartType,
-    ...Object.entries(encodings).sort(([left], [right]) => left.localeCompare(right)).map(([channel, encoding]) => `${channel}:${encoding?.field ?? ""}`),
-    series?.field ?? "",
-    ...(angleFields ?? []).map((encoding) => `segment:${encoding.field}`),
-    ...(parallelFields ?? []).map((encoding) => `dimension:${encoding.field}`),
-    ...(node.chartSpec.valueFields ?? []).map((encoding) => `value:${encoding.field}`),
-    JSON.stringify(node.chartSpec.aggregations ?? {}),
-  ].join("|");
-}
-
 const activeCompositionType = ref<CompositionType | null>(null);
 const axisBindingMarkGroupConfig = computed(() =>
   axisBindingNode.value?.chartSpec?.markGroups?.[0]?.sharedConfig ?? {},
@@ -740,10 +816,41 @@ const llmDataset = computed(() => {
     llmNode.value?.layerSpec?.datasetId ?? llmNode.value?.chartSpec?.datasetId;
   return datasetId ? getDataset(datasetId) : activeDataset.value;
 });
-const encodingTargetNode = computed(() =>
-  selectedNodes.value.find((node) => !!node.chartSpec || node.layerKind === "deckgl")
-  ?? axisBindingNode.value,
-);
+const encodingTargetNode = computed(() => {
+  const selectedNode = selectedNodes.value[0];
+  if (selectedNode?.chartSpec || selectedNode?.layerKind === "deckgl") return selectedNode;
+  if (selectedNode?.kind === "group" && selectedNode.compositionSpec?.type === "facet") {
+    return findFirstChartNodeInTree(selectedNode.children) ?? axisBindingNode.value;
+  }
+  return axisBindingNode.value;
+});
+const compositionMemberEncodingEntries = computed(() => {
+  const node = axisBindingNode.value;
+  const composition = node?.compositionSpec;
+  if (!node || !composition || (composition.type !== "layer" && composition.type !== "concat")
+    || editingCompositionId.value === composition.id) return [];
+  const ownerId = node.coordinateSystem?.ownerNodeId ?? composition.members[0]?.nodeId;
+  return composition.members
+    .filter((member) => member.nodeId !== ownerId)
+    .map((member) => findCanvasNodeInTree(canvasNodes.value, member.nodeId))
+    .filter((member): member is CanvasNode => !!member?.chartSpec)
+    .map((member) => ({
+      id: member.id,
+      name: member.name,
+      chartType: member.chartSpec!.chartType,
+      encodings: member.chartSpec!.encodings,
+    }));
+});
+const compositionEncodingOnly = computed(() => {
+  const node = selectedNodes.value[0];
+  return selectedNodes.value.length === 1
+    && node?.kind === "group"
+    && node.compositionSpec?.type === "facet";
+});
+const compositionEncodingSectionLabel = computed(() => {
+  const composition = axisBindingNode.value?.compositionSpec;
+  return composition && composition.type !== "facet" ? `${composition.type.toUpperCase()} ENCODINGS` : undefined;
+});
 const canToggleEncodingInspector = computed(() => !!encodingTargetNode.value);
 const dimensionDropNode = computed(() => dimensionDropTarget.value
   ? selectedNodes.value.find((node) => node.id === dimensionDropTarget.value?.nodeId) ?? null
@@ -829,20 +936,39 @@ function selectEncodingTarget(node: CanvasNode) {
 }
 
 function toggleEncodingInspector() {
-  if (encodingInspectorOpen.value) {
+  const target = encodingTargetNode.value;
+  const isOpenForCurrentTarget = encodingInspectorOpen.value
+    && !!axisBindingTarget.value
+    && axisBindingTarget.value.nodeId === target?.id;
+  if (isOpenForCurrentTarget) {
     encodingInspectorOpen.value = false;
     return;
   }
-  const node = encodingTargetNode.value;
-  if (!node) return;
+  if (!target) return;
   closeCompositionCandidates();
-  selectEncodingTarget(node);
+  compositionInspectorOpen.value = false;
+  selectEncodingTarget(target);
   encodingInspectorOpen.value = true;
 }
 
 function closeEncodingInspector() {
   encodingInspectorOpen.value = false;
 }
+
+function openSelectedCompositionConfig() {
+  if (!configureSelectionComposition()) return;
+  if (nestedPositionEditor.value) return;
+  closeCompositionCandidates();
+  encodingInspectorOpen.value = false;
+  compositionInspectorOpen.value = true;
+}
+
+function closeCompositionInspector() {
+  compositionInspectorOpen.value = false;
+}
+watch(selectedCompositionSpec, (composition) => {
+  if (!composition) compositionInspectorOpen.value = false;
+});
 const selectedCanvasNodesWithCoordinateGuides = coordinateGuideNodes;
 const cartesianAxisSwapNode = computed(() => {
   if (semanticSelection.value || selectedIds.value.length !== 1) return null;
@@ -966,11 +1092,36 @@ function onCompositionKeyDown(event: KeyboardEvent) {
     closeNestedBinding();
     closeNestedPositionEditor();
     closeFacetClueDialog();
+    closeCompositionInspector();
   }
 }
 
 function onEncodingChannelChange(channel: ChartEncodingChannel, field: string) {
   setChartEncoding(channel, field);
+}
+
+function withEncodingNode(node: CanvasNode, action: () => void) {
+  const previousTarget = axisBindingTarget.value;
+  axisBindingTarget.value = {
+    nodeId: node.id,
+    channel: previousTarget?.nodeId === node.id
+      ? previousTarget.channel
+      : defaultEncodingChannel(node),
+  };
+  try {
+    action();
+  } finally {
+    axisBindingTarget.value = previousTarget;
+  }
+}
+
+function nestedMarkConfig(node: CanvasNode) {
+  return node.chartSpec?.markGroups?.[0]?.sharedConfig ?? {};
+}
+
+function beginNestedMarkConfigEdit(node: CanvasNode, field: string) {
+  const role = node.chartSpec?.markGroups?.[0]?.role ?? "arc";
+  beginMarkConfigEdit(node.id, role, field);
 }
 
 function onMarkConfigEditStart(field: string) {
@@ -1040,86 +1191,6 @@ function removeSeriesCaptionItem(nodeId: string, field: string, event: Event) {
   event.stopPropagation();
   removeBarItemField(nodeId, field);
 }
-
-function confirmEncodingInspector() {
-  const node = axisBindingNode.value;
-  void nextTick(() => {
-    encodingReviewApprovedKey.value = encodingReviewKey(node);
-  });
-}
-
-async function generateLlmRenderer() {
-  if (llmRendererPaused) return;
-  const node = llmNode.value;
-  const dataset = llmDataset.value;
-  if (!node || !dataset) return;
-  try {
-    const result = await llmRenderer.execute(node, dataset);
-    applyLlmRenderer(node.id, result);
-  } catch {
-    // The deterministic/original content remains untouched on any failure.
-  }
-}
-
-let autoLlmRequestKey = "";
-watch(
-  [
-    () => llmNode.value?.id ?? "",
-    () => llmNode.value?.chartSpec?.chartType ?? "",
-    () => llmNode.value?.chartSpec?.datasetId ?? "",
-    () => llmNode.value?.chartSpec?.encodings.x?.field ?? "",
-    () => llmNode.value?.chartSpec?.encodings.y?.field ?? "",
-    () => llmNode.value?.chartSpec?.series?.field ?? "",
-    () => llmNode.value?.chartSpec?.encodings.color?.field ?? "",
-    () => llmNode.value?.chartSpec?.encodings.size?.field ?? "",
-    () => llmNode.value?.chartSpec?.encodings.shape?.field ?? "",
-    encodingReviewApprovedKey,
-  ],
-  ([
-    nodeId,
-    chartType,
-    datasetId,
-    xField,
-    yField,
-    seriesField,
-    colorField,
-    sizeField,
-    shapeField,
-    approvedKey,
-  ]) => {
-    if (llmRendererPaused) return;
-    if (
-      !nodeId ||
-      (!isLineChartType(chartType) && !isScatterChartType(chartType)) ||
-      !xField ||
-      !yField ||
-      !llmDataset.value
-    )
-      return;
-    const node = llmNode.value;
-    if (!node || approvedKey !== encodingReviewKey(node)) return;
-    if (node.llmRenderer?.status === "ready") return;
-    const key = [
-      nodeId,
-      datasetId,
-      xField,
-      yField,
-      seriesField,
-      colorField,
-      sizeField,
-      shapeField,
-    ].join("|");
-    if (autoLlmRequestKey === key) return;
-    autoLlmRequestKey = key;
-    void generateLlmRenderer();
-  },
-  { flush: "post" },
-);
-
-watch(encodingTargetNode, (node) => {
-  if (!node) return;
-  selectEncodingTarget(node);
-}, { immediate: true });
 
 onMounted(() => {
   window.addEventListener("keydown", onCompositionKeyDown);
@@ -1538,6 +1609,23 @@ onBeforeUnmount(() => {
           </div>
 
           <aside
+            v-if="compositionInspectorOpen && selectedCompositionSpec && axisBindingTarget"
+            class="encoding-inspector"
+            role="dialog"
+            aria-modal="false"
+            :aria-label="`Configure ${selectedCompositionSpec.type} composition`"
+            @click.stop
+            @pointerdown.stop
+          >
+            <CompositionConfigPanel
+              :composition-spec="selectedCompositionSpec"
+              :columns="axisBindingColumns"
+              @close="closeCompositionInspector"
+              @change="onCompositionEncodingChange"
+            />
+          </aside>
+
+          <aside
             v-if="encodingInspectorOpen && axisBindingTarget"
             id="encoding-inspector"
             class="encoding-inspector"
@@ -1547,18 +1635,72 @@ onBeforeUnmount(() => {
             @click.stop
             @pointerdown.stop
           >
+            <div v-if="nestedEncodingPair" class="nested-encoding-config">
+              <header class="nested-encoding-config__header">
+                <div>
+                  <strong>NESTED ENCODINGS</strong>
+                  <span>Father and child</span>
+                </div>
+                <button type="button" title="Close" aria-label="Close encoding panel" @click="closeEncodingInspector">
+                  <X :size="16" :stroke-width="1.6" aria-hidden="true" />
+                </button>
+              </header>
+              <section class="nested-encoding-config__composite" aria-label="Nested composite coordinate system">
+                <strong>NESTED COMPOSITE</strong>
+                <span>Parent coordinate frame - child positioned inside parent marks</span>
+              </section>
+              <details
+                v-for="entry in nestedEncodingEntries"
+                :key="entry.node.id"
+                class="nested-encoding-config__section"
+                :aria-label="`${entry.role} encodings`"
+              >
+                <summary>{{ entry.role }} - {{ entry.node.chartSpec?.chartType ?? entry.node.name }}</summary>
+                <EncodingConfigPanel
+                  v-if="entry.node.chartSpec"
+                  embedded
+                  :section-label="entry.role"
+                  :chart-name="entry.node.chartSpec.chartType ?? entry.node.name"
+                  :chart-spec="entry.node.chartSpec"
+                  :coordinate-guide="entry.node.coordinateGuide"
+                  :composition-spec="entry.node.compositionSpec"
+                  :columns="entry.dataset?.columns ?? []"
+                  :father-columns="entry.fatherColumns"
+                  :rows="entry.dataset?.rows ?? []"
+                  :mark-config="nestedMarkConfig(entry.node)"
+                  :renderer-error="entry.node.chartSpec.renderer?.error"
+                  @channel-change="(channel, field) => withEncodingNode(entry.node, () => onEncodingChannelChange(channel, field))"
+                  @composition-change="(patch) => withEncodingNode(entry.node, () => onCompositionEncodingChange(patch))"
+                  @axis-swap="(swapped) => setAxisSwap(swapped, entry.node.id)"
+                  @coordinate-guide-change="(patch) => withEncodingNode(entry.node, () => onCoordinateGuideChange(patch))"
+                  @coordinate-axis-reverse="(axis) => withEncodingNode(entry.node, () => onCoordinateAxisReverse(axis))"
+                  @series-field-change="(field) => withEncodingNode(entry.node, () => onSeriesFieldChange(field))"
+                  @series-fields-change="(fields) => withEncodingNode(entry.node, () => onSeriesFieldsChange(fields))"
+                  @value-series-fields-change="(fields) => withEncodingNode(entry.node, () => setValueSeriesFields(fields))"
+                  @segment-fields-change="(fields) => withEncodingNode(entry.node, () => setPolarSegmentFields(fields))"
+                  @parallel-fields-change="(fields) => withEncodingNode(entry.node, () => setParallelFields(fields))"
+                  @aggregation-change="(channel, aggregation) => withEncodingNode(entry.node, () => setAxisBindingAggregation(channel, aggregation))"
+                  @single-bar-value-order-change="(direction, topN) => withEncodingNode(entry.node, () => setSingleBarValueOrder(direction, topN))"
+                  @mark-config-change="(patch) => withEncodingNode(entry.node, () => updateAxisBindingMarkGroupConfig(patch))"
+                  @mark-config-edit-start="(field) => beginNestedMarkConfigEdit(entry.node, field)"
+                  @mark-config-edit-end="commitMarkConfigEdit"
+                />
+              </details>
+            </div>
             <EncodingConfigPanel
-              v-if="axisBindingNode?.chartSpec"
-              :chart-name="axisBindingNode.chartSpec.chartType ?? axisBindingNode.name"
+              v-else-if="axisBindingNode?.chartSpec"
+              :chart-name="compositionEncodingOnly ? 'Facet' : (axisBindingNode.chartSpec.chartType ?? axisBindingNode.name)"
+              :section-label="compositionEncodingOnly ? 'COMPOSITION ENCODINGS' : compositionEncodingSectionLabel"
+              :composition-only="compositionEncodingOnly"
               :chart-spec="axisBindingNode.chartSpec"
               :coordinate-guide="axisBindingNode.coordinateGuide"
               :composition-spec="axisBindingNode.compositionSpec"
+              :composition-members="compositionMemberEncodingEntries"
               :columns="axisBindingColumns"
               :rows="axisBindingRows"
               :mark-config="axisBindingMarkGroupConfig"
               :renderer-error="axisBindingRendererError"
               @close="closeEncodingInspector"
-              @confirm="confirmEncodingInspector"
               @channel-change="onEncodingChannelChange"
               @composition-change="onCompositionEncodingChange"
               @axis-swap="onAxisSwap"
@@ -1570,6 +1712,7 @@ onBeforeUnmount(() => {
               @segment-fields-change="setPolarSegmentFields"
               @parallel-fields-change="setParallelFields"
               @aggregation-change="setAxisBindingAggregation"
+              @single-bar-value-order-change="setSingleBarValueOrder"
               @mark-config-change="updateAxisBindingMarkGroupConfig"
               @mark-config-edit-start="onMarkConfigEditStart"
               @mark-config-edit-end="commitMarkConfigEdit"
@@ -2146,16 +2289,15 @@ onBeforeUnmount(() => {
                 v-for="node in visibleCanvasNodes"
                 :key="node.id"
                 :node="node"
-                :selected="selectedIds.includes(node.id)"
+                :selected="false"
                 :interactive="true"
                 :editing-group-path="editingGroupPath"
                 :editing-chart-id="chartDrilldown?.nodeId ?? null"
-                :dragging-node-id="activeDropZone ? compositionDragSourceId : null"
-                :selected-ids="selectedIds"
+                :dragging-node-id="null"
+                :selected-ids="editingGroupPath.length > 0 ? selectedIds : EMPTY_SELECTION_IDS"
                 :nested-placements="nestedRenderPlacements"
                 :nested-rendered-child-ids="nestedRenderedChildIds"
                 :on-node-pointer-down="onCanvasNodePointerDown"
-                :on-node-double-click="onCanvasNodeDoubleClick"
                 :on-node-context-menu="onCanvasNodeContextMenu"
                 :on-mark-pointer-down="onSemanticMarkPointerDown"
                 :on-editing-background-pointer-down="onEditingGroupBackgroundPointerDown"
@@ -2164,7 +2306,8 @@ onBeforeUnmount(() => {
                 v-for="node in visibleCanvasNodes"
                 :key="`coordinate-system-${node.id}`"
                 :node="node"
-                :dragging-node-id="activeDropZone ? compositionDragSourceId : null"
+                :dragging-node-id="null"
+                :editing-composition-id="editingCompositionId"
                 :hidden-node-ids="nestedRenderedChildIds"
               />
               <g v-if="activeDropZone" :transform="editingGroupTransform" class="composition-drop-zone-layer">
@@ -2245,6 +2388,7 @@ onBeforeUnmount(() => {
                 v-for="legend in seriesItemLegends"
                 :key="`series-item-legend-${legend.node.id}`"
                 :transform="editingGroupTransform"
+                :data-canvas-owner-node-id="legend.node.id"
                 class="series-item-legend-layer"
               >
                 <g :transform="`rotate(${legend.legendFrame.rotation} ${legend.legendFrame.center.x} ${legend.legendFrame.center.y})`">
@@ -2274,6 +2418,7 @@ onBeforeUnmount(() => {
               <g
                 v-if="seriesItemOverlay"
                 :transform="editingGroupTransform"
+                :data-canvas-owner-node-id="seriesItemOverlay.node.id"
                 class="series-item-drop-guide"
               >
                 <g
@@ -2450,7 +2595,7 @@ onBeforeUnmount(() => {
                   :vector-effect="'non-scaling-stroke'"
                 />
                 <g v-if="selectionFrame">
-                  <template v-if="selectionPolarOutlines.length > 0">
+                  <template v-if="!passiveCompositeSelection && selectionPolarOutlines.length > 0">
                     <path
                       v-for="outline in selectionPolarOutlines"
                       :key="`polar-selection-${outline.key}`"
@@ -2499,7 +2644,7 @@ onBeforeUnmount(() => {
                     />
                   </g>
                   <circle
-                    v-if="canTransformSelection"
+                    v-if="canTransformSelection && !passiveCompositeSelection"
                     v-for="handle in scaleHandles"
                     :key="handle.key"
                     class="selection-handle"
@@ -2510,7 +2655,7 @@ onBeforeUnmount(() => {
                     @pointerdown="onScaleHandlePointerDown(handle.key, $event)"
                   />
                   <line
-                    v-if="canTransformSelection && rotateHandle"
+                    v-if="canTransformSelection && !passiveCompositeSelection && rotateHandle"
                     class="rotate-stem"
                     :x1="rotateHandle.stemX"
                     :y1="rotateHandle.stemY"
@@ -2518,7 +2663,7 @@ onBeforeUnmount(() => {
                     :y2="rotateHandle.y"
                   />
                   <circle
-                    v-if="canTransformSelection && rotateHandle"
+                    v-if="canTransformSelection && !passiveCompositeSelection && rotateHandle"
                     class="rotate-handle"
                     :cx="rotateHandle.x"
                     :cy="rotateHandle.y"
@@ -2534,9 +2679,9 @@ onBeforeUnmount(() => {
                     tabindex="0"
                     aria-label="Configure composition"
                     :transform="`translate(${selectionFrame.x + selectionFrame.width / 2} ${selectionFrame.y + selectionFrame.height / 2})`"
-                    @pointerdown.stop.prevent="configureSelectionComposition"
-                    @keydown.enter.stop.prevent="configureSelectionComposition"
-                    @keydown.space.stop.prevent="configureSelectionComposition"
+                    @pointerdown.stop.prevent="openSelectedCompositionConfig"
+                    @keydown.enter.stop.prevent="openSelectedCompositionConfig"
+                    @keydown.space.stop.prevent="openSelectedCompositionConfig"
                   >
                     <title>Configure composition</title>
                     <path
@@ -2599,7 +2744,7 @@ onBeforeUnmount(() => {
                 </g>
               </g>
               <PolarCoordinateSystem
-                v-for="node in selectedCanvasNodesWithCoordinateGuides.filter((item) => item.coordinateGuide?.type === 'Polar')"
+                v-for="node in passiveCompositeSelection ? [] : selectedCanvasNodesWithCoordinateGuides.filter((item) => item.coordinateGuide?.type === 'Polar')"
                 :key="`coordinate-guide-${node.id}`"
                 :node="node"
                 :view-zoom="selectionOverlayZoom"
@@ -3327,7 +3472,7 @@ onBeforeUnmount(() => {
   right: 264px;
   z-index: 5;
   width: min(420px, calc(100% - 24px));
-  max-height: calc(100% - 24px);
+  max-height: calc(100% - 82px);
   min-width: 220px;
   box-sizing: border-box;
   overflow-y: auto;
@@ -3338,6 +3483,19 @@ onBeforeUnmount(() => {
   box-shadow: 0 18px 40px rgba(45, 89, 126, 0.2);
   backdrop-filter: blur(12px);
 }
+.nested-encoding-config { display: grid; gap: 9px; }
+.nested-encoding-config__header { position: sticky; top: -12px; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -12px -12px 0; padding: 10px 12px 8px; border-bottom: 1px solid rgba(24, 33, 47, 0.1); background: rgba(255, 255, 255, 0.97); }
+.nested-encoding-config__header > div { display: grid; min-width: 0; gap: 2px; }
+.nested-encoding-config__header strong { color: #18212f; font-size: 11px; letter-spacing: 0.08em; }
+.nested-encoding-config__header span { color: #6b7889; font-size: 10px; }
+.nested-encoding-config__header button { display: inline-grid; width: 28px; height: 28px; flex: 0 0 28px; padding: 0; place-items: center; border: 0; border-radius: 6px; background: transparent; color: #5b6a80; cursor: pointer; }
+.nested-encoding-config__header button:hover { background: #edf5fc; color: #1554b2; }
+.nested-encoding-config__composite { display: grid; gap: 2px; padding: 8px; border: 1px solid rgba(24, 33, 47, 0.1); border-radius: 6px; background: #f4f8fc; }
+.nested-encoding-config__composite strong { color: #263548; font-size: 11px; letter-spacing: 0.08em; }
+.nested-encoding-config__composite span { color: #5f6f82; font-size: 11px; line-height: 1.35; }
+.nested-encoding-config__section { min-width: 0; padding-bottom: 9px; border-bottom: 1px solid rgba(24, 33, 47, 0.12); }
+.nested-encoding-config__section > summary { padding: 7px 0; color: #334155; font-size: 11px; cursor: pointer; }
+.nested-encoding-config__section:last-child { padding-bottom: 0; border-bottom: 0; }
 .nested-position-editor {
   position: absolute;
   left: 16px;
@@ -5156,18 +5314,6 @@ onBeforeUnmount(() => {
   stroke-linejoin: round;
   pointer-events: none;
 }
-.coordinate-guide-layer :deep(.polar-coordinate-radius-axis),
-.coordinate-guide-layer :deep(.polar-coordinate-angle-axis) {
-  fill: none;
-  stroke: rgba(17, 17, 17, 0.78);
-  stroke-width: 1.5;
-  stroke-linecap: round;
-  vector-effect: non-scaling-stroke;
-}
-.coordinate-guide-layer :deep(.polar-coordinate-radius-axis--upper),
-.coordinate-guide-layer :deep(.polar-coordinate-angle-axis--upper) {
-  stroke: #1554b2;
-}
 .coordinate-guide-layer :deep(.polar-coordinate-axis-label) {
   fill: #1554b2;
   font-family: Inter, sans-serif;
@@ -5186,12 +5332,6 @@ onBeforeUnmount(() => {
 .coordinate-guide-layer :deep(.polar-coordinate-angle-hit-target) {
   fill: transparent;
   stroke: transparent;
-}
-.coordinate-guide-layer :deep(.polar-coordinate-radius-handle-stem) {
-  stroke: #1554b2;
-  stroke-width: 1.4;
-  stroke-dasharray: 2 2;
-  pointer-events: none;
 }
 .coordinate-guide-layer :deep(.polar-coordinate-radius-control) {
   cursor: ew-resize;
@@ -5444,6 +5584,7 @@ onBeforeUnmount(() => {
     top: 256px;
     right: 12px;
     width: min(420px, calc(100% - 24px));
+    max-height: calc(100% - 268px);
     min-width: 0;
   }
   .dimension-drop-popup__options {

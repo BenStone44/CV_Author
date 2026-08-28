@@ -29,7 +29,12 @@ Object.defineProperty(globalThis, "window", {
   },
 });
 
-const { getDimensionChartUpgradeOptions, useCanvasStore } = await import("../stores/useCanvasStore");
+const {
+  canResolveNestedParentField,
+  getDimensionChartUpgradeOptions,
+  getNestedParentContextFields,
+  useCanvasStore,
+} = await import("../stores/useCanvasStore");
 const { useDatasetStore } = await import("../stores/useDatasetStore");
 
 const layerDataset: Dataset = {
@@ -132,7 +137,39 @@ function lineChart(id: string, x: number, withSeries: boolean): CanvasGroupNode 
   };
 }
 
-function cartesianChart(id: string, x: number, chartType: "AreaChart" | "LineGraph" | "SingleBarChart") {
+describe("nested parent grain", () => {
+  it("inherits the complete multiline structural grain without the measure", () => {
+    const parent = lineChart("nested-grain-parent", 100, true);
+    parent.chartSpec = {
+      ...parent.chartSpec!,
+      chartType: "MultiLineChart",
+      aggregations: { y: "sum" },
+    };
+
+    expect(getNestedParentContextFields(parent.chartSpec!)).toEqual(["time", "series"]);
+  });
+
+  it("keeps measure coordinates for an unaggregated point", () => {
+    const parent = lineChart("nested-row-parent", 100, false);
+    parent.chartSpec = { ...parent.chartSpec!, chartType: "Scatterplot" };
+
+    expect(getNestedParentContextFields(parent.chartSpec!)).toEqual(["time", "value"]);
+  });
+
+  it("allows a concrete scatter row to supply an unbound nested clue", () => {
+    const parent = lineChart("nested-row-clue-parent", 100, false);
+    parent.chartSpec = { ...parent.chartSpec!, chartType: "Scatterplot" };
+    const row = { ...layerDataset.rows[0]!, university_id: "u01" };
+
+    expect(canResolveNestedParentField(parent.chartSpec!, "university_id", row)).toBe(true);
+    expect(canResolveNestedParentField(parent.chartSpec!, "university_id", undefined)).toBe(false);
+
+    const lineParent = lineChart("nested-line-clue-parent", 100, false);
+    expect(canResolveNestedParentField(lineParent.chartSpec!, "university_id", row)).toBe(false);
+  });
+});
+
+function cartesianChart(id: string, x: number, chartType: "AreaChart" | "LineGraph" | "Scatterplot" | "SingleBarChart") {
   const chart = lineChart(id, x, false);
   chart.chartSpec = {
     ...chart.chartSpec!,
@@ -224,13 +261,6 @@ function pointerEvent(clientX: number, clientY: number) {
   } as unknown as PointerEvent;
 }
 
-function mouseEvent() {
-  return {
-    preventDefault() {},
-    stopPropagation() {},
-  } as unknown as MouseEvent;
-}
-
 function columnDragEvent(datasetId: string, field: string, type: "nominal" | "temporal" | "quantitative", clientX: number, clientY: number) {
   const data = new Map([
     [csvColumnDragMime, encodeCsvColumnDragPayload({ datasetId, field, type })],
@@ -251,7 +281,7 @@ function columnDragEvent(datasetId: string, field: string, type: "nominal" | "te
 }
 
 describe("implemented chart template cards", () => {
-  it("keeps the D3 Gallery image until required encodings are complete", () => {
+  it("keeps the native area SVG until required encodings are complete", () => {
     const dataset: Dataset = {
       id: "area-placeholder-data",
       name: "area-placeholder.csv",
@@ -269,18 +299,20 @@ describe("implemented chart template cards", () => {
     const candidate = store.implementedTemplateCandidates.value.find(
       (item) => item.chartType === "AreaChart",
     );
-    expect(candidate?.svgMarkup).toContain("static.observableusercontent.com/thumbnail/");
+    expect(candidate?.src).toMatch(/^data:image\/svg\+xml/);
+    expect(candidate?.svgMarkup).toContain("<path");
+    expect(candidate?.svgMarkup).not.toContain("<image");
 
     const chart = leaf("area-placeholder", 120, 80);
     chart.name = "Area Chart";
     chart.candidateId = candidate!.id;
     chart.content = candidate!.svgMarkup!;
-    chart.viewBox = "0 0 320 200";
+    chart.viewBox = "0 0 320 180";
     chart.width = 320;
-    chart.height = 200;
+    chart.height = 180;
     chart.coordinateGuide = {
       type: "Cartesian",
-      origin: { x: 0, y: 200 },
+      origin: { x: 0, y: 180 },
       xDirection: 1,
       yDirection: -1,
     };
@@ -298,11 +330,11 @@ describe("implemented chart template cards", () => {
 
     store.setChartEncoding("x", "time");
     expect(chart.renderedContent).toBeNull();
-    expect(chart.content).toContain(candidate!.src);
+    expect(chart.content).toBe(candidate!.svgMarkup);
 
     store.setChartEncoding("y", "weight_kg");
     expect(chart.renderedContent).toContain('data-renderer="deterministic-area@1"');
-    expect(chart.renderedContent).not.toContain(candidate!.src);
+    expect(chart.renderedContent).not.toContain("<image");
   });
 
   it("exposes one independent card for every Bar variant", () => {
@@ -321,17 +353,51 @@ describe("implemented chart template cards", () => {
     ]);
   });
 
-  it("exposes Single Line and Multi-Line as independent D3 Gallery cards", () => {
+  it("exposes Single Line and Multi-Line as independent SVG cards", () => {
     const store = useCanvasStore(ref(null));
-    const lineCards = store.implementedTemplateCandidates.value
-      .filter((candidate) => candidate.chartType === "LineGraph" || candidate.chartType === "MultiLineChart")
-      .map(({ id, name, chartType, src }) => ({ id, name, chartType, src }));
+    const lineCandidates = store.implementedTemplateCandidates.value
+      .filter((candidate) => candidate.chartType === "LineGraph" || candidate.chartType === "MultiLineChart");
+    const lineCards = lineCandidates.map(({ id, name, chartType, src }) => ({ id, name, chartType, src }));
 
     expect(lineCards).toEqual([
       expect.objectContaining({ id: "builtin-template:line", name: "Single Line", chartType: "LineGraph" }),
       expect.objectContaining({ id: "builtin-template:multi-line", name: "Multi-Line Chart", chartType: "MultiLineChart" }),
     ]);
-    expect(lineCards.every((candidate) => candidate.src.includes("static.observableusercontent.com/thumbnail/"))).toBe(true);
+    expect(lineCards.every((candidate) => candidate.src.startsWith("data:image/svg+xml"))).toBe(true);
+    const singleLine = lineCandidates.find((candidate) => candidate.chartType === "LineGraph");
+    const multiLine = lineCandidates.find((candidate) => candidate.chartType === "MultiLineChart");
+    expect(singleLine?.svgMarkup).toContain("<path");
+    expect(singleLine?.svgMarkup).not.toContain("<circle");
+    expect((multiLine?.svgMarkup?.match(/<path/g) ?? []).length).toBe(3);
+  });
+
+  it("uses native SVGs for bar, line, area, point, matrix, and arc templates", () => {
+    const store = useCanvasStore(ref(null));
+    const nativeSvgChartTypes = new Set([
+      "SingleBarChart",
+      "GroupedBarChart",
+      "StackedBarChart",
+      "DivergentBarChart",
+      "DivergentStackedBarChart",
+      "LineGraph",
+      "MultiLineChart",
+      "AreaChart",
+      "StackedAreaChart",
+      "Streamgraph",
+      "HorizonChart",
+      "Scatterplot",
+      "MatrixDiagram",
+      "PieChart",
+      "DonutChart",
+    ]);
+    const candidates = store.implementedTemplateCandidates.value.filter((candidate) =>
+      nativeSvgChartTypes.has(candidate.chartType),
+    );
+
+    expect(candidates).toHaveLength(nativeSvgChartTypes.size);
+    expect(candidates.every((candidate) => candidate.src.startsWith("data:image/svg+xml"))).toBe(true);
+    expect(candidates.every((candidate) => candidate.svgMarkup?.startsWith("<svg"))).toBe(true);
+    expect(candidates.every((candidate) => !candidate.svgMarkup?.includes("<image"))).toBe(true);
   });
 
   it("binds Matrix value through the generic encoding API", () => {
@@ -688,7 +754,8 @@ describe("group editing scope", () => {
     store.canvasNodes.value = createNodes();
 
     const root = store.canvasNodes.value[0] as CanvasGroupNode;
-    store.onCanvasNodeDoubleClick(root, mouseEvent());
+    store.selectedIds.value = [root.id];
+    store.enterSelection();
     expect(store.editingGroupPath.value).toEqual(["root-group"]);
     expect(store.selectedIds.value).toEqual([]);
 
@@ -709,7 +776,8 @@ describe("group editing scope", () => {
 
     const restoredRoot = store.canvasNodes.value[0] as CanvasGroupNode;
     const nested = restoredRoot.children[1] as CanvasGroupNode;
-    store.onCanvasNodeDoubleClick(nested, mouseEvent());
+    store.selectedIds.value = [nested.id];
+    store.enterSelection();
     expect(store.editingGroupPath.value).toEqual(["root-group", "nested"]);
     store.exitGroupEditing();
     expect(store.editingGroupPath.value).toEqual(["root-group"]);
@@ -733,6 +801,88 @@ describe("group editing scope", () => {
 });
 
 describe("composition selection hierarchy", () => {
+  it("selects a composite without side effects and uses only DOM transforms while dragging", () => {
+    listeners.clear();
+    const transformWrites: string[] = [];
+    const svgElement = (id: string, transform: string) => {
+      const attributes = new Map([["transform", transform]]);
+      return {
+        dataset: id ? { nodeId: id } : {},
+        parentElement: null,
+        getAttribute: (name: string) => attributes.get(name) ?? null,
+        setAttribute: (name: string, value: string) => {
+          attributes.set(name, value);
+          if (name === "transform") transformWrites.push(`${id || "selection"}:${value}`);
+        },
+      };
+    };
+    const firstElement = svgElement("composite-member-a", "translate(100 100)");
+    const secondElement = svgElement("composite-member-b", "translate(950 100)");
+    const selectionElement = svgElement("", "");
+    const elements = [firstElement, secondElement, selectionElement];
+    const canvasRef = ref({
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1800, height: 1000 }),
+      querySelectorAll: (selector: string) => selector === "[data-transform-only-base]"
+        ? elements.filter((element) => "transformOnlyBase" in element.dataset)
+        : [firstElement, secondElement],
+      querySelector: (selector: string) => selector === ".selection-overlay" ? selectionElement : null,
+    } as unknown as HTMLElement);
+    const store = useCanvasStore(canvasRef);
+    store.relationshipStore.dispatch({ type: "clear" });
+    const first = lineChart("composite-member-a", 100, false);
+    const second = lineChart("composite-member-b", 950, false);
+    const composition = {
+      id: "composition:deferred-selection",
+      type: "facet" as const,
+      members: [first, second].map((node) => ({
+        nodeId: node.id,
+        sourceNodeId: first.id,
+        chartType: node.chartSpec?.chartType,
+        sharedChannels: [],
+      })),
+      sharedChannels: [],
+    };
+    first.compositionSpec = composition;
+    second.compositionSpec = composition;
+    store.canvasNodes.value = [first, second];
+    store.axisBindingTarget.value = { nodeId: first.id, channel: "x" };
+    const relationshipStateBefore = JSON.stringify(store.chartRelationships.value);
+    const storageBefore = Array.from(storage.entries());
+
+    store.onCanvasNodePointerDown(first, pointerEvent(140, 140));
+
+    expect(store.selectedIds.value).toEqual([first.id, second.id]);
+    expect(store.passiveCompositeSelection.value).toBe(true);
+    expect(store.selectionBounds.value).toEqual({
+      minX: 100,
+      minY: 100,
+      maxX: 1750,
+      maxY: 500,
+      width: 1650,
+      height: 400,
+    });
+    expect(store.interaction.value).toMatchObject({ type: "move", deferred: true });
+    expect(store.axisBindingTarget.value).toBeNull();
+    expect(store.selectedRelationshipEntity.value).toBeNull();
+    expect(store.compositionDragSourceId.value).toBeNull();
+    expect(store.activeDropZone.value).toBeNull();
+
+    listeners.get("pointermove")?.(pointerEvent(190, 180));
+
+    expect([first.x, first.y, second.x, second.y]).toEqual([100, 100, 950, 100]);
+    expect(store.canUndo.value).toBe(false);
+    expect(JSON.stringify(store.chartRelationships.value)).toBe(relationshipStateBefore);
+    expect(Array.from(storage.entries())).toEqual(storageBefore);
+
+    listeners.get("pointerup")?.(pointerEvent(190, 180));
+
+    expect(transformWrites.some((value) => value.includes("translate(50 40)"))).toBe(true);
+    expect([first.x, first.y, second.x, second.y]).toEqual([150, 140, 1000, 140]);
+    expect(store.canUndo.value).toBe(true);
+    expect(JSON.stringify(store.chartRelationships.value)).toBe(relationshipStateBefore);
+    expect(Array.from(storage.entries())).toEqual(storageBefore);
+  });
+
   it("selects and drags every member until the composition is entered", () => {
     const store = useCanvasStore(ref({
       getBoundingClientRect: () => ({ left: 0, top: 0, width: 1800, height: 1000 }),
@@ -889,6 +1039,32 @@ describe("generic Layer composition", () => {
     store.setChartEncoding("y", "value");
     store.selectedIds.value = [ready.id, incomplete.id];
     expect(store.canCompose.value).toBe(true);
+  });
+
+  it("layers compatible chart-local views without requiring identical datasets or filters", () => {
+    const alternateDataset: Dataset = {
+      ...layerDataset,
+      id: "alternate-layer-dataset",
+      rows: layerDataset.rows.map((row) => ({ ...row })),
+    };
+    const source = lineChart("independent-layer-source", 100, false);
+    const target = lineChart("independent-layer-target", 950, false);
+    source.chartSpec = { ...source.chartSpec!, filters: { series: "A" } };
+    target.chartSpec = {
+      ...target.chartSpec!,
+      datasetId: alternateDataset.id,
+      filters: { series: "B" },
+    };
+    const store = useCanvasStore(ref(null));
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset, alternateDataset];
+    store.canvasNodes.value = [source, target];
+    store.selectedIds.value = [source.id, target.id];
+
+    expect(store.executeComposition("layer", true, ["x", "y"], undefined, undefined, target.id)).toBe(true);
+    expect(source.coordinateSystem).toBe(target.coordinateSystem);
+    expect(source.coordinateSystem?.ownerNodeId).toBe(target.id);
+    expect(source.coordinateGuide).toEqual(target.coordinateGuide);
   });
 
   it("layers independent line and point marks under one shared coordinate system", () => {
@@ -1477,6 +1653,14 @@ describe("dimension overflow decisions", () => {
     expect(top?.compositionSpec?.facetDirection).toBe("row");
     expect(bottom?.x).toBe(top?.x);
     expect((bottom?.y ?? 0) - (top?.y ?? 0)).toBe((top?.height ?? 0) * (top?.scaleY ?? 1) + 4);
+
+    expect(store.canConfigureSelectionComposition.value).toBe(true);
+    expect(store.configureSelectionComposition()).toBe(true);
+    store.setCompositionEncoding({ facetRowGap: 28, facetColumnGap: 16 });
+
+    expect(top?.compositionSpec?.facetRowGap).toBe(28);
+    expect(top?.compositionSpec?.facetColumnGap).toBe(16);
+    expect((bottom?.y ?? 0) - (top?.y ?? 0)).toBe((top?.height ?? 0) * (top?.scaleY ?? 1) + 28);
   });
 
   it("uses the remaining facet direction for a second repair field", () => {
@@ -1519,6 +1703,12 @@ describe("dimension overflow decisions", () => {
       rowValues: ["A", "B"],
       columnValues: ["East", "West"],
     });
+
+    expect(store.configureSelectionComposition()).toBe(true);
+    store.setCompositionEncoding({ facetRowGap: 18, facetColumnGap: 26 });
+    const [topLeft, topRight, bottomLeft] = store.canvasNodes.value;
+    expect((topRight?.x ?? 0) - (topLeft?.x ?? 0)).toBe((topLeft?.width ?? 0) * (topLeft?.scaleX ?? 1) + 26);
+    expect((bottomLeft?.y ?? 0) - (topLeft?.y ?? 0)).toBe((topLeft?.height ?? 0) * (topLeft?.scaleY ?? 1) + 18);
   });
 
   it("consumes single-value filter clues when creating a two-dimensional facet", () => {
@@ -1778,6 +1968,7 @@ describe("composition coordinate editing", () => {
   it.each([
     ["AreaChart", "LineGraph"],
     ["LineGraph", "SingleBarChart"],
+    ["Scatterplot", "LineGraph"],
     ["SingleBarChart", "AreaChart"],
   ] as const)("layers configured %s and %s blocks through an interior drop", async (sourceType, targetType) => {
     const source = cartesianChart(`drag-layer-source-${sourceType}`, 100, sourceType);
@@ -1824,6 +2015,54 @@ describe("composition coordinate editing", () => {
       expect(linePath).not.toContain("NaN");
       expect(firstX).toBeGreaterThanOrEqual(sourceAfter.chartSpec!.plotArea!.x);
     }
+  });
+
+  it("splits a layer for editing without separating its scales or coordinate frame", async () => {
+    const first = cartesianChart("layer-edit-first", 100, "AreaChart");
+    const second = cartesianChart("layer-edit-second", 950, "LineGraph");
+    first.chartSpec = {
+      ...first.chartSpec!,
+      dataTransforms: [{
+        id: "layer-edit-filter-a",
+        kind: "filter",
+        mode: "values",
+        field: "series",
+        values: ["A"],
+        purpose: "filter",
+      }],
+    };
+    second.chartSpec = {
+      ...second.chartSpec!,
+      dataTransforms: [{
+        id: "layer-edit-filter-b",
+        kind: "filter",
+        mode: "values",
+        field: "series",
+        values: ["B"],
+        purpose: "filter",
+      }],
+    };
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    store.canvasNodes.value = [first, second];
+    store.selectedIds.value = [first.id, second.id];
+
+    expect(store.executeComposition("layer", true, ["x", "y"])).toBe(true);
+    const overlaidFrame = { x: first.x, y: first.y };
+    expect(first.chartSpec?.scales).toEqual(second.chartSpec?.scales);
+
+    expect(store.enterSelection()).toBe(true);
+    await nextTick();
+    expect(first.x).not.toBe(second.x);
+    expect(first.y).toBe(second.y);
+    expect(first.chartSpec?.scales).toEqual(second.chartSpec?.scales);
+    expect(first.chartSpec?.plotArea).toEqual(second.chartSpec?.plotArea);
+    expect(first.coordinateGuide).toEqual(second.coordinateGuide);
+
+    expect(store.exitSelectionHierarchy()).toBe(true);
+    expect({ x: first.x, y: first.y }).toEqual(overlaidFrame);
+    expect({ x: second.x, y: second.y }).toEqual(overlaidFrame);
   });
 
   it.each([

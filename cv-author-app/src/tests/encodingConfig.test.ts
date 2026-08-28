@@ -151,7 +151,7 @@ describe("card encoding configuration", () => {
   it.each([
     ["LineGraph", ["x", "y", "size", "shape"]],
     ["MultiLineChart", ["x", "y", "color", "size", "shape"]],
-    ["Scatterplot", ["x", "y", "color", "size", "shape"]],
+    ["Scatterplot", ["x", "y", "color", "size"]],
     ["SingleBarChart", ["x", "y", "color", "size"]],
     ["GroupedBarChart", ["x", "y", "color", "size"]],
     ["StackedBarChart", ["x", "y", "color", "size"]],

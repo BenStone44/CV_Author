@@ -601,6 +601,14 @@ export function inferColumnIntents(
 
 function markKeys(dataset: Dataset, spec: ChartSpec, role: string) {
   if (role === "line") return spec.series ? uniqueValues(dataset, spec.series.field) : ["__single__"];
+  if (role === "arc" && spec.encodings.segment?.field) {
+    const aggregation = spec.aggregations?.theta
+      ?? spec.aggregations?.angle
+      ?? spec.aggregations?.y;
+    return aggregation
+      ? uniqueValues(dataset, spec.encodings.segment.field)
+      : dataset.rows.map((row, index) => csvRowKey(dataset, row, index));
+  }
   if (role === "arc" && spec.angleFields?.length) {
     const flattenFields = spec.flattenFields ?? [];
     if (flattenFields.length === 0) return spec.angleFields.map((encoding) => encoding.field);

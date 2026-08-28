@@ -2,25 +2,25 @@ import { describe, expect, it } from "vitest";
 import { d3GalleryPlaceholderSvg, d3GalleryThumbnailUrl, withD3GalleryThumbnail } from "../utils/d3GalleryThumbnails";
 
 describe("D3 Gallery thumbnails", () => {
-  it("maps implemented templates to immutable Observable thumbnails", () => {
-    const url = d3GalleryThumbnailUrl("AreaChart");
-    expect(url).toBe("https://static.observableusercontent.com/thumbnail/621c926e03757f3473aa2d0257e7eb0666ee01b22c73a658ce7357fea1d91afe.jpg");
-    expect(d3GalleryPlaceholderSvg("AreaChart")).toContain(`<image href="${url}"`);
-    expect(d3GalleryThumbnailUrl("MultiLineChart")).toBe("https://static.observableusercontent.com/thumbnail/b0d4966110427b06bfdf7a84396cce6267e52cabf0805ba466618f2758cb56b5.jpg");
+  it("maps remaining gallery templates to immutable Observable thumbnails", () => {
+    const url = d3GalleryThumbnailUrl("Calendar");
+    expect(url).toBe("https://static.observableusercontent.com/thumbnail/d008c0aeb2e945aef84b41961dd335bf81d9e01aed81b0f3c14ee782683ebbe9.jpg");
+    expect(d3GalleryPlaceholderSvg("Calendar")).toContain(`<image href="${url}"`);
   });
 
-  it("uses the same image for the card and unbound canvas placeholder", () => {
+  it("preserves native SVG templates for core chart families", () => {
     const candidate = withD3GalleryThumbnail({
       id: "area",
       name: "Area Chart",
       chartType: "AreaChart",
       coordinateSystem: "Cartesian",
-      src: "old-preview",
-      svgMarkup: "<svg/>",
+      src: "data:image/svg+xml,area",
+      svgMarkup: "<svg><path/></svg>",
     });
-    expect(candidate.src).toContain("static.observableusercontent.com/thumbnail/");
-    expect(candidate.svgMarkup).toContain(candidate.src);
-    expect(candidate.svgMarkup).toContain('preserveAspectRatio="xMidYMid slice"');
+    expect(d3GalleryThumbnailUrl("AreaChart")).toBeNull();
+    expect(d3GalleryThumbnailUrl("MultiLineChart")).toBeNull();
+    expect(candidate.src).toBe("data:image/svg+xml,area");
+    expect(candidate.svgMarkup).toBe("<svg><path/></svg>");
   });
 
   it("leaves unknown templates unchanged", () => {
