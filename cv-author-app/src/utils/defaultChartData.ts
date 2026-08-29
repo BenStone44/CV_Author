@@ -19,7 +19,7 @@ const defaultRows = Papa.parse<Record<string, string>>(defaultChartDataCsv, {
 }).data;
 
 /**
- * One neutral, long-form table shared by the built-in Cartesian templates.
+ * One neutral, long-form table shared by the built-in chart templates.
  * It deliberately contains discrete, signed, quantitative, and size fields so
  * every core family can render without inventing family-specific sample data.
  */
@@ -57,7 +57,9 @@ export function supportsDefaultChartData(chartType: string) {
     || family === "line"
     || family === "area"
     || family === "scatter"
-    || family === "matrix";
+    || family === "matrix"
+    || family === "pie"
+    || family === "donut";
 }
 
 export function isDefaultChartDataSpec(spec: ChartSpec | null | undefined) {
@@ -116,6 +118,16 @@ export function createDefaultChartSpec(chartType: string): ChartSpec | null {
       },
     };
   }
+  if (family === "pie" || family === "donut") {
+    return {
+      ...base,
+      encodings: {
+        theta: { field: "value", type: "quantitative" },
+        segment: { field: "column", type: "ordinal" },
+      },
+      dataTransforms: groupFilter(),
+    };
+  }
 
   const multiSeries = normalized === "multilinechart"
     || normalized === "groupedbarchart"
@@ -145,6 +157,7 @@ export function defaultChartSpecWithAppearance(chartSpec: ChartSpec, chartId: st
   return {
     ...fallback,
     axisSwapped: chartSpec.axisSwapped,
+    axes: chartSpec.axes,
     styleTokens: chartSpec.styleTokens,
     ...(retainsDefaultSource ? {
       filters: chartSpec.filters,
@@ -173,7 +186,12 @@ export function renderDefaultChartSvg(chartType: string, width = 320, height = 1
       xDirection: 1,
       yDirection: -1,
     }
-    : null;
+    : contract.coordinateSystem === "Polar"
+      ? {
+        type: "Polar",
+        origin: { x: width / 2, y: height / 2 },
+      }
+      : null;
   const prepared = prepareChartData(
     `default-preview-${chartType}`,
     defaultChartDataset,

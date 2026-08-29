@@ -484,8 +484,8 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
       lineStyle,
     });
     const markAttributes = `data-chart-id="${escapeXml(chartId)}" data-mark-role="line" data-mark-group-id="mark-group:${escapeXml(chartId)}:line" data-series-key="${escapeXml(seriesKey)}" data-line-style="${lineStyle}" data-point-count="${ordered.length}" data-row-keys="${escapeXml(keys.join(","))}" opacity="${Number(lineConfig?.opacity ?? 1)}"`;
-    const pathAttributes = isMultiLine ? "" : `${markAttributes} `;
-    const pathMarkup = `<path ${pathAttributes}d="${path}" fill="none" stroke="${escapeXml(color)}" stroke-width="${lineWidth}" stroke-dasharray="${dasharray}" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" style="stroke: ${escapeXml(color)}; stroke-width: ${lineWidth}px; stroke-dasharray: ${dasharray}; stroke-linecap: round; stroke-linejoin: round; fill: none;"/>`;
+    const pathAttributes = isMultiLine ? "" : ` ${markAttributes}`;
+    const pathMarkup = `<path d="${path}"${pathAttributes} fill="none" stroke="${escapeXml(color)}" stroke-width="${lineWidth}" stroke-dasharray="${dasharray}" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" style="stroke: ${escapeXml(color)}; stroke-width: ${lineWidth}px; stroke-dasharray: ${dasharray}; stroke-linecap: round; stroke-linejoin: round; fill: none;"/>`;
     // A single line has no group-level state. Put its metadata on the visible
     // path so the SVG tree contains one mark element instead of two.
     return isMultiLine ? `<g ${markAttributes}>${pathMarkup}</g>` : pathMarkup;

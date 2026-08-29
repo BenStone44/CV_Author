@@ -409,6 +409,51 @@ describe("semantic Case 1 renderers", () => {
     expect(measureSegmentDonut.polarArea?.innerRadius).toBeGreaterThan(0);
   });
 
+  it("keeps only a narrow seam before outer donut bands in radial concat", () => {
+    const chartSpec: ChartSpec = {
+      chartType: "PieChart",
+      datasetId: dataset.id,
+      encodings: { theta: { field: "weight_kg", type: "quantitative" } },
+    };
+    const inner = renderDeterministicChart({
+      chartId: "inner-radial-band",
+      width: 320,
+      height: 180,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: {
+        type: "Polar",
+        origin: { x: 160, y: 90 },
+        innerRadiusRatio: 0,
+        outerRadiusRatio: 0.5,
+      },
+      chartSpec,
+      dataset,
+      polarConcatDirection: "radial",
+    });
+    const outer = renderDeterministicChart({
+      chartId: "outer-radial-band",
+      width: 320,
+      height: 180,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: {
+        type: "Polar",
+        origin: { x: 160, y: 90 },
+        innerRadiusRatio: 0.5,
+        outerRadiusRatio: 1,
+      },
+      chartSpec: { ...chartSpec, chartType: "DonutChart" },
+      dataset,
+      polarConcatDirection: "radial",
+    });
+
+    const seam = outer.polarArea!.innerRadius - inner.polarArea!.outerRadius;
+    const outerBandWidth = outer.polarArea!.outerRadius - inner.polarArea!.outerRadius;
+    expect(seam).toBeGreaterThan(0);
+    expect(seam).toBeLessThan(outerBandWidth * 0.1);
+  });
+
   it("groups categorical and temporal Segments and compares their outer radii globally", () => {
     const polarDataset: Dataset = {
       id: "polar-segments",
@@ -547,6 +592,39 @@ describe("semantic Case 1 renderers", () => {
     expect(result.content.match(/fill="#123456"/g)).toHaveLength(2);
     expect(result.content).toContain('data-theta-value="10"');
     expect(result.content).toContain('data-theta-value="5"');
+  });
+
+  it("positions polar labels using D3's 12-o'clock angle origin", () => {
+    const polarDataset: Dataset = {
+      id: "polar-label-position",
+      name: "polar-label-position.csv",
+      columns: [
+        { name: "group", type: "nominal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [{ group: "A", value: "10" }],
+    };
+    const result = renderDeterministicChart({
+      chartId: "polar-label-position",
+      width: 320,
+      height: 180,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Polar", origin: { x: 160, y: 90 } },
+      chartSpec: {
+        chartType: "PieChart",
+        datasetId: polarDataset.id,
+        encodings: {
+          theta: { field: "value", type: "quantitative" },
+          segment: { field: "group", type: "nominal" },
+        },
+      },
+      dataset: polarDataset,
+    });
+
+    const label = result.content.match(/data-mark-role="arc-label"[^>]*x="([^"]+)" y="([^"]+)"/);
+    expect(Number(label?.[1])).toBeLessThan(160);
+    expect(Number(label?.[2])).toBeCloseTo(90);
   });
 
   it("renders scatter marks without duplicate axes", () => {

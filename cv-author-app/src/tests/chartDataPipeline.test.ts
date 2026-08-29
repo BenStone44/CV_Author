@@ -73,7 +73,7 @@ describe("chart data pipeline", () => {
     expect(prepared.chartSpec.dimensionRecommendations).toBeUndefined();
   });
 
-  it("keeps Pie segments row-level until Theta aggregation is explicit", () => {
+  it("automatically sums Theta after a categorical Pie Segment is selected", () => {
     const pieDataset: Dataset = {
       id: "pie-segments",
       name: "pie-segments.csv",
@@ -98,14 +98,10 @@ describe("chart data pipeline", () => {
       },
     };
 
-    const rowLevel = prepareChartData("pie-row-level", pieDataset, {
-      ...baseSpec,
-      aggregations: { theta: "sum" },
-      autoAggregations: { theta: "sum" },
-    });
-    expect(rowLevel.chartSpec.aggregations).toBeUndefined();
-    expect(rowLevel.chartSpec.autoAggregations).toBeUndefined();
-    expect(rowLevel.chartSpec.markGroups?.[0]?.memberKeys).toEqual(["1", "2", "3"]);
+    const automatic = prepareChartData("pie-automatic", pieDataset, baseSpec);
+    expect(automatic.chartSpec.aggregations).toEqual({ theta: "sum" });
+    expect(automatic.chartSpec.autoAggregations).toEqual({ theta: "sum" });
+    expect(automatic.chartSpec.markGroups?.[0]?.memberKeys).toEqual(["A", "B"]);
 
     const aggregated = prepareChartData("pie-aggregated", pieDataset, {
       ...baseSpec,

@@ -5,6 +5,7 @@ import {
   createCartesianAxisModel,
   getCartesianAxisChannels,
 } from "../components/CartesianCoordinateSystem";
+import { PolarCoordinateSystem } from "../components/PolarCoordinateSystem";
 import type { CanvasLeafNode, CompositionSpec, CoordinateSystemSpec } from "../types";
 
 function chartNode(overrides: Partial<CanvasLeafNode> = {}): CanvasLeafNode {
@@ -139,6 +140,41 @@ describe("independent Cartesian axis component", () => {
     expect(model.xTicks.map((tick) => tick.label)).toEqual(["Plan", "Build", "Ship"]);
     expect(model.yTicks.map((tick) => tick.label)).toEqual(["Low", "Medium", "High"]);
     expect(node.renderedContent).not.toContain("<text");
+  });
+
+  it("renders directly from ChartSpec axis checkbox values", () => {
+    const node = chartNode({
+      chartSpec: {
+        ...chartNode().chartSpec!,
+        axes: {
+          x: { visible: false, labelsVisible: false },
+        },
+      },
+    });
+    const render = () => (CartesianCoordinateSystem as any).setup({
+      node,
+      viewZoom: 1,
+      channels: ["x"],
+      showAxis: true,
+      interactive: false,
+      applyTransform: false,
+    })();
+
+    expect(render().children).toHaveLength(0);
+    node.chartSpec = {
+      ...node.chartSpec!,
+      axes: {
+        ...node.chartSpec!.axes,
+        x: {
+          ...node.chartSpec!.axes?.x,
+          visible: true,
+          labelsVisible: true,
+        },
+      },
+    };
+    const visibleAxis = render();
+    expect(visibleAxis.children.some((child: any) => child.props?.class === "cartesian-axis-domain")).toBe(true);
+    expect(visibleAxis.children.some((child: any) => child.props?.class === "cartesian-axis-tick-label")).toBe(true);
   });
 
   it("uses the shared Cartesian component for Matrix axes", () => {
@@ -277,5 +313,38 @@ describe("independent Cartesian axis component", () => {
     })();
     expect(editingMemberLayer.children).toHaveLength(1);
     expect(editingMemberLayer.children[0].type).toBe(CartesianCoordinateSystem);
+  });
+
+  it("keeps enabled Polar axes in the static layer after deselection", () => {
+    const node = chartNode({
+      coordinateGuide: {
+        type: "Polar",
+        origin: { x: 520, y: 245 },
+        showThetaLine: true,
+        showRadiusLine: true,
+      },
+      chartSpec: {
+        chartType: "PieChart",
+        datasetId: "measurements",
+        encodings: { theta: { field: "value", type: "quantitative" } },
+      },
+    });
+    const layer = (CanvasCoordinateSystemLayer as any).setup({ node })();
+
+    expect(layer.children).toHaveLength(1);
+    expect(layer.children[0].type).toBe(PolarCoordinateSystem);
+    expect(layer.children[0].props).toMatchObject({
+      showAxis: true,
+      interactive: false,
+      applyTransform: false,
+    });
+
+    if (node.coordinateGuide?.type !== "Polar") throw new Error("Expected a Polar guide.");
+    node.coordinateGuide = {
+      ...node.coordinateGuide,
+      showThetaLine: false,
+      showRadiusLine: false,
+    };
+    expect((CanvasCoordinateSystemLayer as any).setup({ node })()).toBeNull();
   });
 });

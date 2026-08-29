@@ -1,0 +1,1622 @@
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar__top">
+        <div class="sidebar__filters">
+          <div class="filter-group filter-group--coordinate">
+            <p class="filter-group__title">Coordinate</p>
+            <div class="filters filters--compact">
+              <button
+                v-for="option in coordinateOptions"
+                :key="option.value"
+                class="filter-chip"
+                :class="{
+                  'filter-chip--active': selectedCoordinateSystems.has(
+                    option.value,
+                  ),
+                }"
+                type="button"
+                @click="toggleCoordinateSystem(option.value)"
+              >
+                <span
+                  class="filter-chip__icon"
+                  aria-hidden="true"
+                  v-html="getFilterIconSvg(option.icon)"
+                ></span>
+                <span>{{ option.label }}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="sidebar__browser">
+          <section class="implemented-templates" aria-label="Implemented chart templates">
+            <p class="implemented-templates__title">Chart templates</p>
+            <div class="implemented-template-category-list">
+              <button
+                v-for="category in implementedTemplateCategories"
+                :key="category.id"
+                class="implemented-template-category"
+                :class="{ 'implemented-template-category--active': activeTemplateCategoryId === category.id }"
+                type="button"
+                :title="`${category.label}: ${category.candidates.map((candidate) => candidate.name).join(', ')}`"
+                :aria-label="`${category.label}, ${category.candidates.length} templates`"
+                aria-haspopup="menu"
+                :aria-expanded="activeTemplateCategoryId === category.id"
+                @click.stop="toggleTemplateCategory(category, $event)"
+              >
+                <div
+                  class="implemented-template-category__preview"
+                  :class="`implemented-template-category__preview--${Math.min(4, category.candidates.length)}`"
+                >
+                  <span
+                    v-for="candidate in category.candidates.slice(0, 4)"
+                    :key="candidate.id"
+                    class="implemented-template-category__tile"
+                  >
+                    <img :src="candidate.src" alt="" draggable="false" />
+                  </span>
+                </div>
+                <span class="implemented-template-category__footer">
+                  <span>{{ category.label }}</span>
+                  <span class="implemented-template-category__count">{{ category.candidates.length }}</span>
+                  <ChevronDown :size="14" :stroke-width="1.7" aria-hidden="true" />
+                </span>
+              </button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </aside>
+
+    <Teleport to="body">
+      <div
+        v-if="activeTemplateCategory"
+        class="template-category-menu"
+        :style="templateCategoryMenuStyle"
+        role="menu"
+        :aria-label="`${activeTemplateCategory.label} chart templates`"
+        @click.stop
+      >
+        <header class="template-category-menu__header">
+          <div>
+            <strong>{{ activeTemplateCategory.label }}</strong>
+            <span>{{ activeTemplateCategory.candidates.length }} templates</span>
+          </div>
+          <button type="button" title="Close" aria-label="Close template menu" @click="closeTemplateCategoryMenu">
+            <X :size="15" :stroke-width="1.7" aria-hidden="true" />
+          </button>
+        </header>
+        <div class="template-category-menu__grid">
+          <article
+            v-for="candidate in activeTemplateCategory.candidates"
+            :key="candidate.id"
+            class="template-category-menu__item"
+            draggable="true"
+            role="menuitem"
+            :title="candidate.name"
+            @dragstart="onCandidateDragStart(candidate, $event)"
+            @dragend="onTemplateCandidateDragEnd"
+          >
+            <div class="template-category-menu__preview">
+              <img :src="candidate.src" alt="" draggable="false" />
+            </div>
+            <span>{{ candidate.name }}</span>
+          </article>
+        </div>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div
+        v-if="facetClueDialog"
+        class="facet-clue-backdrop"
+        @mousedown.self="closeFacetClueDialog"
+      >
+        <section
+          class="facet-clue-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="facet-clue-title"
+        >
+          <header class="facet-clue-dialog__header">
+            <div>
+              <strong id="facet-clue-title">Facet dimensions</strong>
+              <span>{{ facetClueDialog.chartName }}</span>
+            </div>
+            <button type="button" title="Close" aria-label="Close" @click="closeFacetClueDialog">
+              <X :size="16" :stroke-width="1.8" aria-hidden="true" />
+            </button>
+          </header>
+          <div class="facet-clue-dialog__body">
+            <div class="facet-coordinate-mode" role="group" aria-label="Facet coordinate system">
+              <button type="button" :class="{ 'is-active': facetClueDialog.coordinateSystem === 'Cartesian' }" @click="facetClueDialog.coordinateSystem = 'Cartesian'">Cartesian</button>
+              <button type="button" :class="{ 'is-active': facetClueDialog.coordinateSystem === 'Polar' }" @click="facetClueDialog.coordinateSystem = 'Polar'">Polar</button>
+            </div>
+            <label v-if="facetClueDialog.coordinateSystem === 'Cartesian'">
+              <span>Row dimension</span>
+              <select v-model="facetClueDialog.rowField">
+                <option value="">None</option>
+                <option
+                  v-for="field in facetClueDialog.fields"
+                  :key="`row-${field}`"
+                  :value="field"
+                  :disabled="field === facetClueDialog.columnField"
+                >
+                  {{ field }}
+                </option>
+              </select>
+            </label>
+            <label v-if="facetClueDialog.coordinateSystem === 'Cartesian'">
+              <span>Column dimension</span>
+              <select v-model="facetClueDialog.columnField">
+                <option value="">None</option>
+                <option
+                  v-for="field in facetClueDialog.fields"
+                  :key="`column-${field}`"
+                  :value="field"
+                  :disabled="field === facetClueDialog.rowField"
+                >
+                  {{ field }}
+                </option>
+              </select>
+            </label>
+            <label v-if="facetClueDialog.coordinateSystem === 'Polar'">
+              <span>Theta dimension</span>
+              <select v-model="facetClueDialog.thetaField">
+                <option value="">None</option>
+                <option v-for="field in facetClueDialog.fields" :key="`theta-${field}`" :value="field" :disabled="field === facetClueDialog.radiusField">{{ field }}</option>
+              </select>
+            </label>
+            <label v-if="facetClueDialog.coordinateSystem === 'Polar'">
+              <span>R dimension</span>
+              <select v-model="facetClueDialog.radiusField">
+                <option value="">None</option>
+                <option v-for="field in facetClueDialog.fields" :key="`radius-${field}`" :value="field" :disabled="field === facetClueDialog.thetaField">{{ field }}</option>
+              </select>
+            </label>
+          </div>
+          <footer class="facet-clue-dialog__footer">
+            <button type="button" class="facet-clue-dialog__cancel" @click="closeFacetClueDialog">
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="facet-clue-dialog__apply"
+              :disabled="!canConfirmFacetClues"
+              @click="confirmFacetClues"
+            >
+              Create facet
+            </button>
+          </footer>
+        </section>
+      </div>
+    </Teleport>
+
+    <div class="workbench">
+      <CsvDataPanel
+        :chart-id="chartTransformNode?.id"
+        :chart-name="chartTransformNode?.name"
+        :chart-spec="chartTransformNode?.chartSpec"
+        @transforms-change="onChartTransformsChange"
+        @dataset-change="onDatasetChange"
+      />
+      <main class="workspace">
+        <section
+          ref="canvasRef"
+          class="canvas-board"
+          :class="{
+            'canvas-board--dragging': draggedCandidateId,
+            'canvas-board--panning': isPanning,
+          }"
+          @dragover="onCanvasDragOver"
+          @dragleave="onCanvasDragLeave"
+          @drop="onCanvasDrop"
+          @contextmenu="onCanvasContextMenu"
+        >
+          <button
+            class="encoding-control"
+            :class="{ 'encoding-control--active': encodingInspectorOpen }"
+            type="button"
+            :disabled="!canToggleEncodingInspector"
+            :aria-expanded="encodingInspectorOpen"
+            aria-controls="encoding-inspector"
+            title="Encoding"
+            @click.stop="toggleEncodingInspector"
+          >
+            <SlidersHorizontal :size="15" :stroke-width="1.7" aria-hidden="true" />
+            <span>Encoding</span>
+          </button>
+          <button
+            v-if="hierarchyNavigationActive"
+            class="hierarchy-back-button"
+            type="button"
+            title="Return to parent"
+            aria-label="Return to parent"
+            @click.stop="exitSelectionHierarchy"
+          >
+            <ArrowUp :size="18" :stroke-width="1.9" aria-hidden="true" />
+          </button>
+          <div
+            class="toolbar toolbar--floating"
+            :class="{ 'toolbar--nested-positioning': nestedPositionEditor }"
+          >
+            <div class="icon-tools" role="group" aria-label="History">
+              <button
+                class="icon-button"
+                type="button"
+                title="Undo (Ctrl/Cmd+Z)"
+                aria-label="Undo"
+                :disabled="!canUndo"
+                @click="undoCanvasChange"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <polyline points="9 14 4 9 9 4" />
+                  <path d="M20 20v-7a4 4 0 0 0-4-4H4" />
+                </svg>
+              </button>
+              <button
+                class="icon-button"
+                type="button"
+                title="Redo (Ctrl/Cmd+Shift+Z)"
+                aria-label="Redo"
+                :disabled="!canRedo"
+                @click="redoCanvasChange"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <polyline points="15 14 20 9 15 4" />
+                  <path d="M4 20v-7a4 4 0 0 1 4-4h12" />
+                </svg>
+              </button>
+              <button
+                class="icon-button"
+                type="button"
+                title="Delete"
+                aria-label="Delete"
+                :disabled="!canDelete"
+                @click="deleteSelectedNodes"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                  <line x1="10" y1="11" x2="10" y2="17" />
+                  <line x1="14" y1="11" x2="14" y2="17" />
+                </svg>
+              </button>
+              <button
+                class="icon-button"
+                type="button"
+                title="Clear canvas"
+                aria-label="Clear canvas"
+                :disabled="canvasNodes.length === 0"
+                @click="clearCanvas"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M15 4L9 10" />
+                  <path d="M9 10L3 19" />
+                  <path d="M9 10L14 15" />
+                  <path d="M3 19L14 15" />
+                  <line x1="5" y1="18" x2="6" y2="21" />
+                  <line x1="8" y1="17" x2="9" y2="20" />
+                  <line x1="11" y1="16" x2="12" y2="19" />
+                </svg>
+              </button>
+              <button
+                class="icon-button"
+                type="button"
+                title="Reset zoom"
+                aria-label="Reset zoom"
+                :disabled="viewZoom === 1 && viewPan.x === 0 && viewPan.y === 0"
+                @click="resetCanvasZoom"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M3 7V5a2 2 0 0 1 2-2h2" />
+                  <path d="M17 3h2a2 2 0 0 1 2 2v2" />
+                  <path d="M21 17v2a2 2 0 0 1-2 2h-2" />
+                  <path d="M7 21H5a2 2 0 0 1-2-2v-2" />
+                </svg>
+              </button>
+            </div>
+            <div class="group-tools" role="group" aria-label="Grouping">
+              <button
+                class="ghost-button"
+                type="button"
+                :disabled="!canGroup"
+                @click="groupSelectedItems"
+              >
+                Group
+              </button>
+              <button
+                class="ghost-button"
+                type="button"
+                :disabled="!canUngroup"
+                @click="ungroupSelectedItems"
+              >
+                Ungroup
+              </button>
+              <button
+                class="ghost-button"
+                type="button"
+                title="Dissolve all nested groups"
+                :disabled="!canUngroup"
+                @click="dissolveSelectedGroups"
+              >
+                Dissolve
+              </button>
+            </div>
+            <div
+              class="composition-tools"
+              role="group"
+              aria-label="Composition"
+            >
+              <button
+                v-for="option in compositionOptions"
+                :key="option.value"
+                class="ghost-button composition-button"
+                type="button"
+                :title="option.description"
+                :disabled="option.value === 'facet' ? !canFacet : !canCompose"
+                @click.stop="openCompositionCandidates(option.value)"
+              >
+                <svg
+                  v-if="option.value === 'layer'"
+                  viewBox="0 0 18 18"
+                  aria-hidden="true"
+                >
+                  <rect x="2.5" y="5.5" width="9" height="9" rx="1" />
+                  <rect x="6.5" y="2.5" width="9" height="9" rx="1" />
+                </svg>
+                <svg
+                  v-else-if="option.value === 'facet'"
+                  viewBox="0 0 18 18"
+                  aria-hidden="true"
+                >
+                  <rect x="2.5" y="2.5" width="5" height="5" rx="0.75" />
+                  <rect x="10.5" y="2.5" width="5" height="5" rx="0.75" />
+                  <rect x="2.5" y="10.5" width="5" height="5" rx="0.75" />
+                  <rect x="10.5" y="10.5" width="5" height="5" rx="0.75" />
+                </svg>
+                <svg
+                  v-else-if="option.value === 'concat'"
+                  viewBox="0 0 18 18"
+                  aria-hidden="true"
+                >
+                  <rect x="2.5" y="3" width="5" height="12" rx="1" />
+                  <rect x="10.5" y="3" width="5" height="12" rx="1" />
+                  <path d="M8.5 9h1" />
+                </svg>
+                <svg v-else viewBox="0 0 18 18" aria-hidden="true">
+                  <rect x="2.5" y="2.5" width="13" height="13" rx="1" />
+                  <rect x="6" y="6" width="6" height="6" rx="0.75" />
+                </svg>
+                <span>{{ option.label }}</span>
+              </button>
+            </div>
+            <AlignmentToolbar
+              :disabled="!nestedPositionEditor && selectionUnits.length < 2"
+              @align="onCanvasToolbarAlign"
+            />
+          </div>
+
+          <aside
+            v-if="compositionInspectorOpen && selectedCompositionSpec && axisBindingTarget"
+            class="encoding-inspector"
+            role="dialog"
+            aria-modal="false"
+            :aria-label="`Configure ${selectedCompositionSpec.type} composition`"
+            @click.stop
+            @pointerdown.stop
+          >
+            <CompositionConfigPanel
+              :composition-spec="selectedCompositionSpec"
+              :columns="axisBindingColumns"
+              @close="closeCompositionInspector"
+              @change="onCompositionEncodingChange"
+            />
+          </aside>
+
+          <aside
+            v-if="encodingInspectorOpen && axisBindingTarget"
+            id="encoding-inspector"
+            class="encoding-inspector"
+            role="dialog"
+            aria-modal="false"
+            :aria-label="`${axisBindingNode?.chartSpec?.chartType ?? axisBindingNode?.deckglLayerType ?? 'Chart'} mark encodings`"
+            @click.stop
+            @pointerdown.stop
+          >
+            <div v-if="nestedEncodingPair" class="nested-encoding-config">
+              <header class="nested-encoding-config__header">
+                <div>
+                  <strong>NESTED ENCODINGS</strong>
+                  <span>Father and child</span>
+                </div>
+                <button type="button" title="Close" aria-label="Close encoding panel" @click="closeEncodingInspector">
+                  <X :size="16" :stroke-width="1.6" aria-hidden="true" />
+                </button>
+              </header>
+              <section class="nested-encoding-config__composite" aria-label="Nested composite coordinate system">
+                <strong>NESTED COMPOSITE</strong>
+                <span>Parent coordinate frame - child positioned inside parent marks</span>
+              </section>
+              <details
+                v-for="entry in nestedEncodingEntries"
+                :key="entry.node.id"
+                class="nested-encoding-config__section"
+                :aria-label="`${entry.role} encodings`"
+              >
+                <summary>{{ entry.role }} - {{ entry.node.chartSpec?.chartType ?? entry.node.name }}</summary>
+                <EncodingConfigPanel
+                  v-if="entry.node.chartSpec"
+                  embedded
+                  :section-label="entry.role"
+                  :chart-name="entry.node.chartSpec.chartType ?? entry.node.name"
+                  :chart-spec="entry.node.chartSpec"
+                  :coordinate-guide="entry.node.coordinateGuide"
+                  :composition-spec="entry.node.compositionSpec"
+                  :columns="entry.dataset?.columns ?? []"
+                  :father-columns="entry.fatherColumns"
+                  :rows="entry.dataset?.rows ?? []"
+                  :mark-config="nestedMarkConfig(entry.node)"
+                  :renderer-error="entry.node.chartSpec.renderer?.error"
+                  @channel-change="(channel, field) => withEncodingNode(entry.node, () => onEncodingChannelChange(channel, field))"
+                  @composition-change="(patch) => withEncodingNode(entry.node, () => onCompositionEncodingChange(patch))"
+                  @axis-swap="(swapped) => setAxisSwap(swapped, entry.node.id)"
+                  @chart-axis-change="(axis, patch) => withEncodingNode(entry.node, () => onChartAxisChange(axis, patch))"
+                  @coordinate-axis-reverse="(axis) => withEncodingNode(entry.node, () => onCoordinateAxisReverse(axis))"
+                  @series-field-change="(field) => withEncodingNode(entry.node, () => onSeriesFieldChange(field))"
+                  @series-fields-change="(fields) => withEncodingNode(entry.node, () => onSeriesFieldsChange(fields))"
+                  @value-series-fields-change="(fields) => withEncodingNode(entry.node, () => setValueSeriesFields(fields))"
+                  @segment-fields-change="(fields) => withEncodingNode(entry.node, () => setPolarSegmentFields(fields))"
+                  @parallel-fields-change="(fields) => withEncodingNode(entry.node, () => setParallelFields(fields))"
+                  @aggregation-change="(channel, aggregation) => withEncodingNode(entry.node, () => setAxisBindingAggregation(channel, aggregation))"
+                  @single-bar-value-order-change="(direction, topN) => withEncodingNode(entry.node, () => setSingleBarValueOrder(direction, topN))"
+                  @mark-config-change="(patch) => withEncodingNode(entry.node, () => updateAxisBindingMarkGroupConfig(patch))"
+                  @mark-config-edit-start="(field) => beginNestedMarkConfigEdit(entry.node, field)"
+                  @mark-config-edit-end="commitMarkConfigEdit"
+                />
+              </details>
+            </div>
+            <EncodingConfigPanel
+              v-else-if="axisBindingNode?.chartSpec"
+              :chart-name="compositionEncodingOnly ? 'Facet' : (axisBindingNode.chartSpec.chartType ?? axisBindingNode.name)"
+              :section-label="compositionEncodingOnly ? 'COMPOSITION ENCODINGS' : compositionEncodingSectionLabel"
+              :composition-only="compositionEncodingOnly"
+              :chart-spec="axisBindingNode.chartSpec"
+              :coordinate-guide="axisBindingNode.coordinateGuide"
+              :composition-spec="axisBindingNode.compositionSpec"
+              :composition-members="compositionMemberEncodingEntries"
+              :columns="axisBindingColumns"
+              :rows="axisBindingRows"
+              :mark-config="axisBindingMarkGroupConfig"
+              :renderer-error="axisBindingRendererError"
+              @close="closeEncodingInspector"
+              @channel-change="onEncodingChannelChange"
+              @composition-change="onCompositionEncodingChange"
+              @axis-swap="onAxisSwap"
+              @chart-axis-change="onChartAxisChange"
+              @coordinate-axis-reverse="onCoordinateAxisReverse"
+              @series-field-change="onSeriesFieldChange"
+              @series-fields-change="onSeriesFieldsChange"
+              @value-series-fields-change="setValueSeriesFields"
+              @segment-fields-change="setPolarSegmentFields"
+              @parallel-fields-change="setParallelFields"
+              @aggregation-change="setAxisBindingAggregation"
+              @single-bar-value-order-change="setSingleBarValueOrder"
+              @mark-config-change="updateAxisBindingMarkGroupConfig"
+              @mark-config-edit-start="onMarkConfigEditStart"
+              @mark-config-edit-end="commitMarkConfigEdit"
+            />
+            <DeckglEncodingConfigPanel
+              v-else-if="axisBindingNode?.layerKind === 'deckgl'"
+              :layer-name="deckglLayerType(axisBindingNode)"
+              :layer-family="deckglLayerFamily(axisBindingNode)"
+              :map-style-url="axisBindingNode.mapStyleUrl ?? ''"
+              :config="deckglLayerConfig(axisBindingNode)"
+              :binding="axisBindingNode.deckglBinding"
+              :columns="deckglLayerDataset(axisBindingNode)?.columns ?? []"
+              @close="closeEncodingInspector"
+              @map-style-change="setDeckglMapStyle(axisBindingNode.id, $event)"
+              @config-change="setDeckglConfig(axisBindingNode.id, $event)"
+              @encoding-change="(channel, field) => setDeckglEncoding(axisBindingNode.id, channel, field)"
+            />
+          </aside>
+
+          <div
+            v-if="dimensionDropTarget"
+            class="recommendation-popup-backdrop"
+            @click="closeDimensionDropDecision"
+          />
+          <aside
+            v-if="dimensionDropTarget"
+            class="recommendation-popup dimension-drop-popup"
+            role="dialog"
+            aria-modal="true"
+            :aria-label="`Choose how to use ${dimensionDropField}`"
+            @click.stop
+            @pointerdown.stop
+          >
+            <header class="recommendation-popup__header">
+              <div>
+                <span class="dimension-drop-popup__eyebrow">AI STRUCTURAL SUGGESTIONS</span>
+                <strong>Use {{ dimensionDropField }}</strong>
+                <span>{{ dimensionDropNode?.chartSpec?.chartType }}</span>
+              </div>
+              <button
+                class="recommendation-popup__close"
+                type="button"
+                title="Close"
+                aria-label="Close dimension options"
+                @click="closeDimensionDropDecision"
+              >
+                <X :size="17" :stroke-width="1.7" aria-hidden="true" />
+              </button>
+            </header>
+            <div class="recommendation-popup__options dimension-drop-popup__options">
+              <article
+                v-for="group in dimensionIntentGroups"
+                :key="group.id"
+                class="dimension-intent-card"
+                :class="{ 'dimension-intent-card--disabled': group.intents.length === 0 }"
+              >
+                <header class="dimension-intent-card__header">
+                  <span class="dimension-intent-card__kicker">{{ group.kicker }}</span>
+                  <strong>{{ group.title }}</strong>
+                  <p>{{ group.description }}</p>
+                </header>
+                <template v-if="group.intents.length">
+                  <select
+                    :value="selectedDimensionIntent(group)"
+                    :aria-label="`${group.title} option`"
+                    @change="chooseDimensionIntent(group.id, $event.target.value)"
+                  >
+                    <option v-for="intent in group.intents" :key="intent.id" :value="intent.id">
+                      {{ intent.label }}
+                    </option>
+                  </select>
+                  <select
+                    v-if="group.id === 'filter'"
+                    :value="dimensionFilterSelection[group.id]"
+                    aria-label="Filter value"
+                    @change="dimensionFilterSelection[group.id] = $event.target.value"
+                  >
+                    <option
+                      v-for="value in group.intents[0]?.filterValues ?? []"
+                      :key="value"
+                      :value="value"
+                    >
+                      {{ value }}
+                    </option>
+                  </select>
+                  <button type="button" @click="applyDimensionIntentGroup(group)">
+                    Apply choice
+                  </button>
+                </template>
+                <span v-else class="dimension-intent-card__empty">Not available for this chart</span>
+              </article>
+            </div>
+          </aside>
+
+          <aside
+            v-if="nestedPositionEditor"
+            class="nested-position-editor"
+            role="dialog"
+            aria-modal="false"
+            aria-labelledby="nested-position-title"
+            @click.stop
+            @pointerdown.stop
+          >
+            <header class="nested-position-editor__header">
+              <div>
+                <strong id="nested-position-title">Nested positioning</strong>
+                <span>
+                  {{ nestedPositionEditor.parentName }} + {{ nestedPositionEditor.childName }}
+                  <template v-if="nestedPositionEditor.instanceCount > 1">
+                    / {{ nestedPositionEditor.instanceCount }} instances
+                  </template>
+                </span>
+              </div>
+              <button
+                class="recommendation-popup__close"
+                type="button"
+                title="Close"
+                aria-label="Close nested positioning"
+                @click="closeNestedPositionEditor"
+              >
+                <X :size="18" :stroke-width="1.7" aria-hidden="true" />
+              </button>
+            </header>
+
+            <div class="nested-position-editor__body">
+              <section class="nested-anchor-panel" aria-label="Nested anchors">
+                <div class="nested-anchor-selector">
+                  <header>
+                    <span class="nested-anchor-selector__role nested-anchor-selector__role--parent">Parent anchor</span>
+                    <strong>{{ nestedPositionEditor.parentName }}</strong>
+                  </header>
+                  <div class="nested-anchor-map nested-anchor-map--parent">
+                    <button
+                      v-for="anchor in nestedAnchorOptions"
+                      :key="`parent-${anchor.x}-${anchor.y}`"
+                      class="nested-anchor-option"
+                      :class="{ 'nested-anchor-option--selected': isNestedAnchorSelected('parentAnchor', anchor) }"
+                      :style="nestedAnchorOptionStyle(anchor)"
+                      type="button"
+                      :title="`Parent ${anchor.label}`"
+                      :aria-label="`Use ${anchor.label} as parent anchor`"
+                      :aria-pressed="isNestedAnchorSelected('parentAnchor', anchor)"
+                      @click="selectNestedAnchor('parentAnchor', anchor)"
+                    ></button>
+                  </div>
+                </div>
+
+                <div class="nested-anchor-selector">
+                  <header>
+                    <span class="nested-anchor-selector__role nested-anchor-selector__role--child">Child pin</span>
+                    <strong>{{ nestedPositionEditor.childName }}</strong>
+                  </header>
+                  <div class="nested-anchor-map nested-anchor-map--child">
+                    <button
+                      v-for="anchor in nestedAnchorOptions"
+                      :key="`child-${anchor.x}-${anchor.y}`"
+                      class="nested-anchor-option"
+                      :class="{ 'nested-anchor-option--selected': isNestedAnchorSelected('childAnchor', anchor) }"
+                      :style="nestedAnchorOptionStyle(anchor)"
+                      type="button"
+                      :title="`Child ${anchor.label}`"
+                      :aria-label="`Use ${anchor.label} as child anchor`"
+                      :aria-pressed="isNestedAnchorSelected('childAnchor', anchor)"
+                      @click="selectNestedAnchor('childAnchor', anchor)"
+                    ></button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="nested-position-workspace" aria-label="Nested relative position">
+                <header>
+                  <strong>Relative position</strong>
+                  <output>
+                    x {{ Math.round(nestedPositionEditor.parameters.offset.x) }}
+                    / y {{ Math.round(nestedPositionEditor.parameters.offset.y) }}
+                  </output>
+                </header>
+                <div class="nested-position-preview">
+                  <div
+                    class="nested-position-parent"
+                    :class="{ 'nested-position-parent--omitted': !nestedPositionEditor.parameters.retainParent }"
+                  >
+                    <span class="nested-position-parent__label">{{ nestedPositionEditor.parentName }}</span>
+                    <i
+                      class="nested-position-anchor nested-position-anchor--parent"
+                      :style="nestedParentAnchorStyle"
+                      aria-hidden="true"
+                    ></i>
+                  </div>
+                  <i
+                    class="nested-position-offset-guide"
+                    :style="nestedOffsetGuideStyle"
+                    aria-hidden="true"
+                  ></i>
+                  <button
+                    class="nested-position-child"
+                    type="button"
+                    :style="nestedChildPreviewStyle"
+                    title="Drag child to adjust offset"
+                    :aria-label="`Move ${nestedPositionEditor.childName}`"
+                    @pointerdown.prevent="onNestedPreviewPointerDown"
+                    @pointermove.prevent="onNestedPreviewPointerMove"
+                    @pointerup.prevent="onNestedPreviewPointerUp"
+                    @pointercancel.prevent="onNestedPreviewPointerUp"
+                  >
+                    <Move :size="16" :stroke-width="1.7" aria-hidden="true" />
+                    <span>{{ nestedPositionEditor.childName }}</span>
+                    <i
+                      class="nested-position-anchor nested-position-anchor--child"
+                      :style="nestedChildAnchorStyle"
+                      aria-hidden="true"
+                    ></i>
+                  </button>
+                </div>
+              </section>
+            </div>
+
+            <footer class="nested-position-editor__actions">
+              <label class="nested-position-editor__retain-parent">
+                <input
+                  type="checkbox"
+                  :checked="nestedPositionEditor.parameters.retainParent"
+                  @change="setNestedParentRetention"
+                />
+                <span>Keep parent mark</span>
+              </label>
+              <button
+                class="encoding-inspector__secondary nested-position-editor__reset"
+                type="button"
+                @click="resetNestedPosition"
+              >
+                <RotateCcw :size="15" :stroke-width="1.7" aria-hidden="true" />
+                <span>Reset center</span>
+              </button>
+              <button
+                class="encoding-inspector__confirm nested-position-editor__done"
+                type="button"
+                @click="closeNestedPositionEditor"
+              >
+                <Check :size="16" :stroke-width="1.8" aria-hidden="true" />
+                <span>Done</span>
+              </button>
+            </footer>
+          </aside>
+
+          <aside
+            v-if="nestedBindingTarget"
+            ref="nestedBindingPopupRef"
+            class="nested-binding-popup"
+            role="dialog"
+            aria-modal="false"
+            aria-label="Configure Point and Pie composition"
+            :style="nestedBindingPopupPosition ? {
+              left: `${nestedBindingPopupPosition.left}px`,
+              top: `${nestedBindingPopupPosition.top}px`,
+              maxHeight: `calc(100% - ${nestedBindingPopupPosition.top + 12}px)`,
+            } : undefined"
+            @click.stop
+            @pointerdown.stop
+          >
+            <header class="nested-binding-popup__header">
+              <div>
+                <strong>POINT + PIE</strong>
+                <span>{{ nestedBindingNode?.name }}</span>
+              </div>
+              <button
+                class="encoding-inspector__close"
+                type="button"
+                title="Close"
+                aria-label="Close composition editor"
+                @click="closeNestedBinding"
+              >
+                <X :size="16" :stroke-width="1.6" aria-hidden="true" />
+              </button>
+            </header>
+
+            <form class="nested-binding-popup__form" @submit.prevent="submitNestedBinding">
+              <fieldset>
+                <legend>Point position</legend>
+                <div class="nested-binding-popup__field-grid">
+                  <label class="encoding-inspector__field">
+                    <span>X</span>
+                    <select v-model="nestedPointXField">
+                      <option
+                        v-for="column in nestedBindingColumns"
+                        :key="`point-x-${column.name}`"
+                        :value="column.name"
+                      >
+                        {{ column.name }} ({{ column.type }})
+                      </option>
+                    </select>
+                  </label>
+                  <label class="encoding-inspector__field">
+                    <span>Y</span>
+                    <select v-model="nestedPointYField">
+                      <option
+                        v-for="column in nestedBindingColumns"
+                        :key="`point-y-${column.name}`"
+                        :value="column.name"
+                      >
+                        {{ column.name }} ({{ column.type }})
+                      </option>
+                    </select>
+                  </label>
+                </div>
+                <div class="nested-binding-popup__relation">
+                  <span>Attach to</span>
+                  <strong>{{ nestedBindingTarget.rowKey }}</strong>
+                </div>
+              </fieldset>
+
+              <fieldset>
+                <legend>Pie encodings</legend>
+                <label class="encoding-inspector__field">
+                  <span>Radius</span>
+                  <select v-model="nestedPieRadiusField">
+                    <option
+                      v-for="column in nestedBindingColumns.filter((item) => item.type === 'quantitative')"
+                      :key="`pie-radius-${column.name}`"
+                      :value="column.name"
+                    >
+                      {{ column.name }}
+                    </option>
+                  </select>
+                </label>
+                <div class="nested-binding-popup__angles">
+                  <span>Angle components</span>
+                  <label
+                    v-for="column in nestedBindingColumns.filter((item) => item.type === 'quantitative')"
+                    :key="`pie-angle-${column.name}`"
+                    class="nested-binding-popup__angle-option"
+                  >
+                    <input
+                      type="checkbox"
+                      :checked="nestedPieAngleFields.includes(column.name)"
+                      @change="toggleNestedAngleField(column.name)"
+                    />
+                    <span>{{ column.name }}</span>
+                  </label>
+                </div>
+              </fieldset>
+
+              <div class="nested-binding-popup__actions">
+                <button type="button" class="encoding-inspector__secondary" @click="closeNestedBinding">
+                  Cancel
+                </button>
+                <button type="submit" class="encoding-inspector__confirm" :disabled="!canConfirmNestedBinding">
+                  Create composition
+                </button>
+              </div>
+            </form>
+          </aside>
+
+          <aside
+            v-if="activeCompositionType"
+            class="composition-popover"
+            :class="{ 'composition-popover--nested-positioning': nestedPositionEditor }"
+            role="dialog"
+            aria-modal="false"
+            :aria-label="`${activeCompositionOption?.label ?? ''} candidates`"
+            @click.stop
+          >
+            <header class="composition-popover__header">
+              <div>
+                <strong>{{ activeCompositionOption?.label }}</strong>
+                <span> candidates</span>
+              </div>
+              <button
+                class="composition-popover__close"
+                type="button"
+                title="Close"
+                aria-label="Close candidate list"
+                @click="closeCompositionCandidates"
+              >
+                <svg viewBox="0 0 18 18" aria-hidden="true">
+                  <path d="M4 4l10 10M14 4L4 14" />
+                </svg>
+              </button>
+            </header>
+            <div class="composition-candidate-list">
+              <article
+                v-for="candidate in activeCompositionCandidates"
+                :key="candidate.id"
+                class="composition-candidate"
+                :class="{
+                  'composition-candidate--unavailable': candidate.unavailable,
+                }"
+                :title="candidate.name"
+                :draggable="!candidate.unavailable"
+                role="button"
+                :tabindex="candidate.unavailable ? -1 : 0"
+                :aria-disabled="candidate.unavailable || undefined"
+                @click="selectCompositionCandidate(candidate)"
+                @keydown.enter.prevent="selectCompositionCandidate(candidate)"
+                @keydown.space.prevent="selectCompositionCandidate(candidate)"
+                @dragstart="onCandidateDragStart(candidate, $event)"
+                @dragend="onCandidateDragEnd"
+              >
+                <div class="composition-candidate__preview">
+                  <img
+                    :src="candidate.src"
+                    :alt="candidate.name"
+                    draggable="false"
+                  />
+                </div>
+                <span class="composition-candidate__name">{{
+                  candidate.name
+                }}</span>
+                <span
+                  v-if="candidate.unavailable"
+                  class="composition-candidate__status"
+                >
+                  Pending
+                </span>
+              </article>
+            </div>
+          </aside>
+          <div
+            v-if="contextMenu"
+            class="context-menu"
+            :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
+            role="menu"
+            @contextmenu.stop.prevent
+          >
+            <button
+              class="context-menu__item"
+              type="button"
+              role="menuitem"
+              :disabled="!canCopy"
+              @click="copySelectedNodes"
+            >
+              Copy
+            </button>
+            <button
+              class="context-menu__item"
+              type="button"
+              role="menuitem"
+              :disabled="!canPaste"
+              @click="contextMenu && pasteClipboardNodes(contextMenu.point)"
+            >
+              Paste
+            </button>
+            <div class="context-menu__separator" role="separator"></div>
+            <button
+              class="context-menu__item"
+              type="button"
+              role="menuitem"
+              :disabled="!canGroup"
+              @click="groupSelectedItems"
+            >
+              Group
+            </button>
+            <button
+              class="context-menu__item"
+              type="button"
+              role="menuitem"
+              :disabled="!canUngroup"
+              @click="ungroupSelectedItems"
+            >
+              Ungroup
+            </button>
+            <div class="context-menu__separator" role="separator"></div>
+            <button
+              class="context-menu__item"
+              type="button"
+              role="menuitem"
+              :disabled="!canMoveSelectionForward"
+              @click="reorderSelectedNodes('front')"
+            >
+              Bring to front
+            </button>
+            <button
+              class="context-menu__item"
+              type="button"
+              role="menuitem"
+              :disabled="!canMoveSelectionForward"
+              @click="reorderSelectedNodes('forward')"
+            >
+              Move forward
+            </button>
+            <button
+              class="context-menu__item"
+              type="button"
+              role="menuitem"
+              :disabled="!canMoveSelectionBackward"
+              @click="reorderSelectedNodes('backward')"
+            >
+              Move backward
+            </button>
+            <button
+              class="context-menu__item"
+              type="button"
+              role="menuitem"
+              :disabled="!canMoveSelectionBackward"
+              @click="reorderSelectedNodes('back')"
+            >
+              Send to back
+            </button>
+            <div class="context-menu__separator" role="separator"></div>
+            <button
+              class="context-menu__item context-menu__item--danger"
+              type="button"
+              role="menuitem"
+              :disabled="!canDelete"
+              @click="deleteSelectedNodes"
+            >
+              Delete
+            </button>
+          </div>
+
+          <div
+            v-if="canvasNodes.length === 0 && !loadingDrop"
+            class="empty-state"
+          >
+            Drag an SVG, PNG, JPEG, WebP, GIF, or AVIF here.
+          </div>
+          <div v-if="loadingDrop" class="loading-state">Loading SVG...</div>
+          <div v-if="importNotice" class="import-notice">
+            {{ importNotice }}
+          </div>
+
+          <div
+            class="deckgl-layer-scene"
+            :style="{ transform: `translate(${viewPan.x}px, ${viewPan.y}px) scale(${viewZoom})` }"
+            aria-hidden="true"
+          >
+            <div
+              v-for="node in deckglLayerNodes"
+              :key="`deckgl-layer-${node.id}`"
+              class="deckgl-layer-node"
+              :style="deckglLayerStyle(node)"
+            >
+              <DeckglMapLayer
+                :key="`${node.id}:${node.mapStyleUrl ?? 'example-default'}`"
+                :layer-type="deckglLayerType(node)"
+                :map-style-url="node.mapStyleUrl ?? ''"
+                :map-view-state="node.mapViewState"
+                :config="deckglLayerConfig(node)"
+                :binding="node.deckglBinding"
+                :dataset-rows="deckglLayerDataset(node)?.rows ?? []"
+                :geometry-features="deckglLayerGeometrySource(node)?.features ?? []"
+                :width="deckglLayerWidth(node)"
+                :height="deckglLayerHeight(node)"
+                @interaction-start="onDeckglMapInteraction(node, $event)"
+                @view-state-change="onDeckglMapViewStateChange(node, $event)"
+              />
+              <div
+                v-if="selectedIds.includes(node.id)"
+                class="deckgl-layer-selection-frame"
+                aria-hidden="true"
+              />
+              <div class="deckgl-layer-frame" aria-hidden="true">
+                <span
+                  v-for="edge in ['top', 'right', 'bottom', 'left']"
+                  :key="`${node.id}-${edge}`"
+                  class="deckgl-layer-frame__edge"
+                  :class="`deckgl-layer-frame__edge--${edge}`"
+                  @pointerdown.stop.prevent="onCanvasNodePointerDown(node, $event)"
+                />
+              </div>
+            </div>
+          </div>
+
+          <svg
+            class="canvas-scene"
+            preserveAspectRatio="none"
+            @pointerdown="onCanvasPointerDown"
+            @wheel="onCanvasWheel"
+          >
+            <g
+              :transform="`translate(${viewPan.x} ${viewPan.y}) scale(${viewZoom})`"
+            >
+              <CanvasNodeView
+                v-for="node in visibleCanvasNodes"
+                :key="node.id"
+                :node="node"
+                :selected="false"
+                :interactive="true"
+                :editing-group-path="editingGroupPath"
+                :editing-chart-id="chartDrilldown?.nodeId ?? null"
+                :dragging-node-id="null"
+                :selected-ids="editingGroupPath.length > 0 ? selectedIds : EMPTY_SELECTION_IDS"
+                :nested-placements="nestedRenderPlacements"
+                :nested-rendered-child-ids="nestedRenderedChildIds"
+                :on-node-pointer-down="onCanvasNodePointerDown"
+                :on-node-context-menu="onCanvasNodeContextMenu"
+                :on-mark-pointer-down="onSemanticMarkPointerDown"
+                :on-editing-background-pointer-down="onEditingGroupBackgroundPointerDown"
+              />
+              <CanvasCoordinateSystemLayer
+                v-for="node in visibleCanvasNodes"
+                :key="`coordinate-system-${node.id}`"
+                :node="node"
+                :dragging-node-id="null"
+                :editing-composition-id="editingCompositionId"
+                :hidden-node-ids="nestedRenderedChildIds"
+              />
+              <g v-if="activeDropZone" :transform="editingGroupTransform" class="composition-drop-zone-layer">
+                <foreignObject
+                  v-if="activeDropZone.enterBounds && (activeDropZone.enterCompositionId || activeDropZone.type === 'layer' || activeDropZone.nestedAction === 'enter')"
+                  class="composition-mode-veil"
+                  :class="{ 'composition-mode-veil--nested': activeDropZone.nestedAction === 'enter' || activeDropZone.enterCompositionId }"
+                  :x="activeDropZone.bounds.minX"
+                  :y="activeDropZone.bounds.minY"
+                  :width="activeDropZone.bounds.width"
+                  :height="activeDropZone.bounds.height"
+                  pointer-events="none"
+                >
+                  <div
+                    xmlns="http://www.w3.org/1999/xhtml"
+                    class="composition-mode-veil__surface"
+                    :style="{
+                      '--enter-x': `${activeDropZone.enterBounds.minX + activeDropZone.enterBounds.width / 2 - activeDropZone.bounds.minX}px`,
+                      '--enter-y': `${activeDropZone.enterBounds.minY + activeDropZone.enterBounds.height / 2 - activeDropZone.bounds.minY}px`,
+                      '--enter-radius': `${activeDropZone.enterBounds.width / 2}px`,
+                    }"
+                  ></div>
+                </foreignObject>
+                <component
+                  :is="activeDropZone.outline ? 'polygon' : 'rect'"
+                  class="composition-drop-zone"
+                  :class="{
+                    'composition-drop-zone--layer': activeDropZone.type === 'layer',
+                    'composition-drop-zone--concat': activeDropZone.type === 'concat' || activeDropZone.type === 'concat-corner',
+                    'composition-drop-zone--concat-corner': activeDropZone.type === 'concat-corner',
+                    'composition-drop-zone--horizontal': activeDropZone.direction === 'horizontal',
+                    'composition-drop-zone--vertical': activeDropZone.direction === 'vertical',
+                    'composition-drop-zone--radial': activeDropZone.direction === 'radial',
+                    'composition-drop-zone--angular': activeDropZone.direction === 'angular',
+                    'composition-drop-zone--before': activeDropZone.concatPosition === 'before',
+                    'composition-drop-zone--after': activeDropZone.concatPosition === 'after',
+                    'composition-drop-zone--nested': activeDropZone.type === 'nested',
+                    'composition-drop-zone--enter': activeDropZone.nestedAction === 'enter',
+                    'composition-drop-zone--invalid': !activeDropZone.compatible,
+                  }"
+                  :x="activeDropZone.bounds.minX"
+                  :y="activeDropZone.bounds.minY"
+                  :width="activeDropZone.bounds.width"
+                  :height="activeDropZone.bounds.height"
+                  :points="activeDropZone.outline?.map((point) => `${point.x},${point.y}`).join(' ')"
+                  vector-effect="non-scaling-stroke"
+                />
+                <text
+                  v-if="activeDropZone.type === 'layer' || activeDropZone.type === 'nested'"
+                  class="composition-mode-label"
+                  :class="{ 'composition-mode-label--nested': activeDropZone.type === 'nested' }"
+                  :x="activeDropZone.bounds.minX + activeDropZone.bounds.width / 2"
+                  :y="activeDropZone.bounds.minY + 22 / selectionOverlayZoom"
+                  text-anchor="middle"
+                  dominant-baseline="middle"
+                  :font-size="13 / selectionOverlayZoom"
+                >{{ activeDropZone.type === 'nested' ? 'Nested' : 'Layer' }}</text>
+                <g
+                  v-if="activeDropZone.enterBounds"
+                  class="composition-enter-zone"
+                  :class="{ 'composition-enter-zone--active': activeDropZone.nestedAction === 'enter' }"
+                  :style="{
+                    '--enter-expand-scale': Math.max(activeDropZone.bounds.width, activeDropZone.bounds.height) / Math.max(activeDropZone.enterBounds.width, 1) * 1.35,
+                  }"
+                  :transform="`translate(${activeDropZone.enterBounds.minX + activeDropZone.enterBounds.width / 2} ${activeDropZone.enterBounds.minY + activeDropZone.enterBounds.height / 2})`"
+                >
+                  <circle
+                    :r="activeDropZone.enterBounds.width / 2"
+                    vector-effect="non-scaling-stroke"
+                  />
+                  <text
+                    text-anchor="middle"
+                    dominant-baseline="middle"
+                    :font-size="12 / selectionOverlayZoom"
+                  >{{ activeDropZone.nestedAction === 'enter' ? 'Nested' : 'Enter' }}</text>
+                </g>
+              </g>
+              <g
+                v-for="legend in seriesItemLegends"
+                :key="`series-item-legend-${legend.node.id}`"
+                :transform="editingGroupTransform"
+                :data-canvas-owner-node-id="legend.node.id"
+                class="series-item-legend-layer"
+              >
+                <g :transform="`rotate(${legend.legendFrame.rotation} ${legend.legendFrame.center.x} ${legend.legendFrame.center.y})`">
+                  <foreignObject
+                    :x="legend.legendFrame.x"
+                    :y="legend.legendFrame.y"
+                    :width="legend.legendFrame.width"
+                    :height="legend.legendFrame.height"
+                  >
+                    <div xmlns="http://www.w3.org/1999/xhtml" class="series-item-legend">
+                      <div
+                        v-for="member in legend.members"
+                        :key="`${legend.node.id}-legend-${member.memberId}`"
+                        class="series-item-legend__item"
+                      >
+                        <span
+                          class="series-item-legend__swatch"
+                          :style="{ background: member.color }"
+                          aria-hidden="true"
+                        ></span>
+                        <span :title="member.label">{{ member.label }}</span>
+                      </div>
+                    </div>
+                  </foreignObject>
+                </g>
+              </g>
+              <g
+                v-if="seriesItemOverlay"
+                :transform="editingGroupTransform"
+                :data-canvas-owner-node-id="seriesItemOverlay.node.id"
+                class="series-item-drop-guide"
+              >
+                <g
+                  :transform="`rotate(${seriesItemOverlay.frame.rotation} ${seriesItemOverlay.frame.center.x} ${seriesItemOverlay.frame.center.y})`"
+                >
+                  <foreignObject
+                    :x="seriesItemOverlay.frame.x"
+                    :y="seriesItemOverlay.frame.y"
+                    :width="seriesItemOverlay.frame.width"
+                    :height="seriesItemOverlay.frame.height"
+                  >
+                    <div
+                      xmlns="http://www.w3.org/1999/xhtml"
+                      class="series-item-panel"
+                      @pointerdown.stop
+                    >
+                      <header class="series-item-panel__header">
+                        <strong>{{ seriesItemOverlay.label }}</strong>
+                        <span class="series-item-panel__bindings">
+                          <span
+                            v-for="field in seriesItemOverlay.fields"
+                            :key="`${seriesItemOverlay.node.id}-binding-${field}`"
+                            class="series-item-panel__binding"
+                          >
+                            <span :title="field">{{ field }}</span>
+                            <button
+                              type="button"
+                              :title="`Remove ${field}`"
+                              :aria-label="`Remove ${field}`"
+                              @pointerdown.stop
+                              @click="removeSeriesCaptionItem(seriesItemOverlay.node.id, field, $event)"
+                            >
+                              <X :size="12" :stroke-width="1.8" aria-hidden="true" />
+                            </button>
+                          </span>
+                        </span>
+                      </header>
+                      <div
+                        v-for="member in seriesItemOverlay.members"
+                        :key="`${seriesItemOverlay.node.id}-series-member-${member.memberId}`"
+                        class="series-item-panel__member"
+                        :class="{ 'series-item-panel__member--color-only': seriesItemOverlay.colorOnly }"
+                      >
+                        <span :title="member.label">{{ member.label }}</span>
+                        <label
+                          class="series-item-panel__color"
+                          :style="{ background: member.color }"
+                          :title="`${member.label} color`"
+                        >
+                          <input
+                            type="color"
+                            :value="member.color"
+                            :aria-label="`${member.label} color`"
+                            @input="onSeriesItemStyleChange(member.memberId, { color: $event.target.value })"
+                          />
+                        </label>
+                        <input
+                          v-if="!seriesItemOverlay.colorOnly"
+                          type="number"
+                          min="0.5"
+                          max="16"
+                          step="0.5"
+                          :value="member.width"
+                          :aria-label="`${member.label} stroke width`"
+                          @change="onSeriesItemStyleChange(member.memberId, { strokeWidth: Number($event.target.value) })"
+                        />
+                        <select
+                          v-if="!seriesItemOverlay.colorOnly"
+                          :value="member.shape"
+                          :aria-label="`${member.label} line style`"
+                          @change="onSeriesItemStyleChange(member.memberId, { shape: $event.target.value })"
+                        >
+                          <option value="solid">Solid</option>
+                          <option value="dashed">Dashed</option>
+                          <option value="dotted">Dotted</option>
+                        </select>
+                      </div>
+                    </div>
+                  </foreignObject>
+                </g>
+              </g>
+              <g
+                v-if="activeDataBindingDropZone"
+                :transform="editingGroupTransform"
+                class="data-binding-drop-zone-layer"
+              >
+                <template v-if="activeDataBindingDropZone.type === 'polar-axis'">
+                  <path
+                    class="data-binding-drop-zone"
+                    :class="{
+                      'data-binding-drop-zone--invalid': !activeDataBindingDropZone.compatible,
+                    }"
+                    :d="activeDataBindingDropZone.path"
+                    vector-effect="non-scaling-stroke"
+                  />
+                  <text
+                    class="data-binding-drop-zone__label"
+                    :x="activeDataBindingDropZone.labelPosition.x"
+                    :y="activeDataBindingDropZone.labelPosition.y"
+                    text-anchor="middle"
+                  >{{ activeDataBindingDropZone.channel === 'angle' ? 'Theta' : 'R' }}</text>
+                </template>
+                <template v-else-if="activeDataBindingDropZone.type === 'series-item'">
+                  <g :transform="`rotate(${activeDataBindingDropZone.frame.rotation} ${activeDataBindingDropZone.frame.center.x} ${activeDataBindingDropZone.frame.center.y})`">
+                    <rect
+                      class="data-binding-series-item-drop-zone"
+                      :class="{
+                        'data-binding-drop-zone--invalid': !activeDataBindingDropZone.compatible,
+                      }"
+                      :x="activeDataBindingDropZone.frame.x"
+                      :y="activeDataBindingDropZone.frame.y"
+                      :width="activeDataBindingDropZone.frame.width"
+                      :height="activeDataBindingDropZone.frame.height"
+                      rx="6"
+                      vector-effect="non-scaling-stroke"
+                    />
+                    <text
+                      class="data-binding-series-item-drop-zone__label"
+                      :class="{
+                        'data-binding-series-item-drop-zone__label--invalid': !activeDataBindingDropZone.compatible,
+                      }"
+                      :x="activeDataBindingDropZone.frame.x + activeDataBindingDropZone.frame.width / 2"
+                      :y="activeDataBindingDropZone.frame.y + activeDataBindingDropZone.frame.height / 2"
+                      text-anchor="middle"
+                      dominant-baseline="middle"
+                    >{{ activeDataBindingDropZone.label }}</text>
+                  </g>
+                </template>
+                <rect
+                  v-else-if="activeDataBindingDropZone.type === 'chart-body' || activeDataBindingDropZone.type === 'geographic-body'"
+                  class="data-binding-chart-drop-zone"
+                  :class="{ 'data-binding-drop-zone--invalid': !activeDataBindingDropZone.compatible }"
+                  :x="activeDataBindingDropZone.bounds.minX"
+                  :y="activeDataBindingDropZone.bounds.minY"
+                  :width="activeDataBindingDropZone.bounds.width"
+                  :height="activeDataBindingDropZone.bounds.height"
+                  vector-effect="non-scaling-stroke"
+                />
+                <ellipse
+                  v-else-if="activeDataBindingDropZone.type === 'polar-slice'"
+                  class="data-binding-drop-zone"
+                  :class="{
+                    'data-binding-drop-zone--invalid': !activeDataBindingDropZone.compatible,
+                  }"
+                  :cx="activeDataBindingDropZone.center.x"
+                  :cy="activeDataBindingDropZone.center.y"
+                  :rx="activeDataBindingDropZone.radiusX"
+                  :ry="activeDataBindingDropZone.radiusY"
+                  :transform="`rotate(${activeDataBindingDropZone.rotation} ${activeDataBindingDropZone.center.x} ${activeDataBindingDropZone.center.y})`"
+                  vector-effect="non-scaling-stroke"
+                />
+                <line
+                  v-else
+                  class="data-binding-axis-drop-zone"
+                  :class="{
+                    'data-binding-drop-zone--invalid': !activeDataBindingDropZone.compatible,
+                  }"
+                  :x1="activeDataBindingDropZone.start.x"
+                  :y1="activeDataBindingDropZone.start.y"
+                  :x2="activeDataBindingDropZone.end.x"
+                  :y2="activeDataBindingDropZone.end.y"
+                  vector-effect="non-scaling-stroke"
+                />
+              </g>
+              <g :transform="editingGroupTransform">
+              <g class="selection-overlay">
+                <rect
+                  v-if="marqueeBounds"
+                  class="marquee-box"
+                  :x="marqueeBounds.minX"
+                  :y="marqueeBounds.minY"
+                  :width="marqueeBounds.width"
+                  :height="marqueeBounds.height"
+                  :vector-effect="'non-scaling-stroke'"
+                />
+                <g v-if="selectionFrame">
+                  <template v-if="showPolarSelectionOutlines">
+                    <path
+                      v-for="outline in selectionPolarOutlines"
+                      :key="`polar-selection-${outline.key}`"
+                      class="selection-box selection-box--polar"
+                      :d="outline.path"
+                      :transform="outline.transform"
+                      fill-rule="evenodd"
+                      :vector-effect="'non-scaling-stroke'"
+                    />
+                  </template>
+                  <rect
+                    v-else
+                    class="selection-box"
+                    :class="{ 'selection-box--semantic': !!semanticSelection }"
+                    :x="selectionFrame.x"
+                    :y="selectionFrame.y"
+                    :width="selectionFrame.width"
+                    :height="selectionFrame.height"
+                    :transform="`rotate(${selectionFrame.rotation} ${selectionFrame.x + selectionFrame.width / 2} ${selectionFrame.y + selectionFrame.height / 2})`"
+                    :vector-effect="'non-scaling-stroke'"
+                  />
+                  <g
+                    v-for="control in concatSplitControls"
+                    :key="`concat-split-${control.id}`"
+                    class="selection-split"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Split concat link"
+                    :transform="`translate(${control.x} ${control.y})`"
+                    @pointerdown.stop.prevent="splitConcatLink(control.id)"
+                    @keydown.enter.stop.prevent="splitConcatLink(control.id)"
+                    @keydown.space.stop.prevent="splitConcatLink(control.id)"
+                  >
+                    <title>Split concat link</title>
+                    <circle :r="11 / selectionOverlayZoom" vector-effect="non-scaling-stroke" />
+                    <SplitIcon
+                      :x="-7 / selectionOverlayZoom"
+                      :y="-7 / selectionOverlayZoom"
+                      :size="14 / selectionOverlayZoom"
+                      :stroke-width="2"
+                      aria-hidden="true"
+                    />
+                  </g>
+                  <g
+                    v-if="cartesianAxisSwapNode && cartesianAxisSwapPosition"
+                    class="cartesian-axis-swap-control"
+                    :class="{ 'is-active': cartesianAxisSwapNode.chartSpec?.axisSwapped }"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Swap X and Y axes"
+                    :aria-pressed="cartesianAxisSwapNode.chartSpec?.axisSwapped === true"
+                    :transform="`translate(${cartesianAxisSwapPosition.x} ${cartesianAxisSwapPosition.y})`"
+                    @pointerdown.stop.prevent="toggleSelectedCartesianAxes"
+                    @keydown.enter.stop.prevent="toggleSelectedCartesianAxes"
+                    @keydown.space.stop.prevent="toggleSelectedCartesianAxes"
+                  >
+                    <title>Swap X and Y axes</title>
+                    <circle
+                      :r="12 / selectionOverlayZoom"
+                      vector-effect="non-scaling-stroke"
+                    />
+                    <ArrowLeftRight
+                      :x="-8 / selectionOverlayZoom"
+                      :y="-8 / selectionOverlayZoom"
+                      :size="16 / selectionOverlayZoom"
+                      :stroke-width="2"
+                      aria-hidden="true"
+                    />
+                  </g>
+                  <circle
+                    v-if="canTransformSelection && !passiveCompositeSelection"
+                    v-for="handle in scaleHandles"
+                    :key="handle.key"
+                    class="selection-handle"
+                    :cx="handle.x"
+                    :cy="handle.y"
+                    :r="6 / selectionOverlayZoom"
+                    :vector-effect="'non-scaling-stroke'"
+                    @pointerdown="onScaleHandlePointerDown(handle.key, $event)"
+                  />
+                  <line
+                    v-if="canTransformSelection && !passiveCompositeSelection && rotateHandle"
+                    class="rotate-stem"
+                    :x1="rotateHandle.stemX"
+                    :y1="rotateHandle.stemY"
+                    :x2="rotateHandle.x"
+                    :y2="rotateHandle.y"
+                  />
+                  <circle
+                    v-if="canTransformSelection && !passiveCompositeSelection && rotateHandle"
+                    class="rotate-handle"
+                    :cx="rotateHandle.x"
+                    :cy="rotateHandle.y"
+                    :r="6 / selectionOverlayZoom"
+                    :vector-effect="'non-scaling-stroke'"
+                    title="Rotate"
+                    @pointerdown="onRotateHandlePointerDown"
+                  />
+                  <g
+                    v-if="canConfigureSelectionComposition"
+                    class="selection-configure"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Configure composition"
+                    :transform="`translate(${selectionFrame.x + selectionFrame.width / 2} ${selectionFrame.y + selectionFrame.height / 2})`"
+                    @pointerdown.stop.prevent="openSelectedCompositionConfig"
+                    @keydown.enter.stop.prevent="openSelectedCompositionConfig"
+                    @keydown.space.stop.prevent="openSelectedCompositionConfig"
+                  >
+                    <title>Configure composition</title>
+                    <path
+                      :d="selectionActionPath(Math.min(selectionFrame.width, selectionFrame.height) / 4, 'left')"
+                      vector-effect="non-scaling-stroke"
+                    />
+                    <text
+                      text-anchor="middle"
+                      dominant-baseline="middle"
+                      :transform="`translate(${-Math.min(selectionFrame.width, selectionFrame.height) * 0.175} 0) rotate(-90)`"
+                      :font-size="10 / selectionOverlayZoom"
+                    >Config</text>
+                  </g>
+                  <g
+                    v-if="canEnterSelection"
+                    class="selection-enter"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Enter selection"
+                    :transform="`translate(${selectionFrame.x + selectionFrame.width / 2} ${selectionFrame.y + selectionFrame.height / 2})`"
+                    @pointerdown.stop.prevent="enterSelection"
+                    @keydown.enter.stop.prevent="enterSelection"
+                    @keydown.space.stop.prevent="enterSelection"
+                  >
+                    <title>Enter selection</title>
+                    <path
+                      :d="selectionActionPath(Math.min(selectionFrame.width, selectionFrame.height) / 4, 'top')"
+                      vector-effect="non-scaling-stroke"
+                    />
+                    <text
+                      text-anchor="middle"
+                      dominant-baseline="middle"
+                      :y="-Math.min(selectionFrame.width, selectionFrame.height) * 0.175"
+                      :font-size="10 / selectionOverlayZoom"
+                    >Enter</text>
+                  </g>
+                  <g
+                    v-if="canRemoveSelectionComposition"
+                    class="selection-uncompose"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Split selection"
+                    :transform="`translate(${selectionFrame.x + selectionFrame.width / 2} ${selectionFrame.y + selectionFrame.height / 2})`"
+                    @pointerdown.stop.prevent="removeSelectionComposition"
+                    @keydown.enter.stop.prevent="removeSelectionComposition"
+                    @keydown.space.stop.prevent="removeSelectionComposition"
+                  >
+                    <title>Split selection</title>
+                    <path
+                      :d="selectionActionPath(Math.min(selectionFrame.width, selectionFrame.height) / 4, 'bottom')"
+                      vector-effect="non-scaling-stroke"
+                    />
+                    <text
+                      text-anchor="middle"
+                      dominant-baseline="middle"
+                      :y="Math.min(selectionFrame.width, selectionFrame.height) * 0.175"
+                      :font-size="10 / selectionOverlayZoom"
+                    >Split</text>
+                  </g>
+                </g>
+              </g>
+              <PolarCoordinateSystem
+                v-for="node in passiveCompositeSelection ? [] : selectedCanvasNodesWithCoordinateGuides.filter((item) => item.coordinateGuide?.type === 'Polar')"
+                :key="`coordinate-guide-${node.id}`"
+                :node="node"
+                :view-zoom="selectionOverlayZoom"
+                :show-axis="false"
+                :interactive="true"
+                :use-composite-radius="editingCompositionId !== node.compositionSpec?.id"
+                :scale-channels="polarScaleChannels(node)"
+                :class="{ 'coordinate-control--drag-source': compositionDragSourceId === node.id }"
+                :on-angle-pointer-down="onPolarAnglePointerDown"
+                :on-axis-scale-pointer-down="onCoordinateAxisScalePointerDown"
+              />
+              </g>
+            </g>
+          </svg>
+          <label
+            v-if="selectionBounds && rotationInputVisible && rotateHandle"
+            class="rotation-input"
+            :style="rotationInputPosition ? {
+              left: `${rotationInputPosition.left}px`,
+              top: `${rotationInputPosition.top}px`,
+            } : undefined"
+          >
+            <span>Angle</span>
+            <input
+              type="number"
+              step="1"
+              :value="Math.round(selectionRotation)"
+              @change="
+                setSelectionRotation(
+                  Number($event.target.value),
+                )
+              "
+            />
+            <span>°</span>
+          </label>
+          <label
+            v-if="selectedPolarAngleSpan !== null && polarAngleInputVisible"
+            class="rotation-input"
+            :style="polarAngleInputPosition ? {
+              left: `${polarAngleInputPosition.left}px`,
+              top: `${polarAngleInputPosition.top}px`,
+            } : undefined"
+          >
+            <span>Angle</span>
+            <input
+              type="number"
+              min="1"
+              max="360"
+              step="1"
+              :value="Math.round(selectedPolarAngleSpan)"
+              @change="
+                setPolarAngleSpan(
+                  Number($event.target.value),
+                )
+              "
+            />
+            <span>°</span>
+          </label>
+        </section>
+      </main>
+    </div>
+  </div>

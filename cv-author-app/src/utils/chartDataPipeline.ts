@@ -228,15 +228,18 @@ function hasRepeatedVisualKey(dataset: Dataset, fields: string[]) {
 }
 
 /**
- * Detects duplicate visual keys after chart-local transforms. Cartesian
- * renderers retain their legacy automatic reduction; polar aggregation stays
- * user-triggered because repeated Segment values can represent distinct arcs.
+ * Detects duplicate visual keys after chart-local transforms. A categorical
+ * polar Segment explicitly defines the grouping grain, so its quantitative
+ * Theta value is summed automatically even when each current key is unique.
  */
 export function applyAutomaticAggregations(dataset: Dataset, input: ChartSpec): ChartSpec {
   const contract = getChartTemplateContract(input.chartType);
   if (!contract || contract.aggregationPolicy !== "allowed") return input;
   const template = normalizeChartTemplate(input.chartType);
-  const inferAggregation = template !== "pie" && template !== "donut";
+  const isPolar = template === "pie" || template === "donut";
+  const hasCategoricalPolarSegment = isPolar
+    && input.encodings.segment !== undefined
+    && input.encodings.segment.type !== "quantitative";
   const dimensions = visualKeyFields(input);
   const repeated = hasRepeatedVisualKey(dataset, dimensions);
   const previousAuto = input.autoAggregations ?? {};
@@ -252,7 +255,11 @@ export function applyAutomaticAggregations(dataset: Dataset, input: ChartSpec): 
     const encodings = encodingsForChannel(input, mapping.channel, mapping.role)
       .filter((encoding) => encoding.type === "quantitative");
     if (encodings.length === 0) return;
-    if (inferAggregation && repeated && aggregations[mapping.channel] === undefined) {
+    const shouldAggregate = hasCategoricalPolarSegment
+      ? mapping.channel === "theta" || mapping.channel === "angle"
+      : !isPolar && repeated;
+    if (shouldAggregate
+      && aggregations[mapping.channel] === undefined) {
       aggregations[mapping.channel] = "sum";
       autoAggregations[mapping.channel] = "sum";
     }

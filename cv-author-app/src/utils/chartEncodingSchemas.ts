@@ -122,6 +122,8 @@ const flowChannels: ChartEncodingChannelSchema[] = [
  */
 export const chartEncodingSchemas = {
   LineGraph: defineSchema("LineGraph", "Single Line", "line", [xAny, yMeasure, { ...lineSeries, configurable: false }, lineSize, lineShape], {
+    aggregationPolicy: "forbidden",
+    requiresFunctionalDependency: true,
     dimensionUpgrades: [{ chartType: "MultiLineChart", label: "Multi-line", role: "series" }],
   }),
   MultiLineChart: defineSchema("MultiLineChart", "Multi-Line Chart", "line", [xAny, multiLineYMeasure, lineSeries, lineSize, lineShape]),

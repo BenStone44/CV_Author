@@ -18,6 +18,9 @@ import {
 } from "./visualMapping";
 import { renderAdvancedChart } from "./advancedRenderer";
 import { csvRowKey } from "./csvDataEngine";
+import { chartAxisLabelsVisible, chartAxisVisible } from "./chartAxes";
+
+const POLAR_CONCAT_SEAM_RATIO = 0.06;
 
 function esc(value: string) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
@@ -367,7 +370,7 @@ function renderBarChart(input: GenericRenderInput) {
     return `<rect data-chart-id="${esc(input.chartId)}" data-mark-role="bar" data-mark-group-id="mark-group:${esc(input.chartId)}:bar" data-row-keys="${esc(keys)}" data-category-key="${esc(datum.category)}" data-series-key="${esc(datum.series)}" data-value="${datum.value}" x="${x}" y="${y}" width="${width}" height="${height}" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 0.9)}"/>`;
   }).join("");
   const showZeroLine = guide?.showAllAxes !== false
-    && (swapped ? guide?.showYLine !== false : guide?.showXLine !== false);
+    && chartAxisVisible(input.chartSpec, guide, swapped ? "y" : "x");
   const zeroLine = (variant === "divergent" || variant === "divergent-stacked") && Number.isFinite(zeroPosition) && showZeroLine
     ? swapped
       ? `<line data-mark-role="zero-line" x1="${zeroPosition}" y1="${plotArea.y}" x2="${zeroPosition}" y2="${plotArea.y + plotArea.height}" stroke="${esc(input.chartSpec.styleTokens?.axisColor ?? "#64748b")}" stroke-width="1" vector-effect="non-scaling-stroke"/>`
@@ -414,8 +417,10 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
     : 1;
   const innerRadius = baseOuterRadius * innerRadiusRatio;
   const outerRadius = baseOuterRadius * outerRadiusRatio;
+  const isOuterRadialConcatBand = input.polarConcatDirection === "radial" && innerRadiusRatio > 0;
   const markInnerRadius = donut
-    ? innerRadius + Math.max(outerRadius - innerRadius, 1) * 0.5
+    ? innerRadius + Math.max(outerRadius - innerRadius, 1)
+      * (isOuterRadialConcatBand ? POLAR_CONCAT_SEAM_RATIO : 0.5)
     : innerRadius;
   const angleSpan = input.coordinateGuide?.type === "Polar"
     ? Math.max(1, Math.min(input.coordinateGuide.angleSpan ?? 360, 360))
@@ -474,7 +479,7 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
           if (!segmentValue || !Number.isFinite(thetaValue)) return [];
           return [{
             field: segmentValue,
-            categoryKey: key(input.dataset, row, rowIndex) || String(rowIndex),
+            categoryKey: segmentValue,
             thetaField: segmentThetaField,
             flattenValues: [] as string[],
             rows: [row],
@@ -544,7 +549,7 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
     }).join("");
     const showSegmentLabels = !!segment
       && input.coordinateGuide?.type === "Polar"
-      && input.coordinateGuide.showDiscreteLabels !== false;
+      && chartAxisLabelsVisible(input.chartSpec, input.coordinateGuide, "theta");
     const segmentLabels = showSegmentLabels
       ? layout.map((datum, index) => {
         const component = components[index];
@@ -553,8 +558,9 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
         const componentOuterRadius = Number.isFinite(radiusValue) ? radiusScale(radiusValue) : outerRadius;
         const labelRadius = markInnerRadius + (componentOuterRadius - markInnerRadius) * 0.55;
         const angle = (datum.startAngle + datum.endAngle) / 2;
-        const x = cx + Math.cos(angle) * labelRadius;
-        const y = cy + Math.sin(angle) * labelRadius;
+        // d3-shape measures arc angles clockwise from 12 o'clock.
+        const x = cx + Math.sin(angle) * labelRadius;
+        const y = cy - Math.cos(angle) * labelRadius;
         return `<text data-mark-role="arc-label" data-category-key="${esc(component.categoryKey)}" x="${x}" y="${y}" text-anchor="middle" dominant-baseline="middle" fill="#1554b2" font-size="11" font-weight="650">${esc(component.field)}</text>`;
       }).join("")
       : "";
@@ -796,6 +802,7 @@ export type GenericRenderInput = {
   coordinateGuide: CoordinateGuide | null | undefined;
   chartSpec: ChartSpec;
   dataset: Dataset;
+  polarConcatDirection?: "radial" | "angular";
   sharedPlotArea?: ChartPlotArea;
   sharedScales?: Partial<{ x: ChartScaleSpec; y: ChartScaleSpec }>;
 };

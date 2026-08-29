@@ -104,12 +104,48 @@ describe("independent Polar coordinate system component", () => {
     expect(createPolarCoordinateSystemModel(node, 0.5)?.radius).toBe(48);
   });
 
-  it("keeps polar controls without rendering boundary rays or control arcs", () => {
+  it("renders thin concentric radial guides and matching ticks within the angle span", () => {
+    const node = polarNode({
+      coordinateGuide: {
+        type: "Polar",
+        origin: { x: 110, y: 100 },
+        radius: 80,
+        angleSpan: 120,
+      },
+    });
+    const render = (PolarCoordinateSystem as any).setup({
+      node,
+      viewZoom: 1,
+      applyTransform: false,
+      showAxis: true,
+      interactive: false,
+    });
+    const coordinateSystem = render();
+    const classes = (child: any) => Array.isArray(child.props.class)
+      ? child.props.class
+      : String(child.props.class ?? "").split(" ");
+    const rings = coordinateSystem.children.filter((child: any) =>
+      classes(child).includes("polar-coordinate-grid-ring"),
+    );
+    const ticks = coordinateSystem.children.filter((child: any) =>
+      classes(child).includes("polar-coordinate-axis-tick--radius"),
+    );
+
+    expect(rings).toHaveLength(4);
+    expect(ticks).toHaveLength(4);
+    expect(rings.map((ring: any) => ring.props["data-radius-ratio"])).toEqual([0.25, 0.5, 0.75, 1]);
+    expect(rings.every((ring: any) => (String(ring.props.d).match(/ A /g) ?? []).length === 1)).toBe(true);
+    expect(ticks.map((tick: any) => tick.props["data-radius-ratio"])).toEqual([0.25, 0.5, 0.75, 1]);
+  });
+
+  it("marks the polar angle handle with a rightward ray and 15-degree control arcs", () => {
     const node = polarNode();
+    const onAnglePointerDown = vi.fn();
     const render = (PolarCoordinateSystem as any).setup({
       node,
       viewZoom: 0.5,
       applyTransform: false,
+      onAnglePointerDown,
     });
     const coordinateSystem = render();
     const classes = (child: any) => Array.isArray(child.props.class)
@@ -118,7 +154,7 @@ describe("independent Polar coordinate system component", () => {
 
     expect(coordinateSystem.props.class).toContain("polar-coordinate-system");
     expect(coordinateSystem.props.transform).toBeUndefined();
-    expect(coordinateSystem.children).toHaveLength(2);
+    expect(coordinateSystem.children).toHaveLength(7);
 
     const radiusAxes = coordinateSystem.children.filter((child: any) =>
       classes(child).includes("polar-coordinate-radius-axis"),
@@ -133,6 +169,36 @@ describe("independent Polar coordinate system component", () => {
     const labels = coordinateSystem.children.filter((child: any) => child.type === "text");
     expect(labels).toHaveLength(0);
 
+    const controlRay = coordinateSystem.children.find((child: any) =>
+      classes(child).includes("polar-coordinate-control-ray"),
+    );
+    expect(controlRay.props).toMatchObject({ x1: 110, y1: 100, x2: 276, y2: 100 });
+
+    const controlArcs = coordinateSystem.children.filter((child: any) =>
+      classes(child).includes("polar-coordinate-control-arc"),
+    );
+    expect(controlArcs).toHaveLength(2);
+    expect(controlArcs.map((child: any) => child.props.d)).toEqual([
+      createPolarCoordinateSystemModel(node, 0.5)?.upperControlArcPath,
+      createPolarCoordinateSystemModel(node, 0.5)?.lowerControlArcPath,
+    ]);
+    const arcEvent = {
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    } as unknown as PointerEvent;
+    controlArcs[0].props.onPointerdown(arcEvent);
+    expect(onAnglePointerDown).toHaveBeenCalledWith(node, arcEvent);
+
+    const radiusDragTarget = coordinateSystem.children.find((child: any) =>
+      classes(child).includes("polar-coordinate-radius-drag-target"),
+    );
+    expect(radiusDragTarget.props).toMatchObject({ x1: 110, y1: 100, x2: 276, y2: 100 });
+
+    const angleDragTarget = coordinateSystem.children.find((child: any) =>
+      classes(child).includes("polar-coordinate-angle-drag-target"),
+    );
+    expect(angleDragTarget.props.d).toBe(createPolarCoordinateSystemModel(node, 0.5)?.angleControlArcPath);
+
     const control = coordinateSystem.children.find((child: any) =>
       classes(child).includes("polar-coordinate-angle-control"),
     );
@@ -140,7 +206,7 @@ describe("independent Polar coordinate system component", () => {
     expect(control.props.transform).toBe("translate(276 100) scale(1)");
   });
 
-  it("subtracts an upper counter-clockwise rotation from the 360-degree range", () => {
+  it("uses the range from the dragged angle through 360 degrees", () => {
     const origin = { x: 100, y: 100 };
     expect(polarAngleSpanFromPoint(origin, { x: 200, y: 100 })).toBe(360);
     expect(polarAngleSpanFromPoint(origin, { x: 100, y: 0 })).toBe(270);
@@ -159,6 +225,8 @@ describe("independent Polar coordinate system component", () => {
     expect(model.radius).toBe(120);
     expect(model.upperRadiusEnd.x).toBeCloseTo(160);
     expect(model.upperRadiusEnd.y).toBeCloseTo(100 - Math.sqrt(3) * 60);
+    expect(model.lowerControlArcPath).toContain("M 220 100");
+    expect(model.angleControlArcPath).toBe(model.upperControlArcPath);
   });
 
   it("starts angle rotation from the upper ray and isolates the pointer event", () => {
@@ -251,6 +319,7 @@ describe("independent Polar coordinate system component", () => {
 
   it("renders a sector or annulus path instead of a frame-sized polar hit rectangle", () => {
     const node = polarNode({
+      id: "outer-ring",
       renderedContent: '<path data-mark-role="arc"/>',
       coordinateGuide: {
         type: "Polar",
@@ -266,6 +335,16 @@ describe("independent Polar coordinate system component", () => {
         encodings: { theta: { field: "value", type: "quantitative" } },
         plotArea: { x: 30, y: 20, width: 160, height: 160 },
         polarArea: { startAngle: 0, angleSpan: 120, innerRadius: 40, outerRadius: 80 },
+      },
+      compositionSpec: {
+        id: "composition:radial-hit-target",
+        type: "concat",
+        direction: "radial",
+        members: [
+          { nodeId: "inner-ring", sourceNodeId: "inner-ring", sharedChannels: ["angle"] },
+          { nodeId: "outer-ring", sourceNodeId: "outer-ring", sharedChannels: ["angle"] },
+        ],
+        sharedChannels: ["angle"],
       },
     });
     const render = (CanvasNodeView as any).setup({
@@ -290,6 +369,8 @@ describe("independent Polar coordinate system component", () => {
     expect(hitTarget.props.d).toContain(" A 40 40 ");
     expect(hitTarget.props["fill-rule"]).toBe("evenodd");
     expect(hitTarget.props["data-hit-target-shape"]).toBe("polar");
+    expect(hitTarget.props["pointer-events"]).toBe("all");
+    expect(hitTarget.props.class).toBe("canvas-object-hit-target");
   });
 
   it("uses the Polar chart contract when a migrated node has no coordinate guide", () => {

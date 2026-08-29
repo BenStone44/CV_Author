@@ -388,6 +388,12 @@ export function cloneChartSpec(chartSpec: ChartSpec | null | undefined) {
       : undefined,
     plotArea: chartSpec.plotArea ? { ...chartSpec.plotArea } : undefined,
     polarArea: chartSpec.polarArea ? { ...chartSpec.polarArea } : undefined,
+    axes: chartSpec.axes
+      ? Object.fromEntries(Object.entries(chartSpec.axes).map(([channel, config]) => [
+        channel,
+        config ? { ...config } : config,
+      ])) as ChartSpec["axes"]
+      : undefined,
     styleTokens: chartSpec.styleTokens
       ? { ...chartSpec.styleTokens, palette: [...chartSpec.styleTokens.palette] }
       : undefined,

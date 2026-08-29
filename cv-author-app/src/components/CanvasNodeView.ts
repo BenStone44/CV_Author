@@ -575,6 +575,13 @@ export const CanvasNodeView: any = defineComponent({
             "data-hit-target-shape": "polar",
             "pointer-events": pointerEvents,
             style: { pointerEvents },
+            onPointerdown: !hasInteractiveMarks && props.onNodePointerDown
+              ? (event: PointerEvent) => {
+                event.preventDefault();
+                event.stopPropagation();
+                props.onNodePointerDown!(props.node, event);
+              }
+              : undefined,
           });
         }
         const hitBounds = getCanvasObjectHitTargetBounds(props.node);

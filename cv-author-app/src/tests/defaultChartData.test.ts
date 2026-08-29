@@ -21,6 +21,8 @@ const chartTypes = [
   "HorizonChart",
   "Scatterplot",
   "MatrixDiagram",
+  "PieChart",
+  "DonutChart",
 ] as const;
 
 describe("built-in default chart data", () => {
@@ -42,5 +44,15 @@ describe("built-in default chart data", () => {
     expect(svg).toContain(`data-default-dataset-id="${DEFAULT_CHART_DATASET_ID}"`);
     expect(svg).toContain("data-renderer=");
     expect(svg).not.toContain("<image");
+  });
+
+  it.each(["PieChart", "DonutChart"])("uses the shared categorical and value fields for %s", (chartType) => {
+    expect(createDefaultChartSpec(chartType)).toMatchObject({
+      encodings: {
+        theta: { field: "value", type: "quantitative" },
+        segment: { field: "column", type: "ordinal" },
+      },
+      dataTransforms: [{ field: "group", values: ["Alpha"] }],
+    });
   });
 });

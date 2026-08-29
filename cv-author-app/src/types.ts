@@ -279,6 +279,13 @@ export type ChartStyleTokens = {
   lineWidth: number;
 };
 
+export type ChartAxisChannel = "x" | "y" | "theta" | "radius";
+
+export type ChartAxisConfig = {
+  visible?: boolean;
+  labelsVisible?: boolean;
+};
+
 export type LinearColorStop = {
   offset: number;
   color: string;
@@ -387,6 +394,7 @@ export type ChartSpec = {
   scales?: Partial<Record<EncodingChannel, ChartScaleSpec>>;
   plotArea?: ChartPlotArea;
   polarArea?: ChartPolarArea;
+  axes?: Partial<Record<ChartAxisChannel, ChartAxisConfig>>;
   styleTokens?: ChartStyleTokens;
   renderer?: ChartRendererReference;
   filters?: Record<string, string>;
@@ -472,6 +480,8 @@ export type ConcatLinkSpec = {
   direction: "horizontal" | "vertical" | "radial" | "angular";
   position: "before" | "after";
   sharedChannels: CoordinateChannel[];
+  /** Monotonic creation order used to replay concat layout deterministically. */
+  order?: number;
 };
 
 export type ConcatSplitControl = ConcatLinkSpec & {

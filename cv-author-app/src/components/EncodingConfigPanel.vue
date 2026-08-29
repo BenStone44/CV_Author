@@ -13,6 +13,8 @@ import type { EncodingChannelConfig } from "../utils/encodingConfig";
 import { getChartTemplateContract, normalizeChartTemplate } from "../utils/chartTemplates";
 import type {
   ChartEncodingChannel,
+  ChartAxisChannel,
+  ChartAxisConfig,
   ChartSpec,
   CompositionSpec,
   CoordinateGuide,
@@ -24,6 +26,7 @@ import type {
   MarkGroupSharedConfig,
   SeriesStyleMapping,
 } from "../types";
+import { chartAxisLabelsVisible, chartAxisVisible } from "../utils/chartAxes";
 import {
   defaultColorMapping,
   defaultSizeMapping,
@@ -74,18 +77,7 @@ const emit = defineEmits<{
   markConfigEditStart: [field: string];
   markConfigEditEnd: [];
   axisSwap: [swapped: boolean];
-  coordinateGuideChange: [patch: {
-    showXLine?: boolean;
-    showYLine?: boolean;
-    showXLabels?: boolean;
-    showYLabels?: boolean;
-    showAllAxes?: boolean;
-    showThetaLine?: boolean;
-    showRadiusLine?: boolean;
-    showDiscreteLabels?: boolean;
-    xDiscreteSpacing?: number;
-    yDiscreteSpacing?: number;
-  }];
+  chartAxisChange: [axis: ChartAxisChannel, patch: Pick<ChartAxisConfig, "visible" | "labelsVisible">];
   coordinateAxisReverse: [axis: "x" | "y"];
   compositionChange: [patch: {
     facetField?: string;
@@ -401,41 +393,35 @@ const axisRows = computed(() => (["x", "y"] as const).flatMap((axis) => {
 }));
 
 function axisVisibility(axis: "x" | "y") {
-  if (!props.coordinateGuide || props.coordinateGuide.type !== "Cartesian") return true;
-  return axis === "x" ? props.coordinateGuide.showXLine !== false : props.coordinateGuide.showYLine !== false;
+  return chartAxisVisible(props.chartSpec, props.coordinateGuide, axis);
 }
 
 function axisLabelsVisible(axis: "x" | "y") {
-  if (!props.coordinateGuide || props.coordinateGuide.type !== "Cartesian") return true;
-  return axis === "x" ? props.coordinateGuide.showXLabels !== false : props.coordinateGuide.showYLabels !== false;
+  return chartAxisLabelsVisible(props.chartSpec, props.coordinateGuide, axis);
 }
 
 function polarAxisVisibility(axis: "theta" | "radius") {
-  if (!props.coordinateGuide || props.coordinateGuide.type !== "Polar") return true;
-  return axis === "theta"
-    ? props.coordinateGuide.showThetaLine !== false
-    : props.coordinateGuide.showRadiusLine !== false;
+  return chartAxisVisible(props.chartSpec, props.coordinateGuide, axis);
 }
 
-function polarAxisLabelsVisible(_axis: "theta" | "radius") {
-  if (!props.coordinateGuide || props.coordinateGuide.type !== "Polar") return true;
-  return props.coordinateGuide.showDiscreteLabels !== false;
+function polarAxisLabelsVisible(axis: "theta" | "radius") {
+  return chartAxisLabelsVisible(props.chartSpec, props.coordinateGuide, axis);
 }
 
 function setAxisVisibility(axis: "x" | "y", visible: boolean) {
-  emit("coordinateGuideChange", axis === "x" ? { showXLine: visible } : { showYLine: visible });
+  emit("chartAxisChange", axis, { visible });
 }
 
 function setAxisLabelsVisible(axis: "x" | "y", visible: boolean) {
-  emit("coordinateGuideChange", axis === "x" ? { showXLabels: visible } : { showYLabels: visible });
+  emit("chartAxisChange", axis, { labelsVisible: visible });
 }
 
 function setPolarAxisVisibility(axis: "theta" | "radius", visible: boolean) {
-  emit("coordinateGuideChange", axis === "theta" ? { showThetaLine: visible } : { showRadiusLine: visible });
+  emit("chartAxisChange", axis, { visible });
 }
 
-function setPolarAxisLabelsVisible(_axis: "theta" | "radius", visible: boolean) {
-  emit("coordinateGuideChange", { showDiscreteLabels: visible });
+function setPolarAxisLabelsVisible(axis: "theta" | "radius", visible: boolean) {
+  emit("chartAxisChange", axis, { labelsVisible: visible });
 }
 
 function toggleDetailPanel(channel: "color" | "size") {
@@ -590,7 +576,7 @@ function updateSingleBarTopN(rawValue: string) {
     <div v-if="columns.length" class="encoding-config__channels">
       <div class="encoding-config__columns">
       <section
-        v-if="compositionSpec && compositionSpec.type !== 'facet'"
+        v-if="compositionSpec?.type === 'layer'"
         class="encoding-config__column encoding-config__column--composition-summary"
         aria-label="Composite coordinate system"
       >

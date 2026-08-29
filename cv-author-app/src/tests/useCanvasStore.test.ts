@@ -1957,6 +1957,12 @@ describe("composition coordinate editing", () => {
     expect(store.executeComposition("concat", true, ["y"], "horizontal")).toBe(true);
     const [first, second] = store.canvasNodes.value;
     expect(first && second).toBeTruthy();
+    store.selectedIds.value = [second!.id];
+    store.axisBindingTarget.value = { nodeId: second!.id, channel: "y" };
+    expect(store.axisBindingNode.value?.id).toBe(second!.id);
+    store.setAxisBindingAggregation("y", "sum");
+    expect(first?.chartSpec?.aggregations?.y).toBeUndefined();
+    expect(second?.chartSpec?.aggregations?.y).toBe("sum");
     store.reverseCoordinateAxis(first!, "y");
     expect(second?.coordinateGuide?.type === "Cartesian" && second.coordinateGuide.yDirection).toBe(1);
     store.reverseCoordinateAxis(first!, "x");
@@ -2072,20 +2078,44 @@ describe("composition coordinate editing", () => {
   ] as const)("concatenates a configured block at the %s boundary", async (edge, direction, channel, position) => {
     const source = cartesianChart(`drag-concat-source-${edge}`, 100, "LineGraph");
     const target = cartesianChart(`drag-concat-target-${edge}`, 950, "SingleBarChart");
+    const defaultEncodings = {
+      x: { field: "column", type: "nominal" as const },
+      y: { field: "value", type: "quantitative" as const },
+    };
+    source.chartSpec = {
+      ...source.chartSpec!,
+      defaultDataBinding: true,
+      encodings: defaultEncodings,
+      renderer: undefined,
+    };
+    target.chartSpec = {
+      ...target.chartSpec!,
+      defaultDataBinding: true,
+      encodings: defaultEncodings,
+      renderer: undefined,
+    };
+    source.width = 620;
+    source.height = 520;
+    source.scaleX = 0.75;
+    source.scaleY = 0.7;
+    target.width = 760;
+    target.height = 440;
+    target.scaleX = 1.1;
+    target.scaleY = 1.15;
     const store = useCanvasStore(coordinateCanvasRef());
     store.relationshipStore.dispatch({ type: "clear" });
     useDatasetStore().datasets.value = [layerDataset];
     store.canvasNodes.value = [source, target];
     store.selectedIds.value = [source.id];
-    const plotArea = target.chartSpec!.plotArea!;
+    const targetPlotBefore = worldPlotArea(target);
     const dropPoint = edge === "left" || edge === "right"
       ? {
-        x: target.x + plotArea.x + (edge === "left" ? -2 : plotArea.width + 2),
-        y: target.y + plotArea.y + plotArea.height / 2,
+        x: edge === "left" ? targetPlotBefore.left - 2 : targetPlotBefore.right + 2,
+        y: (targetPlotBefore.top + targetPlotBefore.bottom) / 2,
       }
       : {
-        x: target.x + plotArea.x + plotArea.width / 2,
-        y: target.y + plotArea.y + (edge === "top" ? -2 : plotArea.height + 2),
+        x: (targetPlotBefore.left + targetPlotBefore.right) / 2,
+        y: edge === "top" ? targetPlotBefore.top - 2 : targetPlotBefore.bottom + 2,
       };
 
     store.onCanvasNodePointerDown(source, pointerEvent(source.x + 20, source.y + 20));
@@ -2115,7 +2145,18 @@ describe("composition coordinate editing", () => {
     expect(targetAfter.coordinateSystem?.ownerNodeId).toBe(target.id);
     const sourcePlot = worldPlotArea(sourceAfter);
     const targetPlot = worldPlotArea(targetAfter);
+    store.selectedIds.value = [sourceAfter.id];
+    expect(store.selectionFrame.value).toMatchObject({
+      x: sourcePlot.left,
+      y: sourcePlot.top,
+      width: sourcePlot.right - sourcePlot.left,
+      height: sourcePlot.bottom - sourcePlot.top,
+    });
     if (direction === "horizontal") {
+      expect(sourceAfter.height).toBe(targetAfter.height);
+      expect(sourceAfter.scaleY).toBe(targetAfter.scaleY);
+      expect(sourceAfter.height * sourceAfter.scaleY).toBe(targetAfter.height * targetAfter.scaleY);
+      expect(store.selectionFrame.value?.height).toBe(targetPlot.bottom - targetPlot.top);
       expect(position === "before" ? sourceAfter.x < targetAfter.x : sourceAfter.x > targetAfter.x).toBe(true);
       expect(sourcePlot.top).toBe(targetPlot.top);
       expect(sourcePlot.bottom).toBe(targetPlot.bottom);
@@ -2125,6 +2166,10 @@ describe("composition coordinate editing", () => {
       expect(plotGap).toBeGreaterThanOrEqual(0);
       expect(plotGap).toBeLessThanOrEqual(16);
     } else {
+      expect(sourceAfter.width).toBe(targetAfter.width);
+      expect(sourceAfter.scaleX).toBe(targetAfter.scaleX);
+      expect(sourceAfter.width * sourceAfter.scaleX).toBe(targetAfter.width * targetAfter.scaleX);
+      expect(store.selectionFrame.value?.width).toBe(targetPlot.right - targetPlot.left);
       expect(position === "before" ? sourceAfter.y < targetAfter.y : sourceAfter.y > targetAfter.y).toBe(true);
       expect(sourcePlot.left).toBe(targetPlot.left);
       expect(sourcePlot.right).toBe(targetPlot.right);
@@ -2222,6 +2267,78 @@ describe("composition coordinate editing", () => {
     expect(second.x).toBeLessThan(third.x);
   });
 
+  it("replays concat links in order when adding a chart below the prior source", () => {
+    const chartA = cartesianChart("ordered-concat-a", 100, "LineGraph");
+    const chartB = cartesianChart("ordered-concat-b", 800, "SingleBarChart");
+    const chartC = cartesianChart("ordered-concat-c", 1500, "AreaChart");
+    chartA.width = 620;
+    chartA.height = 440;
+    chartB.width = 760;
+    chartB.height = 520;
+    chartC.width = 540;
+    chartC.height = 360;
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    store.canvasNodes.value = [chartA, chartB, chartC];
+    store.selectedIds.value = [chartA.id, chartB.id];
+
+    expect(store.executeComposition("concat", true, ["y"], "horizontal")).toBe(true);
+    expect(store.executeComposition(
+      "concat",
+      true,
+      ["x"],
+      "vertical",
+      "after",
+      chartB.id,
+      chartC.id,
+    )).toBe(true);
+
+    expect(chartA.compositionSpec?.concatLinks).toMatchObject([
+      {
+        targetNodeId: chartA.id,
+        sourceNodeId: chartB.id,
+        direction: "horizontal",
+        position: "after",
+        order: 0,
+      },
+      {
+        targetNodeId: chartB.id,
+        sourceNodeId: chartC.id,
+        direction: "vertical",
+        position: "after",
+        order: 1,
+      },
+    ]);
+    const plotA = worldPlotArea(chartA);
+    const plotB = worldPlotArea(chartB);
+    const plotC = worldPlotArea(chartC);
+    expect(plotB.top).toBe(plotA.top);
+    expect(plotC.left).toBe(plotB.left);
+    expect(plotC.right).toBe(plotB.right);
+    expect(plotC.top).toBeGreaterThanOrEqual(plotB.bottom);
+    expect(plotC.top - plotB.bottom).toBeLessThanOrEqual(16);
+    expect(chartA.chartSpec?.axes?.y).toMatchObject({
+      visible: true,
+      labelsVisible: true,
+    });
+    expect(chartB.chartSpec?.axes).toMatchObject({
+      x: { visible: false, labelsVisible: false },
+      y: { visible: false, labelsVisible: false },
+    });
+    expect(chartC.chartSpec?.axes?.x).toMatchObject({
+      visible: true,
+      labelsVisible: true,
+    });
+
+    store.axisBindingTarget.value = { nodeId: chartB.id, channel: "x" };
+    store.setChartAxisAppearance("x", { visible: true, labelsVisible: true });
+    expect(chartB.chartSpec?.axes?.x).toMatchObject({
+      visible: true,
+      labelsVisible: true,
+    });
+  });
+
   it("offers Polar radial, angular, and layer drop zones", () => {
     const store = useCanvasStore(coordinateCanvasRef());
     store.relationshipStore.dispatch({ type: "clear" });
@@ -2309,6 +2426,11 @@ describe("composition coordinate editing", () => {
     const radialMembers = store.canvasNodes.value;
     expect(radialMembers[0]?.coordinateGuide?.origin).toEqual(radialMembers[1]?.coordinateGuide?.origin);
     expect(radialMembers.map((node) => [node.coordinateGuide?.innerRadiusRatio, node.coordinateGuide?.outerRadiusRatio])).toEqual([[0, 0.5], [0.5, 1]]);
+    store.axisBindingTarget.value = { nodeId: radialMembers[1]!.id, channel: "angle" };
+    expect(store.axisBindingNode.value?.id).toBe(radialMembers[1]!.id);
+    store.setAxisBindingAggregation("theta", "sum");
+    expect(radialMembers[0]?.chartSpec?.aggregations?.theta).toBeUndefined();
+    expect(radialMembers[1]?.chartSpec?.aggregations?.theta).toBe("sum");
 
     const angularSource = polarChart("polar-angular-source", 100, 120);
     const angularTarget = polarChart("polar-angular-target", 800, 120);

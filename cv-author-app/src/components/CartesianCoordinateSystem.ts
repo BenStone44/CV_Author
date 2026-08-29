@@ -7,6 +7,7 @@ import type {
   Point,
 } from "../types";
 import { getLeafNodeTransform, getNodeTransform } from "../utils/canvasUtils";
+import { chartAxisLabelsVisible, chartAxisVisible } from "../utils/chartAxes";
 import { PolarCoordinateSystem } from "./PolarCoordinateSystem";
 
 type AxisTick = {
@@ -42,14 +43,14 @@ export function getCartesianAxisChannels(
   const isLayer = node.compositionSpec?.type === "layer";
   const isOwner = !system || system.ownerNodeId === node.id;
   if (isLayer) return mode === "static" && isOwner ? [...cartesianChannels] : [];
-  // Concat only has one shared Cartesian dimension. Interactive controls for
-  // the other dimension would edit an independent member axis and imply a
-  // scale that is not uniform across the composition.
+  // Interactive concat controls expose only channels shared by its recorded
+  // links; independent member axes remain local to their charts.
   if (mode === "interactive" && node.compositionSpec?.type === "concat") {
     const shared = new Set(node.compositionSpec.sharedChannels);
     return cartesianChannels.filter((channel) => shared.has(channel));
   }
   if (mode === "interactive") return [...cartesianChannels];
+  if (node.compositionSpec?.type === "concat") return [...cartesianChannels];
   const shared = new Set(system?.sharedChannels ?? []);
   return cartesianChannels.filter((channel) => !shared.has(channel) || isOwner);
 }
@@ -173,8 +174,8 @@ export const CartesianCoordinateSystem = defineComponent({
       const textTransform = (x: number, y: number) => `translate(${x} ${y}) scale(${textScale / nodeScaleX} ${textScale / nodeScaleY})`;
       const arrowSize = 11 / screenScale;
       const includes = (channel: EncodingChannel) => props.channels.includes(channel);
-      const showXLine = guide.showXLine !== false;
-      const showYLine = guide.showYLine !== false;
+      const showXLine = chartAxisVisible(props.node.chartSpec, guide, "x");
+      const showYLine = chartAxisVisible(props.node.chartSpec, guide, "y");
       const showDiscreteLabels = guide.showDiscreteLabels !== false;
       const showAllAxes = guide.showAllAxes !== false;
       const renderAxes = props.showAxis && showAllAxes;
@@ -191,8 +192,10 @@ export const CartesianCoordinateSystem = defineComponent({
             stroke: model.axisColor,
             "vector-effect": "non-scaling-stroke",
           }));
-          const showLabels = guide.showYLabels !== false
-            && (props.node.chartSpec?.scales?.y?.type !== "point" || showDiscreteLabels);
+          const showLabels = chartAxisLabelsVisible(props.node.chartSpec, guide, "y")
+            && (props.node.chartSpec?.scales?.y?.type !== "point"
+              || props.node.chartSpec?.axes?.y?.labelsVisible !== undefined
+              || showDiscreteLabels);
           axisNodes.push(...model.yTicks.flatMap((tick) => {
             const tickEnd = model.origin.x + (guide.xDirection === 1 ? -5 : 5);
             const textOffset = model.fontSize * textScale / nodeScaleX * 0.8;
@@ -223,8 +226,10 @@ export const CartesianCoordinateSystem = defineComponent({
             stroke: model.axisColor,
             "vector-effect": "non-scaling-stroke",
           }));
-          const showLabels = guide.showXLabels !== false
-            && (props.node.chartSpec?.scales?.x?.type !== "point" || showDiscreteLabels);
+          const showLabels = chartAxisLabelsVisible(props.node.chartSpec, guide, "x")
+            && (props.node.chartSpec?.scales?.x?.type !== "point"
+              || props.node.chartSpec?.axes?.x?.labelsVisible !== undefined
+              || showDiscreteLabels);
           axisNodes.push(...model.xTicks.flatMap((tick) => {
             const tickEnd = model.origin.y + (guide.yDirection === -1 ? 5 : -5);
             const textOffset = model.fontSize * textScale / nodeScaleY;
@@ -371,11 +376,15 @@ export const CanvasCoordinateSystemLayer: any = defineComponent({
   setup(props) {
     return () => {
       const node = props.node;
-      if (props.hiddenNodeIds.has(node.id) && props.allowHiddenNodeId !== node.id) return null;
+      if (props.hiddenNodeIds?.has(node.id) && props.allowHiddenNodeId !== node.id) return null;
       const editingLayer = node.compositionSpec?.type === "layer"
         && props.editingCompositionId === node.compositionSpec.id;
-      const channels = editingLayer ? [...cartesianChannels] : getCartesianAxisChannels(node, "static");
-      if (node.compositionSpec?.type === "layer" && channels.length === 0) return null;
+      const channels = editingLayer
+        ? [...cartesianChannels]
+        : getCartesianAxisChannels(node, "static");
+      if (node.coordinateGuide?.type === "Cartesian"
+        && node.compositionSpec?.type === "layer"
+        && channels.length === 0) return null;
       const children = node.kind === "group"
         ? node.children.map((child) => h(CanvasCoordinateSystemLayer, {
           key: child.id,
@@ -394,6 +403,8 @@ export const CanvasCoordinateSystemLayer: any = defineComponent({
           applyTransform: false,
         })
         : node.coordinateGuide?.type === "Polar"
+          && (chartAxisVisible(node.chartSpec, node.coordinateGuide, "theta")
+            || chartAxisVisible(node.chartSpec, node.coordinateGuide, "radius"))
           ? h(PolarCoordinateSystem, {
             node,
             showAxis: true,

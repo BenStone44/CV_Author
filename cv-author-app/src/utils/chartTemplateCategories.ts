@@ -68,7 +68,12 @@ export function groupChartTemplateCandidates(candidates: SvgCandidate[]): ChartT
   const grouped = familyDefinitions.map((definition) => ({
     id: definition.id,
     label: definition.label,
-    candidates: candidates.filter((candidate) => definition.matches?.(candidate) ?? definition.chartTypes.has(normalizedChartType(candidate.chartType))),
+    candidates: candidates
+      .filter((candidate) => definition.matches?.(candidate) ?? definition.chartTypes.has(normalizedChartType(candidate.chartType)))
+      .sort((left, right) => {
+        const order = [...definition.chartTypes];
+        return order.indexOf(normalizedChartType(left.chartType)) - order.indexOf(normalizedChartType(right.chartType));
+      }),
   })).filter((category) => category.candidates.length);
   const assigned = new Set(grouped.flatMap((category) => category.candidates.map((candidate) => candidate.id)));
   const remaining = candidates.filter((candidate) => !assigned.has(candidate.id));
