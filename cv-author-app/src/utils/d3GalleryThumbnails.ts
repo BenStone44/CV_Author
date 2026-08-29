@@ -1,6 +1,6 @@
 import type { SvgCandidate } from "../types";
 
-// Core bar, line, area, point, matrix, and arc templates use their native SVGs.
+// Core templates already provide SVGs rendered from built-in data.
 const thumbnailHashes: Record<string, string> = {
   ParallelCoordinatesPlot: "137c531fbab68c35e4713548f23b720c511234954380d23d9396c48a83e03d2d",
   Calendar: "d008c0aeb2e945aef84b41961dd335bf81d9e01aed81b0f3c14ee782683ebbe9",

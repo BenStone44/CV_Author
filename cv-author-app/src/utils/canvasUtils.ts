@@ -449,6 +449,10 @@ export function cloneCanvasNode(node: CanvasNode): CanvasNode {
       ...node.compositionSpec,
       members: node.compositionSpec.members.map((member) => ({ ...member, sharedChannels: [...member.sharedChannels] })),
       sharedChannels: [...node.compositionSpec.sharedChannels],
+      concatLinks: node.compositionSpec.concatLinks?.map((link) => ({
+        ...link,
+        sharedChannels: [...link.sharedChannels],
+      })),
       facetValues: node.compositionSpec.facetValues ? [...node.compositionSpec.facetValues] : undefined,
       facetGrid: node.compositionSpec.facetGrid
         ? { ...node.compositionSpec.facetGrid, rowValues: [...node.compositionSpec.facetGrid.rowValues], columnValues: [...node.compositionSpec.facetGrid.columnValues] }

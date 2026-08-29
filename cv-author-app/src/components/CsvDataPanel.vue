@@ -45,6 +45,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   transformsChange: [transforms: ChartDataTransform[]];
+  datasetChange: [datasetId: string];
 }>();
 
 const panelRef = ref<HTMLElement | null>(null);
@@ -216,7 +217,10 @@ function updateExpandedWidth() {
 
 function onDatasetChange(event: Event) {
   const datasetId = (event.target as HTMLSelectElement).value;
-  if (datasetId) setActiveDataset(datasetId);
+  if (datasetId) {
+    setActiveDataset(datasetId);
+    emit("datasetChange", datasetId);
+  }
 }
 
 function onGeometrySourceChange(event: Event) {

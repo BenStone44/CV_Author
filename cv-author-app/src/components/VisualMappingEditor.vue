@@ -38,43 +38,15 @@ const openSizeStop = ref<number | null>(null);
 const colorGradient = computed(() => `linear-gradient(90deg, ${colorStops.value
   .map((stop) => `${stop.color} ${Math.round(stop.offset * 100)}%`)
   .join(", ")})`);
-const usableColorDomain = computed(() => {
-  const configured = props.colorMapping.domain;
-  if (configured && configured.length === 2 && configured.every(Number.isFinite)) return configured;
-  const domain = props.colorDomain;
-  if (!domain || !domain.every(Number.isFinite)) return null;
-  return domain;
-});
-
 function boundedOffset(value: string) {
   const number = Number(value);
   return Number.isFinite(number) ? Math.max(0, Math.min(1, number / 100)) : 0;
 }
 
-function colorStopValue(offset: number) {
-  const domain = usableColorDomain.value;
-  if (!domain) return Math.round(offset * 100);
-  const value = domain[0] + offset * (domain[1] - domain[0]);
-  return Number(value.toPrecision(12));
-}
-
-function updateColorStopValue(index: number, rawValue: string) {
-  const domain = usableColorDomain.value;
-  const value = Number(rawValue);
-  if (!domain || !Number.isFinite(value)) return;
-  const values = colorStops.value.map((stop) => colorStopValue(stop.offset));
-  values[index] = value;
-  const minimum = Math.min(...values);
-  const maximum = Math.max(...values);
-  const nextDomain: [number, number] = minimum === maximum
-    ? [minimum - 0.5, maximum + 0.5]
-    : [minimum, maximum];
-  const span = nextDomain[1] - nextDomain[0];
-  const stops = colorStops.value.map((stop, stopIndex) => ({
-    ...stop,
-    offset: (values[stopIndex]! - nextDomain[0]) / span,
-  }));
-  emit("colorChange", { ...props.colorMapping, type: "linear", domain: nextDomain, stops });
+function updateColorStopOffset(index: number, rawValue: string) {
+  const offset = boundedOffset(rawValue);
+  const stops = colorStops.value.map((stop, stopIndex) => stopIndex === index ? { ...stop, offset } : stop);
+  emit("colorChange", { ...props.colorMapping, type: "linear", stops });
 }
 
 function updateColorStop(index: number, changes: Partial<LinearColorStop>) {
@@ -144,22 +116,22 @@ function toggleSizeStop(index: number) {
       </header>
       <div class="color-gradient" :style="{ background: colorGradient }" aria-hidden="true"></div>
       <div class="color-stop-heading" aria-hidden="true">
-        <span>{{ usableColorDomain ? "Value" : "Position" }}</span>
+        <span>Percent</span>
         <span>Color</span>
       </div>
       <div v-for="(stop, index) in colorStops" :key="`color-${index}`" class="stop-row">
         <label>
           <input
-            :class="usableColorDomain ? 'value-input' : 'offset-input'"
+            class="offset-input"
             type="number"
-            :step="usableColorDomain ? 'any' : 1"
-            :value="colorStopValue(stop.offset)"
-            :aria-label="usableColorDomain ? `Color stop ${index + 1} value` : `Color stop ${index + 1} position`"
-            @change="usableColorDomain
-              ? updateColorStopValue(index, ($event.target as HTMLInputElement).value)
-              : updateColorStop(index, { offset: boundedOffset(($event.target as HTMLInputElement).value) })"
+            min="0"
+            max="100"
+            step="1"
+            :value="Math.round(stop.offset * 100)"
+            :aria-label="`Color stop ${index + 1} position`"
+            @change="updateColorStopOffset(index, ($event.target as HTMLInputElement).value)"
           />
-          <span v-if="!usableColorDomain">%</span>
+          <span>%</span>
         </label>
         <input
           class="color-input"

@@ -368,6 +368,8 @@ export type ChartSpec = {
   chartType: string;
   templateId?: ChartTemplateKind;
   datasetId: string;
+  /** Built-in bindings are preview scaffolding until the author supplies fields. */
+  defaultDataBinding?: boolean;
   axisSwapped?: boolean;
   encodings: Partial<Record<ChartEncodingChannel, ChartEncoding>>;
   aggregations?: Partial<Record<ChartEncodingChannel, "sum" | "avg">>;
@@ -463,12 +465,32 @@ export type CompositionMemberSpec = {
   sharedChannels: CoordinateChannel[];
 };
 
+/** A directed spatial relationship inside a concat group. */
+export type ConcatLinkSpec = {
+  targetNodeId: string;
+  sourceNodeId: string;
+  direction: "horizontal" | "vertical" | "radial" | "angular";
+  position: "before" | "after";
+  sharedChannels: CoordinateChannel[];
+};
+
+export type ConcatSplitControl = ConcatLinkSpec & {
+  id: string;
+  x: number;
+  y: number;
+};
+
 export type CompositionSpec = {
   id: string;
   type: "layer" | "concat" | "facet" | "nested";
   members: CompositionMemberSpec[];
   sharedChannels: CoordinateChannel[];
   direction?: "horizontal" | "vertical" | "radial" | "angular";
+  /**
+   * Concat groups may contain links with different directions. `direction`
+   * remains populated for legacy single-axis concats and for display.
+   */
+  concatLinks?: ConcatLinkSpec[];
   polarAngleSpan?: number;
   polarAngleOffset?: number;
   /** Maximum rendered outer radius across Polar composition members. */
@@ -491,7 +513,7 @@ export type CompositionSpec = {
 
 export type ChartDropZone = {
   targetNodeId: string;
-  type: "layer" | "concat" | "nested";
+  type: "layer" | "concat" | "concat-corner" | "nested";
   sharedChannels: CoordinateChannel[];
   bounds: Bounds;
   outline?: Point[];
@@ -514,6 +536,12 @@ export type ChartDropZone = {
   }>;
   direction?: "horizontal" | "vertical" | "radial" | "angular";
   concatPosition?: "before" | "after";
+  concatPair?: Array<{
+    targetNodeId: string;
+    direction: "horizontal" | "vertical";
+    position: "before" | "after";
+    sharedChannels: CoordinateChannel[];
+  }>;
 };
 
 export type DataBindingDropZone =
@@ -1090,7 +1118,21 @@ export type ScaleInteraction = {
   itemIds: string[];
   snapshots: Record<
     string,
-    { x: number; y: number; scaleX: number; scaleY: number }
+    {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      scaleX: number;
+      scaleY: number;
+      coordinateOrigin?: { x: number; y: number };
+      coordinateScales?: {
+        x?: number;
+        y?: number;
+        radius?: number;
+        ring?: number;
+      };
+    }
   >;
   scopeGroupId?: string;
   historyCommitted: boolean;

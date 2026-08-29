@@ -7,7 +7,7 @@ import {
   ref,
   watch,
 } from "vue";
-import { ArrowLeftRight, ArrowUp, Check, ChevronDown, Move, RotateCcw, SlidersHorizontal, X } from "@lucide/vue";
+import { ArrowLeftRight, ArrowUp, Check, ChevronDown, Move, RotateCcw, SlidersHorizontal, Split as SplitIcon, X } from "@lucide/vue";
 import { CanvasNodeView } from "./CanvasNodeView";
 import DeckglMapLayer from "./DeckglMapLayer.vue";
 import DeckglEncodingConfigPanel from "./DeckglEncodingConfigPanel.vue";
@@ -116,6 +116,7 @@ const {
   polarAngleInputVisible,
   marqueeBounds,
   selectionUnits,
+  concatSplitControls,
   isPanning,
   canUndo,
   canRedo,
@@ -145,6 +146,7 @@ const {
   configureSelectionComposition,
   exitSelectionHierarchy,
   removeSelectionComposition,
+  splitConcatLink,
   onEditingGroupBackgroundPointerDown,
   onSemanticMarkPointerDown,
   onCanvasNodeContextMenu,
@@ -167,6 +169,7 @@ const {
   removeBarItemField,
   setParallelFields,
   setChartDataTransforms,
+  resetChartBindingsForDataset,
   setDeckglMapStyle,
   setDeckglMapViewState,
   setDeckglConfig,
@@ -461,6 +464,10 @@ const nestedEncodingEntries = computed(() => {
 function onChartTransformsChange(transforms: ChartDataTransform[]) {
   const node = chartTransformNode.value;
   if (node) setChartDataTransforms(node.id, transforms);
+}
+
+function onDatasetChange(datasetId: string) {
+  resetChartBindingsForDataset(datasetId);
 }
 function createSeriesItemPresentation(node: CanvasNode) {
   const spec = node?.chartSpec;
@@ -1409,6 +1416,7 @@ onBeforeUnmount(() => {
         :chart-name="chartTransformNode?.name"
         :chart-spec="chartTransformNode?.chartSpec"
         @transforms-change="onChartTransformsChange"
+        @dataset-change="onDatasetChange"
       />
       <main class="workspace">
         <section
@@ -2336,7 +2344,8 @@ onBeforeUnmount(() => {
                   class="composition-drop-zone"
                   :class="{
                     'composition-drop-zone--layer': activeDropZone.type === 'layer',
-                    'composition-drop-zone--concat': activeDropZone.type === 'concat',
+                    'composition-drop-zone--concat': activeDropZone.type === 'concat' || activeDropZone.type === 'concat-corner',
+                    'composition-drop-zone--concat-corner': activeDropZone.type === 'concat-corner',
                     'composition-drop-zone--horizontal': activeDropZone.direction === 'horizontal',
                     'composition-drop-zone--vertical': activeDropZone.direction === 'vertical',
                     'composition-drop-zone--radial': activeDropZone.direction === 'radial',
@@ -2617,6 +2626,28 @@ onBeforeUnmount(() => {
                     :transform="`rotate(${selectionFrame.rotation} ${selectionFrame.x + selectionFrame.width / 2} ${selectionFrame.y + selectionFrame.height / 2})`"
                     :vector-effect="'non-scaling-stroke'"
                   />
+                  <g
+                    v-for="control in concatSplitControls"
+                    :key="`concat-split-${control.id}`"
+                    class="selection-split"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Split concat link"
+                    :transform="`translate(${control.x} ${control.y})`"
+                    @pointerdown.stop.prevent="splitConcatLink(control.id)"
+                    @keydown.enter.stop.prevent="splitConcatLink(control.id)"
+                    @keydown.space.stop.prevent="splitConcatLink(control.id)"
+                  >
+                    <title>Split concat link</title>
+                    <circle :r="11 / selectionOverlayZoom" vector-effect="non-scaling-stroke" />
+                    <SplitIcon
+                      :x="-7 / selectionOverlayZoom"
+                      :y="-7 / selectionOverlayZoom"
+                      :size="14 / selectionOverlayZoom"
+                      :stroke-width="2"
+                      aria-hidden="true"
+                    />
+                  </g>
                   <g
                     v-if="cartesianAxisSwapNode && cartesianAxisSwapPosition"
                     class="cartesian-axis-swap-control"
@@ -4991,6 +5022,10 @@ onBeforeUnmount(() => {
   fill: rgba(5, 150, 105, 0.18);
   stroke: #059669;
 }
+.composition-drop-zone--concat-corner {
+  stroke-dasharray: 3 3;
+  fill: rgba(21, 84, 178, 0.16);
+}
 .composition-drop-zone--horizontal,
 .composition-drop-zone--vertical,
 .composition-drop-zone--radial,
@@ -5367,6 +5402,36 @@ onBeforeUnmount(() => {
 .selection-box--semantic {
   fill: rgba(21, 84, 178, 0.1);
   stroke-dasharray: none;
+}
+.selection-split {
+  color: #1554b2;
+  opacity: 0.82;
+  pointer-events: all;
+  cursor: pointer;
+  outline: none;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+.selection-split circle {
+  fill: rgba(255, 255, 255, 0.98);
+  stroke: #1554b2;
+  stroke-width: 1.5;
+  filter: drop-shadow(0 2px 5px rgba(30, 64, 175, 0.22));
+}
+.selection-split :deep(svg) {
+  overflow: visible;
+  pointer-events: none;
+}
+.selection-split:hover,
+.selection-split:focus {
+  opacity: 1;
+}
+.selection-split:hover circle,
+.selection-split:focus circle {
+  fill: #1554b2;
+}
+.selection-split:hover,
+.selection-split:focus {
+  color: #fff;
 }
 .cartesian-axis-swap-control {
   color: #1554b2;

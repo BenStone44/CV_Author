@@ -6,7 +6,6 @@ import VisualMappingEditor from "./VisualMappingEditor.vue";
 import {
   getEncodingChannelConfigsForSpec,
   resolvedEncodingField,
-  resolvedPolarRadiusMode,
   resolvedSeriesField,
   resolveChartTemplateVariant,
 } from "../utils/encodingConfig";
@@ -140,7 +139,8 @@ const isParallel = computed(() => template.value === "parallel");
 const standardConfigs = computed(() => configs.value.filter((config) => {
   if (isCartesian.value && (config.channel === "x" || config.channel === "y")) return false;
   if (isPolar.value && config.channel === "segment") return false;
-  if (isPolar.value && config.channel === "theta" && polarSegmentMode.value === "quantitative") return false;
+  if (isPolar.value && config.channel === "theta") return false;
+  if (isPolar.value && config.channel === "radius") return false;
   if (isParallel.value && config.channel === "dimensions") return false;
   if (supportsSeriesItems.value && config.role === "series" && template.value !== "scatter") return false;
   if (supportsSeriesItems.value && seriesItemMode.value === "quantitative" && config.channel === "y") return false;
@@ -149,13 +149,19 @@ const standardConfigs = computed(() => configs.value.filter((config) => {
 const compactConfigs = computed(() => standardConfigs.value.filter((config) => config.channel === "color" || config.channel === "size"));
 const otherStandardConfigs = computed(() => standardConfigs.value.filter((config) => config.channel !== "color" && config.channel !== "size"));
 const seriesMembers = computed(() => {
-  const field = selectedSeriesFields.value[0] ?? resolvedSeriesField(props.chartSpec);
+  const field = props.chartSpec.defaultDataBinding
+    ? undefined
+    : selectedSeriesFields.value[0] ?? resolvedSeriesField(props.chartSpec);
   if (!field) return [];
   return Array.from(new Set(props.rows.map((row) => row[field] ?? "").filter(Boolean)))
     .map((id) => ({ id, label: id }));
 });
-const selectedValueSeriesFields = computed(() => props.chartSpec.valueFields?.map((encoding) => encoding.field) ?? []);
-const selectedSeriesFields = computed(() => props.chartSpec.seriesFields?.map((encoding) => encoding.field)
+const selectedValueSeriesFields = computed(() => props.chartSpec.defaultDataBinding
+  ? []
+  : props.chartSpec.valueFields?.map((encoding) => encoding.field) ?? []);
+const selectedSeriesFields = computed(() => props.chartSpec.defaultDataBinding
+  ? []
+  : props.chartSpec.seriesFields?.map((encoding) => encoding.field)
   ?? (props.chartSpec.series
     ? [props.chartSpec.series.field]
     : template.value === "scatter"
@@ -224,14 +230,19 @@ const singleBarValueOrder = computed(() => {
 const singleBarSortDirection = computed(() => singleBarValueOrder.value?.direction ?? "source");
 const singleBarTopN = computed(() => singleBarValueOrder.value?.limit);
 const selectedSegmentFields = computed(() => props.chartSpec.encodings.segment?.field
+  && !props.chartSpec.defaultDataBinding
   ? [props.chartSpec.encodings.segment.field]
-  : props.chartSpec.angleFields?.map((encoding) => encoding.field) ?? []);
+  : props.chartSpec.defaultDataBinding
+    ? []
+    : props.chartSpec.angleFields?.map((encoding) => encoding.field) ?? []);
 const polarSegmentMode = computed<"categorical" | "quantitative" | null>(() => {
+  if (props.chartSpec.defaultDataBinding) return null;
   if (props.chartSpec.encodings.segment?.field) return "categorical";
   if ((props.chartSpec.angleFields?.length ?? 0) > 0) return "quantitative";
   return null;
 });
 const polarSegmentMembers = computed(() => {
+  if (props.chartSpec.defaultDataBinding) return [];
   const field = props.chartSpec.encodings.segment?.field;
   if (field) {
     return Array.from(new Set(props.rows.map((row) => row[field] ?? "").filter(Boolean)))
@@ -242,11 +253,18 @@ const polarSegmentMembers = computed(() => {
     label: encoding.field,
   }));
 });
+const polarSegmentColumns = computed(() => {
+  const config = configs.value.find((item) => item.channel === "segment");
+  if (!config) return [];
+  return props.columns.filter((column) => config.accepts.includes(column.type));
+});
 const selectedParallelFields = computed(() => props.chartSpec.parallelFields?.map((encoding) => encoding.field) ?? []);
-const radiusMode = computed(() => resolvedPolarRadiusMode(props.chartSpec));
-const staticOuterRadius = computed(() => typeof props.markConfig.outerRadius === "number"
+const staticRadius = computed(() => typeof props.markConfig.outerRadius === "number"
   ? props.markConfig.outerRadius
   : 1);
+const polarThetaConfig = computed(() => configs.value.find((config) => config.channel === "theta"));
+const polarRadiusConfig = computed(() => configs.value.find((config) => config.channel === "radius"));
+const radiusField = computed(() => resolvedEncodingField(props.chartSpec, "radius"));
 const colorConfig = computed(() => configs.value.find((config) => config.channel === "color"));
 const sizeConfig = computed(() => configs.value.find((config) => config.channel === "size"));
 const colorField = computed(() => resolvedEncodingField(props.chartSpec, "color"));
@@ -259,7 +277,29 @@ const showColorMapping = computed(() => !!colorColumn.value && colorColumn.value
 const colorDomain = computed(() => {
   const column = colorColumn.value;
   if (!colorField.value || column?.type !== "quantitative") return null;
-  return visualDomain(props.rows, { field: colorField.value, type: column.type });
+  const operation = props.chartSpec.aggregations?.color ?? props.chartSpec.autoAggregations?.color;
+  if (!operation) return visualDomain(props.rows, { field: colorField.value, type: column.type });
+  const dimensions = [
+    ...Object.entries(props.chartSpec.encodings)
+      .filter(([channel, encoding]) => channel !== "color" && channel !== "size" && encoding && encoding.type !== "quantitative")
+      .map(([, encoding]) => encoding!.field),
+    ...(props.chartSpec.seriesFields?.map((encoding) => encoding.field) ?? []),
+    ...(props.chartSpec.series ? [props.chartSpec.series.field] : []),
+  ];
+  const groups = new Map<string, DataRow[]>();
+  props.rows.forEach((row) => {
+    const key = JSON.stringify(dimensions.map((field) => row[field] ?? ""));
+    groups.set(key, [...(groups.get(key) ?? []), row]);
+  });
+  const aggregatedRows = Array.from(groups.values()).flatMap((rows) => {
+    const values = rows.map((row) => Number(row[colorField.value!] ?? "")).filter(Number.isFinite);
+    if (values.length === 0 || !rows[0]) return [];
+    const value = operation === "avg"
+      ? values.reduce((sum, current) => sum + current, 0) / values.length
+      : values.reduce((sum, current) => sum + current, 0);
+    return [{ ...rows[0], [colorField.value!]: String(value) }];
+  });
+  return visualDomain(aggregatedRows, { field: colorField.value, type: column.type });
 });
 const showSizeMapping = computed(() => !!sizeField.value);
 const staticColor = computed(() => typeof props.markConfig.color === "string" ? props.markConfig.color : "#2563eb");
@@ -270,6 +310,11 @@ const hexbinRadius = computed(() => typeof props.markConfig.radius === "number" 
 const sankeyAlignment = computed(() => typeof props.markConfig.nodeAlign === "string" ? props.markConfig.nodeAlign : "justify");
 const sankeyLinkColor = computed(() => typeof props.markConfig.linkColor === "string" ? props.markConfig.linkColor : "source-target");
 const colorMapping = computed(() => isLinearColorMapping(props.markConfig.colorMapping) ? props.markConfig.colorMapping : defaultColorMapping);
+const colorScaleGradient = computed(() => `linear-gradient(90deg, ${colorMapping.value.stops
+  .slice()
+  .sort((left, right) => left.offset - right.offset)
+  .map((stop) => `${stop.color} ${Math.round(stop.offset * 100)}%`)
+  .join(", ")})`);
 const sizeMapping = computed(() => isLinearSizeMapping(props.markConfig.sizeMapping) ? props.markConfig.sizeMapping : defaultSizeMapping);
 const composition = computed(() => props.compositionSpec ?? null);
 const isFacetComposition = computed(() => composition.value?.type === "facet");
@@ -365,12 +410,32 @@ function axisLabelsVisible(axis: "x" | "y") {
   return axis === "x" ? props.coordinateGuide.showXLabels !== false : props.coordinateGuide.showYLabels !== false;
 }
 
+function polarAxisVisibility(axis: "theta" | "radius") {
+  if (!props.coordinateGuide || props.coordinateGuide.type !== "Polar") return true;
+  return axis === "theta"
+    ? props.coordinateGuide.showThetaLine !== false
+    : props.coordinateGuide.showRadiusLine !== false;
+}
+
+function polarAxisLabelsVisible(_axis: "theta" | "radius") {
+  if (!props.coordinateGuide || props.coordinateGuide.type !== "Polar") return true;
+  return props.coordinateGuide.showDiscreteLabels !== false;
+}
+
 function setAxisVisibility(axis: "x" | "y", visible: boolean) {
   emit("coordinateGuideChange", axis === "x" ? { showXLine: visible } : { showYLine: visible });
 }
 
 function setAxisLabelsVisible(axis: "x" | "y", visible: boolean) {
   emit("coordinateGuideChange", axis === "x" ? { showXLabels: visible } : { showYLabels: visible });
+}
+
+function setPolarAxisVisibility(axis: "theta" | "radius", visible: boolean) {
+  emit("coordinateGuideChange", axis === "theta" ? { showThetaLine: visible } : { showRadiusLine: visible });
+}
+
+function setPolarAxisLabelsVisible(_axis: "theta" | "radius", visible: boolean) {
+  emit("coordinateGuideChange", { showDiscreteLabels: visible });
 }
 
 function toggleDetailPanel(channel: "color" | "size") {
@@ -433,7 +498,7 @@ function onSeriesItemDrop(event: DragEvent) {
 
 function toggleSegmentField(field: string) {
   const column = props.columns.find((item) => item.name === field);
-  if (!column) return;
+  if (!column || isSegmentFieldDisabled(field)) return;
   if (column.type === "quantitative") {
     emit("segmentFieldsChange", selectedSegmentFields.value.includes(field)
       ? selectedSegmentFields.value.filter((item) => item !== field)
@@ -441,6 +506,13 @@ function toggleSegmentField(field: string) {
   } else {
     emit("segmentFieldsChange", selectedSegmentFields.value.includes(field) ? [] : [field]);
   }
+}
+
+function isSegmentFieldDisabled(field: string) {
+  const column = props.columns.find((item) => item.name === field);
+  if (!column || !polarSegmentMode.value) return false;
+  if (polarSegmentMode.value === "categorical") return !selectedSegmentFields.value.includes(field);
+  return column.type !== "quantitative";
 }
 
 function segmentDragColumn(event: DragEvent) {
@@ -535,6 +607,97 @@ function updateSingleBarTopN(rawValue: string) {
         <strong>Composite encodings</strong>
         <span>{{ compositionSpec?.type ?? 'Composition' }}</span>
       </div>
+      <section v-if="isPolar && polarThetaConfig && polarRadiusConfig" class="encoding-config__axis-rows" aria-label="Polar axis encodings">
+        <div class="encoding-config__axis-rows-toolbar">
+          <div class="encoding-config__axis-toolbar-options">
+            <span class="encoding-config__axis-toolbar-label">Axes</span>
+            <span class="encoding-config__axis-toolbar-label">Labels</span>
+          </div>
+        </div>
+        <div class="encoding-config__axis-row">
+          <div class="encoding-config__axis-channel-label">
+            <span class="encoding-config__axis-row-label">THETA</span>
+          </div>
+          <EncodingChannelField
+            :config="{ ...polarThetaConfig, label: 'Theta' }"
+            :columns="columns"
+            :father-columns="fatherColumns"
+            :value="resolvedEncodingField(chartSpec, 'theta')"
+            @change="updateMappingDefaults('theta', $event)"
+          />
+          <div class="encoding-config__axis-controls">
+            <label class="encoding-config__axis-toggle">
+              <input
+                type="checkbox"
+                :checked="polarAxisVisibility('theta')"
+                aria-label="Show Theta axis"
+                @change="setPolarAxisVisibility('theta', ($event.target as HTMLInputElement).checked)"
+              />
+            </label>
+            <label class="encoding-config__axis-label-toggle">
+              <input
+                type="checkbox"
+                :checked="polarAxisLabelsVisible('theta')"
+                aria-label="Show Theta labels"
+                @change="setPolarAxisLabelsVisible('theta', ($event.target as HTMLInputElement).checked)"
+              />
+            </label>
+          </div>
+        </div>
+        <div class="encoding-config__axis-row encoding-config__axis-row--polar-radius">
+          <div class="encoding-config__axis-channel-label">
+            <span class="encoding-config__axis-row-label">R</span>
+          </div>
+          <div
+            class="encoding-config__polar-radius-editor"
+            :class="{ 'is-mapped': !!radiusField }"
+          >
+            <EncodingChannelField
+              :config="{ ...polarRadiusConfig, label: 'R field', emptyLabel: 'Static' }"
+              :columns="columns"
+              :father-columns="fatherColumns"
+              :value="radiusField"
+              @change="updateMappingDefaults('radius', $event)"
+            />
+            <label v-if="!radiusField" class="encoding-config__polar-radius-control">
+              <output>{{ Math.round(staticRadius * 100) }}%</output>
+              <input
+                type="range"
+                min="0.15"
+                max="1"
+                step="0.05"
+                :value="staticRadius"
+                aria-label="Static R value"
+                @pointerdown="emit('markConfigEditStart', 'outerRadius')"
+                @focus="emit('markConfigEditStart', 'outerRadius')"
+                @pointerup="emit('markConfigEditEnd')"
+                @pointercancel="emit('markConfigEditEnd')"
+                @blur="emit('markConfigEditEnd')"
+                @change="emit('markConfigEditEnd')"
+                @input="emit('markConfigChange', { outerRadius: Number(($event.target as HTMLInputElement).value) })"
+              />
+            </label>
+          </div>
+          <div class="encoding-config__axis-controls">
+            <label class="encoding-config__axis-toggle">
+              <input
+                type="checkbox"
+                :checked="polarAxisVisibility('radius')"
+                aria-label="Show R axis"
+                @change="setPolarAxisVisibility('radius', ($event.target as HTMLInputElement).checked)"
+              />
+            </label>
+            <label class="encoding-config__axis-label-toggle">
+              <input
+                type="checkbox"
+                :checked="polarAxisLabelsVisible('radius')"
+                aria-label="Show R labels"
+                @change="setPolarAxisLabelsVisible('radius', ($event.target as HTMLInputElement).checked)"
+              />
+            </label>
+          </div>
+        </div>
+      </section>
       <section v-if="isCartesian && axisRows.length" class="encoding-config__axis-rows" aria-label="Cartesian axis encodings">
         <div class="encoding-config__axis-rows-toolbar">
           <div class="encoding-config__axis-switch">
@@ -662,7 +825,13 @@ function updateSingleBarTopN(rawValue: string) {
               :aria-label="`${config.label} details`"
               @click="toggleDetailPanel(config.channel as 'color' | 'size')"
             >
-              Mapped
+              <span
+                v-if="config.channel === 'color' && showColorMapping"
+                class="encoding-config__color-scale-preview"
+                :style="{ background: colorScaleGradient }"
+                aria-hidden="true"
+              />
+              <span v-else>Mapped</span>
             </button>
           </div>
           <div v-if="detailPanel === config.channel" class="encoding-config__details-popover">
@@ -732,7 +901,7 @@ function updateSingleBarTopN(rawValue: string) {
 
       <section
         v-if="isPolar"
-        class="encoding-config__segment-drop"
+        class="encoding-config__angle encoding-config__segment-drop"
         :class="{
           'is-drop-active': segmentDropState === 'valid',
           'is-drop-invalid': segmentDropState === 'invalid',
@@ -742,23 +911,22 @@ function updateSingleBarTopN(rawValue: string) {
         @dragleave.stop="onSegmentDragLeave"
         @drop.stop.prevent="onSegmentDrop"
       >
-        <header>
+        <header class="encoding-config__series-header">
           <span>Segment</span>
         </header>
-        <div v-if="selectedSegmentFields.length" class="encoding-config__segment-fields">
-          <span v-for="field in selectedSegmentFields" :key="field">
-            <span :title="columnDisplayLabel(field)">{{ columnDisplayLabel(field) }}</span>
-            <button
-              type="button"
-              :title="`Remove ${field}`"
-              :aria-label="`Remove ${field}`"
-              @click="toggleSegmentField(field)"
-            >
-              <X :size="12" :stroke-width="1.8" aria-hidden="true" />
-            </button>
-          </span>
-        </div>
-        <p v-else>Not bound</p>
+        <label
+          v-for="column in polarSegmentColumns"
+          :key="column.name"
+          :class="{ 'is-disabled': isSegmentFieldDisabled(column.name) }"
+        >
+          <input
+            type="checkbox"
+            :checked="selectedSegmentFields.includes(column.name)"
+            :disabled="isSegmentFieldDisabled(column.name)"
+            @change="toggleSegmentField(column.name)"
+          />
+          <span :title="columnDisplayLabel(column.name)">{{ columnDisplayLabel(column.name) }}</span>
+        </label>
       </section>
 
       <section v-if="isParallel" class="encoding-config__angle" aria-label="Parallel dimensions">
@@ -831,32 +999,6 @@ function updateSingleBarTopN(rawValue: string) {
             @change="updateSingleBarTopN(($event.target as HTMLInputElement).value)"
           />
         </label>
-      </section>
-
-      <section v-if="isPolar" class="encoding-config__radius" aria-label="R axis encoding">
-        <div class="encoding-config__radius-heading">
-          <span>R / Outer radius</span>
-          <strong>{{ radiusMode === "static" ? "Static" : "Mapped" }}</strong>
-        </div>
-        <div v-if="radiusMode === 'static'" class="encoding-config__static encoding-config__static-radius">
-          <span>Outer radius</span>
-          <output>{{ Math.round(staticOuterRadius * 100) }}%</output>
-          <input
-            type="range"
-            min="0.15"
-            max="1"
-            step="0.05"
-            :value="staticOuterRadius"
-            aria-label="Outer radius"
-            @pointerdown="emit('markConfigEditStart', 'outerRadius')"
-            @focus="emit('markConfigEditStart', 'outerRadius')"
-            @pointerup="emit('markConfigEditEnd')"
-            @pointercancel="emit('markConfigEditEnd')"
-            @blur="emit('markConfigEditEnd')"
-            @change="emit('markConfigEditEnd')"
-            @input="emit('markConfigChange', { outerRadius: Number(($event.target as HTMLInputElement).value) })"
-          />
-        </div>
       </section>
 
       <section v-if="polarSegmentMembers.length || editableSeriesMembers.length || colorConfig || sizeConfig" class="encoding-config__appearance encoding-config__appearance--chart">
@@ -1075,6 +1217,14 @@ function updateSingleBarTopN(rawValue: string) {
 .encoding-config__axis-row :deep(.encoding-channel-field) { display: contents; min-width: 0; }
 .encoding-config__axis-row :deep(.encoding-channel-field__label) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 .encoding-config__axis-row :deep(.encoding-channel-field select) { grid-column: 2; min-width: 0; }
+.encoding-config__polar-radius-editor { display: grid; grid-column: 2; grid-template-columns: minmax(72px, 0.58fr) minmax(0, 1fr); align-items: center; gap: 6px; min-width: 0; }
+.encoding-config__polar-radius-editor :deep(.encoding-channel-field) { display: contents; }
+.encoding-config__polar-radius-editor :deep(.encoding-channel-field__label) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.encoding-config__polar-radius-editor :deep(.encoding-channel-field select) { grid-column: 1; width: 100%; min-width: 0; }
+.encoding-config__polar-radius-editor.is-mapped { grid-template-columns: minmax(0, 1fr); }
+.encoding-config__polar-radius-control { display: grid; grid-column: 2; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 7px; min-width: 0; color: #516176; font-size: var(--encoding-config-font-size); }
+.encoding-config__polar-radius-control output { min-width: 36px; color: #687585; font-variant-numeric: tabular-nums; text-align: right; }
+.encoding-config__polar-radius-control input[type="range"] { width: 100%; min-width: 0; accent-color: #1980bd; }
 .encoding-config__axis-direction-button { display: inline-grid; width: 22px; height: 22px; padding: 0; place-items: center; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 4px; background: #fff; color: #516176; cursor: pointer; }
 .encoding-config__axis-direction-button:hover { border-color: rgba(21, 84, 178, 0.4); background: #edf5fc; color: #1554b2; }
 .encoding-config__columns { display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; align-items: stretch; }
@@ -1115,6 +1265,7 @@ function updateSingleBarTopN(rawValue: string) {
 .encoding-config__radius { order: 3; }
 .encoding-config__details-button { min-width: 64px; max-width: 120px; height: 30px; overflow: hidden; padding: 0 8px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 5px; background: #f8fafc; color: #526174; font: inherit; font-size: var(--encoding-config-font-size); text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .encoding-config__details-button:hover, .encoding-config__details-button[aria-expanded="true"] { border-color: rgba(21, 84, 178, 0.4); background: #edf5fc; color: #1554b2; }
+.encoding-config__color-scale-preview { display: block; width: 100%; height: 12px; border: 1px solid rgba(24, 33, 47, 0.16); border-radius: 3px; }
 .encoding-config__static-color-picker { width: 38px; height: 28px; padding: 2px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 5px; background: #fff; cursor: pointer; }
 .encoding-config__static-value { color: #526174; font-size: var(--encoding-config-font-size); white-space: nowrap; }
 .encoding-config__inline-slider { width: 55px; min-width: 0; accent-color: #1980bd; }

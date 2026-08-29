@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createUnboundChartSpec } from "../stores/useCanvasStore";
+import { createDefaultChartSpec } from "../utils/defaultChartData";
 
 describe("new chart initialization", () => {
   it("leaves Cartesian channels unbound until fields are dropped", () => {
@@ -26,6 +27,21 @@ describe("new chart initialization", () => {
       templateId: "bar",
       datasetId: "dataset:case1",
       encodings: {},
+    });
+  });
+
+  it("keeps the selected dataset as the chart source when using default bindings", () => {
+    const spec = createDefaultChartSpec("LineGraph");
+    expect(spec).toMatchObject({
+      datasetId: "builtin:default-cartesian-data",
+      encodings: {
+        x: { field: "column" },
+        y: { field: "value" },
+      },
+    });
+    expect({ ...spec, datasetId: "dataset:selected" }).toMatchObject({
+      datasetId: "dataset:selected",
+      encodings: spec?.encodings,
     });
   });
 });

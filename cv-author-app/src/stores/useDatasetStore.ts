@@ -12,6 +12,10 @@ import type {
   GraphTables,
 } from "../types";
 import { inferCsvPrimaryKey } from "../utils/csvDataEngine";
+import {
+  DEFAULT_CHART_DATASET_ID,
+  defaultChartDataset,
+} from "../utils/defaultChartData";
 
 type ParsedCsv = {
   data: unknown[][];
@@ -286,6 +290,7 @@ function clearActiveDataset() {
 }
 
 function getDataset(datasetId: string) {
+  if (datasetId === DEFAULT_CHART_DATASET_ID) return defaultChartDataset;
   return datasets.value.find((dataset) => dataset.id === datasetId) ?? null;
 }
 

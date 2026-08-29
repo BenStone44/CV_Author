@@ -148,19 +148,11 @@ export const PolarCoordinateSystem = defineComponent({
       const showRadiusControl = radialScaleAxis !== null;
       const showAngleControl = props.scaleChannels.includes("angle");
       const guide = props.node.coordinateGuide;
-      const showDiscreteLabels = guide?.type === "Polar" && guide.showDiscreteLabels !== false;
-      const facet = props.node.compositionSpec?.type === "facet" ? props.node.compositionSpec : null;
-      const thetaField = facet?.facetCoordinateSystem === "Polar"
-        ? facet.facetThetaField
-        : props.node.chartSpec?.encodings.segment?.field ?? props.node.chartSpec?.encodings.theta?.field;
-      const radiusField = facet?.facetCoordinateSystem === "Polar"
-        ? facet.facetRadiusField
-        : props.node.chartSpec?.encodings.radius?.field;
-      const fieldLabel = (field: string | undefined) => {
-        if (!field) return "";
-        const value = props.node.chartSpec?.filters?.[field];
-        return value === undefined ? field : `${field}: ${value}`;
-      };
+      const showThetaLine = guide?.type === "Polar" && guide.showThetaLine !== false;
+      const showRadiusLine = guide?.type === "Polar" && guide.showRadiusLine !== false;
+      const thetaAxisPath = model.angleSpan >= 359.999
+        ? `M ${guide!.origin.x - model.radius} ${guide!.origin.y} A ${model.radius} ${model.radius} 0 1 1 ${guide!.origin.x + model.radius} ${guide!.origin.y} A ${model.radius} ${model.radius} 0 1 1 ${guide!.origin.x - model.radius} ${guide!.origin.y}`
+        : arcPath(guide!.origin, model.radius, 0, -model.angleSpan);
 
       const transform = props.applyTransform
         ? props.node.kind === "leaf"
@@ -179,20 +171,25 @@ export const PolarCoordinateSystem = defineComponent({
         transform,
         "pointer-events": "none",
       }, [
-        ...(props.showAxis && showDiscreteLabels && fieldLabel(radiusField) ? [h("text", {
-          class: "polar-coordinate-axis-label polar-coordinate-axis-label--radius",
-          x: model.radiusLabel.x,
-          y: model.radiusLabel.y,
-          "font-size": 11 / model.renderedScale,
-          "text-anchor": "middle",
-        }, fieldLabel(radiusField))] : []),
-        ...(props.showAxis && showDiscreteLabels && fieldLabel(thetaField) ? [h("text", {
-          class: "polar-coordinate-axis-label polar-coordinate-axis-label--theta",
-          x: model.thetaLabel.x,
-          y: model.thetaLabel.y,
-          "font-size": 11 / model.renderedScale,
-          "text-anchor": "middle",
-        }, fieldLabel(thetaField))] : []),
+        ...(props.showAxis && showRadiusLine ? [h("line", {
+          class: "polar-coordinate-axis polar-coordinate-axis--radius",
+          x1: guide!.origin.x,
+          y1: guide!.origin.y,
+          x2: model.radiusEnd.x,
+          y2: model.radiusEnd.y,
+          fill: "none",
+          stroke: "#111",
+          "stroke-width": 2.2,
+          "stroke-linecap": "round",
+        })] : []),
+        ...(props.showAxis && showThetaLine ? [h("path", {
+          class: "polar-coordinate-axis polar-coordinate-axis--theta",
+          d: thetaAxisPath,
+          fill: "none",
+          stroke: "#111",
+          "stroke-width": 2.2,
+          "stroke-linecap": "round",
+        })] : []),
         ...(props.interactive && showRadiusControl ? [h("g", {
           class: "polar-coordinate-radius-control",
           transform: `translate(${model.radiusControlPoint.x} ${model.radiusControlPoint.y}) scale(${1 / model.renderedScale})`,

@@ -1,4 +1,5 @@
 import type { SvgCandidate } from "../types";
+import { renderDefaultChartSvg } from "./defaultChartData";
 
 const frame = (content: string, viewBox = "0 0 320 180") => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" font-family="sans-serif">${content}</svg>`;
 const axis = `<g fill="none" stroke="#111" stroke-width="1"><path d="M28 18V152H304"/></g>`;
@@ -52,7 +53,7 @@ const definitions: Array<[keyof typeof advancedTemplateSvgs, string, string, Svg
 ];
 
 export const advancedTemplateDefinitions: SvgCandidate[] = definitions.map(([key, name, chartType, coordinateSystem]) => {
-  const svgMarkup = advancedTemplateSvgs[key];
+  const svgMarkup = renderDefaultChartSvg(chartType) ?? advancedTemplateSvgs[key];
   return {
     id: `builtin-template:${chartType.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase()}`,
     name,

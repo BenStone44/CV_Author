@@ -542,9 +542,25 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
         ?? palette[(segmentPaletteIndexes.get(field) ?? index) % palette.length]!;
       return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="arc" data-mark-group-id="mark-group:${esc(input.chartId)}:arc" data-category-key="${esc(categoryKey)}" data-segment-value="${esc(field)}" data-theta-field="${esc(component?.thetaField ?? "")}" data-theta-value="${componentValues[index] ?? 0}" data-angle-field="${esc(component?.thetaField ?? "")}" data-angle-value="${componentValues[index] ?? 0}" data-flatten-fields="${esc(flattenFields.join("|"))}" data-flatten-values="${esc((component?.flattenValues ?? []).join("|"))}" data-radius-mode="${radiusMode}" data-radius-field="${esc(radius?.field ?? "")}" data-radius-value="${Number.isFinite(radiusValue) ? radiusValue : ""}" d="${path(datum) ?? ""}" transform="translate(${cx} ${cy})" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 1)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
     }).join("");
+    const showSegmentLabels = !!segment
+      && input.coordinateGuide?.type === "Polar"
+      && input.coordinateGuide.showDiscreteLabels !== false;
+    const segmentLabels = showSegmentLabels
+      ? layout.map((datum, index) => {
+        const component = components[index];
+        if (!component) return "";
+        const radiusValue = componentRadiusValues[index] ?? Number.NaN;
+        const componentOuterRadius = Number.isFinite(radiusValue) ? radiusScale(radiusValue) : outerRadius;
+        const labelRadius = markInnerRadius + (componentOuterRadius - markInnerRadius) * 0.55;
+        const angle = (datum.startAngle + datum.endAngle) / 2;
+        const x = cx + Math.cos(angle) * labelRadius;
+        const y = cy + Math.sin(angle) * labelRadius;
+        return `<text data-mark-role="arc-label" data-category-key="${esc(component.categoryKey)}" x="${x}" y="${y}" text-anchor="middle" dominant-baseline="middle" fill="#1554b2" font-size="11" font-weight="650">${esc(component.field)}</text>`;
+      }).join("")
+      : "";
     const thetaFields = Array.from(new Set(components.map((component) => component.thetaField)));
     return {
-      content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="${donut ? "donut" : "pie"}" data-renderer="deterministic-chart@1" data-segment-field="${esc(segment?.field ?? "")}" data-segment-fields="${esc(angleFields.map((encoding) => encoding.field).join("|"))}" data-theta-fields="${esc(thetaFields.join("|"))}" data-angle-fields="${esc(thetaFields.join("|"))}" data-flatten-fields="${esc(flattenFields.join("|"))}" data-radius-mode="${radiusMode}">${arcs}</g>`,
+      content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="${donut ? "donut" : "pie"}" data-renderer="deterministic-chart@1" data-segment-field="${esc(segment?.field ?? "")}" data-segment-fields="${esc(angleFields.map((encoding) => encoding.field).join("|"))}" data-theta-fields="${esc(thetaFields.join("|"))}" data-angle-fields="${esc(thetaFields.join("|"))}" data-flatten-fields="${esc(flattenFields.join("|"))}" data-radius-mode="${radiusMode}">${arcs}${segmentLabels}</g>`,
       plotArea: { x: cx - outerRadius, y: cy - outerRadius, width: outerRadius * 2, height: outerRadius * 2 },
       polarArea: polarArea(markInnerRadius, outerRadius),
       scales: undefined,

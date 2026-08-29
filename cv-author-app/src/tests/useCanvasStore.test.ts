@@ -281,7 +281,7 @@ function columnDragEvent(datasetId: string, field: string, type: "nominal" | "te
 }
 
 describe("implemented chart template cards", () => {
-  it("keeps the native area SVG until required encodings are complete", () => {
+  it("uses shared default data while area encodings are incomplete", () => {
     const dataset: Dataset = {
       id: "area-placeholder-data",
       name: "area-placeholder.csv",
@@ -329,7 +329,7 @@ describe("implemented chart template cards", () => {
     store.axisBindingTarget.value = { nodeId: chart.id, channel: "x" };
 
     store.setChartEncoding("x", "time");
-    expect(chart.renderedContent).toBeNull();
+    expect(chart.renderedContent).toContain('data-renderer="deterministic-area@1"');
     expect(chart.content).toBe(candidate!.svgMarkup);
 
     store.setChartEncoding("y", "weight_kg");
@@ -371,7 +371,7 @@ describe("implemented chart template cards", () => {
     expect((multiLine?.svgMarkup?.match(/<path/g) ?? []).length).toBe(3);
   });
 
-  it("uses native SVGs for bar, line, area, point, matrix, and arc templates", () => {
+  it("uses data-rendered SVGs for bar, line, area, point, and matrix templates", () => {
     const store = useCanvasStore(ref(null));
     const nativeSvgChartTypes = new Set([
       "SingleBarChart",
@@ -387,8 +387,6 @@ describe("implemented chart template cards", () => {
       "HorizonChart",
       "Scatterplot",
       "MatrixDiagram",
-      "PieChart",
-      "DonutChart",
     ]);
     const candidates = store.implementedTemplateCandidates.value.filter((candidate) =>
       nativeSvgChartTypes.has(candidate.chartType),
@@ -397,6 +395,7 @@ describe("implemented chart template cards", () => {
     expect(candidates).toHaveLength(nativeSvgChartTypes.size);
     expect(candidates.every((candidate) => candidate.src.startsWith("data:image/svg+xml"))).toBe(true);
     expect(candidates.every((candidate) => candidate.svgMarkup?.startsWith("<svg"))).toBe(true);
+    expect(candidates.every((candidate) => candidate.svgMarkup?.includes("data-default-dataset-id"))).toBe(true);
     expect(candidates.every((candidate) => !candidate.svgMarkup?.includes("<image"))).toBe(true);
   });
 
