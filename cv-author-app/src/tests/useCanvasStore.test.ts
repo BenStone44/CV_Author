@@ -2683,6 +2683,104 @@ describe("composition coordinate editing", () => {
     expect(store.concatNodesAreCompatible([tree, bars], "vertical", "x")).toBe(false);
   });
 
+  it.each([
+    ["leaf_id", ["Leaf A", "Leaf B", "Leaf C"], false],
+    ["axis_label", ["Root", "Branch", "Leaf A", "Leaf B", "Leaf C"], true],
+  ] as const)("simulates dragging a Bar Chart onto a Dendrogram concat using %s", async (sharedField, barDomain, hasNonLeafBars) => {
+    listeners.clear();
+    const dataset: Dataset = {
+      id: `cartesian-tree-bar-concat-${sharedField}`,
+      name: `cartesian-tree-bar-concat-${sharedField}.csv`,
+      columns: [
+        { name: "node_id", type: "nominal" },
+        { name: "parent_id", type: "nominal" },
+        { name: "leaf_id", type: "nominal" },
+        { name: "axis_label", type: "nominal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { node_id: "root", parent_id: "", leaf_id: "", axis_label: "Root", value: "30" },
+        { node_id: "branch", parent_id: "root", leaf_id: "", axis_label: "Branch", value: "24" },
+        { node_id: "leaf-a", parent_id: "branch", leaf_id: "Leaf A", axis_label: "Leaf A", value: "8" },
+        { node_id: "leaf-b", parent_id: "branch", leaf_id: "Leaf B", axis_label: "Leaf B", value: "7" },
+        { node_id: "leaf-c", parent_id: "root", leaf_id: "Leaf C", axis_label: "Leaf C", value: "6" },
+      ],
+      primaryKey: ["node_id"],
+    };
+    const tree = lineChart(`cartesian-tree-${sharedField}`, 100, false);
+    tree.chartSpec = {
+      chartType: "Dendrogram",
+      datasetId: dataset.id,
+      encodings: {
+        key: { field: "node_id", type: "nominal" },
+        parent: { field: "parent_id", type: "nominal" },
+        category: { field: sharedField, type: "nominal" },
+      },
+      plotArea: { x: 80, y: 40, width: 640, height: 320 },
+      scales: {
+        x: { type: "point", domain: ["Leaf A", "Leaf B", "Leaf C"], range: [80, 720] },
+        y: { type: "linear", domain: [0, 1], range: [40, 250] },
+      },
+      markGroups: [{
+        id: `tree-nodes-${sharedField}`,
+        chartId: tree.id,
+        role: "node",
+        memberKeys: [],
+        sharedConfig: { treeDirection: "down" },
+      }],
+    };
+    tree.renderedContent = '<g data-chart-type="dendrogram"/>';
+
+    const bars = lineChart(`cartesian-tree-bars-${sharedField}`, 100, false);
+    bars.y = 700;
+    bars.chartSpec = {
+      chartType: "SingleBarChart",
+      datasetId: dataset.id,
+      encodings: {
+        x: { field: sharedField, type: "nominal" },
+        y: { field: "value", type: "quantitative" },
+      },
+      plotArea: { x: 80, y: 40, width: 640, height: 320 },
+      scales: {
+        x: { type: "point", domain: [...barDomain], range: [80, 720] },
+        y: { type: "linear", domain: [0, 30], range: [360, 40] },
+      },
+    };
+    bars.renderedContent = '<g data-chart-type="bar"/>';
+
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [tree, bars];
+    store.selectedIds.value = [bars.id];
+    const treePlot = worldPlotArea(tree);
+    const dropPoint = {
+      x: (treePlot.left + treePlot.right) / 2,
+      y: treePlot.bottom + 2,
+    };
+
+    store.onCanvasNodePointerDown(bars, pointerEvent(bars.x + 20, bars.y + 20));
+    listeners.get("pointermove")?.(pointerEvent(dropPoint.x, dropPoint.y));
+
+    expect(store.activeDropZone.value).toMatchObject({
+      targetNodeId: tree.id,
+      type: "concat",
+      sharedChannels: ["x"],
+      compatible: true,
+      direction: "vertical",
+      concatPosition: "after",
+    });
+
+    listeners.get("pointerup")?.(pointerEvent(dropPoint.x, dropPoint.y));
+    await nextTick();
+
+    expect(store.canvasNodes.value.every((node) => node.compositionSpec?.type === "concat")).toBe(true);
+    expect(tree.chartSpec?.scales?.x.domain).toEqual(barDomain);
+    expect(bars.chartSpec?.scales?.x.domain).toEqual(barDomain);
+    expect(bars.renderedContent?.match(/data-mark-role="bar"/g)).toHaveLength(barDomain.length);
+    expect(hasNonLeafBars).toBe(barDomain.some((value) => value === "Root" || value === "Branch"));
+  });
+
   it("extends Polar layer and concat compositions without replacing their members", () => {
     const layerFirst = polarChart("repeat-polar-layer-first", 100);
     const layerSecond = polarChart("repeat-polar-layer-second", 800);

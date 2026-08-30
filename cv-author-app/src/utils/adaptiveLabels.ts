@@ -1,8 +1,8 @@
 /**
  * Label layout helpers shared by deterministic SVG renderers and coordinate
- * system components.  A reference box describes the space the label is
- * allowed to occupy; all calculations are deterministic so server rendering
- * and the browser produce the same result.
+ * system components. A reference box guides font scaling, but labels remain
+ * complete after reaching their minimum size. All calculations are
+ * deterministic so server rendering and the browser produce the same result.
  */
 
 export type LabelReference = {
@@ -117,18 +117,6 @@ export function measureLabelWidth(text: string, fontSize: number, fontFamily = "
   return width * fontSize;
 }
 
-function fitText(text: string, width: number, fontSize: number, fontFamily: string) {
-  if (measureLabelWidth(text, fontSize, fontFamily) <= width) return { text, truncated: false };
-  const ellipsis = "...";
-  let result = "";
-  for (const character of Array.from(text)) {
-    const candidate = `${result}${character}${ellipsis}`;
-    if (measureLabelWidth(candidate, fontSize, fontFamily) > width) break;
-    result += character;
-  }
-  return { text: result ? `${result}${ellipsis}` : "", truncated: true };
-}
-
 /** Calculate an adaptive style from a concrete reference box. */
 export function adaptiveLabel(reference: LabelReference): AdaptiveLabel {
   const fontFamily = reference.fontFamily ?? "sans-serif";
@@ -143,14 +131,13 @@ export function adaptiveLabel(reference: LabelReference): AdaptiveLabel {
     : minFontSize;
   const heightBound = availableHeight > 0 ? availableHeight / 1.2 : minFontSize;
   const fontSize = clamp(Math.min(preferred, widthBound, heightBound), minFontSize, maxFontSize);
-  const fitted = fitText(reference.text, availableWidth, fontSize, fontFamily);
   return {
-    text: fitted.text,
+    text: reference.text,
     fontSize,
     color: readableTextColor(reference.background),
-    width: measureLabelWidth(fitted.text, fontSize, fontFamily),
+    width: measureLabelWidth(reference.text, fontSize, fontFamily),
     height: fontSize * 1.2,
-    truncated: fitted.truncated,
+    truncated: false,
   };
 }
 

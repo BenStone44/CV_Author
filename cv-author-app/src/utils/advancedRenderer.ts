@@ -798,8 +798,8 @@ function renderHierarchy(input: GenericRenderInput) {
       const label = !nodeLabelsVisible
         ? ""
         : horizontal
-        ? labelStyle.text ? `<text dy="0.31em" x="${(direction === "right") === isLeaf ? 6 : -6}" text-anchor="${(direction === "right") === isLeaf ? "start" : "end"}" font-size="${labelStyle.fontSize}" font-family="sans-serif" fill="${labelStyle.color}" stroke="white" paint-order="stroke">${esc(labelStyle.text)}</text>` : ""
-        : labelStyle.text ? `<text y="${(direction === "down") === isLeaf ? 8 : -8}" text-anchor="middle" dominant-baseline="${(direction === "down") === isLeaf ? "hanging" : "auto"}" font-size="${labelStyle.fontSize}" font-family="sans-serif" fill="${labelStyle.color}" stroke="white" paint-order="stroke">${esc(labelStyle.text)}</text>` : "";
+        ? labelStyle.text ? `<text dy="0.31em" x="${(direction === "right") === isLeaf ? 6 : -6}" text-anchor="${(direction === "right") === isLeaf ? "start" : "end"}" font-size="${labelStyle.fontSize}" font-family="sans-serif" fill="#000000" stroke="white" paint-order="stroke">${esc(labelStyle.text)}</text>` : ""
+        : labelStyle.text ? `<text y="${(direction === "down") === isLeaf ? 8 : -8}" text-anchor="middle" dominant-baseline="${(direction === "down") === isLeaf ? "hanging" : "auto"}" font-size="${labelStyle.fontSize}" font-family="sans-serif" fill="#000000" stroke="white" paint-order="stroke">${esc(labelStyle.text)}</text>` : "";
     return `<g transform="translate(${x} ${y})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-row-key="${esc(rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)))}"><circle r="${nodeRadius(node)}" fill="${fill}"/>${label}</g>`;
   }).join("");
   const scales = leafAxis === "x"

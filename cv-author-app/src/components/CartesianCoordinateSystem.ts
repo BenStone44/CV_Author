@@ -173,6 +173,16 @@ function arrowHead(end: Point, direction: Point, size: number) {
   return `M ${end.x - direction.x * size + perpendicular.x * wing} ${end.y - direction.y * size + perpendicular.y * wing} L ${end.x} ${end.y} L ${end.x - direction.x * size - perpendicular.x * wing} ${end.y - direction.y * size - perpendicular.y * wing}`;
 }
 
+export function cartesianTickLabelRotation(width: number, height: number, availableWidth: number) {
+  if (!Number.isFinite(availableWidth) || width <= availableWidth) return 0;
+  for (const angle of [30, 45, 60, 75, 90]) {
+    const radians = angle * Math.PI / 180;
+    const projectedWidth = width * Math.cos(radians) + height * Math.sin(radians);
+    if (projectedWidth <= availableWidth) return -angle;
+  }
+  return -90;
+}
+
 export const CartesianCoordinateSystem = defineComponent({
   name: "CartesianCoordinateSystem",
   props: {
@@ -297,9 +307,12 @@ export const CartesianCoordinateSystem = defineComponent({
               previous ? Math.abs(tick.position - previous.position) : Infinity,
               next ? Math.abs(next.position - tick.position) : Infinity,
             );
+            const availableWidth = Number.isFinite(horizontalGap)
+              ? Math.max(8, horizontalGap * 0.86)
+              : Math.max(24, props.node.width * 0.2);
             const labelStyle = adaptiveLabel({
               text: tick.label,
-              width: Number.isFinite(horizontalGap) ? Math.max(8, horizontalGap * 0.86) : Math.max(24, props.node.width * 0.2),
+              width: availableWidth,
               height: Math.max(10, model.fontSize * 1.3),
               fontSize: model.fontSize,
               minFontSize: 7,
@@ -308,6 +321,7 @@ export const CartesianCoordinateSystem = defineComponent({
               fontFamily: model.fontFamily,
               padding: 1,
             });
+            const labelRotation = cartesianTickLabelRotation(labelStyle.width, labelStyle.height, availableWidth);
             const tickEnd = model.origin.y + (yDirection === -1 ? 5 : -5);
             const textOffset = model.fontSize * textScale / nodeScaleY;
             const textY = model.origin.y + (yDirection === -1 ? textOffset * 1.6 : -textOffset * 0.8);
@@ -315,8 +329,8 @@ export const CartesianCoordinateSystem = defineComponent({
               ...(showXLine ? [h("line", { class: "cartesian-axis-tick", x1: tick.position, y1: model.origin.y, x2: tick.position, y2: tickEnd, stroke: model.axisColor, "vector-effect": "non-scaling-stroke" })] : []),
               ...(showLabels && labelStyle.text ? [h("text", {
                 class: "cartesian-axis-tick-label",
-                transform: textTransform(tick.position, textY),
-                "text-anchor": "middle",
+                transform: `${textTransform(tick.position, textY)}${labelRotation ? ` rotate(${labelRotation})` : ""}`,
+                "text-anchor": labelRotation === 0 ? "middle" : yDirection === -1 ? "end" : "start",
                 "font-size": labelStyle.fontSize,
                 fill: labelStyle.color,
               }, labelStyle.text)] : []),
