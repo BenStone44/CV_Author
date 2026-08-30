@@ -107,7 +107,7 @@ const definitions: Array<[keyof typeof advancedTemplateSvgs, string, string, Svg
   ["Icicle", "Icicle", "Icicle", "CoordinateFree"],
   ["Sunburst", "Sunburst", "Sunburst", "Polar"],
   ["Treemap", "Treemap", "Treemap", "CoordinateFree"],
-  ["Dendrogram", "Dendrogram", "Dendrogram", "CoordinateFree"],
+  ["Dendrogram", "Dendrogram", "Dendrogram", "Cartesian"],
   ["RadialDendrogram", "Radial Dendrogram", "RadialDendrogram", "Polar"],
   ["RadialBarChart", "Radial Bar Chart", "RadialBarChart", "Polar"],
   ["Calendar", "Calendar", "Calendar", "CoordinateFree"],

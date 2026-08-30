@@ -185,6 +185,11 @@ import { useCanvasImportOperations } from "./canvas/importOperations";
 import { useCanvasInteraction } from "./canvas/interaction";
 import { useCanvasCompositionOperations } from "./canvas/compositionOperations";
 import { useCanvasCoordinateOperations } from "./canvas/coordinateOperations";
+import {
+  cartesianTreeDirection,
+  cartesianTreeLeafAxis,
+  isCartesianTreeChart,
+} from "../utils/treeLayout";
 export {
   canResolveNestedParentField,
   compositionOptions,
@@ -528,6 +533,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function mappedEncodingChannel(node: CanvasNode, channel: CoordinateChannel): ChartEncodingChannel {
     const template = normalizeChartTemplate(node.chartSpec?.chartType ?? "");
     const coordinateType = getChartTemplateContract(node.chartSpec?.chartType ?? "")?.coordinateSystem;
+    if (isCartesianTreeChart(node.chartSpec?.chartType) && (channel === "x" || channel === "y")) {
+      return channel === cartesianTreeLeafAxis(cartesianTreeDirection(node.chartSpec))
+        ? "category"
+        : channel;
+    }
     if (template === "pie" || template === "donut") {
       if (channel === "angle") return "theta";
       if (channel === "radius" || channel === "ring") return channel;
@@ -569,6 +579,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const spec = node.chartSpec;
     if (!spec) return undefined;
     if (channel === "x" || channel === "y") {
+      if (isCartesianTreeChart(spec.chartType)) {
+        const leafAxis = cartesianTreeLeafAxis(cartesianTreeDirection(spec));
+        if (channel !== leafAxis) return undefined;
+        return spec.encodings.category ?? spec.encodings.key;
+      }
       const axisEncoding = cartesianAxisEncoding(spec, channel);
       if (axisEncoding) return axisEncoding;
       // Matrix/heatmap charts may still use persisted row/column encodings.
@@ -971,9 +986,17 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   });
   function itemBindingAxis(node: CanvasNode): CoordinateChannel {
     if (getChartTemplateContract(node.chartSpec?.chartType ?? "")?.coordinateSystem === "Polar") return "angle";
+    if (isCartesianTreeChart(node.chartSpec?.chartType)) {
+      return cartesianTreeLeafAxis(cartesianTreeDirection(node.chartSpec));
+    }
     return node.chartSpec?.axisSwapped === true ? "x" : "y";
   }
   function logicalAxisChannel(node: CanvasNode, channel: ChartEncodingChannel): ChartEncodingChannel {
+    if (isCartesianTreeChart(node.chartSpec?.chartType) && (channel === "x" || channel === "y")) {
+      return channel === cartesianTreeLeafAxis(cartesianTreeDirection(node.chartSpec))
+        ? "category"
+        : channel;
+    }
     if (node.chartSpec?.axisSwapped !== true || (channel !== "x" && channel !== "y")) return channel;
     return channel === "x" ? "y" : "x";
   }
@@ -1722,7 +1745,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (node.chartSpec) {
       setAxisBindingTarget({
         nodeId: node.id,
-        channel: getChartTemplateContract(node.chartSpec.chartType)?.coordinateSystem === "Polar" ? "angle" : "x",
+        channel: isCartesianTreeChart(node.chartSpec.chartType)
+          ? cartesianTreeLeafAxis(cartesianTreeDirection(node.chartSpec))
+          : getChartTemplateContract(node.chartSpec.chartType)?.coordinateSystem === "Polar" ? "angle" : "x",
         clientX: event.clientX,
         clientY: event.clientY,
       });
@@ -2870,6 +2895,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       valueFields: spec.valueFields?.map((encoding) => replaceEncoding(encoding)!),
       angleFields: spec.angleFields?.map((encoding) => replaceEncoding(encoding)!),
       parallelFields: spec.parallelFields?.map((encoding) => replaceEncoding(encoding)!),
+      parallelAxisBoxplots: spec.parallelAxisBoxplots
+        ? Object.fromEntries(Object.entries(spec.parallelAxisBoxplots).map(([axis, encoding]) => [replaceField(axis), replaceEncoding(encoding)!]))
+        : undefined,
       series: replaceEncoding(spec.series),
       seriesFields: spec.seriesFields?.map((encoding) => replaceEncoding(encoding)!),
     });
@@ -3381,6 +3409,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     updateEncodingTargets(node, (_target, spec) => ({
       ...spec,
       parallelFields: fields,
+      parallelAxisBoxplots: spec.parallelAxisBoxplots
+        ? Object.fromEntries(Object.entries(spec.parallelAxisBoxplots).filter(([axis]) => fields.some((field) => field.field === axis)))
+        : undefined,
       scales: undefined,
       plotArea: undefined,
       renderer: undefined,
@@ -3942,6 +3973,22 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       return child.kind === "leaf" ? [flat as CanvasLeafNode] : flattenGroupToLeaves(flat as CanvasGroupNode);
     });
   }
+  function setParallelAxisBoxplot(axisField: string, valueField?: string) {
+    const node = axisBindingNode.value;
+    const dataset = axisBindingDataset.value;
+    if (!node?.chartSpec || !dataset || normalizeChartTemplate(node.chartSpec.chartType) !== "parallel") return;
+    const axis = dataset.columns.find((column) => column.name === axisField && column.type === "quantitative");
+    if (!axis) return;
+    const value = valueField
+      ? dataset.columns.find((column) => column.name === valueField && column.type === "quantitative")
+      : undefined;
+    updateEncodingTargets(node, (_target, spec) => {
+      const next = { ...(spec.parallelAxisBoxplots ?? {}) };
+      if (value) next[axis.field] = { field: value.field, type: value.type };
+      else delete next[axis.field];
+      return { ...spec, parallelAxisBoxplots: Object.keys(next).length ? next : undefined, renderer: undefined };
+    });
+  }
   function dissolveSelectedGroups() {
     const groupIds = new Set(
       selectedNodes.value.filter((n): n is CanvasGroupNode => n.kind === "group").map((n) => n.id),
@@ -4289,6 +4336,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     addBarItemField,
     removeBarItemField,
     setParallelFields,
+    setParallelAxisBoxplot,
     closeAxisBinding,
     setSelectionRotation,
     setPolarAngleSpan,

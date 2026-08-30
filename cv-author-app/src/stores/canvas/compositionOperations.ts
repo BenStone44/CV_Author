@@ -1542,11 +1542,20 @@ export function useCanvasCompositionOperations(context: any) {
         if (nestedItem) return nestedItem;
         continue;
       }
+      // Hierarchy and force-directed charts expose their nodes as the
+      // smallest, directly nestable targets. Resolve the hovered node before
+      // the chart-level enter portal so a drop can be aimed at a concrete
+      // node without first entering an unrelated chart center.
+      const targetTemplate = normalizeChartTemplate(target.chartSpec?.chartType ?? "");
+      if (targetTemplate === "hierarchy"
+        || target.chartSpec?.chartType.replace(/[\s_-]/g, "").toLowerCase().includes("forcedirected")) {
+        const nestedItem = semanticItemDropZone(target, point, sourceNodeId);
+        if (nestedItem) return nestedItem;
+      }
       const enterZone = chartEnterZone(target);
       if (!enterZone) continue;
-      const sourceTemplate = normalizeChartTemplate(source.chartSpec.chartType);
       if (enterZone.enterCompositionId
-        || (enterZone.nestedAction === "enter" && (sourceTemplate === "pie" || sourceTemplate === "donut"))) {
+        || enterZone.nestedAction === "enter") {
         return enterZone;
       }
       nestedEnterCandidates.set(target.id, enterZone);

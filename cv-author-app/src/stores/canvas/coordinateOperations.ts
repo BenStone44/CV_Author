@@ -295,6 +295,18 @@ export function useCanvasCoordinateOperations(context: any) {
       if (node.coordinateSystem && (node.coordinateSystem.type as string) === "None") {
         node.coordinateSystem.type = "CoordinateFree";
       }
+      const normalizedChartType = node.chartSpec?.chartType.replace(/[\s_-]/g, "").toLowerCase();
+      if (normalizedChartType === "dendrogram" && node.coordinateGuide?.type !== "Cartesian") {
+        const minX = node.kind === "leaf" ? node.contentMinX : 0;
+        const minY = node.kind === "leaf" ? node.contentMinY : 0;
+        node.coordinateGuide = {
+          type: "Cartesian",
+          origin: { x: minX, y: minY + node.height },
+          xDirection: 1,
+          yDirection: -1,
+        };
+        node.coordinateSystem = standaloneCoordinateSystem(node);
+      }
       if (node.kind !== "group") return [node];
       const sourceComposition = node.compositionSpec;
       const type = sourceComposition?.type;

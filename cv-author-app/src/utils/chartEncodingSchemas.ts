@@ -179,7 +179,14 @@ export const chartEncodingSchemas = {
     shareableChannels: ["angle", "radius"],
   }),
   Treemap: defineSchema("Treemap", "Treemap", "hierarchy", hierarchyChannels),
-  Dendrogram: defineSchema("Dendrogram", "Dendrogram", "hierarchy", hierarchyChannels),
+  Dendrogram: defineSchema("Dendrogram", "Dendrogram", "hierarchy", [
+    ...hierarchyChannels,
+    { channel: "category", label: "Leaf order", role: "dimension", required: false, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+  ], {
+    coordinateSystem: "Cartesian",
+    rendererVersion: 3,
+    shareableChannels: ["x", "y"],
+  }),
   RadialDendrogram: defineSchema("RadialDendrogram", "Radial Dendrogram", "hierarchy", [
     { channel: "key", label: "Node ID", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
     { channel: "parent", label: "Parent ID", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound" },

@@ -2644,6 +2644,45 @@ describe("composition coordinate editing", () => {
     }
   });
 
+  it("concats Cartesian trees only along their active leaf-order axis", () => {
+    const tree = lineChart("cartesian-tree-compatibility", 100, false);
+    tree.chartSpec = {
+      chartType: "Dendrogram",
+      datasetId: layerDataset.id,
+      encodings: {
+        key: { field: "time", type: "temporal" },
+        parent: { field: "series", type: "nominal" },
+        category: { field: "series", type: "nominal" },
+      },
+      markGroups: [{
+        id: "tree-nodes",
+        chartId: tree.id,
+        role: "node",
+        memberKeys: [],
+        sharedConfig: { treeDirection: "down" },
+      }],
+    };
+    const bars = lineChart("cartesian-tree-bars", 900, false);
+    bars.chartSpec = {
+      chartType: "SingleBarChart",
+      datasetId: layerDataset.id,
+      encodings: {
+        x: { field: "series", type: "nominal" },
+        y: { field: "value", type: "quantitative" },
+      },
+    };
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+
+    expect(store.concatNodesAreCompatible([tree, bars], "vertical", "x")).toBe(true);
+    expect(store.concatNodesAreCompatible([tree, bars], "horizontal", "y")).toBe(false);
+
+    tree.chartSpec!.markGroups![0]!.sharedConfig.treeDirection = "right";
+    bars.chartSpec!.axisSwapped = true;
+    expect(store.concatNodesAreCompatible([tree, bars], "horizontal", "y")).toBe(true);
+    expect(store.concatNodesAreCompatible([tree, bars], "vertical", "x")).toBe(false);
+  });
+
   it("extends Polar layer and concat compositions without replacing their members", () => {
     const layerFirst = polarChart("repeat-polar-layer-first", 100);
     const layerSecond = polarChart("repeat-polar-layer-second", 800);

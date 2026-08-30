@@ -69,4 +69,16 @@ describe("built-in default chart data", () => {
     });
     expect(spec?.encodings.theta).toBeUndefined();
   });
+
+  it("binds the default Dendrogram leaf order to a Cartesian dimension", () => {
+    const spec = createDefaultChartSpec("Dendrogram");
+    expect(spec).toMatchObject({
+      encodings: {
+        key: { field: "node_id", type: "nominal" },
+        parent: { field: "parent_id", type: "nominal" },
+        category: { field: "label", type: "nominal" },
+      },
+    });
+    expect(renderDefaultChartSvg("Dendrogram")).toContain('data-leaf-axis="y"');
+  });
 });

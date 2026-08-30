@@ -39,7 +39,7 @@ const defaultDataTemplateDefinitions = [
   { id: "builtin-template:icicle", name: "Icicle", chartType: "Icicle", coordinateSystem: "CoordinateFree" },
   { id: "builtin-template:sunburst", name: "Sunburst", chartType: "Sunburst", coordinateSystem: "Polar" },
   { id: "builtin-template:treemap", name: "Treemap", chartType: "Treemap", coordinateSystem: "CoordinateFree" },
-  { id: "builtin-template:dendrogram", name: "Dendrogram", chartType: "Dendrogram", coordinateSystem: "CoordinateFree" },
+  { id: "builtin-template:dendrogram", name: "Dendrogram", chartType: "Dendrogram", coordinateSystem: "Cartesian" },
   { id: "builtin-template:radial-dendrogram", name: "Radial Dendrogram", chartType: "RadialDendrogram", coordinateSystem: "Polar" },
   { id: "builtin-template:force-directed-graph", name: "Force-Directed Graph", chartType: "ForceDirectedGraph", coordinateSystem: "CoordinateFree" },
 ] satisfies Array<Omit<SvgCandidate, "src" | "svgMarkup">>;

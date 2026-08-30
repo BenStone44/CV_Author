@@ -142,6 +142,36 @@ describe("independent Cartesian axis component", () => {
     expect(node.renderedContent).not.toContain("<text");
   });
 
+  it.each([
+    ["right", "y", { x: 892, y: 389 }],
+    ["left", "y", { x: 192, y: 389 }],
+    ["down", "x", { x: 192, y: 389 }],
+    ["up", "x", { x: 192, y: 73 }],
+  ] as const)("exposes only the %s tree's %s leaf axis", (direction, leafAxis, origin) => {
+    const node = chartNode({
+      chartSpec: {
+        ...chartNode().chartSpec!,
+        chartType: "Dendrogram",
+        encodings: {
+          key: { field: "id", type: "nominal" },
+          parent: { field: "parent", type: "nominal" },
+          category: { field: "leaf", type: "nominal" },
+        },
+        markGroups: [{
+          id: "tree-nodes",
+          chartId: "chart",
+          role: "node",
+          memberKeys: [],
+          sharedConfig: { treeDirection: direction },
+        }],
+      },
+    });
+
+    expect(getCartesianAxisChannels(node, "static")).toEqual([leafAxis]);
+    expect(getCartesianAxisChannels(node, "interactive")).toEqual([leafAxis]);
+    expect(createCartesianAxisModel(node)?.origin).toEqual(origin);
+  });
+
   it("renders directly from ChartSpec axis checkbox values", () => {
     const node = chartNode({
       chartSpec: {

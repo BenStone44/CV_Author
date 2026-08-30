@@ -684,6 +684,10 @@
 .nested-encoding-config__section { min-width: 0; padding-bottom: 9px; border-bottom: 1px solid rgba(24, 33, 47, 0.12); }
 .nested-encoding-config__section > summary { padding: 7px 0; color: #334155; font-size: 11px; cursor: pointer; }
 .nested-encoding-config__section:last-child { padding-bottom: 0; border-bottom: 0; }
+.encoding-config__parallel-boxplots { display: grid; gap: 6px; margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(24, 33, 47, 0.1); }
+.encoding-config__parallel-boxplots > span { color: #5f6f82; font-size: 10px; font-weight: 600; }
+.encoding-config__parallel-boxplots label { display: grid; grid-template-columns: minmax(0, 1fr) minmax(92px, 0.8fr); align-items: center; gap: 8px; }
+.encoding-config__parallel-boxplots select { min-width: 0; }
 .nested-position-editor {
   position: absolute;
   left: 16px;

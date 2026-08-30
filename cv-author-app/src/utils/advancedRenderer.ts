@@ -82,6 +82,10 @@ import {
   RADIAL_DENDROGRAM_SELECTION_PADDING,
   type RadialClusterNode,
 } from "./radialClusterLayout";
+import {
+  cartesianTreeDirection,
+  cartesianTreeLeafAxis,
+} from "./treeLayout";
 
 const tableau = schemeTableau10;
 
@@ -393,20 +397,20 @@ function renderArea(input: GenericRenderInput) {
 function renderParallel(input: GenericRenderInput) {
   const fields = input.chartSpec.parallelFields ?? [];
   if (fields.length < 2) throw new Error("Parallel Coordinates requires at least two numeric dimensions.");
-  const marginTop = 20;
-  const marginRight = 10;
-  const marginBottom = 20;
-  const marginLeft = 10;
+  const marginTop = 22;
+  const marginRight = 18;
+  const marginBottom = 24;
+  const marginLeft = 18;
   const area = {
     x: input.minX + marginLeft,
     y: input.minY + marginTop,
     width: Math.max(1, input.width - marginLeft - marginRight),
     height: Math.max(1, input.height - marginTop - marginBottom),
   };
-  const y = scalePoint<string>().domain(fields.map((field) => field.field)).range([area.y, area.y + area.height]);
+  const x = scalePoint<string>().domain(fields.map((field) => field.field)).range([area.x, area.x + area.width]).padding(0.35);
   const scales = new Map(fields.map((field) => {
     const domain = finiteDomain(input.dataset.rows.map((row) => numeric(row, field)));
-    return [field.field, scaleLinear().domain(domain).range([area.x, area.x + area.width])] as const;
+    return [field.field, scaleLinear().domain(domain).range([area.y + area.height, area.y])] as const;
   }));
   const colorEncoding = input.chartSpec.encodings.color;
   const colorField = colorEncoding?.field ?? fields[0]!.field;
@@ -418,8 +422,8 @@ function renderParallel(input: GenericRenderInput) {
   const ordinal = scaleOrdinal<string, string>().domain(categories).range(tableau);
   const line = d3Line<[string, number]>()
     .defined(([, value]) => Number.isFinite(value))
-    .x(([field, value]) => scales.get(field)?.(value) ?? area.x)
-    .y(([field]) => y(field) ?? area.y);
+    .x(([field]) => x(field) ?? area.x)
+    .y(([field, value]) => scales.get(field)?.(value) ?? area.y + area.height);
   const sortedRows = input.dataset.rows.slice().sort((left, right) => Number(left[colorField] ?? 0) - Number(right[colorField] ?? 0));
   const paths = sortedRows.map((row) => {
     const index = input.dataset.rows.indexOf(row);
@@ -429,12 +433,40 @@ function renderParallel(input: GenericRenderInput) {
   }).join("");
   const axes = fields.map((field) => {
     const scale = scales.get(field.field)!;
-    const axisY = y(field.field) ?? area.y;
+    const axisX = x(field.field) ?? area.x;
     const domain = scale.domain();
-    const tickMarks = scale.ticks(Math.max(2, Math.floor(area.width / 100))).map((value) => `<g class="tick" transform="translate(${scale(value)} 0)"><line y2="6" stroke="currentColor"/><text y="18" text-anchor="middle" font-size="10" fill="currentColor">${esc(formatTick(value))}</text></g>`).join("");
-    return `<g data-mark-role="parallel-axis" data-field="${esc(field.field)}" transform="translate(0 ${axisY})"><line x1="${area.x}" x2="${area.x + area.width}" stroke="currentColor"/>${tickMarks}<text x="${area.x}" y="-6" text-anchor="start" font-size="10" fill="currentColor" stroke="white" stroke-width="5" stroke-linejoin="round" paint-order="stroke">${esc(field.field)}</text><title>${domain.map(formatTick).join(" - ")}</title></g>`;
+    const tickMarks = scale.ticks(Math.max(3, Math.floor(area.height / 44))).map((value) => {
+      const yPosition = scale(value);
+      return `<g class="tick" transform="translate(${axisX} ${yPosition})"><line x1="-5" x2="5" stroke="currentColor"/><text x="8" y="3" text-anchor="start" font-size="9" fill="currentColor">${esc(formatTick(value))}</text></g>`;
+    }).join("");
+    const boxplotField = input.chartSpec.parallelAxisBoxplots?.[field.field];
+    const boxValues = boxplotField
+      ? input.dataset.rows.map((row) => numeric(row, boxplotField)).filter(Number.isFinite).sort((a, b) => a - b)
+      : [];
+    const boxScale = boxValues.length > 0
+      ? scaleLinear().domain(finiteDomain(boxValues)).range([area.y + area.height, area.y])
+      : scale;
+    const quantile = (q: number) => {
+      if (boxValues.length === 0) return Number.NaN;
+      const position = (boxValues.length - 1) * q;
+      const lower = Math.floor(position);
+      const upper = Math.ceil(position);
+      return boxValues[lower]! + (boxValues[upper]! - boxValues[lower]!) * (position - lower);
+    };
+    const box = boxValues.length > 0
+      ? (() => {
+        const low = boxScale(quantile(0.05));
+        const q1 = boxScale(quantile(0.25));
+        const median = boxScale(quantile(0.5));
+        const q3 = boxScale(quantile(0.75));
+        const high = boxScale(quantile(0.95));
+        const width = 10;
+        return `<g data-mark-role="nested-boxplot" data-parent-axis="${esc(field.field)}" data-field="${esc(boxplotField!.field)}" aria-label="Boxplot for ${esc(boxplotField!.field)}"><line x1="${axisX}" x2="${axisX}" y1="${low}" y2="${high}" stroke="#b45309" stroke-width="1.5"/><line x1="${axisX - width / 2}" x2="${axisX + width / 2}" y1="${low}" y2="${low}" stroke="#b45309"/><line x1="${axisX - width / 2}" x2="${axisX + width / 2}" y1="${high}" y2="${high}" stroke="#b45309"/><rect x="${axisX - width / 2}" y="${Math.min(q1, q3)}" width="${width}" height="${Math.max(1, Math.abs(q3 - q1))}" fill="#f59e0b" fill-opacity="0.35" stroke="#b45309"/><line x1="${axisX - width / 2}" x2="${axisX + width / 2}" y1="${median}" y2="${median}" stroke="#92400e" stroke-width="2"/></g>`;
+      })()
+      : "";
+    return `<g data-mark-role="parallel-axis" data-field="${esc(field.field)}"><line x1="${axisX}" x2="${axisX}" y1="${area.y}" y2="${area.y + area.height}" stroke="currentColor"/>${tickMarks}<text x="${axisX}" y="${area.y - 7}" text-anchor="middle" font-size="10" fill="currentColor" stroke="white" stroke-width="5" stroke-linejoin="round" paint-order="stroke">${esc(field.field)}</text>${box}<title>${domain.map(formatTick).join(" - ")}</title></g>`;
   }).join("");
-  return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="parallel" data-axis-orientation="horizontal" data-renderer="observable-parallel@1" font-family="sans-serif">${paths}${axes}</g>`, plotArea: area };
+  return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="parallel" data-axis-orientation="vertical" data-renderer="observable-parallel@2" font-family="sans-serif">${paths}${axes}</g>`, plotArea: area };
 }
 
 function hierarchyRoot(input: GenericRenderInput) {
@@ -559,7 +591,7 @@ function renderHierarchy(input: GenericRenderInput) {
         ? nodeConfig.color
         : node.children ? "#555" : "#999");
       const rotation = node.x * 180 / Math.PI - 90;
-      return `<circle data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-angle="${node.x}" transform="rotate(${rotation}) translate(${node.y},0)" r="${nodeRadius(node)}" fill="${color}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}</title></circle>`;
+      return `<circle data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-row-key="${esc(rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)))}" data-angle="${node.x}" transform="rotate(${rotation}) translate(${node.y},0)" r="${nodeRadius(node)}" fill="${color}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}</title></circle>`;
     }).join("");
     const labels = nodeLabelsVisible ? nodes.map((node) => {
       const onLeft = Math.sin(node.x) < 0;
@@ -638,30 +670,116 @@ function renderHierarchy(input: GenericRenderInput) {
     return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="icicle" data-renderer="observable-icicle@2">${cells}</g>`, plotArea: area };
   }
 
-  root.sort((a, b) => (a.id ?? "").localeCompare(b.id ?? ""));
-  const leafCount = Math.max(1, root.leaves().length);
-  const dx = area.height / (leafCount + 1);
-  const labelRoom = Math.min(140, area.width * 0.3);
-  const dy = Math.max(1, (area.width - labelRoom) / (root.height + 1));
-  const layoutRoot = cluster<Dataset["rows"][number]>().nodeSize([dx, dy])(root);
+  const direction = cartesianTreeDirection(input.chartSpec);
+  const leafAxis = cartesianTreeLeafAxis(direction);
+  const horizontal = leafAxis === "y";
+  const guide = input.coordinateGuide?.type === "Cartesian" ? input.coordinateGuide : null;
+  const scaledWidth = Math.max(1, area.width * (guide?.xScale ?? 1));
+  const scaledHeight = Math.max(1, area.height * (guide?.yScale ?? 1));
+  const treeArea: ChartPlotArea = input.sharedPlotArea ?? {
+    x: guide?.xDirection === -1 ? area.x + area.width - scaledWidth : area.x,
+    y: guide?.yDirection === 1 ? area.y : area.y + area.height - scaledHeight,
+    width: scaledWidth,
+    height: scaledHeight,
+  };
+  const orderEncoding = input.chartSpec.encodings.category ?? input.chartSpec.encodings.key!;
+  const orderValue = (node: { id?: string; data: Dataset["rows"][number] }) =>
+    node.data[orderEncoding.field] ?? node.id ?? "";
+  const compareOrder = (left: string, right: string) => {
+    if (orderEncoding.type === "quantitative") {
+      const difference = Number(left) - Number(right);
+      if (Number.isFinite(difference) && difference !== 0) return difference;
+    }
+    if (orderEncoding.type === "temporal") {
+      const difference = Date.parse(left) - Date.parse(right);
+      if (Number.isFinite(difference) && difference !== 0) return difference;
+    }
+    return left.localeCompare(right, undefined, { numeric: true });
+  };
+  const subtreeOrder = new Map<object, string>();
+  root.eachAfter((node) => {
+    const values = node.children?.map((child) => subtreeOrder.get(child) ?? orderValue(child))
+      ?? [orderValue(node)];
+    subtreeOrder.set(node, values.slice().sort(compareOrder)[0] ?? orderValue(node));
+  });
+  root.sort((left, right) => compareOrder(
+    subtreeOrder.get(left) ?? orderValue(left),
+    subtreeOrder.get(right) ?? orderValue(right),
+  ) || (left.id ?? "").localeCompare(right.id ?? ""));
+
+  const layoutRoot = cluster<Dataset["rows"][number]>().size([1, 1])(root);
+  const labelRoom = Math.min(140, (horizontal ? treeArea.width : treeArea.height) * 0.3);
+  const leafRange: [number, number] = horizontal
+    ? guide?.yDirection === 1
+      ? [treeArea.y, treeArea.y + treeArea.height]
+      : [treeArea.y + treeArea.height, treeArea.y]
+    : guide?.xDirection === -1
+      ? [treeArea.x + treeArea.width, treeArea.x]
+      : [treeArea.x, treeArea.x + treeArea.width];
+  const depthRange: [number, number] = direction === "right"
+    ? [treeArea.x, treeArea.x + treeArea.width - labelRoom]
+    : direction === "left"
+      ? [treeArea.x + treeArea.width, treeArea.x + labelRoom]
+      : direction === "down"
+        ? [treeArea.y, treeArea.y + treeArea.height - labelRoom]
+        : [treeArea.y + treeArea.height, treeArea.y + labelRoom];
+  const nativeLeafScale = scaleForEncoding(
+    layoutRoot.leaves().map((node) => node.data),
+    orderEncoding,
+    leafRange,
+  ).spec as ChartScaleSpec;
+  const leafScale = input.sharedScales?.[leafAxis] ?? nativeLeafScale;
+  const depthScale: ChartScaleSpec = {
+    type: "linear",
+    domain: [0, 1],
+    range: depthRange,
+  };
+  const leafPositions = new Map<object, number>();
+  layoutRoot.eachAfter((node) => {
+    if (!node.children?.length) {
+      leafPositions.set(node, areaAxisPosition(leafScale, orderValue(node)));
+      return;
+    }
+    const positions = node.children
+      .map((child) => leafPositions.get(child))
+      .filter((value): value is number => value !== undefined);
+    leafPositions.set(node, positions.reduce((sum, value) => sum + value, 0) / Math.max(1, positions.length));
+  });
   const nodes = layoutRoot.descendants().filter(visible);
-  const xExtent = finiteDomain(nodes.map((node) => node.x));
-  const offsetY = area.y + area.height / 2 - (xExtent[0] + xExtent[1]) / 2;
+  const point = (node: typeof layoutRoot) => {
+    const leafPosition = leafPositions.get(node) ?? leafRange[0];
+    const depthPosition = areaValuePosition(depthScale, node.y);
+    return horizontal
+      ? { x: depthPosition, y: leafPosition }
+      : { x: leafPosition, y: depthPosition };
+  };
   const links = layoutRoot.links().filter((link) => visible(link.source) && visible(link.target)).map((link) => {
-    const sx = area.x + link.source.y;
-    const sy = offsetY + link.source.x;
-    const tx = area.x + link.target.y;
-    const ty = offsetY + link.target.x;
-    return `<path data-mark-role="link" d="M${sx},${sy}C${(sx + tx) / 2},${sy} ${(sx + tx) / 2},${ty} ${tx},${ty}" fill="none" stroke="#555" stroke-opacity="0.4" stroke-width="1.5"/>`;
+    const source = point(link.source);
+    const target = point(link.target);
+    const path = horizontal
+      ? `M${source.x},${source.y}C${(source.x + target.x) / 2},${source.y} ${(source.x + target.x) / 2},${target.y} ${target.x},${target.y}`
+      : `M${source.x},${source.y}C${source.x},${(source.y + target.y) / 2} ${target.x},${(source.y + target.y) / 2} ${target.x},${target.y}`;
+    return `<path data-mark-role="link" d="${path}" fill="none" stroke="#555" stroke-opacity="0.4" stroke-width="1.5"/>`;
   }).join("");
   const marks = nodes.map((node) => {
-    const x = area.x + node.y;
-    const y = offsetY + node.x;
+    const { x, y } = point(node);
     const fill = nodeColor(node, node.children ? "#555" : "#999");
-    const label = nodeLabelsVisible ? `<text dy="0.31em" x="${node.children ? -6 : 6}" text-anchor="${node.children ? "end" : "start"}" font-size="10" font-family="sans-serif" stroke="white" paint-order="stroke">${esc(node.id ?? "")}</text>` : "";
-    return `<g transform="translate(${x} ${y})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}"><circle r="${nodeRadius(node)}" fill="${fill}"/>${label}</g>`;
+    const isLeaf = !node.children?.length;
+    const label = !nodeLabelsVisible
+      ? ""
+      : horizontal
+        ? `<text dy="0.31em" x="${(direction === "right") === isLeaf ? 6 : -6}" text-anchor="${(direction === "right") === isLeaf ? "start" : "end"}" font-size="10" font-family="sans-serif" stroke="white" paint-order="stroke">${esc(node.id ?? "")}</text>`
+        : `<text y="${(direction === "down") === isLeaf ? 8 : -8}" text-anchor="middle" dominant-baseline="${(direction === "down") === isLeaf ? "hanging" : "auto"}" font-size="10" font-family="sans-serif" stroke="white" paint-order="stroke">${esc(node.id ?? "")}</text>`;
+    return `<g transform="translate(${x} ${y})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-row-key="${esc(rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)))}"><circle r="${nodeRadius(node)}" fill="${fill}"/>${label}</g>`;
   }).join("");
-  return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="dendrogram" data-renderer="observable-cluster@2">${links}${marks}</g>`, plotArea: area };
+  const scales = leafAxis === "x"
+    ? { x: leafScale, y: depthScale }
+    : { x: depthScale, y: leafScale };
+  return {
+    content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="dendrogram" data-tree-direction="${direction}" data-leaf-axis="${leafAxis}" data-renderer="observable-cluster@3">${links}${marks}</g>`,
+    plotArea: treeArea,
+    scales,
+  };
 }
 
 function renderCalendar(input: GenericRenderInput) {
@@ -939,7 +1057,7 @@ function renderForceDirected(input: GenericRenderInput) {
       ?? (typeof forceConfig.color === "string" ? forceConfig.color : tableau[node.index % tableau.length]!);
     const radius = radiusFor(node);
     const label = node.row.label ?? node.id;
-    return `<g data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id)}"><circle cx="${node.x}" cy="${node.y}" r="${radius}" fill="${color}" stroke="#fff" stroke-width="1.5"><title>${esc(String(label))}</title></circle><text x="${node.x + radius + 3}" y="${node.y}" dy="0.35em" font-size="10" fill="currentColor">${esc(String(label))}</text></g>`;
+    return `<g data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id)}" data-row-key="${esc(rowKey(graph.nodes, node.row, node.index))}"><circle cx="${node.x}" cy="${node.y}" r="${radius}" fill="${color}" stroke="#fff" stroke-width="1.5"><title>${esc(String(label))}</title></circle><text x="${node.x + radius + 3}" y="${node.y}" dy="0.35em" font-size="10" fill="currentColor">${esc(String(label))}</text></g>`;
   }).join("");
   return {
     content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="force-directed-graph" data-renderer="observable-force-directed@1">${linkMarks}${nodeMarks}</g>`,

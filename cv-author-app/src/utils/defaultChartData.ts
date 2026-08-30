@@ -183,6 +183,9 @@ export function createDefaultChartSpec(chartType: string): ChartSpec | null {
         key: { field: "node_id", type: "nominal" },
         parent: { field: "parent_id", type: "nominal" },
         value: { field: "weight", type: "quantitative" },
+        ...(normalized === "dendrogram"
+          ? { category: { field: "label", type: "nominal" as const } }
+          : {}),
       },
     };
   }

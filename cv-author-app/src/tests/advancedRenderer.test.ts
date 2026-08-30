@@ -154,6 +154,7 @@ describe("advanced chart cards", () => {
     expect(channels("AreaChart")).toEqual(["x", "y", "color"]);
     expect(channels("ParallelCoordinatesPlot")).toEqual(["dimensions", "color"]);
     expect(channels("Sunburst")).toEqual(["key", "parent", "value", "color"]);
+    expect(channels("Dendrogram")).toEqual(["key", "parent", "value", "color", "size", "category"]);
     expect(channels("RadialDendrogram")).toEqual(["key", "parent", "theta"]);
     expect(channels("RadialBarChart")).toEqual(["theta", "segment", "radius", "color"]);
     expect(channels("Calendar")).toEqual(["date", "value", "color"]);
@@ -422,6 +423,40 @@ describe("advanced chart cards", () => {
     });
     expect(result.content).toContain('data-mark-role="node"');
     expect(result.content).toContain('data-node-key="a1"');
+  });
+
+  it.each([
+    ["right", "y", "x", 1],
+    ["left", "y", "x", -1],
+    ["down", "x", "y", 1],
+    ["up", "x", "y", -1],
+  ] as const)("renders a %s-growing Cartesian tree on the %s leaf axis", (direction, leafAxis, depthCoordinate, sign) => {
+    const result = render("Dendrogram", hierarchyDataset, {
+      encodings: {
+        key: { field: "id", type: "nominal" },
+        parent: { field: "parent", type: "nominal" },
+        category: { field: "id", type: "nominal" },
+      },
+      markGroups: [{
+        id: "tree-nodes",
+        chartId: "Dendrogram",
+        role: "node",
+        memberKeys: [],
+        sharedConfig: { treeDirection: direction },
+      }],
+    });
+    const position = (key: string) => {
+      const match = result.content.match(new RegExp(`transform="translate\\(([-0-9.]+) ([-0-9.]+)\\)"[^>]+data-node-key="${key}"`));
+      expect(match).not.toBeNull();
+      return { x: Number(match?.[1]), y: Number(match?.[2]) };
+    };
+    const root = position("root");
+    const leaf = position("a1");
+
+    expect(result.content).toContain(`data-tree-direction="${direction}"`);
+    expect(result.content).toContain(`data-leaf-axis="${leafAxis}"`);
+    expect(result.scales?.[leafAxis].type).toBe("point");
+    expect(Math.sign(leaf[depthCoordinate] - root[depthCoordinate])).toBe(sign);
   });
 
   it("renders equal-width radial bars from Segment and R with a default inner radius", () => {

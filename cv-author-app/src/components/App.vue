@@ -48,6 +48,11 @@ import {
 } from "../utils/chartTemplateCategories";
 import { getGeographicLayerFamily } from "../utils/geographicLayerCards";
 import { getChartTemplateContract } from "../utils/chartTemplates";
+import {
+  cartesianTreeDirection,
+  cartesianTreeLeafAxis,
+  isCartesianTreeChart,
+} from "../utils/treeLayout";
 
 const EMPTY_SELECTION_IDS: string[] = [];
 
@@ -173,6 +178,7 @@ const {
   setValueSeriesFields,
   removeBarItemField,
   setParallelFields,
+  setParallelAxisBoxplot,
   setChartDataTransforms,
   resetChartBindingsForDataset,
   setDeckglMapStyle,
@@ -924,6 +930,9 @@ function applyDimensionIntentGroup(group: { id: string; intents: Array<{ id: str
 }
 
 function defaultEncodingChannel(node: CanvasNode): CoordinateChannel {
+  if (isCartesianTreeChart(node.chartSpec?.chartType)) {
+    return cartesianTreeLeafAxis(cartesianTreeDirection(node.chartSpec));
+  }
   return isPolarChartType(node.chartSpec?.chartType ?? "") ? "angle" : "x";
 }
 
@@ -973,7 +982,10 @@ const selectedCanvasNodesWithCoordinateGuides = coordinateGuideNodes;
 const cartesianAxisSwapNode = computed(() => {
   if (semanticSelection.value || selectedIds.value.length !== 1) return null;
   const node = selectedNodes.value[0];
-  return node?.coordinateGuide?.type === "Cartesian" && node.chartSpec ? node : null;
+  const chartType = node?.chartSpec?.chartType.replace(/[\s_-]/g, "").toLowerCase();
+  return node?.coordinateGuide?.type === "Cartesian" && node.chartSpec && chartType !== "dendrogram"
+    ? node
+    : null;
 });
 const cartesianAxisSwapPosition = computed(() => {
   const frame = selectionFrame.value;

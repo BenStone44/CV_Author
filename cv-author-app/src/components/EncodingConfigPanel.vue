@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { ArrowLeftRight, X } from "@lucide/vue";
+import { ArrowDown, ArrowLeft, ArrowLeftRight, ArrowRight, ArrowUp, X } from "@lucide/vue";
 import EncodingChannelField from "./EncodingChannelField.vue";
 import VisualMappingEditor from "./VisualMappingEditor.vue";
 import {
@@ -42,6 +42,10 @@ import {
   getActiveCsvColumnDrag,
 } from "../utils/csvColumnDrag";
 import { RADIAL_DENDROGRAM_DEFAULT_LEAF_RADIUS } from "../utils/radialClusterLayout";
+import {
+  normalizeCartesianTreeDirection,
+  type CartesianTreeDirection,
+} from "../utils/treeLayout";
 
 const props = defineProps<{
   chartName: string;
@@ -72,6 +76,7 @@ const emit = defineEmits<{
   valueSeriesFieldsChange: [fields: string[]];
   segmentFieldsChange: [fields: string[]];
   parallelFieldsChange: [fields: string[]];
+  parallelAxisBoxplotChange: [axisField: string, valueField?: string];
   aggregationChange: [channel: ChartEncodingChannel, aggregation?: "sum" | "avg"];
   singleBarValueOrderChange: [direction: "source" | "ascending" | "descending", topN?: number];
   markConfigChange: [patch: MarkGroupSharedConfig];
@@ -140,6 +145,18 @@ const seriesItemsRequired = computed(() => supportsSeriesItems.value
 const seriesItemLabel = computed(() => seriesRole.value?.semanticLabel ?? "Series");
 const isParallel = computed(() => template.value === "parallel");
 const isHierarchy = computed(() => template.value === "hierarchy");
+const isCartesianTree = computed(() => normalizedChartType.value === "dendrogram");
+const treeDirection = computed(() => normalizeCartesianTreeDirection(props.markConfig.treeDirection));
+const treeDirections: Array<{
+  value: CartesianTreeDirection;
+  label: string;
+  icon: typeof ArrowRight;
+}> = [
+  { value: "right", label: "Grow right", icon: ArrowRight },
+  { value: "left", label: "Grow left", icon: ArrowLeft },
+  { value: "down", label: "Grow down", icon: ArrowDown },
+  { value: "up", label: "Grow up", icon: ArrowUp },
+];
 const isForceDirected = computed(() => normalizedChartType.value === "forcedirectedgraph");
 const nodeLabelsVisible = computed(() => props.markConfig.nodeLabelsVisible !== false);
 function markNumber(name: string, fallback: number) {
@@ -274,6 +291,7 @@ const polarSegmentColumns = computed(() => {
   return props.columns.filter((column) => config.accepts.includes(column.type));
 });
 const selectedParallelFields = computed(() => props.chartSpec.parallelFields?.map((encoding) => encoding.field) ?? []);
+const parallelAxisBoxplots = computed(() => props.chartSpec.parallelAxisBoxplots ?? {});
 const staticRadius = computed(() => typeof props.markConfig.outerRadius === "number"
   ? props.markConfig.outerRadius
   : 1);
@@ -564,6 +582,10 @@ function toggleParallelField(field: string) {
   emit("parallelFieldsChange", selectedParallelFields.value.includes(field)
     ? selectedParallelFields.value.filter((item) => item !== field)
     : [...selectedParallelFields.value, field]);
+}
+
+function updateParallelAxisBoxplot(axisField: string, valueField: string) {
+  emit("parallelAxisBoxplotChange", axisField, valueField || undefined);
 }
 
 function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
@@ -951,6 +973,22 @@ function updateSingleBarTopN(rawValue: string) {
           />
           <span>{{ columnDisplayLabel(column.name) }}</span>
         </label>
+        <div v-if="selectedParallelFields.length" class="encoding-config__parallel-boxplots">
+          <span>Axis boxplots</span>
+          <label v-for="axisField in selectedParallelFields" :key="axisField">
+            <span>{{ columnDisplayLabel(axisField) }}</span>
+            <select
+              :value="parallelAxisBoxplots[axisField]?.field ?? ''"
+              :aria-label="`Boxplot for ${axisField}`"
+              @change="updateParallelAxisBoxplot(axisField, ($event.target as HTMLSelectElement).value)"
+            >
+              <option value="">None</option>
+              <option v-for="column in quantitativeColumns" :key="column.name" :value="column.name">
+                {{ columnDisplayLabel(column.name) }}
+              </option>
+            </select>
+          </label>
+        </div>
       </section>
 
       <template v-if="!compositionOnly">
@@ -1171,6 +1209,23 @@ function updateSingleBarTopN(rawValue: string) {
     </section>
 
     <section v-if="isHierarchy" class="encoding-config__appearance">
+      <div v-if="isCartesianTree" class="encoding-config__tree-direction" aria-label="Tree direction">
+        <span>Direction</span>
+        <div role="group" aria-label="Tree direction">
+          <button
+            v-for="direction in treeDirections"
+            :key="direction.value"
+            type="button"
+            :title="direction.label"
+            :aria-label="direction.label"
+            :aria-pressed="treeDirection === direction.value"
+            :class="{ 'is-active': treeDirection === direction.value }"
+            @click="emit('markConfigChange', { treeDirection: direction.value })"
+          >
+            <component :is="direction.icon" :size="15" :stroke-width="1.8" aria-hidden="true" />
+          </button>
+        </div>
+      </div>
       <label class="encoding-config__option encoding-config__node-label-toggle">
         <span>Show node labels</span>
         <input
@@ -1336,6 +1391,12 @@ function updateSingleBarTopN(rawValue: string) {
 .encoding-config__axis-switch { display: inline-flex; align-items: center; gap: 7px; color: #516176; font-size: var(--encoding-config-font-size); }
 .encoding-config__axis-switch button { min-width: 64px; min-height: 28px; padding: 0 8px; border: 1px solid rgba(28, 126, 214, 0.28); border-radius: 999px; background: #fff; color: #1554b2; font: inherit; font-size: var(--encoding-config-font-size); font-weight: 700; cursor: pointer; }
 .encoding-config__axis-switch button.is-active { border-color: #1554b2; background: #1554b2; color: #fff; }
+.encoding-config__tree-direction { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; color: #516176; font-size: var(--encoding-config-font-size); }
+.encoding-config__tree-direction > div { display: grid; grid-template-columns: repeat(4, 30px); border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 5px; overflow: hidden; background: #fff; }
+.encoding-config__tree-direction button { display: inline-grid; width: 30px; height: 28px; padding: 0; place-items: center; border: 0; border-left: 1px solid rgba(24, 33, 47, 0.1); background: transparent; color: #516176; cursor: pointer; }
+.encoding-config__tree-direction button:first-child { border-left: 0; }
+.encoding-config__tree-direction button:hover { background: #edf5fc; color: #1554b2; }
+.encoding-config__tree-direction button.is-active { background: #1554b2; color: #fff; }
 .encoding-config__detail-fields { display: grid; gap: 6px; }
 .encoding-config__detail-row { position: relative; display: grid; grid-template-columns: minmax(52px, 0.2fr) minmax(164px, 0.76fr) minmax(96px, 0.42fr); align-items: center; gap: 2px; min-height: 32px; padding: 3px 4px; border: 1px solid rgba(24, 33, 47, 0.1); border-radius: 5px; background: #fbfcfe; }
 .encoding-config__detail-row :deep(.encoding-channel-field) { display: contents; }

@@ -8,6 +8,11 @@ import type {
 } from "../types";
 import { getLeafNodeTransform, getNodeTransform } from "../utils/canvasUtils";
 import { chartAxisLabelsVisible, chartAxisVisible } from "../utils/chartAxes";
+import {
+  cartesianTreeDirection,
+  cartesianTreeLeafAxis,
+  isCartesianTreeChart,
+} from "../utils/treeLayout";
 import { PolarCoordinateSystem } from "./PolarCoordinateSystem";
 
 type AxisTick = {
@@ -23,6 +28,8 @@ export type CartesianAxisModel = {
   origin: Point;
   xEnd: Point;
   yEnd: Point;
+  xDirection: 1 | -1;
+  yDirection: 1 | -1;
   xTicks: AxisTick[];
   yTicks: AxisTick[];
   xTitle: string;
@@ -42,7 +49,20 @@ export function getCartesianAxisChannels(
   const system = node.coordinateSystem;
   const isLayer = node.compositionSpec?.type === "layer";
   const isOwner = !system || system.ownerNodeId === node.id;
-  if (isLayer) return mode === "static" && isOwner ? [...cartesianChannels] : [];
+  const treeLeafAxis = isCartesianTreeChart(node.chartSpec?.chartType)
+    ? cartesianTreeLeafAxis(cartesianTreeDirection(node.chartSpec))
+    : null;
+  if (isLayer) {
+    return mode === "static" && isOwner
+      ? treeLeafAxis ? [treeLeafAxis] : [...cartesianChannels]
+      : [];
+  }
+  if (treeLeafAxis) {
+    if (mode === "interactive" && node.compositionSpec?.type === "concat") {
+      return node.compositionSpec.sharedChannels.includes(treeLeafAxis) ? [treeLeafAxis] : [];
+    }
+    return [treeLeafAxis];
+  }
   // Interactive concat controls expose only channels shared by its recorded
   // links; independent member axes remain local to their charts.
   if (mode === "interactive" && node.compositionSpec?.type === "concat") {
@@ -100,9 +120,14 @@ export function createCartesianAxisModel(node: CanvasNode): CartesianAxisModel |
   const top = plot.y;
   const right = left + plot.width;
   const bottom = top + plot.height;
+  const treeDirection = isCartesianTreeChart(node.chartSpec?.chartType)
+    ? cartesianTreeDirection(node.chartSpec)
+    : null;
+  const xDirection = treeDirection === "right" ? -1 : treeDirection === "left" ? 1 : guide.xDirection;
+  const yDirection = treeDirection === "up" ? 1 : treeDirection === "down" ? -1 : guide.yDirection;
   const origin = {
-    x: guide.xDirection === 1 ? left : right,
-    y: guide.yDirection === -1 ? bottom : top,
+    x: xDirection === 1 ? left : right,
+    y: yDirection === -1 ? bottom : top,
   };
   const tokens = node.chartSpec?.styleTokens;
   const renderedScale = Math.max(Math.abs(node.scaleX), Math.abs(node.scaleY), 0.0001);
@@ -114,8 +139,10 @@ export function createCartesianAxisModel(node: CanvasNode): CartesianAxisModel |
     right,
     bottom,
     origin,
-    xEnd: { x: guide.xDirection === 1 ? right : left, y: origin.y },
-    yEnd: { x: origin.x, y: guide.yDirection === -1 ? top : bottom },
+    xEnd: { x: xDirection === 1 ? right : left, y: origin.y },
+    yEnd: { x: origin.x, y: yDirection === -1 ? top : bottom },
+    xDirection,
+    yDirection,
     xTicks: axisTicks(xScale, Math.max(2, Math.min(6, Math.floor(plot.width / 80)))),
     yTicks: axisTicks(yScale, Math.max(2, Math.min(6, Math.floor(plot.height / 42)))),
     // Axis titles duplicated the bound CSV column names. The encoding panel
@@ -161,12 +188,14 @@ export const CartesianCoordinateSystem = defineComponent({
       const top = model?.top ?? minY;
       const right = model?.right ?? minX + props.node.width * (guide.xScale ?? 1);
       const bottom = model?.bottom ?? minY + props.node.height * (guide.yScale ?? 1);
+      const xDirection = model?.xDirection ?? guide.xDirection;
+      const yDirection = model?.yDirection ?? guide.yDirection;
       const origin = model?.origin ?? {
-        x: guide.xDirection === 1 ? left : right,
-        y: guide.yDirection === -1 ? bottom : top,
+        x: xDirection === 1 ? left : right,
+        y: yDirection === -1 ? bottom : top,
       };
-      const xEnd = model?.xEnd ?? { x: guide.xDirection === 1 ? right : left, y: origin.y };
-      const yEnd = model?.yEnd ?? { x: origin.x, y: guide.yDirection === -1 ? top : bottom };
+      const xEnd = model?.xEnd ?? { x: xDirection === 1 ? right : left, y: origin.y };
+      const yEnd = model?.yEnd ?? { x: origin.x, y: yDirection === -1 ? top : bottom };
       const screenScale = Math.max(Math.abs(props.node.scaleX), Math.abs(props.node.scaleY), 0.0001) * Math.max(props.viewZoom, 0.0001);
       const nodeScaleX = Math.max(Math.abs(props.node.scaleX), 0.0001);
       const nodeScaleY = Math.max(Math.abs(props.node.scaleY), 0.0001);
@@ -197,15 +226,15 @@ export const CartesianCoordinateSystem = defineComponent({
               || props.node.chartSpec?.axes?.y?.labelsVisible !== undefined
               || showDiscreteLabels);
           axisNodes.push(...model.yTicks.flatMap((tick) => {
-            const tickEnd = model.origin.x + (guide.xDirection === 1 ? -5 : 5);
+            const tickEnd = model.origin.x + (xDirection === 1 ? -5 : 5);
             const textOffset = model.fontSize * textScale / nodeScaleX * 0.8;
-            const textX = model.origin.x + (guide.xDirection === 1 ? -textOffset : textOffset);
+            const textX = model.origin.x + (xDirection === 1 ? -textOffset : textOffset);
             return [
               ...(showYLine ? [h("line", { class: "cartesian-axis-tick", x1: model.origin.x, y1: tick.position, x2: tickEnd, y2: tick.position, stroke: model.axisColor, "vector-effect": "non-scaling-stroke" })] : []),
               ...(showLabels ? [h("text", {
                 class: "cartesian-axis-tick-label",
                 transform: textTransform(textX, tick.position),
-                "text-anchor": guide.xDirection === 1 ? "end" : "start",
+                "text-anchor": xDirection === 1 ? "end" : "start",
                 "dominant-baseline": "middle",
               }, tick.label)] : []),
             ];
@@ -231,9 +260,9 @@ export const CartesianCoordinateSystem = defineComponent({
               || props.node.chartSpec?.axes?.x?.labelsVisible !== undefined
               || showDiscreteLabels);
           axisNodes.push(...model.xTicks.flatMap((tick) => {
-            const tickEnd = model.origin.y + (guide.yDirection === -1 ? 5 : -5);
+            const tickEnd = model.origin.y + (yDirection === -1 ? 5 : -5);
             const textOffset = model.fontSize * textScale / nodeScaleY;
-            const textY = model.origin.y + (guide.yDirection === -1 ? textOffset * 1.6 : -textOffset * 0.8);
+            const textY = model.origin.y + (yDirection === -1 ? textOffset * 1.6 : -textOffset * 0.8);
             return [
               ...(showXLine ? [h("line", { class: "cartesian-axis-tick", x1: tick.position, y1: model.origin.y, x2: tick.position, y2: tickEnd, stroke: model.axisColor, "vector-effect": "non-scaling-stroke" })] : []),
               ...(showLabels ? [h("text", {
@@ -273,11 +302,11 @@ export const CartesianCoordinateSystem = defineComponent({
       } else if (renderAxes) {
         if (includes("x") && showXLine) axisNodes.push(
           h("line", { class: "cartesian-axis-line", x1: origin.x, y1: origin.y, x2: xEnd.x, y2: xEnd.y, "vector-effect": "non-scaling-stroke" }),
-          h("path", { class: "cartesian-axis-arrow", d: arrowHead(xEnd, { x: guide.xDirection, y: 0 }, arrowSize), "vector-effect": "non-scaling-stroke" }),
+          h("path", { class: "cartesian-axis-arrow", d: arrowHead(xEnd, { x: xDirection, y: 0 }, arrowSize), "vector-effect": "non-scaling-stroke" }),
         );
         if (includes("y") && showYLine) axisNodes.push(
           h("line", { class: "cartesian-axis-line", x1: origin.x, y1: origin.y, x2: yEnd.x, y2: yEnd.y, "vector-effect": "non-scaling-stroke" }),
-          h("path", { class: "cartesian-axis-arrow", d: arrowHead(yEnd, { x: 0, y: guide.yDirection }, arrowSize), "vector-effect": "non-scaling-stroke" }),
+          h("path", { class: "cartesian-axis-arrow", d: arrowHead(yEnd, { x: 0, y: yDirection }, arrowSize), "vector-effect": "non-scaling-stroke" }),
         );
       }
 
@@ -292,9 +321,9 @@ export const CartesianCoordinateSystem = defineComponent({
           const isXAxisBinding = props.bindingAxis === "x";
           const startX = isXAxisBinding
             ? left + 6 / screenScale
-            : origin.x + (guide.xDirection === 1 ? 10 / screenScale : -(chipWidth + 10 / screenScale));
+            : origin.x + (xDirection === 1 ? 10 / screenScale : -(chipWidth + 10 / screenScale));
           const startY = isXAxisBinding
-            ? origin.y + (guide.yDirection === -1 ? 10 / screenScale : -(labelHeight + chipHeight + 10 / screenScale))
+            ? origin.y + (yDirection === -1 ? 10 / screenScale : -(labelHeight + chipHeight + 10 / screenScale))
             : top + 6 / screenScale;
           return [h("g", { class: "cartesian-axis-item-bindings" }, [
             h("text", {
