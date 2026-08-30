@@ -99,8 +99,8 @@ export const templateBindingContracts: Record<ChartTemplateKind, TemplateBinding
   pie: {
     templateId: "pie",
     slots: [
-      { id: "theta", label: "Theta", required: true, accepts: ["measure"] },
-      { id: "segment", label: "Segment", required: false, accepts: ["dimension", "measure-set"], supportsMemberSelection: true },
+      { id: "theta", label: "Theta", required: false, accepts: ["measure"] },
+      { id: "segment", label: "Segment", required: true, accepts: ["dimension", "measure-set"], supportsMemberSelection: true },
       { id: "radius", label: "R", required: false, accepts: ["measure"] },
     ],
     unresolvedDimensionPolicies,
@@ -109,8 +109,8 @@ export const templateBindingContracts: Record<ChartTemplateKind, TemplateBinding
   donut: {
     templateId: "donut",
     slots: [
-      { id: "theta", label: "Theta", required: true, accepts: ["measure"] },
-      { id: "segment", label: "Segment", required: false, accepts: ["dimension", "measure-set"], supportsMemberSelection: true },
+      { id: "theta", label: "Theta", required: false, accepts: ["measure"] },
+      { id: "segment", label: "Segment", required: true, accepts: ["dimension", "measure-set"], supportsMemberSelection: true },
       { id: "radius", label: "R", required: false, accepts: ["measure"] },
     ],
     unresolvedDimensionPolicies,
@@ -168,16 +168,10 @@ const requiredEncodingFallbacks: Record<
     },
   },
   pie: {
-    theta: (spec) => !!spec.angleFields?.length
-      || !!spec.encodings.theta
-      || !!spec.encodings.angle
-      || !!spec.encodings.y,
+    segment: (spec) => !!spec.encodings.segment || !!spec.angleFields?.length,
   },
   donut: {
-    theta: (spec) => !!spec.angleFields?.length
-      || !!spec.encodings.theta
-      || !!spec.encodings.angle
-      || !!spec.encodings.y,
+    segment: (spec) => !!spec.encodings.segment || !!spec.angleFields?.length,
   },
   area: {
     y: (spec) => !!spec.valueFields?.length,
@@ -246,7 +240,7 @@ export function normalizeBarChartVariant(chartType: string): BarChartVariant | n
 const channelSlotMappings: Record<ChartTemplateKind, Partial<Record<ChartEncodingChannel, SemanticBindingSlot>>> = {
   line: { x: "x", y: "y", color: "series" },
   scatter: { x: "x", y: "y", color: "series" },
-  bar: { x: "category", y: "value" },
+  bar: { x: "category", y: "value", theta: "value", segment: "category", radius: "value" },
   pie: { theta: "theta", segment: "segment", radius: "radius" },
   donut: { theta: "theta", segment: "segment", radius: "radius" },
   matrix: { x: "column", y: "row", color: "cell" },

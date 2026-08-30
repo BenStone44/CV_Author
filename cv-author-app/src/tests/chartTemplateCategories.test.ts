@@ -38,7 +38,7 @@ describe("chart template categories", () => {
     ]);
     expect(grouped).toHaveLength(candidates.length);
     expect(new Set(grouped.map((candidate) => candidate.id)).size).toBe(candidates.length);
-    expect(categories.find((category) => category.id === "barchart")?.candidates).toHaveLength(5);
+    expect(categories.find((category) => category.id === "barchart")?.candidates).toHaveLength(6);
     expect(categories.find((category) => category.id === "linechart")?.candidates).toHaveLength(2);
     expect(categories.find((category) => category.id === "areachart")?.candidates).toHaveLength(4);
     expect(categories.find((category) => category.id === "heatmap")?.candidates.map((candidate) => candidate.chartType)).toEqual([
@@ -52,6 +52,7 @@ describe("chart template categories", () => {
       "Icicle",
       "Treemap",
       "Dendrogram",
+      "RadialDendrogram",
     ]);
   });
 

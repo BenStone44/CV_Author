@@ -211,6 +211,9 @@ function barData(input: GenericRenderInput, xField: string, yField: string, seri
 }
 
 function renderBarChart(input: GenericRenderInput) {
+  if (input.chartSpec.chartType.replace(/[\s_-]/g, "").toLowerCase() === "radialbarchart") {
+    return renderRadialBarChart(input);
+  }
   const xEncoding = input.chartSpec.encodings.x;
   const yEncoding = input.chartSpec.encodings.y;
   if (!xEncoding || !yEncoding) throw new Error("Bar renderer requires both X and Y encodings.");
@@ -383,6 +386,117 @@ function renderBarChart(input: GenericRenderInput) {
   };
 }
 
+function renderRadialBarChart(input: GenericRenderInput) {
+  const theta = input.chartSpec.encodings.theta ?? input.chartSpec.encodings.angle;
+  const segment = input.chartSpec.encodings.segment;
+  const radius = input.chartSpec.encodings.radius;
+  if (!segment || !radius) {
+    throw new Error("Radial Bar renderer requires Segment and R encodings.");
+  }
+
+  const rows = input.dataset.rows.flatMap((row, rowIndex) => {
+    const category = (row[segment.field] ?? "").trim();
+    const rawValue = (row[radius.field] ?? "").trim();
+    const value = Number(rawValue);
+    const rawTheta = theta ? (row[theta.field] ?? "").trim() : "";
+    const thetaValue = theta ? Number(rawTheta) : 1;
+    return category && rawValue && Number.isFinite(value) && Number.isFinite(thetaValue)
+      ? [{ row, rowIndex, category, value: Math.max(0, value), thetaValue: Math.max(0, thetaValue) }]
+      : [];
+  });
+  const categories = Array.from(new Set(rows.map((datum) => datum.category)));
+  const radiusAggregation = input.chartSpec.aggregations?.radius;
+  const thetaAggregation = input.chartSpec.aggregations?.theta ?? input.chartSpec.aggregations?.angle;
+  const data = categories.flatMap((category) => {
+    const members = rows.filter((datum) => datum.category === category);
+    if (!members.length) return [];
+    if (!radiusAggregation && !thetaAggregation) return members;
+    const radiusTotal = members.reduce((sum, datum) => sum + datum.value, 0);
+    const thetaTotal = members.reduce((sum, datum) => sum + datum.thetaValue, 0);
+    return [{
+      ...members[0]!,
+      value: radiusAggregation
+        ? radiusAggregation === "avg" ? radiusTotal / members.length : radiusTotal
+        : members[0]!.value,
+      thetaValue: thetaAggregation
+        ? thetaAggregation === "avg" ? thetaTotal / members.length : thetaTotal
+        : members[0]!.thetaValue,
+    }];
+  });
+  if (!data.length) throw new Error("Radial Bar renderer found no Segment categories with numeric R values.");
+
+  const guide = input.coordinateGuide?.type === "Polar" ? input.coordinateGuide : null;
+  const cx = guide?.origin.x ?? input.minX + input.width / 2;
+  const cy = guide?.origin.y ?? input.minY + input.height / 2;
+  const baseRadius = Math.max(8, Math.min(input.width, input.height) * 0.38 * (guide?.radiusScale ?? 1));
+  const innerRatio = Math.max(0, Math.min(guide?.innerRadiusRatio ?? 0.28, 0.98));
+  const outerRatio = Math.max(innerRatio + 0.01, Math.min(guide?.outerRadiusRatio ?? 1, 1));
+  const innerRadius = baseRadius * innerRatio;
+  const outerRadius = baseRadius * outerRatio;
+  const angleSpan = Math.max(1, Math.min(guide?.angleSpan ?? 360, 360));
+  const angleOffset = guide?.angleOffset ?? 0;
+  const startAngle = (-270 + angleOffset) * Math.PI / 180;
+  const spanRadians = angleSpan * Math.PI / 180;
+  const angleLayout = pie<number>()
+    .sort(null)
+    .value((value) => value)
+    .startAngle(startAngle)
+    .endAngle(startAngle + spanRadians)(data.map((datum) => theta ? datum.thetaValue : 1));
+  const maximum = Math.max(...data.map((datum) => datum.value), 0);
+  const valueScale = scaleLinear()
+    .domain([0, maximum || 1])
+    .range([innerRadius, outerRadius]);
+  const config = groupConfig(input.chartSpec, "bar");
+  const colorEncoding = input.chartSpec.encodings.color;
+  const colorValues = Array.from(new Set(data.map((datum) => colorEncoding ? datum.row[colorEncoding.field] ?? "" : "")));
+  const colorIndexes = new Map(colorValues.map((value, index) => [value, index]));
+  const colorDomain = visualDomain(data.map((datum) => datum.row), colorEncoding);
+  const seriesStyles = isSeriesStyleMapping(config.seriesStyleMapping)
+    ? config.seriesStyleMapping.values
+    : {};
+  const barArc = arc<any>();
+
+  const marks = data.map((datum, index) => {
+    const angleDatum = angleLayout[index];
+    if (!angleDatum) return "";
+    const angle = (angleDatum.startAngle + angleDatum.endAngle) / 2;
+    const inset = Math.max(0, angleDatum.endAngle - angleDatum.startAngle) * 0.14;
+    const angle0 = angleDatum.startAngle + inset;
+    const angle1 = angleDatum.endAngle - inset;
+    const colorValue = colorEncoding ? datum.row[colorEncoding.field] ?? "" : "";
+    const fallbackColor = palette[(colorIndexes.get(colorValue) ?? index) % palette.length]!;
+    const color = seriesStyles[datum.category]?.color
+      ?? visualColor(datum.row, colorEncoding, colorDomain, config, fallbackColor);
+    const path = barArc({
+      startAngle: angle0,
+      endAngle: Math.max(angle0, angle1),
+      innerRadius,
+      outerRadius: valueScale(datum.value),
+    }) ?? "";
+    return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="bar" data-mark-group-id="mark-group:${esc(input.chartId)}:bar" data-row-key="${esc(key(input.dataset, datum.row, datum.rowIndex))}" data-category-key="${esc(datum.category)}" data-segment-value="${esc(datum.category)}" data-angle="${angle}" data-theta-value="${theta ? datum.thetaValue : 1}" data-value="${datum.value}" d="${path}" transform="translate(${cx} ${cy})" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 0.9)}"><title>${esc(datum.category)}\n${datum.value}</title></path>`;
+  }).join("");
+
+  const labels = data.length <= 24
+    && chartAxisLabelsVisible(input.chartSpec, input.coordinateGuide, "theta")
+    ? data.map((datum, index) => {
+      const angleDatum = angleLayout[index];
+      if (!angleDatum) return "";
+      const angle = (angleDatum.startAngle + angleDatum.endAngle) / 2;
+      const degrees = angle * 180 / Math.PI;
+      const x = cx + Math.sin(angle) * (outerRadius + 7);
+      const y = cy - Math.cos(angle) * (outerRadius + 7);
+      const onLeft = Math.sin(angle) < 0;
+      return `<text data-mark-role="bar-label" x="${x}" y="${y}" transform="rotate(${degrees} ${x} ${y})" text-anchor="${onLeft ? "end" : "start"}" dominant-baseline="middle" font-size="9" fill="${esc(input.chartSpec.styleTokens?.textColor ?? "#334155")}">${esc(datum.category)}</text>`;
+    }).join("") : "";
+
+  return {
+    content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="radial-bar" data-renderer="deterministic-radial-bar@1" data-segment-field="${esc(segment.field)}" data-theta-mode="${theta ? "mapped" : "static"}" data-theta-field="${esc(theta?.field ?? "")}">${marks}${labels}</g>`,
+    plotArea: { x: cx - outerRadius, y: cy - outerRadius, width: outerRadius * 2, height: outerRadius * 2 },
+    polarArea: { startAngle: angleOffset, angleSpan, innerRadius, outerRadius },
+    scales: undefined,
+  };
+}
+
 function resolvedPolarEncodings(spec: ChartSpec) {
   return {
     value: spec.encodings.theta ?? spec.encodings.angle ?? spec.encodings.y,
@@ -394,7 +508,7 @@ function resolvedPolarEncodings(spec: ChartSpec) {
 function renderPolarChart(input: GenericRenderInput, donut: boolean) {
   const { value, segment, radius } = resolvedPolarEncodings(input.chartSpec);
   const angleFields = input.chartSpec.angleFields ?? [];
-  if (!value && angleFields.length === 0) throw new Error(`${donut ? "Donut" : "Pie"} renderer requires a Theta encoding.`);
+  if (!segment && angleFields.length === 0 && !value) throw new Error(`${donut ? "Donut" : "Pie"} renderer requires a Segment encoding.`);
   const minX = input.minX;
   const minY = input.minY;
   const cx = input.coordinateGuide?.type === "Polar" ? input.coordinateGuide.origin.x : minX + input.width / 2;
@@ -435,7 +549,6 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
     outerRadius: occupiedOuterRadius,
   });
   if (angleFields.length > 0 || segment) {
-    if (!value && segment) throw new Error(`${donut ? "Donut" : "Pie"} Segment requires a Theta encoding.`);
     const segmentThetaField = value?.field ?? "";
     const flattenFields = (input.chartSpec.flattenFields ?? []).filter((field) =>
       input.dataset.columns.some((column) => column.name === field),
@@ -453,7 +566,18 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
       });
     }
     const components = segment
-      ? valueAggregation
+      ? !value
+        ? Array.from(new Set(input.dataset.rows.map((row) => row[segment.field] ?? "")))
+          .filter(Boolean)
+          .map((segmentValue) => ({
+            field: segmentValue,
+            categoryKey: segmentValue,
+            thetaField: "",
+            flattenValues: [] as string[],
+            rows: input.dataset.rows.filter((row) => (row[segment.field] ?? "") === segmentValue),
+            value: 1,
+          }))
+        : valueAggregation
         ? Array.from(new Set(input.dataset.rows.map((row) => row[segment.field] ?? "")))
           .filter(Boolean)
           .map((segmentValue) => {
@@ -473,7 +597,7 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
                 : total,
             };
           })
-        : input.dataset.rows.flatMap((row, rowIndex) => {
+        : input.dataset.rows.flatMap((row) => {
           const segmentValue = row[segment.field] ?? "";
           const thetaValue = Number(row[segmentThetaField] ?? "");
           if (!segmentValue || !Number.isFinite(thetaValue)) return [];
@@ -566,7 +690,7 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
       : "";
     const thetaFields = Array.from(new Set(components.map((component) => component.thetaField)));
     return {
-      content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="${donut ? "donut" : "pie"}" data-renderer="deterministic-chart@1" data-segment-field="${esc(segment?.field ?? "")}" data-segment-fields="${esc(angleFields.map((encoding) => encoding.field).join("|"))}" data-theta-fields="${esc(thetaFields.join("|"))}" data-angle-fields="${esc(thetaFields.join("|"))}" data-flatten-fields="${esc(flattenFields.join("|"))}" data-radius-mode="${radiusMode}">${arcs}${segmentLabels}</g>`,
+      content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="${donut ? "donut" : "pie"}" data-renderer="deterministic-chart@1" data-segment-field="${esc(segment?.field ?? "")}" data-segment-fields="${esc(angleFields.map((encoding) => encoding.field).join("|"))}" data-theta-mode="${value ? "mapped" : "static"}" data-theta-fields="${esc(thetaFields.join("|"))}" data-angle-fields="${esc(thetaFields.join("|"))}" data-flatten-fields="${esc(flattenFields.join("|"))}" data-radius-mode="${radiusMode}">${arcs}${segmentLabels}</g>`,
       plotArea: { x: cx - outerRadius, y: cy - outerRadius, width: outerRadius * 2, height: outerRadius * 2 },
       polarArea: polarArea(markInnerRadius, outerRadius),
       scales: undefined,

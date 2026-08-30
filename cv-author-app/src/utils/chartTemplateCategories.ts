@@ -16,7 +16,7 @@ const familyDefinitions: Array<{
   {
     id: "barchart",
     label: "Bar chart",
-    chartTypes: new Set(["singlebarchart", "groupedbarchart", "stackedbarchart", "divergentbarchart", "divergentstackedbarchart"]),
+    chartTypes: new Set(["singlebarchart", "groupedbarchart", "stackedbarchart", "divergentbarchart", "divergentstackedbarchart", "radialbarchart"]),
   },
   {
     id: "linechart",
@@ -55,7 +55,7 @@ const familyDefinitions: Array<{
   { id: "chord", label: "Chord", chartTypes: new Set(["chord"]) },
   { id: "sankey", label: "Sankey", chartTypes: new Set(["sankey"]) },
   { id: "parallel-coordinates", label: "Parallel coordinates", chartTypes: new Set(["parallelcoordinatesplot"]) },
-  { id: "tree", label: "Tree", chartTypes: new Set(["sunburst", "icicle", "treemap", "dendrogram"]) },
+  { id: "tree", label: "Tree", chartTypes: new Set(["sunburst", "icicle", "treemap", "dendrogram", "radialdendrogram"]) },
   { id: "calendar", label: "Calendar", chartTypes: new Set(["calendar"]) },
   { id: "boxplot", label: "Boxplot", chartTypes: new Set(["boxplot", "boxandwhisker"]) },
 ];

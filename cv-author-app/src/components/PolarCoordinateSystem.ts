@@ -86,7 +86,9 @@ export function createPolarCoordinateSystemModel(
     0.0001,
   ) * Math.max(viewZoom, 0.0001);
 
-  const occupiedGeometry = getPolarOccupiedGeometry(node);
+  // Guide-only template nodes use the legacy control radius until a chart
+  // spec exists, while their canvas hit target can still be circular.
+  const occupiedGeometry = node.chartSpec ? getPolarOccupiedGeometry(node) : null;
   const compositeRadius = useCompositeRadius
     && (node.compositionSpec?.type === "layer" || node.compositionSpec?.type === "concat")
     ? node.compositionSpec.polarOuterRadius

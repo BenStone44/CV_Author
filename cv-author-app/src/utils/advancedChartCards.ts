@@ -1,5 +1,7 @@
-import type { SvgCandidate } from "../types";
+import { linkRadial } from "d3";
+import type { Dataset, SvgCandidate } from "../types";
 import { renderDefaultChartSvg } from "./defaultChartData";
+import { createRadialClusterLayout, type RadialClusterNode } from "./radialClusterLayout";
 
 const frame = (content: string, viewBox = "0 0 320 180") => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" font-family="sans-serif">${content}</svg>`;
 const axis = `<g fill="none" stroke="#111" stroke-width="1"><path d="M28 18V152H304"/></g>`;
@@ -16,6 +18,59 @@ const hexagons = [[53,48,2],[75,61,4],[97,45,3],[119,71,5],[141,56,4],[163,84,6]
   return `<path d="M${x} ${y! - 8}L${x! + 7} ${y! - 4}V${y! + 4}L${x} ${y! + 8}L${x! - 7} ${y! + 4}V${y! - 4}Z" fill="${palette[level!]}" stroke="#000" stroke-width="0.8"/>`;
 }).join("");
 
+function radialClusterTemplateSvg() {
+  const dataset: Dataset = {
+    id: "template:radial-cluster",
+    name: "Radial cluster template",
+    columns: [
+      { name: "id", type: "nominal" },
+      { name: "parent", type: "nominal" },
+    ],
+    rows: [
+      { id: "root", parent: "" },
+      { id: "analytics", parent: "root" },
+      { id: "cluster", parent: "analytics" },
+      { id: "graph", parent: "analytics" },
+      { id: "stats", parent: "analytics" },
+      { id: "visual", parent: "root" },
+      { id: "color", parent: "visual" },
+      { id: "scale", parent: "visual" },
+      { id: "shape", parent: "visual" },
+      { id: "util", parent: "visual" },
+    ],
+  };
+  const cx = 160;
+  const cy = 90;
+  const radial = createRadialClusterLayout(dataset, {
+    keyField: "id",
+    parentField: "parent",
+    orderField: "id",
+    startAngle: Math.PI / 2,
+    angleSpan: Math.PI * 2,
+    innerRadius: 0,
+    outerRadius: 68,
+  });
+  const nodes = radial.root.descendants().filter(radial.visible) as RadialClusterNode[];
+  const radialLink = linkRadial<any, RadialClusterNode>()
+    .angle((node) => node.x)
+    .radius((node) => node.y);
+  const links = radial.root.links()
+    .filter((link) => radial.visible(link.source) && radial.visible(link.target))
+    .map((link) => `<path d="${radialLink(link as any) ?? ""}"/>`)
+    .join("");
+  const marks = nodes.map((node) => {
+    const rotation = node.x * 180 / Math.PI - 90;
+    return `<circle transform="rotate(${rotation}) translate(${node.y},0)" r="2.5" fill="${node.children ? "#555" : "#999"}"/>`;
+  }).join("");
+  const labels = nodes.map((node) => {
+    const onLeft = Math.sin(node.x) < 0;
+    const rotation = node.x * 180 / Math.PI - 90;
+    const labelOnOutside = !onLeft === !node.children;
+    return `<text transform="rotate(${rotation}) translate(${node.y},0) rotate(${onLeft ? 180 : 0})" dy="0.31em" x="${labelOnOutside ? 6 : -6}" text-anchor="${labelOnOutside ? "start" : "end"}">${node.id ?? ""}</text>`;
+  }).join("");
+  return frame(`<g transform="translate(${cx} ${cy})" data-renderer="observable-radial-cluster@2"><g fill="none" stroke="#555" stroke-opacity="0.4" stroke-width="1.5">${links}</g><g>${marks}</g><g stroke-linejoin="round" stroke-width="3" paint-order="stroke" stroke="white" fill="currentColor" font-size="8">${labels}</g></g>`);
+}
+
 export const advancedTemplateSvgs = {
   AreaChart: frame(`${axis}<path d="M28 152L28 125L62 113L96 121L130 91L164 101L198 66L232 79L266 39L304 56L304 152Z" fill="#4f8fc4" fill-opacity=".8" stroke="#2563eb" stroke-width="1.5"/><g fill="#fff" stroke="#2563eb" stroke-width="2"><circle cx="28" cy="125" r="3"/><circle cx="62" cy="113" r="3"/><circle cx="96" cy="121" r="3"/><circle cx="130" cy="91" r="3"/><circle cx="164" cy="101" r="3"/><circle cx="198" cy="66" r="3"/><circle cx="232" cy="79" r="3"/><circle cx="266" cy="39" r="3"/><circle cx="304" cy="56" r="3"/></g>`),
   StackedAreaChart: frame(`${axis}<path d="M28 152L28 123L62 116L96 127L130 107L164 114L198 92L232 102L266 76L304 87L304 152Z" fill="#4e79a7" stroke="#355f86" stroke-width="1"/><path d="M28 123L28 93L62 79L96 101L130 68L164 83L198 50L232 67L266 38L304 54L304 87L266 76L232 102L198 92L164 114L130 107L96 127L62 116L28 123Z" fill="#f28e2c" stroke="#c56d18" stroke-width="1"/><path d="M28 93L28 73L62 55L96 76L130 43L164 57L198 25L232 40L266 18L304 32L304 54L266 38L232 67L198 50L164 83L130 68L96 101L62 79L28 93Z" fill="#e15759" stroke="#b83d42" stroke-width="1"/><g fill="#fff" stroke="#b83d42" stroke-width="1.5"><circle cx="28" cy="73" r="2.5"/><circle cx="96" cy="76" r="2.5"/><circle cx="164" cy="57" r="2.5"/><circle cx="232" cy="40" r="2.5"/><circle cx="304" cy="32" r="2.5"/></g>`),
@@ -26,6 +81,8 @@ export const advancedTemplateSvgs = {
   Sunburst: frame(`<g transform="translate(160 90)" fill-opacity="0.6"><path d="M0-28A28 28 0 0 1 26 10L53 20A57 57 0 0 0 0-57Z" fill="#6e40aa"/><path d="M26 10A28 28 0 0 1-17 22L-35 45A57 57 0 0 0 53 20Z" fill="#1ac7c2"/><path d="M-17 22A28 28 0 0 1 0-28V-57A57 57 0 0 0-35 45Z" fill="#ff8c38"/><path d="M0-59A84 84 0 0 1 78 31L55 22A59 59 0 0 0 0-59Z" fill="#6e40aa"/><path d="M78 31A84 84 0 0 1 13 83L9 58A59 59 0 0 0 55 22Z" fill="#1ac7c2"/><path d="M13 83A84 84 0 0 1-79 28L-55 20A59 59 0 0 0 9 58Z" fill="#ff8c38"/><path d="M-79 28A84 84 0 0 1 0-84V-59A59 59 0 0 0-55 20Z" fill="#ff8c38"/></g>`),
   Treemap: frame(`<g fill-opacity="0.6"><rect x="5" y="5" width="184" height="104" fill="#4e79a7"/><rect x="5" y="110" width="184" height="65" fill="#4e79a7"/><rect x="190" y="5" width="125" height="78" fill="#f28e2c"/><rect x="190" y="84" width="77" height="91" fill="#e15759"/><rect x="268" y="84" width="47" height="91" fill="#76b7b2"/></g><g font-size="9"><text x="9" y="18">flare.analytics</text><text x="9" y="31" fill-opacity="0.7">12,840</text><text x="194" y="18">display</text><text x="194" y="31" fill-opacity="0.7">5,772</text></g>`),
   Dendrogram: frame(`<g fill="none" stroke="#555" stroke-opacity="0.4" stroke-width="1.5"><path d="M20 90C48 90 48 45 76 45M20 90C48 90 48 135 76 135M76 45C108 45 108 25 140 25M76 45C108 45 108 65 140 65M76 135C108 135 108 112 140 112M76 135C108 135 108 155 140 155M140 25C182 25 182 16 224 16M140 25C182 25 182 35 224 35M140 65C182 65 182 56 224 56M140 65C182 65 182 75 224 75M140 112C182 112 182 103 224 103M140 112C182 112 182 122 224 122M140 155C182 155 182 146 224 146M140 155C182 155 182 165 224 165"/></g><g fill="#999" font-size="8">${[[20,90,"root"],[76,45,"analytics"],[76,135,"vis"],[224,16,"cluster"],[224,35,"graph"],[224,56,"layout"],[224,75,"stats"],[224,103,"color"],[224,122,"scale"],[224,146,"shape"],[224,165,"util"]].map(([x,y,label]) => `<circle cx="${x}" cy="${y}" r="2.5"/><text x="${Number(x)+6}" y="${Number(y)+3}" fill="#111">${label}</text>`).join("")}</g>`),
+  RadialDendrogram: radialClusterTemplateSvg(),
+  RadialBarChart: frame(`<g transform="translate(160 90)">${[42,58,35,66,49,73,54,62,38,69,45,76].map((radius, index) => { const start = index * Math.PI * 2 / 12; const end = (index + .72) * Math.PI * 2 / 12; const x0 = Math.sin(start) * 28; const y0 = -Math.cos(start) * 28; const x1 = Math.sin(end) * 28; const y1 = -Math.cos(end) * 28; const x2 = Math.sin(end) * radius; const y2 = -Math.cos(end) * radius; const x3 = Math.sin(start) * radius; const y3 = -Math.cos(start) * radius; return `<path d="M${x0} ${y0}A28 28 0 0 1 ${x1} ${y1}L${x2} ${y2}A${radius} ${radius} 0 0 0 ${x3} ${y3}Z" fill="${["#4e79a7", "#f28e2c", "#e15759", "#76b7b2"][index % 4]}" fill-opacity=".9"/>`; }).join("")}</g>`),
   Calendar: frame(`<text x="36" y="43" text-anchor="end" font-size="9" font-weight="bold">2025</text><g font-size="7" text-anchor="end"><text x="36" y="65">M</text><text x="36" y="83">T</text><text x="36" y="101">W</text><text x="36" y="119">T</text><text x="36" y="137">F</text></g><g font-size="7"><text x="42" y="43">Jan</text><text x="108" y="43">Apr</text><text x="175" y="43">Jul</text><text x="241" y="43">Oct</text></g><g stroke="#fff" stroke-width="0.8">${calendarCells}</g>`),
   Boxplot: frame(`${axis}<g stroke="#111"><path d="M46 48V132M73 41V139M100 35V125M127 53V143M154 29V117M181 46V135M208 38V129M235 56V145M262 42V122M289 31V137"/></g><g fill="#ddd">${[46,73,100,127,154,181,208,235,262,289].map((x, index) => `<rect x="${x-10}" y="${55 + index%3*8}" width="20" height="${48-index%2*10}"/>`).join("")}</g><g stroke="#111" stroke-width="2">${[46,73,100,127,154,181,208,235,262,289].map((x,index) => `<path d="M${x-10} ${76+index%4*5}H${x+10}"/>`).join("")}</g><g fill="#111" fill-opacity="0.2"><circle cx="101" cy="24" r="2"/><circle cx="154" cy="139" r="2"/><circle cx="236" cy="31" r="2"/></g>`),
   Contour: frame(`<path d="M0 180V0H320V180Z" fill="#000004"/><path d="M18 139C21 71 76 25 142 34S258 18 306 73V166C250 146 214 165 154 148S61 179 18 139Z" fill="#51127c" stroke="#fff" stroke-opacity="0.5"/><path d="M56 129C58 84 98 54 148 63S229 44 274 81S263 135 217 140S151 120 111 141S55 153 56 129Z" fill="#b73779" stroke="#fff" stroke-opacity="0.5"/><path d="M101 117C104 89 132 81 160 91S201 72 226 94S213 123 190 121S153 109 134 127S98 134 101 117Z" fill="#fc8961" stroke="#fff" stroke-opacity="0.5"/><path d="M137 108C140 95 152 94 165 99S183 91 193 101S185 112 174 111S155 107 148 115S135 116 137 108Z" fill="#fcfdbf" stroke="#fff" stroke-opacity="0.5"/>`),
@@ -44,6 +101,8 @@ const definitions: Array<[keyof typeof advancedTemplateSvgs, string, string, Svg
   ["Sunburst", "Sunburst", "Sunburst", "CoordinateFree"],
   ["Treemap", "Treemap", "Treemap", "CoordinateFree"],
   ["Dendrogram", "Dendrogram", "Dendrogram", "CoordinateFree"],
+  ["RadialDendrogram", "Radial Dendrogram", "RadialDendrogram", "Polar"],
+  ["RadialBarChart", "Radial Bar Chart", "RadialBarChart", "Polar"],
   ["Calendar", "Calendar", "Calendar", "CoordinateFree"],
   ["Boxplot", "Box Plot", "Boxplot", "Cartesian"],
   ["Contour", "Contour", "Contour", "Cartesian"],

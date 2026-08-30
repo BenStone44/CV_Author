@@ -162,8 +162,8 @@ function polarOccupiedPath(
 
 /**
  * Resolves the occupied polar region in node-local coordinates. Prefer the
- * renderer's final radii (including Donut holes and ring gaps); older nodes
- * fall back to reversing the radial-concat ratio from the saved plot area.
+ * renderer's final radii (including Donut holes and ring gaps). Unrendered
+ * templates derive the same polar frame from their guide and node dimensions.
  */
 export function getPolarOccupiedGeometry(node: CanvasNode): PolarOccupiedGeometry | null {
   const guide = node.coordinateGuide;
@@ -172,10 +172,12 @@ export function getPolarOccupiedGeometry(node: CanvasNode): PolarOccupiedGeometr
   const chartSchema = node.chartSpec ? getChartEncodingSchema(node.chartSpec.chartType) : null;
   const declaredPolar = node.coordinateSystem?.type === "Polar"
     || chartSchema?.coordinateSystem === "Polar";
-  if ((!polarGuide && !declaredPolar) || !plotArea) return null;
+  if (!polarGuide && !declaredPolar) return null;
+  const localMinX = node.kind === "leaf" ? node.contentMinX : 0;
+  const localMinY = node.kind === "leaf" ? node.contentMinY : 0;
   const origin = polarGuide?.origin ?? {
-    x: plotArea.x + plotArea.width / 2,
-    y: plotArea.y + plotArea.height / 2,
+    x: plotArea ? plotArea.x + plotArea.width / 2 : localMinX + node.width / 2,
+    y: plotArea ? plotArea.y + plotArea.height / 2 : localMinY + node.height / 2,
   };
   const composition = node.compositionSpec?.type === "concat" ? node.compositionSpec : null;
   const memberCount = Math.max(composition?.members.length ?? 0, 1);
@@ -202,7 +204,11 @@ export function getPolarOccupiedGeometry(node: CanvasNode): PolarOccupiedGeometr
     && renderedPolarArea.outerRadius > 0;
   const outerRatio = Math.max(0.01, Math.min(polarGuide?.outerRadiusRatio ?? radialOuterRatio, 1));
   const innerRatio = Math.max(0, Math.min(polarGuide?.innerRadiusRatio ?? fallbackInnerRatio, outerRatio));
-  const renderedOuterRadius = Math.max(0, Math.min(plotArea.width, plotArea.height) / 2);
+  const renderedOuterRadius = plotArea
+    ? Math.max(0, Math.min(plotArea.width, plotArea.height) / 2)
+    : Number.isFinite(polarGuide?.radius) && polarGuide!.radius! > 0
+      ? polarGuide!.radius!
+      : Math.max(0, Math.min(node.width, node.height) * 0.38 * (polarGuide?.radiusScale ?? 1));
   if (!hasRenderedRadii && renderedOuterRadius <= 0) return null;
   const baseRadius = renderedOuterRadius / outerRatio;
   const innerRadius = hasRenderedRadii

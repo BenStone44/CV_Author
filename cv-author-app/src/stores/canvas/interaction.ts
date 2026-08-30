@@ -352,7 +352,8 @@ export function useCanvasInteraction(context: any) {
     members.forEach((member) => {
       member.compositionSpec = null;
       member.coordinateSystem = standaloneCoordinateSystem(member);
-      renderSharedCoordinateComposition(member, true);
+      // Detaching a concat is structural only; retain its current frame and rendered scales.
+      if (composition.type !== "concat") renderSharedCoordinateComposition(member, true);
     });
     reconcileCoordinateSystems();
     editingCompositionId.value = null;
@@ -460,11 +461,11 @@ export function useCanvasInteraction(context: any) {
             sharedChannels: nextComposition?.sharedChannels ?? [],
           }
         : componentNodes[0] ? standaloneCoordinateSystem(componentNodes[0]) : null;
+      // Severing a link must not replay concat layout or regenerate scales.
       componentNodes.forEach((node) => {
         node.compositionSpec = nextComposition;
         node.coordinateSystem = nextSystem;
       });
-      if (componentNodes[0]) renderSharedCoordinateComposition(componentNodes[0], true);
     });
     reconcileCoordinateSystems();
     setSelection([selected.id]);
@@ -713,10 +714,9 @@ export function useCanvasInteraction(context: any) {
       event.stopPropagation();
       if (node.chartSpec) {
         measureSelectionStage(node.id, "axis-binding", () => {
-          const template = normalizeChartTemplate(node.chartSpec!.chartType);
           setAxisBindingTarget({
             nodeId: node.id,
-            channel: template === "pie" || template === "donut" ? "y" : "x",
+            channel: getChartTemplateContract(node.chartSpec!.chartType)?.coordinateSystem === "Polar" ? "angle" : "x",
             clientX: event.clientX,
             clientY: event.clientY,
           });
@@ -755,10 +755,9 @@ export function useCanvasInteraction(context: any) {
     });
     if (node.chartSpec) {
       measureSelectionStage(node.id, "axis-binding", () => {
-        const template = normalizeChartTemplate(node.chartSpec!.chartType);
         setAxisBindingTarget({
           nodeId: node.id,
-          channel: template === "pie" || template === "donut" ? "y" : "x",
+          channel: getChartTemplateContract(node.chartSpec!.chartType)?.coordinateSystem === "Polar" ? "angle" : "x",
           clientX: event.clientX,
           clientY: event.clientY,
         });

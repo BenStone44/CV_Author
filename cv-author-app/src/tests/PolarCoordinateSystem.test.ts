@@ -373,6 +373,47 @@ describe("independent Polar coordinate system component", () => {
     expect(hitTarget.props.class).toBe("canvas-object-hit-target");
   });
 
+  it("keeps an unrendered Polar template hit target and placeholder circular", () => {
+    const node = polarNode({
+      renderedContent: null,
+      coordinateGuide: {
+        type: "Polar",
+        origin: { x: 110, y: 100 },
+        angleSpan: 360,
+        radiusScale: 1.25,
+      },
+      chartSpec: {
+        chartType: "DonutChart",
+        datasetId: "measurements",
+        encodings: {},
+      },
+    });
+    const render = (CanvasNodeView as any).setup({
+      node,
+      interactive: true,
+      selected: false,
+      editingGroupPath: [],
+      editingChartId: null,
+      draggingNodeId: null,
+      selectedIds: [],
+      nestedPlacements: [],
+      nestedRenderedChildIds: new Set<string>(),
+      onNodePointerDown: vi.fn(),
+      onNodeContextMenu: null,
+      onMarkPointerDown: null,
+      onEditingBackgroundPointerDown: null,
+    });
+
+    const [hitTarget, placeholder] = render().children;
+    expect(hitTarget.type).toBe("path");
+    expect(hitTarget.props["data-hit-target-shape"]).toBe("polar");
+    expect(placeholder.type).toBe("path");
+    expect(placeholder.props.class).toBe("chart-placeholder-frame");
+    expect(placeholder.props["fill-rule"]).toBe("evenodd");
+    expect(placeholder.props.d).toContain(" A 76 76 ");
+    expect(placeholder.props.d).toContain(" A 38 38 ");
+  });
+
   it("uses the Polar chart contract when a migrated node has no coordinate guide", () => {
     const node = polarNode({
       renderedContent: '<path data-mark-role="arc"/>',

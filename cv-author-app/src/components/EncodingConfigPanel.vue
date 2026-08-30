@@ -104,7 +104,17 @@ function isDiscreteAxis(axis: "x" | "y") {
 const normalizedChartType = computed(() => props.chartSpec.chartType.replace(/[\s_-]/g, "").toLowerCase());
 const isSingleBar = computed(() => normalizedChartType.value === "singlebarchart");
 const configs = computed(() => getEncodingChannelConfigsForSpec(props.chartSpec));
-const isPolar = computed(() => template.value === "pie" || template.value === "donut");
+function displayedEncodingField(channel: ChartEncodingChannel) {
+  return props.chartSpec.defaultDataBinding
+    ? ""
+    : resolvedEncodingField(props.chartSpec, channel);
+}
+const isPolar = computed(() => template.value === "pie"
+  || template.value === "donut"
+  || normalizedChartType.value === "radialbarchart");
+const usesPolarAxisRows = computed(() => getChartTemplateContract(props.chartSpec.chartType)?.coordinateSystem === "Polar"
+  && configs.value.some((config) => config.channel === "theta")
+  && configs.value.some((config) => config.channel === "radius"));
 const isMultiLine = computed(() => resolveChartTemplateVariant(props.chartSpec) === "line-multi");
 const isExplicitMultiLine = computed(() => normalizedChartType.value === "multilinechart");
 const isGroupedBar = computed(() => template.value === "bar" && normalizedChartType.value.includes("grouped"));
@@ -131,8 +141,8 @@ const isParallel = computed(() => template.value === "parallel");
 const standardConfigs = computed(() => configs.value.filter((config) => {
   if (isCartesian.value && (config.channel === "x" || config.channel === "y")) return false;
   if (isPolar.value && config.channel === "segment") return false;
-  if (isPolar.value && config.channel === "theta") return false;
-  if (isPolar.value && config.channel === "radius") return false;
+  if (usesPolarAxisRows.value && config.channel === "theta") return false;
+  if (usesPolarAxisRows.value && config.channel === "radius") return false;
   if (isParallel.value && config.channel === "dimensions") return false;
   if (supportsSeriesItems.value && config.role === "series" && template.value !== "scatter") return false;
   if (supportsSeriesItems.value && seriesItemMode.value === "quantitative" && config.channel === "y") return false;
@@ -198,7 +208,7 @@ const aggregationEntries = computed(() => {
         ? [{ channel: channel as ChartEncodingChannel, aggregation, automatic: props.chartSpec.autoAggregations?.[channel as ChartEncodingChannel] !== undefined }]
         : [];
     });
-  if (!isPolar.value) return configured;
+  if (!usesPolarAxisRows.value) return configured;
   const entries = new Map<ChartEncodingChannel, {
     channel: ChartEncodingChannel;
     aggregation?: "sum" | "avg";
@@ -256,11 +266,11 @@ const staticRadius = computed(() => typeof props.markConfig.outerRadius === "num
   : 1);
 const polarThetaConfig = computed(() => configs.value.find((config) => config.channel === "theta"));
 const polarRadiusConfig = computed(() => configs.value.find((config) => config.channel === "radius"));
-const radiusField = computed(() => resolvedEncodingField(props.chartSpec, "radius"));
+const radiusField = computed(() => displayedEncodingField("radius"));
 const colorConfig = computed(() => configs.value.find((config) => config.channel === "color"));
 const sizeConfig = computed(() => configs.value.find((config) => config.channel === "size"));
-const colorField = computed(() => resolvedEncodingField(props.chartSpec, "color"));
-const sizeField = computed(() => resolvedEncodingField(props.chartSpec, "size"));
+const colorField = computed(() => displayedEncodingField("color"));
+const sizeField = computed(() => displayedEncodingField("size"));
 const colorColumn = computed(() => props.columns.find((column) => column.name === colorField.value));
 const supportsLegend = computed(() => (isPolar.value && polarSegmentMembers.value.length > 0)
   || supportsSeriesItems.value
@@ -593,7 +603,7 @@ function updateSingleBarTopN(rawValue: string) {
         <strong>Composite encodings</strong>
         <span>{{ compositionSpec?.type ?? 'Composition' }}</span>
       </div>
-      <section v-if="isPolar && polarThetaConfig && polarRadiusConfig" class="encoding-config__axis-rows" aria-label="Polar axis encodings">
+      <section v-if="usesPolarAxisRows && polarThetaConfig && polarRadiusConfig" class="encoding-config__axis-rows" aria-label="Polar axis encodings">
         <div class="encoding-config__axis-rows-toolbar">
           <div class="encoding-config__axis-toolbar-options">
             <span class="encoding-config__axis-toolbar-label">Axes</span>
@@ -608,7 +618,7 @@ function updateSingleBarTopN(rawValue: string) {
             :config="{ ...polarThetaConfig, label: 'Theta' }"
             :columns="columns"
             :father-columns="fatherColumns"
-            :value="resolvedEncodingField(chartSpec, 'theta')"
+            :value="displayedEncodingField('theta')"
             @change="updateMappingDefaults('theta', $event)"
           />
           <div class="encoding-config__axis-controls">
@@ -639,13 +649,13 @@ function updateSingleBarTopN(rawValue: string) {
             :class="{ 'is-mapped': !!radiusField }"
           >
             <EncodingChannelField
-              :config="{ ...polarRadiusConfig, label: 'R field', emptyLabel: 'Static' }"
+              :config="{ ...polarRadiusConfig, label: 'R field', emptyLabel: polarRadiusConfig.required ? 'Not bound' : 'Static' }"
               :columns="columns"
               :father-columns="fatherColumns"
               :value="radiusField"
               @change="updateMappingDefaults('radius', $event)"
             />
-            <label v-if="!radiusField" class="encoding-config__polar-radius-control">
+            <label v-if="!radiusField && !polarRadiusConfig.required" class="encoding-config__polar-radius-control">
               <output>{{ Math.round(staticRadius * 100) }}%</output>
               <input
                 type="range"
@@ -720,7 +730,7 @@ function updateSingleBarTopN(rawValue: string) {
             :config="row.config"
             :columns="columns"
             :father-columns="fatherColumns"
-            :value="resolvedEncodingField(chartSpec, row.axis)"
+            :value="displayedEncodingField(row.axis)"
             @change="updateMappingDefaults(row.axis, $event)"
           />
           <div class="encoding-config__axis-controls">
@@ -767,7 +777,7 @@ function updateSingleBarTopN(rawValue: string) {
             :config="axisConfig(config)"
             :columns="columns"
             :father-columns="fatherColumns"
-            :value="resolvedEncodingField(chartSpec, config.channel)"
+            :value="displayedEncodingField(config.channel)"
             @change="updateMappingDefaults(config.channel, $event)"
           />
         </div>
@@ -778,7 +788,7 @@ function updateSingleBarTopN(rawValue: string) {
             :config="axisConfig(config)"
             :columns="columns"
             :father-columns="fatherColumns"
-            :value="resolvedEncodingField(chartSpec, config.channel)"
+            :value="displayedEncodingField(config.channel)"
             @change="updateMappingDefaults(config.channel, $event)"
           />
           <div class="encoding-config__detail-control">
@@ -898,7 +908,7 @@ function updateSingleBarTopN(rawValue: string) {
         @drop.stop.prevent="onSegmentDrop"
       >
         <header class="encoding-config__series-header">
-          <span>Segment</span>
+          <span>Segment <abbr title="Required" aria-label="Required">*</abbr></span>
         </header>
         <label
           v-for="column in polarSegmentColumns"

@@ -594,6 +594,33 @@ describe("semantic Case 1 renderers", () => {
     expect(result.content).toContain('data-theta-value="5"');
   });
 
+  it.each(["PieChart", "DonutChart"])("uses equal Segment angles when %s Theta is static", (chartType) => {
+    const polarDataset: Dataset = {
+      id: `static-theta-${chartType}`,
+      name: "static-theta.csv",
+      columns: [{ name: "group", type: "nominal" }],
+      rows: [{ group: "A" }, { group: "B" }],
+    };
+    const result = renderDeterministicChart({
+      chartId: `static-theta-${chartType}`,
+      width: 320,
+      height: 180,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Polar", origin: { x: 160, y: 90 } },
+      chartSpec: {
+        chartType,
+        datasetId: polarDataset.id,
+        encodings: { segment: { field: "group", type: "nominal" } },
+      },
+      dataset: polarDataset,
+    });
+
+    expect(result.content).toContain('data-theta-mode="static"');
+    expect(result.content.match(/data-mark-role="arc"/g)).toHaveLength(2);
+    expect(result.content.match(/data-theta-value="1"/g)).toHaveLength(2);
+  });
+
   it("positions polar labels using D3's 12-o'clock angle origin", () => {
     const polarDataset: Dataset = {
       id: "polar-label-position",

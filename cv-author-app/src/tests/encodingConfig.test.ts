@@ -28,7 +28,8 @@ describe("card encoding configuration", () => {
       "StackedBarChart", "DivergentBarChart", "DivergentStackedBarChart", "PieChart",
       "DonutChart", "MatrixDiagram", "AreaChart", "StackedAreaChart", "Streamgraph",
       "HorizonChart", "ParallelCoordinatesPlot", "Icicle", "Sunburst", "Treemap",
-      "Dendrogram", "Calendar", "Boxplot", "Contour", "Hexbin", "Chord", "Sankey",
+      "Dendrogram", "RadialDendrogram", "RadialBarChart", "Calendar", "Boxplot",
+      "Contour", "Hexbin", "Chord", "Sankey",
     ];
     expect(Object.keys(chartEncodingSchemas)).toEqual(chartTypes);
     chartTypes.forEach((chartType) => {
@@ -55,6 +56,16 @@ describe("card encoding configuration", () => {
       encodings: {},
       angleFields: [{ field: "value", type: "quantitative" }],
     })).toBe(true);
+    expect(hasRequiredChartEncodings({
+      chartType: "PieChart",
+      datasetId: "data",
+      encodings: { segment: { field: "group", type: "nominal" } },
+    })).toBe(true);
+    expect(hasRequiredChartEncodings({
+      chartType: "PieChart",
+      datasetId: "data",
+      encodings: { theta: { field: "value", type: "quantitative" } },
+    })).toBe(false);
     expect(hasRequiredChartEncodings({
       chartType: "MatrixDiagram",
       datasetId: "data",
@@ -159,6 +170,7 @@ describe("card encoding configuration", () => {
     ["DivergentStackedBarChart", ["x", "y", "color", "size"]],
     ["PieChart", ["theta", "segment", "radius"]],
     ["DonutChart", ["theta", "segment", "radius"]],
+    ["RadialBarChart", ["theta", "segment", "radius", "color"]],
     ["MatrixDiagram", ["x", "y", "color"]],
   ])("builds the %s card from its channel contract", (chartType, expected) => {
     expect(channels(chartType as string)).toEqual(expected);
@@ -198,6 +210,9 @@ describe("card encoding configuration", () => {
     expect(semanticSlotForChannel("GroupedBarChart", "y")).toBe("value");
     expect(semanticSlotForChannel("GroupedBarChart", "color")).toBe("group");
     expect(semanticSlotForChannel("StackedBarChart", "color")).toBe("segment");
+    expect(semanticSlotForChannel("RadialBarChart", "theta")).toBe("value");
+    expect(semanticSlotForChannel("RadialBarChart", "segment")).toBe("category");
+    expect(semanticSlotForChannel("RadialBarChart", "radius")).toBe("value");
     expect(semanticSlotForChannel("MatrixDiagram", "x")).toBe("column");
     expect(semanticSlotForChannel("MatrixDiagram", "y")).toBe("row");
     expect(semanticSlotForChannel("DonutChart", "theta")).toBe("theta");
@@ -206,11 +221,20 @@ describe("card encoding configuration", () => {
 
   it("exposes semantic slot requirements separately from renderer channels", () => {
     expect(getTemplateBindingContract("PieChart")?.slots).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "theta", label: "Theta", required: true, accepts: ["measure"] }),
-      expect.objectContaining({ id: "segment", label: "Segment", required: false, accepts: ["dimension", "measure-set"] }),
+      expect.objectContaining({ id: "theta", label: "Theta", required: false, accepts: ["measure"] }),
+      expect.objectContaining({ id: "segment", label: "Segment", required: true, accepts: ["dimension", "measure-set"] }),
       expect.objectContaining({ id: "radius", label: "R", required: false, accepts: ["measure"] }),
     ]));
     expect(getEncodingChannelConfigs("DonutChart").find((config) => config.channel === "theta")?.multiple).toBeUndefined();
+    expect(getEncodingChannelConfigs("DonutChart").find((config) => config.channel === "theta")).toMatchObject({
+      required: false,
+      emptyLabel: "Static",
+    });
+    expect(getEncodingChannelConfigs("RadialBarChart").find((config) => config.channel === "theta")).toMatchObject({
+      role: "measure",
+      required: false,
+      emptyLabel: "Static",
+    });
     expect(getEncodingChannelConfigs("DonutChart").find((config) => config.channel === "segment")).toMatchObject({
       role: "dimension",
       multiple: true,
@@ -299,5 +323,15 @@ describe("card encoding configuration", () => {
     expect(resolvedPolarAxisRoles(measureSetSpec, "water")).toEqual([{ channel: "segment", label: "Segment" }]);
     expect(resolvedPolarAxisRoles(measureSetSpec, "fat")).toEqual([{ channel: "segment", label: "Segment" }]);
     expect(resolvedPolarAxisRoles(measureSetSpec, "weight")).toEqual([{ channel: "radius", label: "R" }]);
+    const radialBarSpec = {
+      chartType: "RadialBarChart",
+      datasetId: "data",
+      encodings: {
+        segment: { field: "leaf", type: "nominal" as const },
+        radius: { field: "value", type: "quantitative" as const },
+      },
+    };
+    expect(resolvedPolarAxisRoles(radialBarSpec, "leaf")).toEqual([{ channel: "segment", label: "Segment" }]);
+    expect(resolvedPolarAxisRoles(radialBarSpec, "value")).toEqual([{ channel: "radius", label: "R" }]);
   });
 });

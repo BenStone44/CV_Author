@@ -276,7 +276,7 @@ export function useCanvasCompositionOperations(context: any) {
           composition.direction === direction && sameChannels(composition.sharedChannels, sharedChannels)))
         || (anchoredConcatSpec
           ? !concatEdgeNodesAreCompatible(anchoredTarget!, anchoredSource!, direction, sharedChannel)
-          : !sharedChannelEncodingsAreCompatible(sourceNodes, sharedChannel))
+          : !concatNodesAreCompatible(sourceNodes, direction, sharedChannel))
         || (polar && direction !== "radial" && direction !== "angular")
         || (cartesian && (direction === "radial" || direction === "angular"))) return false;
     }

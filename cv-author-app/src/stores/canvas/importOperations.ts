@@ -70,9 +70,8 @@ export function useCanvasImportOperations(context: any) {
   }
   function createInitialChartSpec(chartType: string, datasetId: string): ChartSpec {
     const defaultSpec = createDefaultChartSpec(chartType);
-    return defaultSpec
-      ? { ...defaultSpec, datasetId, defaultDataBinding: true }
-      : createUnboundChartSpec(chartType, datasetId);
+    const unbound = createUnboundChartSpec(chartType, datasetId);
+    return defaultSpec ? { ...unbound, defaultDataBinding: true } : unbound;
   }
   function resetChartBindingsForDataset(datasetId: string) {
     if (!getDataset(datasetId)) return false;

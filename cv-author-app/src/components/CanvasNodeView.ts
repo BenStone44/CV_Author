@@ -597,6 +597,29 @@ export const CanvasNodeView: any = defineComponent({
           style: { pointerEvents },
         });
       };
+      const chartPlaceholderFrame = () => {
+        const polarGeometry = getPolarOccupiedGeometry(props.node);
+        if (polarGeometry) {
+          return h("path", {
+            class: "chart-placeholder-frame",
+            d: polarGeometry.path,
+            "fill-rule": "evenodd",
+            "vector-effect": "non-scaling-stroke",
+            "pointer-events": "none",
+          });
+        }
+        const minX = props.node.kind === "leaf" ? props.node.contentMinX : 0;
+        const minY = props.node.kind === "leaf" ? props.node.contentMinY : 0;
+        return h("rect", {
+          class: "chart-placeholder-frame",
+          x: minX,
+          y: minY,
+          width: Math.max(props.node.width, 1),
+          height: Math.max(props.node.height, 1),
+          "vector-effect": "non-scaling-stroke",
+          "pointer-events": "none",
+        });
+      };
 
       if (props.node.kind === "leaf") {
         const hasInteractiveMarks = !!props.node.renderedContent
@@ -607,15 +630,7 @@ export const CanvasNodeView: any = defineComponent({
         return h("g", { ...sharedProps }, [
           // Keep a stable hit area for thin strokes and hollow SVG shapes.
           ...(!isDeckglLayer ? [hitTarget(hasInteractiveMarks)] : []),
-          ...(isChartPlaceholder ? [h("rect", {
-            class: "chart-placeholder-frame",
-            x: props.node.contentMinX,
-            y: props.node.contentMinY,
-            width: Math.max(props.node.width, 1),
-            height: Math.max(props.node.height, 1),
-            "vector-effect": "non-scaling-stroke",
-            "pointer-events": "none",
-          })] : []),
+          ...(isChartPlaceholder ? [chartPlaceholderFrame()] : []),
           ...(props.node.layerKind === "deckgl"
             ? []
             : [renderContent(props.node.renderedContent ?? props.node.content, hasInteractiveMarks)]),
@@ -662,15 +677,7 @@ export const CanvasNodeView: any = defineComponent({
             ? [hitTarget()]
             : []),
           ...(!props.node.renderedContent && props.node.chartSpec
-            ? [h("rect", {
-              class: "chart-placeholder-frame",
-              x: 0,
-              y: 0,
-              width: Math.max(props.node.width, 1),
-              height: Math.max(props.node.height, 1),
-              "vector-effect": "non-scaling-stroke",
-              "pointer-events": "none",
-            })]
+            ? [chartPlaceholderFrame()]
             : []),
           ...props.node.children
             .filter((child) => !props.nestedRenderedChildIds.has(child.id))

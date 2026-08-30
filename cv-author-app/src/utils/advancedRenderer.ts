@@ -12,6 +12,7 @@ import {
   interpolatePiYG,
   interpolateRainbow,
   line as d3Line,
+  linkRadial,
   partition,
   quantileSorted,
   quantize,
@@ -59,6 +60,7 @@ import type { GenericRenderInput } from "./semanticRenderer";
 import { renderLineChart } from "./lineRenderer";
 import { csvRowKey } from "./csvDataEngine";
 import { cartesianAxisEncoding } from "./chartTemplates";
+import { createRadialClusterLayout, type RadialClusterNode } from "./radialClusterLayout";
 
 const tableau = schemeTableau10;
 
@@ -447,6 +449,65 @@ function renderHierarchy(input: GenericRenderInput) {
   const topNames = root.children?.map((node) => node.id ?? "") ?? [];
   const rainbow = scaleOrdinal<string, string>().domain(topNames).range(quantize(interpolateRainbow, topNames.length + 1));
   const visible = <T extends { id?: string }>(node: T) => !(synthetic && node.id === "__root__");
+
+  if (type.includes("radialdendrogram")) {
+    const keyEncoding = input.chartSpec.encodings.key;
+    const parentEncoding = input.chartSpec.encodings.parent;
+    const thetaEncoding = input.chartSpec.encodings.theta ?? input.chartSpec.encodings.angle;
+    if (!keyEncoding || !parentEncoding || !thetaEncoding) {
+      throw new Error("Radial Dendrogram renderer requires Node ID, Parent ID, and Leaf order encodings.");
+    }
+    const guide = input.coordinateGuide?.type === "Polar" ? input.coordinateGuide : null;
+    const cx = guide?.origin.x ?? input.minX + input.width / 2;
+    const cy = guide?.origin.y ?? input.minY + input.height / 2;
+    const baseRadius = Math.max(8, Math.min(input.width, input.height) * 0.38 * (guide?.radiusScale ?? 1));
+    const innerRatio = Math.max(0, Math.min(guide?.innerRadiusRatio ?? 0, 0.98));
+    const outerRatio = Math.max(innerRatio + 0.01, Math.min(guide?.outerRadiusRatio ?? 1, 1));
+    const innerRadius = baseRadius * innerRatio;
+    const outerRadius = baseRadius * outerRatio;
+    const angleSpan = Math.max(1, Math.min(guide?.angleSpan ?? 360, 360));
+    const angleOffset = guide?.angleOffset ?? 0;
+    const startAngle = (-270 + angleOffset) * Math.PI / 180;
+    const spanRadians = angleSpan * Math.PI / 180;
+    const radial = createRadialClusterLayout(input.dataset, {
+      keyField: keyEncoding.field,
+      parentField: parentEncoding.field,
+      orderField: thetaEncoding.field,
+      startAngle,
+      angleSpan: spanRadians,
+      innerRadius,
+      outerRadius,
+    });
+    const radialRoot = radial.root;
+    const nodeConfig = sharedConfig(input, "node");
+    const nodes = radialRoot.descendants().filter(radial.visible) as RadialClusterNode[];
+    const radialLink = linkRadial<any, RadialClusterNode>()
+      .angle((node) => node.x)
+      .radius((node) => node.y);
+    const links = radialRoot.links()
+      .filter((link) => radial.visible(link.source) && radial.visible(link.target))
+      .map((link) => `<path data-mark-role="link" d="${radialLink(link as any) ?? ""}" fill="none" stroke="#555" stroke-opacity="0.4" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`)
+      .join("");
+    const marks = nodes.map((node) => {
+      const color = typeof nodeConfig.color === "string"
+        ? nodeConfig.color
+        : node.children ? "#555" : "#999";
+      const rotation = node.x * 180 / Math.PI - 90;
+      return `<circle data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-angle="${node.x}" transform="rotate(${rotation}) translate(${node.y},0)" r="2.5" fill="${color}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}</title></circle>`;
+    }).join("");
+    const labels = nodes.map((node) => {
+      const onLeft = Math.sin(node.x) < 0;
+      const rotation = node.x * 180 / Math.PI - 90;
+      const label = node.data[thetaEncoding.field] || node.id || "";
+      const labelOnOutside = !onLeft === !node.children;
+      return `<text data-mark-role="node-label" transform="rotate(${rotation}) translate(${node.y},0) rotate(${onLeft ? 180 : 0})" dy="0.31em" x="${labelOnOutside ? 6 : -6}" text-anchor="${labelOnOutside ? "start" : "end"}" paint-order="stroke" stroke="white" stroke-width="3" stroke-linejoin="round" fill="currentColor" font-size="10">${esc(label)}</text>`;
+    }).join("");
+    return {
+      content: `<g transform="translate(${cx} ${cy})" data-chart-id="${esc(input.chartId)}" data-chart-type="radial-dendrogram" data-renderer="observable-radial-cluster@2">${links}${marks}${labels}</g>`,
+      plotArea: { x: cx - outerRadius, y: cy - outerRadius, width: outerRadius * 2, height: outerRadius * 2 },
+      polarArea: { startAngle: angleOffset, angleSpan, innerRadius, outerRadius },
+    };
+  }
 
   if (type.includes("treemap")) {
     const tilers = { binary: treemapBinary, squarify: treemapSquarify, "slice-dice": treemapSliceDice, slice: treemapSlice, dice: treemapDice } as const;

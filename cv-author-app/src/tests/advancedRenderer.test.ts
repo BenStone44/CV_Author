@@ -13,6 +13,11 @@ const cartesian: CoordinateGuide = {
   yDirection: -1,
 };
 
+const polar: CoordinateGuide = {
+  type: "Polar",
+  origin: { x: 250, y: 150 },
+};
+
 function render(chartType: string, dataset: Dataset, chartSpec: Omit<ChartSpec, "chartType" | "datasetId">) {
   return renderDeterministicChart({
     chartId: chartType,
@@ -20,7 +25,9 @@ function render(chartType: string, dataset: Dataset, chartSpec: Omit<ChartSpec, 
     height: 300,
     minX: 0,
     minY: 0,
-    coordinateGuide: getChartTemplateContract(chartType)?.coordinateSystem === "Cartesian" ? cartesian : null,
+    coordinateGuide: getChartTemplateContract(chartType)?.coordinateSystem === "Cartesian"
+      ? cartesian
+      : getChartTemplateContract(chartType)?.coordinateSystem === "Polar" ? polar : null,
     chartSpec: { chartType, datasetId: dataset.id, ...chartSpec },
     dataset,
   });
@@ -64,6 +71,25 @@ const hierarchyDataset: Dataset = {
   ],
 };
 
+const radialHierarchyDataset: Dataset = {
+  id: "radial-hierarchy",
+  name: "radial-hierarchy.csv",
+  columns: [
+    { name: "id", type: "nominal" },
+    { name: "parent", type: "nominal" },
+    { name: "leaf", type: "nominal" },
+    { name: "value", type: "quantitative" },
+    { name: "group", type: "nominal" },
+  ],
+  rows: [
+    { id: "root", parent: "", leaf: "", value: "", group: "" },
+    { id: "a", parent: "root", leaf: "", value: "", group: "A" },
+    { id: "a1", parent: "a", leaf: "a1", value: "3", group: "A" },
+    { id: "a2", parent: "a", leaf: "a2", value: "5", group: "A" },
+    { id: "b", parent: "root", leaf: "b", value: "4", group: "B" },
+  ],
+};
+
 const flowDataset: Dataset = {
   id: "flow",
   name: "flow.csv",
@@ -97,10 +123,11 @@ const contourDataset: Dataset = {
 
 describe("advanced chart cards", () => {
   it("registers all requested cards with contracts", () => {
-    expect(advancedTemplateDefinitions).toHaveLength(15);
+    expect(advancedTemplateDefinitions).toHaveLength(17);
     expect(advancedTemplateDefinitions.map((card) => card.name)).toEqual([
       "Area Chart", "Stacked Area", "Streamgraph", "Horizon Chart",
       "Parallel Coordinates", "Icicle", "Sunburst", "Treemap", "Dendrogram",
+      "Radial Dendrogram", "Radial Bar Chart",
       "Calendar", "Box Plot", "Contour", "Hexbin", "Chord", "Sankey",
     ]);
     advancedTemplateDefinitions.forEach((card) => {
@@ -108,6 +135,11 @@ describe("advanced chart cards", () => {
       expect(getChartTemplateContract(card.chartType)?.channels.length).toBeGreaterThan(0);
       expect(card.svgMarkup).toContain("<svg");
     });
+    const radialCluster = advancedTemplateDefinitions.find((card) => card.chartType === "RadialDendrogram");
+    expect(radialCluster?.svgMarkup).toContain('data-renderer="observable-radial-cluster@2"');
+    expect(radialCluster?.svgMarkup).toContain('stroke-opacity="0.4"');
+    expect(radialCluster?.svgMarkup).toContain('fill="#555"');
+    expect(radialCluster?.svgMarkup).toContain('fill="#999"');
   });
 
   it("keeps semantic encoding channels for every new card family", () => {
@@ -115,6 +147,8 @@ describe("advanced chart cards", () => {
     expect(channels("AreaChart")).toEqual(["x", "y", "color"]);
     expect(channels("ParallelCoordinatesPlot")).toEqual(["dimensions", "color"]);
     expect(channels("Sunburst")).toEqual(["key", "parent", "value", "color"]);
+    expect(channels("RadialDendrogram")).toEqual(["key", "parent", "theta"]);
+    expect(channels("RadialBarChart")).toEqual(["theta", "segment", "radius", "color"]);
     expect(channels("Calendar")).toEqual(["date", "value", "color"]);
     expect(channels("Boxplot")).toEqual(["x", "y", "color"]);
     expect(channels("Contour")).toEqual(["x", "y", "color"]);
@@ -381,6 +415,49 @@ describe("advanced chart cards", () => {
     });
     expect(result.content).toContain('data-mark-role="node"');
     expect(result.content).toContain('data-node-key="a1"');
+  });
+
+  it("renders equal-width radial bars from Segment and R with a default inner radius", () => {
+    const dendrogram = render("RadialDendrogram", radialHierarchyDataset, {
+      encodings: {
+        key: { field: "id", type: "nominal" },
+        parent: { field: "parent", type: "nominal" },
+        theta: { field: "leaf", type: "nominal" },
+      },
+    });
+    const bars = render("RadialBarChart", radialHierarchyDataset, {
+      encodings: {
+        segment: { field: "leaf", type: "nominal" },
+        radius: { field: "value", type: "quantitative" },
+        color: { field: "group", type: "nominal" },
+      },
+    });
+
+    expect(dendrogram.content).toContain('data-chart-type="radial-dendrogram"');
+    expect(dendrogram.content).toContain('data-renderer="observable-radial-cluster@2"');
+    expect(dendrogram.content).toContain('fill="#555"');
+    expect(dendrogram.content).toContain('fill="#999"');
+    expect(dendrogram.content.match(/data-mark-role="node"/g)).toHaveLength(5);
+    expect(bars.content).toContain('data-chart-type="radial-bar"');
+    expect(bars.content).toContain('data-theta-mode="static"');
+    expect(bars.content.match(/data-mark-role="bar"/g)).toHaveLength(3);
+    expect(bars.content.match(/data-theta-value="1"/g)).toHaveLength(3);
+    ["a1", "a2", "b"].forEach((leaf) => {
+      expect(bars.content).toContain(`data-category-key="${leaf}"`);
+    });
+    expect(dendrogram.polarArea?.angleSpan).toBe(360);
+    expect(bars.polarArea?.angleSpan).toBe(360);
+    expect(bars.polarArea?.innerRadius).toBeGreaterThan(0);
+
+    const mappedTheta = render("RadialBarChart", radialHierarchyDataset, {
+      encodings: {
+        theta: { field: "value", type: "quantitative" },
+        segment: { field: "leaf", type: "nominal" },
+        radius: { field: "value", type: "quantitative" },
+      },
+    });
+    expect(mappedTheta.content).toContain('data-theta-mode="mapped"');
+    expect(mappedTheta.content).toContain('data-theta-value="3"');
   });
 
   it("renders calendar and box plot marks", () => {

@@ -122,8 +122,17 @@ export function createDefaultChartSpec(chartType: string): ChartSpec | null {
     return {
       ...base,
       encodings: {
-        theta: { field: "value", type: "quantitative" },
         segment: { field: "column", type: "ordinal" },
+      },
+      dataTransforms: groupFilter(),
+    };
+  }
+  if (normalized === "radialbarchart") {
+    return {
+      ...base,
+      encodings: {
+        segment: { field: "column", type: "ordinal" },
+        radius: { field: "value", type: "quantitative" },
       },
       dataTransforms: groupFilter(),
     };

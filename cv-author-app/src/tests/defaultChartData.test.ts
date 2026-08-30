@@ -23,6 +23,7 @@ const chartTypes = [
   "MatrixDiagram",
   "PieChart",
   "DonutChart",
+  "RadialBarChart",
 ] as const;
 
 describe("built-in default chart data", () => {
@@ -46,13 +47,26 @@ describe("built-in default chart data", () => {
     expect(svg).not.toContain("<image");
   });
 
-  it.each(["PieChart", "DonutChart"])("uses the shared categorical and value fields for %s", (chartType) => {
-    expect(createDefaultChartSpec(chartType)).toMatchObject({
+  it.each(["PieChart", "DonutChart"])("uses the shared categorical field with static Theta for %s", (chartType) => {
+    const spec = createDefaultChartSpec(chartType);
+    expect(spec).toMatchObject({
       encodings: {
-        theta: { field: "value", type: "quantitative" },
         segment: { field: "column", type: "ordinal" },
       },
       dataTransforms: [{ field: "group", values: ["Alpha"] }],
     });
+    expect(spec?.encodings.theta).toBeUndefined();
+  });
+
+  it("binds the shared categorical and value fields to radial bar axes", () => {
+    const spec = createDefaultChartSpec("RadialBarChart");
+    expect(spec).toMatchObject({
+      encodings: {
+        segment: { field: "column", type: "ordinal" },
+        radius: { field: "value", type: "quantitative" },
+      },
+      dataTransforms: [{ field: "group", values: ["Alpha"] }],
+    });
+    expect(spec?.encodings.theta).toBeUndefined();
   });
 });

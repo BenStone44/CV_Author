@@ -76,14 +76,15 @@ export function resolvedPolarRadiusMode(spec: ChartSpec): PolarRadiusBindingMode
 
 export function resolvedPolarAxisRoles(spec: ChartSpec, field: string): PolarAxisRole[] {
   const template = normalizeChartTemplate(spec.chartType);
-  if (template !== "pie" && template !== "donut") return [];
+  if (getChartEncodingSchema(spec.chartType)?.coordinateSystem !== "Polar") return [];
   const thetaField = spec.encodings.theta?.field ?? spec.encodings.angle?.field ?? spec.encodings.y?.field;
   const radiusField = spec.encodings.radius?.field;
   const segmentField = spec.encodings.segment?.field;
   const segmentFields = spec.angleFields?.map((encoding) => encoding.field) ?? [];
   return [
     ...(thetaField === field ? [{ channel: "theta" as const, label: "Theta" as const }] : []),
-    ...(segmentField === field || segmentFields.includes(field)
+    ...((template === "pie" || template === "donut" || spec.chartType.replace(/[\s_-]/g, "").toLowerCase() === "radialbarchart")
+      && (segmentField === field || segmentFields.includes(field))
       ? [{ channel: "segment" as const, label: "Segment" as const }]
       : []),
     ...(radiusField === field ? [{ channel: "radius" as const, label: "R" as const }] : []),

@@ -504,6 +504,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     pointInBounds, pointToSegmentDistance, reconcileRelationshipNodes,
     renderChartNode, renderSharedCoordinateComposition,
     replaceDefaultDataBinding, selectedIds, semanticSelection, seriesItemCategoricalFields,
+    seriesItemMemberIds,
     setSelection, transformPoint, walkCanvasNodes, chartScalePosition, csvColumnDragMime,
     candidates, compositionEditLayout, compositionOptions, coordinateOptions, getLeafNodeTransform,
     viewPan, viewZoom,
@@ -525,10 +526,15 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
 
   function mappedEncodingChannel(node: CanvasNode, channel: CoordinateChannel): ChartEncodingChannel {
     const template = normalizeChartTemplate(node.chartSpec?.chartType ?? "");
+    const coordinateType = getChartTemplateContract(node.chartSpec?.chartType ?? "")?.coordinateSystem;
     if (template === "pie" || template === "donut") {
       if (channel === "angle") return "theta";
       if (channel === "radius" || channel === "ring") return channel;
       return channel === "x" ? "color" : "theta";
+    }
+    if (coordinateType === "Polar") {
+      if (channel === "angle") return "theta";
+      if (channel === "radius" || channel === "ring") return channel;
     }
     if (template === "matrix") return channel;
     return channel === "angle" || channel === "radius" || channel === "ring" ? "x" : channel;
@@ -786,6 +792,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     direction: "horizontal" | "vertical" | "radial" | "angular",
     channel: CoordinateChannel,
   ) {
+    // Polar concat shares a geometric domain. A hierarchy may derive its
+    // angle or radius structurally instead of exposing a field encoding.
+    const polarGeometryConcat = (direction === "radial" && channel === "angle")
+      || (direction === "angular" && channel === "radius");
+    const allPolar = polarGeometryConcat && nodes.every(isPolarCompositionChart);
     return externalCoordinatesAreCompatible(nodes)
       && existingRepeatableCompositions(nodes, "concat").every((composition) => {
         const links = concatLinksFor(composition);
@@ -793,8 +804,10 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           ? link.direction === direction
           : true);
       })
-      && nodes.every((node) => externalCoordinate(node)?.sharedChannels.includes(channel))
-      && sharedChannelEncodingsAreCompatible(nodes, channel);
+      && (allPolar || (
+        nodes.every((node) => externalCoordinate(node)?.sharedChannels.includes(channel))
+        && sharedChannelEncodingsAreCompatible(nodes, channel)
+      ));
   }
 
   function concatEdgeNodesAreCompatible(
@@ -803,12 +816,16 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     direction: "horizontal" | "vertical" | "radial" | "angular",
     channel: CoordinateChannel,
   ) {
+    const polarGeometryConcat = (direction === "radial" && channel === "angle")
+      || (direction === "angular" && channel === "radius");
+    if (polarGeometryConcat) {
+      return externalCoordinatesAreCompatible([target, source])
+        && [target, source].every(isPolarCompositionChart);
+    }
     return externalCoordinatesAreCompatible([target, source])
       && [target, source].every((node) => externalCoordinate(node)?.sharedChannels.includes(channel))
       && sharedChannelEncodingsAreCompatible([target, source], channel)
-      && (direction === "radial" || direction === "angular"
-        ? [target, source].every(isPolarCompositionChart)
-        : [target, source].every(isCartesianCompositionChart));
+      && [target, source].every(isCartesianCompositionChart);
   }
 
   function concatGraphMembers(composition: NonNullable<CanvasNode["compositionSpec"]>) {
@@ -949,13 +966,18 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     });
   });
   function itemBindingAxis(node: CanvasNode): CoordinateChannel {
-    const template = normalizeChartTemplate(node.chartSpec?.chartType ?? "");
-    if (template === "pie" || template === "donut") return "angle";
+    if (getChartTemplateContract(node.chartSpec?.chartType ?? "")?.coordinateSystem === "Polar") return "angle";
     return node.chartSpec?.axisSwapped === true ? "x" : "y";
   }
   function logicalAxisChannel(node: CanvasNode, channel: ChartEncodingChannel): ChartEncodingChannel {
     if (node.chartSpec?.axisSwapped !== true || (channel !== "x" && channel !== "y")) return channel;
     return channel === "x" ? "y" : "x";
+  }
+  function isPolarSegmentChart(chartType: string) {
+    const template = normalizeChartTemplate(chartType);
+    return template === "pie"
+      || template === "donut"
+      || chartType.replace(/[\s_-]/g, "").toLowerCase() === "radialbarchart";
   }
   function seriesItemCategoricalFields(spec: ChartSpec) {
     if (spec.defaultDataBinding) return [];
@@ -963,7 +985,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       ?? (spec.series ? [spec.series.field] : []);
     if (explicit.length > 0) return explicit;
     const template = normalizeChartTemplate(spec.chartType);
-    if ((template === "pie" || template === "donut") && spec.encodings.segment?.field) {
+    if (isPolarSegmentChart(spec.chartType) && spec.encodings.segment?.field) {
       return [spec.encodings.segment.field];
     }
     return template === "scatter"
@@ -974,7 +996,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function barItemAxisBinding(node: CanvasNode) {
     const variant = normalizeBarChartVariant(node.chartSpec?.chartType ?? "");
     const template = normalizeChartTemplate(node.chartSpec?.chartType ?? "");
-    if (node.chartSpec && (template === "pie" || template === "donut")) {
+    if (node.chartSpec && isPolarSegmentChart(node.chartSpec.chartType)) {
       return {
         label: "Segment",
         fields: node.chartSpec.encodings.segment?.field
@@ -998,6 +1020,24 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           ...(node.chartSpec.valueFields?.map((encoding) => encoding.field) ?? []),
         ])),
     };
+  }
+  function seriesItemMemberIds(node: CanvasNode) {
+    const binding = barItemAxisBinding(node);
+    if (!binding || !node.chartSpec) return [];
+    const categoricalFields = new Set(seriesItemCategoricalFields(node.chartSpec));
+    const rows = getDataset(node.chartSpec.datasetId)?.rows ?? [];
+    const members = new Set<string>();
+    binding.fields.forEach((field) => {
+      if (!categoricalFields.has(field)) {
+        members.add(field);
+        return;
+      }
+      rows.forEach((row) => {
+        const value = row[field];
+        if (value) members.add(value);
+      });
+    });
+    return Array.from(members);
   }
   const semanticMarkGroupConfig = computed(() => {
     const selection = semanticSelection.value;
@@ -1676,10 +1716,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         : { type: "chart", id: node.id },
     });
     if (node.chartSpec) {
-      const template = normalizeChartTemplate(node.chartSpec.chartType);
       setAxisBindingTarget({
         nodeId: node.id,
-        channel: template === "pie" || template === "donut" ? "y" : "x",
+        channel: getChartTemplateContract(node.chartSpec.chartType)?.coordinateSystem === "Polar" ? "angle" : "x",
         clientX: event.clientX,
         clientY: event.clientY,
       });
@@ -3129,13 +3168,16 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const dataset = axisBindingDataset.value;
     const column = dataset?.columns.find((item) => item.name === fieldName && item.type === "quantitative");
     if (!node?.chartSpec || !column) return;
-    updateEncodingTargets(node, (_target, spec) => ({
-      ...spec,
-      encodings: { ...spec.encodings, radius: { field: column.name, type: column.type } },
-      radiusMode: undefined,
-      componentRadiusFields: undefined,
-      renderer: undefined,
-    }));
+    updateEncodingTargets(node, (_target, spec) => {
+      spec = replaceDefaultDataBinding(spec, dataset.id);
+      return {
+        ...spec,
+        encodings: { ...spec.encodings, radius: { field: column.name, type: column.type } },
+        radiusMode: undefined,
+        componentRadiusFields: undefined,
+        renderer: undefined,
+      };
+    });
   }
   function clearPolarRadiusField() {
     const node = axisBindingNode.value;
@@ -3148,12 +3190,14 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   }
   function applyPieAngleFields(node: CanvasNode, dataset: Dataset, fieldNames: string[]) {
     const template = normalizeChartTemplate(node.chartSpec?.chartType ?? "");
-    if (!node.chartSpec || (template !== "pie" && template !== "donut")) return 0;
+    const radialBar = node.chartSpec?.chartType.replace(/[\s_-]/g, "").toLowerCase() === "radialbarchart";
+    if (!node.chartSpec || (template !== "pie" && template !== "donut" && !radialBar)) return 0;
     const selected = Array.from(new Set(fieldNames)).flatMap((field) => {
       const column = dataset.columns.find((item) => item.name === field && item.type === "quantitative");
       return column ? [{ field: column.name, type: column.type }] : [];
     }).slice(0, 1);
     updateEncodingTargets(node, (_target, spec) => {
+      spec = replaceDefaultDataBinding(spec, dataset.id);
       const memberEncodings = { ...spec.encodings };
       delete memberEncodings.theta;
       delete memberEncodings.angle;
@@ -3271,14 +3315,15 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (!node?.chartSpec || !dataset || !barItemAxisBinding(node)) return false;
     const column = dataset.columns.find((item) => item.name === fieldName);
     if (!column) return false;
-    const template = normalizeChartTemplate(node.chartSpec.chartType);
-    if (template === "pie" || template === "donut") {
+    if (isPolarSegmentChart(node.chartSpec.chartType)) {
+      const radialBar = node.chartSpec.chartType.replace(/[\s_-]/g, "").toLowerCase() === "radialbarchart";
+      if (radialBar && column.type !== "nominal" && column.type !== "ordinal" && column.type !== "temporal") return false;
       const current = node.chartSpec.encodings.segment?.field
         ? [node.chartSpec.encodings.segment.field]
         : node.chartSpec.angleFields?.map((encoding) => encoding.field) ?? [];
       if (current.includes(fieldName)) return true;
       if (node.chartSpec.encodings.segment?.field) return false;
-      if ((node.chartSpec.angleFields?.length ?? 0) > 0 && column.type !== "quantitative") return false;
+      if (!radialBar && (node.chartSpec.angleFields?.length ?? 0) > 0 && column.type !== "quantitative") return false;
       if (!current.includes(fieldName)) setPolarSegmentFields([...current, fieldName]);
       return true;
     }
@@ -3297,8 +3342,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const node = findCanvasNode(nodeId);
     if (!node?.chartSpec || !barItemAxisBinding(node)) return;
     axisBindingTarget.value = { nodeId, channel: itemBindingAxis(node) };
-    const template = normalizeChartTemplate(node.chartSpec.chartType);
-    if (template === "pie" || template === "donut") {
+    if (isPolarSegmentChart(node.chartSpec.chartType)) {
       const segmentFields = node.chartSpec.encodings.segment?.field
         ? [node.chartSpec.encodings.segment.field]
         : node.chartSpec.angleFields?.map((encoding) => encoding.field) ?? [];
@@ -4121,6 +4165,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     axisBindingRelatedCharts,
     coordinateGuideNodes,
     barItemAxisBinding,
+    seriesItemMemberIds,
     itemBindingAxis,
     seriesItemDropFrame,
     seriesItemDropBounds,

@@ -35,6 +35,7 @@ const defaultDataTemplateDefinitions = [
   { id: "builtin-template:horizon-chart", name: "Horizon Chart", chartType: "HorizonChart", coordinateSystem: "CoordinateFree" },
   { id: "builtin-template:pie", name: "Pie Chart", chartType: "PieChart", coordinateSystem: "Polar" },
   { id: "builtin-template:donut", name: "Donut", chartType: "DonutChart", coordinateSystem: "Polar" },
+  { id: "builtin-template:radial-bar-chart", name: "Radial Bar Chart", chartType: "RadialBarChart", coordinateSystem: "Polar" },
 ] satisfies Array<Omit<SvgCandidate, "src" | "svgMarkup">>;
 
 export const implementedTemplateDefinitions: SvgCandidate[] = ([

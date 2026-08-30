@@ -146,13 +146,13 @@ export const chartEncodingSchemas = {
   }),
   DivergentStackedBarChart: defineSchema("DivergentStackedBarChart", "Divergent Stacked Bar", "bar", [barX, barY, { ...barSeries, semanticLabel: "Segment item" }, barSize]),
   PieChart: defineSchema("PieChart", "Pie Chart", "pie", [
-    { channel: "theta", label: "Theta", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
-    { channel: "segment", label: "Segment", role: "dimension", required: false, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound", multiple: true },
+    { channel: "theta", label: "Theta", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
+    { channel: "segment", label: "Segment", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound", multiple: true },
     { channel: "radius", label: "R", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Not bound" },
   ]),
   DonutChart: defineSchema("DonutChart", "Donut", "donut", [
-    { channel: "theta", label: "Theta", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
-    { channel: "segment", label: "Segment", role: "dimension", required: false, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound", multiple: true },
+    { channel: "theta", label: "Theta", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
+    { channel: "segment", label: "Segment", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound", multiple: true },
     { channel: "radius", label: "R", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Not bound" },
   ]),
   MatrixDiagram: defineSchema("MatrixDiagram", "Matrix", "matrix", [
@@ -176,6 +176,23 @@ export const chartEncodingSchemas = {
   Sunburst: defineSchema("Sunburst", "Sunburst", "hierarchy", hierarchyChannels),
   Treemap: defineSchema("Treemap", "Treemap", "hierarchy", hierarchyChannels),
   Dendrogram: defineSchema("Dendrogram", "Dendrogram", "hierarchy", hierarchyChannels),
+  RadialDendrogram: defineSchema("RadialDendrogram", "Radial Dendrogram", "hierarchy", [
+    { channel: "key", label: "Node ID", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "parent", label: "Parent ID", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "theta", label: "Leaf order", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+  ], {
+    coordinateSystem: "Polar",
+    shareableChannels: ["angle", "radius"],
+  }),
+  RadialBarChart: defineSchema("RadialBarChart", "Radial Bar Chart", "bar", [
+    { channel: "theta", label: "Theta", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
+    { channel: "segment", label: "Segment", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal"], emptyLabel: "Not bound" },
+    { channel: "radius", label: "R", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
+    { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Static" },
+  ], {
+    coordinateSystem: "Polar",
+    shareableChannels: ["angle", "radius"],
+  }),
   Calendar: defineSchema("Calendar", "Calendar", "calendar", [
     { channel: "date", label: "Date", role: "dimension", required: true, accepts: ["temporal", "ordinal"], emptyLabel: "Not bound" },
     { channel: "value", label: "Daily value", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },

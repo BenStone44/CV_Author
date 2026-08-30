@@ -294,7 +294,7 @@ describe("implemented chart template cards", () => {
         { time: "2026-02-01", weight_kg: "79" },
       ],
     };
-    const canvasRef = ref(null);
+    const canvasRef = ref<HTMLElement | null>(null);
     const store = useCanvasStore(canvasRef);
     const candidate = store.implementedTemplateCandidates.value.find(
       (item) => item.chartType === "AreaChart",
@@ -350,6 +350,7 @@ describe("implemented chart template cards", () => {
       { id: "builtin-template:stacked-bar", name: "Stacked Bar", chartType: "StackedBarChart" },
       { id: "builtin-template:divergent-bar", name: "Divergent Bar", chartType: "DivergentBarChart" },
       { id: "builtin-template:divergent-stacked-bar", name: "Divergent Stacked Bar", chartType: "DivergentStackedBarChart" },
+      { id: "builtin-template:radial-bar-chart", name: "Radial Bar Chart", chartType: "RadialBarChart" },
     ]);
   });
 
@@ -973,6 +974,44 @@ describe("composition selection hierarchy", () => {
     expect(store.canvasNodes.value.every((node) => node.compositionSpec?.id === composition.id)).toBe(true);
   });
 
+  it("keeps concat visual scales unchanged when removing the composition", () => {
+    const first = cartesianChart("concat-removal-a", 100, "LineGraph");
+    const second = cartesianChart("concat-removal-b", 950, "SingleBarChart");
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    store.canvasNodes.value = [first, second];
+    store.selectedIds.value = [first.id, second.id];
+
+    expect(store.executeComposition("concat", true, ["y"], "horizontal")).toBe(true);
+    const visualState = store.canvasNodes.value.map((node) => ({
+      id: node.id,
+      x: node.x,
+      y: node.y,
+      width: node.width,
+      height: node.height,
+      scaleX: node.scaleX,
+      scaleY: node.scaleY,
+      scales: node.chartSpec?.scales,
+      plotArea: node.chartSpec?.plotArea,
+      renderedContent: node.renderedContent,
+    }));
+
+    expect(store.removeSelectionComposition()).toBe(true);
+    expect(store.canvasNodes.value.map((node) => ({
+      id: node.id,
+      x: node.x,
+      y: node.y,
+      width: node.width,
+      height: node.height,
+      scaleX: node.scaleX,
+      scaleY: node.scaleY,
+      scales: node.chartSpec?.scales,
+      plotArea: node.chartSpec?.plotArea,
+      renderedContent: node.renderedContent,
+    }))).toEqual(visualState);
+  });
+
   it("opens the position editor when configuring a Nested composition", async () => {
     const store = useCanvasStore(ref(null));
     store.relationshipStore.dispatch({ type: "clear" });
@@ -1323,6 +1362,7 @@ describe("CSV to Pie binding", () => {
     store.setPolarSegmentFields(["person"]);
     store.setPieAngleFields(["water"]);
     expect(pieNode.chartSpec?.encodings.segment).toEqual({ field: "person", type: "nominal" });
+    expect(store.seriesItemMemberIds(pieNode)).toEqual(["A"]);
     expect(pieNode.chartSpec?.encodings.theta).toEqual({ field: "water", type: "quantitative" });
     expect(pieNode.chartSpec?.angleFields).toBeUndefined();
     expect(store.addBarItemField("fat")).toBe(false);
@@ -1334,6 +1374,50 @@ describe("CSV to Pie binding", () => {
 
     store.setPolarSegmentFields(["time"]);
     expect(pieNode.chartSpec?.encodings.segment).toEqual({ field: "time", type: "temporal" });
+  });
+
+  it("expands a Radial Bar Segment binding into distinct dataset members", () => {
+    const dataset: Dataset = {
+      id: "radial-segment-members",
+      name: "radial-segment-members.csv",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { person: "Alice", value: "10" },
+        { person: "Bob", value: "20" },
+        { person: "Alice", value: "30" },
+      ],
+    };
+    const radialNode: CanvasGroupNode = {
+      kind: "group",
+      id: "radial-segment-members-node",
+      name: "Radial segment members",
+      x: 120,
+      y: 80,
+      width: 320,
+      height: 180,
+      scaleX: 1,
+      scaleY: 1,
+      rotation: 0,
+      coordinateGuide: { type: "Polar", origin: { x: 160, y: 90 } },
+      chartSpec: {
+        chartType: "RadialBarChart",
+        datasetId: dataset.id,
+        encodings: {
+          segment: { field: "person", type: "nominal" },
+          radius: { field: "value", type: "quantitative" },
+        },
+      },
+      children: [],
+    };
+    const canvasRef = ref(null);
+    const store = useCanvasStore(canvasRef);
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+
+    expect(store.seriesItemMemberIds(radialNode)).toEqual(["Alice", "Bob"]);
   });
 });
 
@@ -2267,6 +2351,47 @@ describe("composition coordinate editing", () => {
     expect(second.x).toBeLessThan(third.x);
   });
 
+  it("keeps concat visual scales unchanged when splitting a link", () => {
+    const first = cartesianChart("split-concat-first", 100, "LineGraph");
+    const second = cartesianChart("split-concat-second", 800, "SingleBarChart");
+    const third = cartesianChart("split-concat-third", 1500, "AreaChart");
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    store.canvasNodes.value = [first, second, third];
+    store.selectedIds.value = [first.id, second.id, third.id];
+
+    expect(store.executeComposition("concat", true, ["y"], "horizontal")).toBe(true);
+    const control = store.concatSplitControls.value[0];
+    const visualState = store.canvasNodes.value.map((node) => ({
+      id: node.id,
+      x: node.x,
+      y: node.y,
+      width: node.width,
+      height: node.height,
+      scaleX: node.scaleX,
+      scaleY: node.scaleY,
+      scales: node.chartSpec?.scales,
+      plotArea: node.chartSpec?.plotArea,
+      renderedContent: node.renderedContent,
+    }));
+
+    expect(control).toBeDefined();
+    expect(store.splitConcatLink(control!.id)).toBe(true);
+    expect(store.canvasNodes.value.map((node) => ({
+      id: node.id,
+      x: node.x,
+      y: node.y,
+      width: node.width,
+      height: node.height,
+      scaleX: node.scaleX,
+      scaleY: node.scaleY,
+      scales: node.chartSpec?.scales,
+      plotArea: node.chartSpec?.plotArea,
+      renderedContent: node.renderedContent,
+    }))).toEqual(visualState);
+  });
+
   it("replays concat links in order when adding a chart below the prior source", () => {
     const chartA = cartesianChart("ordered-concat-a", 100, "LineGraph");
     const chartB = cartesianChart("ordered-concat-b", 800, "SingleBarChart");
@@ -2472,6 +2597,51 @@ describe("composition coordinate editing", () => {
     expect(store.selectionPolarOutlines.value[0]?.path).toContain(" A 100 100 ");
     expect(store.selectionPolarOutlines.value[1]?.path).toContain(" A 200 200 ");
     expect(store.selectionPolarOutlines.value[1]?.path).toContain(" A 100 100 ");
+
+    const unrenderedTemplate = polarChart("polar-selection-template", 100, 360);
+    unrenderedTemplate.renderedContent = null;
+    unrenderedTemplate.chartSpec = undefined;
+    store.canvasNodes.value = [unrenderedTemplate];
+    store.selectedIds.value = [unrenderedTemplate.id];
+
+    expect(store.selectionPolarOutlines.value).toHaveLength(1);
+    expect(store.selectionPolarOutlines.value[0]?.path).toContain(" A 152 152 ");
+  });
+
+  it("allows every Polar chart template to concat on either Polar dimension", () => {
+    const encodingsByType = {
+      PieChart: { theta: { field: "value", type: "quantitative" as const } },
+      DonutChart: { theta: { field: "value", type: "quantitative" as const } },
+      RadialDendrogram: {
+        key: { field: "node_id", type: "nominal" as const },
+        parent: { field: "parent_id", type: "nominal" as const },
+        theta: { field: "leaf_id", type: "nominal" as const },
+      },
+      RadialBarChart: {
+        segment: { field: "leaf_id", type: "nominal" as const },
+        radius: { field: "value", type: "quantitative" as const },
+      },
+    };
+    const chartTypes = Object.keys(encodingsByType) as Array<keyof typeof encodingsByType>;
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    const nodes = chartTypes.map((chartType, index) => {
+      const node = polarChart(`polar-compatibility-${chartType}`, 100 + index * 500);
+      node.chartSpec = {
+        ...node.chartSpec!,
+        chartType,
+        encodings: encodingsByType[chartType],
+      };
+      return node;
+    });
+
+    for (let leftIndex = 0; leftIndex < nodes.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < nodes.length; rightIndex += 1) {
+        const pair = [nodes[leftIndex]!, nodes[rightIndex]!];
+        expect(store.concatNodesAreCompatible(pair, "radial", "angle")).toBe(true);
+        expect(store.concatNodesAreCompatible(pair, "angular", "radius")).toBe(true);
+      }
+    }
   });
 
   it("extends Polar layer and concat compositions without replacing their members", () => {

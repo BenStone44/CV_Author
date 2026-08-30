@@ -155,27 +155,18 @@ describe("case1.csv chart-template compatibility and repair", () => {
     expect(result.status).toBe("VALID");
   });
 
-  it("repairs person-only PieChart selection by adding an angle measure", () => {
-    const spec = {
+  it("accepts a Pie Segment with static Theta", () => {
+    const result = analyze({
       chartType: "PieChart",
       encodings: {
-        color: { field: "person", type: "nominal" as const },
+        segment: { field: "person", type: "nominal" as const },
       },
-    };
-    const result = analyze(spec);
+    });
 
-    expect(result.status).toBe("DIMENSION_UNDERFLOW");
-    expect(addedFieldSets(spec)).toEqual([
-      ["weight_kg"],
-      ["water_kg"],
-      ["fat_kg"],
-      ["muscle_kg"],
-      ["minerals_kg"],
-    ]);
-    expect(result.repairs.every((repair) => repair.binding.angle?.length === 1)).toBe(true);
+    expect(result.status).toBe("VALID");
   });
 
-  it("accepts weight_kg-only selection for PieChart", () => {
+  it("requires a Segment when only Pie Theta is bound", () => {
     const result = analyze({
       chartType: "PieChart",
       encodings: {
@@ -183,7 +174,7 @@ describe("case1.csv chart-template compatibility and repair", () => {
       },
     });
 
-    expect(result.status).toBe("VALID");
+    expect(result.status).toBe("DIMENSION_UNDERFLOW");
   });
 
   it("repairs weight_kg-only Calendar by adding time as the date dimension", () => {

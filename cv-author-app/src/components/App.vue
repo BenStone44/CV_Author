@@ -46,6 +46,7 @@ import {
   type ChartTemplateCategory,
 } from "../utils/chartTemplateCategories";
 import { getGeographicLayerFamily } from "../utils/geographicLayerCards";
+import { getChartTemplateContract } from "../utils/chartTemplates";
 
 const EMPTY_SELECTION_IDS: string[] = [];
 
@@ -93,6 +94,7 @@ const {
   axisBindingRendererError,
   coordinateGuideNodes,
   barItemAxisBinding,
+  seriesItemMemberIds,
   seriesItemDropFrame,
   contextMenu,
   draggedCandidateId,
@@ -482,15 +484,6 @@ function createSeriesItemPresentation(node: CanvasNode) {
     ? { label: "Point type", fields: [scatterColor.field] }
     : null);
   if (!node || !spec || !binding) return null;
-  const rows = getDataset(spec.datasetId)?.rows ?? [];
-  const categoricalFields = new Set([
-    ...(spec.seriesFields?.map((encoding) => encoding.field)
-      ?? (spec.series ? [spec.series.field] : [])),
-    ...(scatterColor ? [scatterColor.field] : []),
-    ...(isPolarChartType(spec.chartType) && spec.encodings.segment?.field
-      ? [spec.encodings.segment.field]
-      : []),
-  ]);
   const markConfig = spec.markGroups?.[0]?.sharedConfig ?? {};
   const mappedStyles = isSeriesStyleMapping(markConfig.seriesStyleMapping)
     ? markConfig.seriesStyleMapping.values
@@ -498,24 +491,15 @@ function createSeriesItemPresentation(node: CanvasNode) {
       ? Object.fromEntries(Object.entries(markConfig.seriesColorMapping.values).map(([member, color]) => [member, { color }]))
       : {};
   const fallbackColors = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#4d7c0f"];
-  const seen = new Set<string>();
-  const members = binding.fields.flatMap((field) => {
-    const fieldMembers = categoricalFields.has(field)
-      ? Array.from(new Set(rows.map((row) => row[field] ?? "").filter(Boolean)))
-      : [field];
-    return fieldMembers.flatMap((member) => {
-      if (seen.has(member)) return [];
-      seen.add(member);
-      const index = seen.size - 1;
-      const style = (mappedStyles[member] ?? {}) as { color?: string; strokeWidth?: number; shape?: "solid" | "dashed" | "dotted" };
-      return [{
-        memberId: member,
-        label: member,
-        color: style.color ?? fallbackColors[index % fallbackColors.length]!,
-        width: style.strokeWidth ?? Number(markConfig.strokeWidth ?? 2.5),
-        shape: style.shape ?? "solid",
-      }];
-    });
+  const members = seriesItemMemberIds(node).map((member, index) => {
+    const style = (mappedStyles[member] ?? {}) as { color?: string; strokeWidth?: number; shape?: "solid" | "dashed" | "dotted" };
+    return {
+      memberId: member,
+      label: member,
+      color: style.color ?? fallbackColors[index % fallbackColors.length]!,
+      width: style.strokeWidth ?? Number(markConfig.strokeWidth ?? 2.5),
+      shape: style.shape ?? "solid",
+    };
   });
   return {
     node,
@@ -798,8 +782,7 @@ function isScatterChartType(chartType: string) {
 }
 
 function isPolarChartType(chartType: string) {
-  const type = chartType.replace(/[\s_-]/g, "").toLowerCase();
-  return type.includes("pie") || type.includes("donut");
+  return getChartTemplateContract(chartType)?.coordinateSystem === "Polar";
 }
 
 const activeCompositionType = ref<CompositionType | null>(null);
@@ -860,9 +843,7 @@ const compositionEncodingSectionLabel = computed(() => {
   const composition = axisBindingNode.value?.compositionSpec;
   return composition?.type === "layer" ? "LAYER ENCODINGS" : undefined;
 });
-const showPolarSelectionOutlines = computed(() => selectionPolarOutlines.value.length > 0
-  && (!passiveCompositeSelection.value
-    || selectedNodes.value[0]?.compositionSpec?.type === "concat"));
+const showPolarSelectionOutlines = computed(() => selectionPolarOutlines.value.length > 0);
 const canToggleEncodingInspector = computed(() => !!encodingTargetNode.value);
 const dimensionDropNode = computed(() => dimensionDropTarget.value
   ? selectedNodes.value.find((node) => node.id === dimensionDropTarget.value?.nodeId) ?? null

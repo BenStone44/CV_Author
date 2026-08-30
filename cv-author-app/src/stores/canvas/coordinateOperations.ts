@@ -21,7 +21,7 @@ export function useCanvasCoordinateOperations(context: any) {
     normalizeChartTemplate,
     pointInBounds, pointToSegmentDistance, renderChartNode, renderSharedCoordinateComposition,
     reconcileRelationshipNodes, replaceDefaultDataBinding, selectedIds, semanticSelection,
-    seriesItemCategoricalFields, setSelection, transformPoint,
+    seriesItemCategoricalFields, seriesItemMemberIds, setSelection, transformPoint,
     viewPan, viewZoom,
     walkCanvasNodes, chartScalePosition, csvColumnDragMime, compositionEditLayout,
     candidates, compositionOptions, coordinateOptions, getLeafNodeTransform,
@@ -693,22 +693,7 @@ export function useCanvasCoordinateOperations(context: any) {
     };
   }
   function seriesItemMemberCount(node: CanvasNode) {
-    const binding = barItemAxisBinding(node);
-    if (!binding || !node.chartSpec) return 0;
-    const categoricalFields = new Set(seriesItemCategoricalFields(node.chartSpec));
-    const rows = getDataset(node.chartSpec.datasetId)?.rows ?? [];
-    const members = new Set<string>();
-    binding.fields.forEach((field) => {
-      if (!categoricalFields.has(field)) {
-        members.add(field);
-        return;
-      }
-      rows.forEach((row) => {
-        const value = row[field];
-        if (value) members.add(value);
-      });
-    });
-    return members.size;
+    return seriesItemMemberIds(node).length;
   }
   function seriesItemDropFrame(node: CanvasNode) {
     const selection = getNodeSelectionBounds(node);
@@ -819,8 +804,9 @@ export function useCanvasCoordinateOperations(context: any) {
           const categoricalFields = seriesItemCategoricalFields(inputSpec);
           const categoricalMode = categoricalFields.length > 0;
           const quantitativeMode = (inputSpec.valueFields?.length ?? 0) > 0;
-          const polarChart = normalizeChartTemplate(spec.chartType) === "pie"
-            || normalizeChartTemplate(spec.chartType) === "donut";
+          const chartContract = getChartTemplateContract(inputSpec.chartType);
+          const segmentContract = chartContract?.channels.find((channel: { channel: string }) => channel.channel === "segment");
+          const polarChart = chartContract?.coordinateSystem === "Polar" && !!segmentContract;
           const polarSegmentField = inputSpec.encodings.segment?.field;
           const polarMeasureSet = (inputSpec.angleFields?.length ?? 0) > 0;
           const compatible = polarChart
@@ -828,7 +814,9 @@ export function useCanvasCoordinateOperations(context: any) {
               ? column.type === "quantitative"
               : polarSegmentField
                 ? column.name === polarSegmentField
-                : column.type === "quantitative" || column.type === "nominal" || column.type === "ordinal" || column.type === "temporal"
+                : segmentContract
+                  ? isDataColumnTypeCompatible(segmentContract.accepts, column.type)
+                  : false
             : categoricalMode
             ? categoricalFields.includes(column.name)
             : quantitativeMode

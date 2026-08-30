@@ -103,6 +103,51 @@ rows remain the source of truth. Legacy `filters`, `valueFilters`, and
 behavior must not create a third competing transform representation. Migrate or
 adapt legacy state through explicit boundaries.
 
+### D3 and Canvas Polar Conventions
+
+D3 `pie`/`arc` angles and the canvas polar coordinate system use different
+origins and directions. D3 measures radians clockwise from 12 o'clock. The
+canvas polar guide measures degrees from the ray pointing right and uses
+positive counter-clockwise angles in screen space. Do not pass a D3 arc angle
+directly to canvas polar helpers. For a D3 angle `a` and radius `r`, place a
+screen-space point with `x = cx + sin(a) * r` and
+`y = cy - cos(a) * r`; equivalently convert it to the canvas convention before
+calling a canvas polar helper. Apply this conversion to labels, hit targets,
+nested marks, and derived polar geometry, not only to arc paths.
+
+When the movable angular handle is positioned at the canvas
+counter-clockwise angle `n`, the polar coordinate system occupies `[n, 360]`,
+not `[0, n]`. Store and render its angular span as `360 - n`: the fixed boundary
+remains at the rightward 360-degree ray and the movable boundary remains at
+`n`. Polar axes and grid arcs are stroked open paths with `fill="none"`; never
+use their fill to depict the coordinate system.
+
+Pie and donut templates use the same built-in default CSV as the Cartesian
+templates. Their initial binding is `column -> segment` and `value -> theta`,
+with the existing `group = Alpha` default filter. Once a categorical or ordinal
+`segment` is selected, automatically aggregate the quantitative `theta` values
+with `sum` at that segment grain. Preserve an explicit user-selected
+aggregation instead of silently replacing it.
+
+The project polar interaction is not D3's default control geometry. Polar axes
+use thin, translucent concentric circles at radial ticks, clipped to concentric
+arcs when the chart occupies only part of the angular range. The `r` axis is a
+rightward horizontal ray with short tick marks at the same radii. Selection
+starts with two adjacent 15-degree control-arc halves at the zero-angle end.
+During angle-span dragging, the movable half and its handle follow the angular
+endpoint while the fixed half remains at zero angle with the rightward ray. The
+movable half owns angle-span dragging; the radial ray and separate right-side
+radius handle own radial scaling. Keep their transparent hit targets usable and
+non-overlapping so the angle handle cannot intercept radius scaling. Visual
+guide paths must not block either interaction.
+
+Visible polar axes belong to the persistent, non-interactive canvas coordinate
+layer, not to the selection overlay. Keep enabled concentric guides and the
+`r`-axis visible after deselection. The selected polar overlay renders handles
+and control arcs only, so it must not redraw the static axes or make their
+strokes appear thicker. Hide the persistent polar layer only when both Theta
+and R axes are explicitly disabled.
+
 ### Filter Intent and Facet Clues
 
 A categorical or ordinal single-select filter may be either a permanent hard
