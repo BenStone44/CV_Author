@@ -48,6 +48,21 @@ export function filterDatasetForChart(dataset: Dataset, spec: ChartSpec): Datase
 /** Select the graph table consumed by a chart while preserving graph lineage. */
 export function materializeGraphDataset(dataset: Dataset, spec: ChartSpec): Dataset {
   if (!dataset.graph) return dataset;
+  const chartType = spec.chartType.replace(/[\s_-]/g, "").toLowerCase();
+  // Force-directed layouts consume both graph tables during rendering.
+  if (chartType === "forcedirectedgraph") {
+    const columns = Array.from(new Map(
+      [...dataset.graph.nodes.columns, ...dataset.graph.edges.columns]
+        .map((column) => [column.name, column] as const),
+    ).values());
+    return {
+      ...dataset,
+      // The inspector needs one field list while the renderer keeps the
+      // separate node and edge tables as the source of truth.
+      columns,
+      rows: dataset.graph.nodes.rows,
+    };
+  }
   const template = normalizeChartTemplate(spec.chartType);
   const table = template === "flow" ? dataset.graph.edges : dataset.graph.nodes;
   return {

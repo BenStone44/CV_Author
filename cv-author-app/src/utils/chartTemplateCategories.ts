@@ -56,6 +56,7 @@ const familyDefinitions: Array<{
   { id: "sankey", label: "Sankey", chartTypes: new Set(["sankey"]) },
   { id: "parallel-coordinates", label: "Parallel coordinates", chartTypes: new Set(["parallelcoordinatesplot"]) },
   { id: "tree", label: "Tree", chartTypes: new Set(["sunburst", "icicle", "treemap", "dendrogram", "radialdendrogram"]) },
+  { id: "network", label: "Network", chartTypes: new Set(["forcedirectedgraph"]) },
   { id: "calendar", label: "Calendar", chartTypes: new Set(["calendar"]) },
   { id: "boxplot", label: "Boxplot", chartTypes: new Set(["boxplot", "boxandwhisker"]) },
 ];

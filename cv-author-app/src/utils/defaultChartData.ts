@@ -8,12 +8,15 @@ import type {
 import Papa from "papaparse";
 import defaultChartDataCsv from "../../../data/default_chart_data.csv?raw";
 import defaultTreeDataCsv from "../../../data/tree_nodes.csv?raw";
+import defaultGraphNodesCsv from "../../../data/nodes.csv?raw";
+import defaultGraphEdgesCsv from "../../../data/edges.csv?raw";
 import { getChartTemplateContract, normalizeChartTemplate } from "./chartTemplates";
 import { prepareChartData } from "./chartDataPipeline";
 import { renderDeterministicChart } from "./semanticRenderer";
 
 export const DEFAULT_CHART_DATASET_ID = "builtin:default-cartesian-data";
 export const DEFAULT_TREE_DATASET_ID = "builtin:default-tree-data";
+export const DEFAULT_GRAPH_DATASET_ID = "builtin:default-force-graph-data";
 
 const defaultRows = Papa.parse<Record<string, string>>(defaultChartDataCsv, {
   header: true,
@@ -21,6 +24,16 @@ const defaultRows = Papa.parse<Record<string, string>>(defaultChartDataCsv, {
 }).data;
 
 const defaultTreeRows = Papa.parse<Record<string, string>>(defaultTreeDataCsv, {
+  header: true,
+  skipEmptyLines: "greedy",
+}).data;
+
+const defaultGraphNodeRows = Papa.parse<Record<string, string>>(defaultGraphNodesCsv, {
+  header: true,
+  skipEmptyLines: "greedy",
+}).data;
+
+const defaultGraphEdgeRows = Papa.parse<Record<string, string>>(defaultGraphEdgesCsv, {
   header: true,
   skipEmptyLines: "greedy",
 }).data;
@@ -65,6 +78,33 @@ export const defaultTreeDataset: Dataset = {
   primaryKey: ["node_id"],
 };
 
+/** A graph dataset with separate node and edge tables for network templates. */
+export const defaultGraphDataset: Dataset = {
+  id: DEFAULT_GRAPH_DATASET_ID,
+  name: "Default force graph data",
+  columns: [],
+  rows: [],
+  graph: {
+    nodes: {
+      columns: [
+        { name: "id", type: "nominal" },
+        { name: "group", type: "nominal" },
+        { name: "size", type: "quantitative" },
+        { name: "label", type: "nominal" },
+      ],
+      rows: defaultGraphNodeRows,
+    },
+    edges: {
+      columns: [
+        { name: "source", type: "nominal" },
+        { name: "target", type: "nominal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: defaultGraphEdgeRows,
+    },
+  },
+};
+
 function groupFilter(): ChartDataTransform[] {
   return [{
     id: "builtin-default:group-alpha",
@@ -79,6 +119,7 @@ function groupFilter(): ChartDataTransform[] {
 
 export function supportsDefaultChartData(chartType: string) {
   const family = normalizeChartTemplate(chartType);
+  const normalized = chartType.replace(/[\s_-]/g, "").toLowerCase();
   return family === "bar"
     || family === "line"
     || family === "area"
@@ -86,18 +127,21 @@ export function supportsDefaultChartData(chartType: string) {
     || family === "matrix"
     || family === "pie"
     || family === "donut"
-    || family === "hierarchy";
+    || family === "hierarchy"
+    || normalized === "forcedirectedgraph";
 }
 
 export function defaultDatasetForChartType(chartType: string): Dataset {
-  return normalizeChartTemplate(chartType) === "hierarchy"
-    ? defaultTreeDataset
-    : defaultChartDataset;
+  const normalized = chartType.replace(/[\s_-]/g, "").toLowerCase();
+  if (normalizeChartTemplate(chartType) === "hierarchy") return defaultTreeDataset;
+  if (normalized === "forcedirectedgraph") return defaultGraphDataset;
+  return defaultChartDataset;
 }
 
 export function isDefaultChartDataSpec(spec: ChartSpec | null | undefined) {
   return spec?.datasetId === DEFAULT_CHART_DATASET_ID
-    || spec?.datasetId === DEFAULT_TREE_DATASET_ID;
+    || spec?.datasetId === DEFAULT_TREE_DATASET_ID
+    || spec?.datasetId === DEFAULT_GRAPH_DATASET_ID;
 }
 
 /** Start a real-data binding while retaining only chart-local appearance. */
@@ -143,6 +187,21 @@ export function createDefaultChartSpec(chartType: string): ChartSpec | null {
     };
   }
 
+  if (normalized === "forcedirectedgraph") {
+    return {
+      ...base,
+      datasetId: DEFAULT_GRAPH_DATASET_ID,
+      encodings: {
+        key: { field: "id", type: "nominal" },
+        source: { field: "source", type: "nominal" },
+        target: { field: "target", type: "nominal" },
+        value: { field: "value", type: "quantitative" },
+        color: { field: "group", type: "nominal" },
+        size: { field: "size", type: "quantitative" },
+      },
+    };
+  }
+
   if (family === "scatter") {
     return {
       ...base,
@@ -169,7 +228,9 @@ export function createDefaultChartSpec(chartType: string): ChartSpec | null {
       ...base,
       encodings: {
         segment: { field: "column", type: "ordinal" },
+        theta: { field: "value", type: "quantitative" },
       },
+      aggregations: { theta: "sum" },
       dataTransforms: groupFilter(),
     };
   }

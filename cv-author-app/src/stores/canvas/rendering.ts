@@ -395,6 +395,18 @@ export function useCanvasRendering(context: any) {
     return result;
   }
 
+  function chartEncodingFieldAvailable(dataset: Dataset, chartType: string, channel: string, field: string) {
+    if (!dataset.graph) return dataset.columns.some((column) => column.name === field);
+    const normalized = chartType.replace(/[\s_-]/g, "").toLowerCase();
+    if (normalized !== "forcedirectedgraph") {
+      return dataset.columns.some((column) => column.name === field);
+    }
+    const table = channel === "source" || channel === "target" || channel === "value"
+      ? dataset.graph.edges
+      : dataset.graph.nodes;
+    return table.columns.some((column) => column.name === field);
+  }
+
   function renderChartNode(node: CanvasNode, useLayerScales = true) {
     const coordinateOwner = useLayerScales
       && (node.compositionSpec?.type === "layer" || node.compositionSpec?.type === "concat")
@@ -428,12 +440,14 @@ export function useCanvasRendering(context: any) {
     const sourceDataset = getDataset(chartSpec.datasetId);
     const defaultFieldsUnavailable = chartSpec.defaultDataBinding === true
       && !!sourceDataset
-      && [
-        ...Object.values(chartSpec.encodings),
-        ...(chartSpec.seriesFields ?? []),
-        ...(chartSpec.valueFields ?? []),
-      ].some((encoding) =>
-        !!encoding && !sourceDataset.columns.some((column) => column.name === encoding.field));
+      && (
+        Object.entries(chartSpec.encodings).some(([channel, encoding]) =>
+          !!encoding && !chartEncodingFieldAvailable(sourceDataset, chartSpec.chartType, channel, encoding.field))
+        || (chartSpec.seriesFields ?? []).some((encoding) =>
+          !chartEncodingFieldAvailable(sourceDataset, chartSpec.chartType, "series", encoding.field))
+        || (chartSpec.valueFields ?? []).some((encoding) =>
+          !chartEncodingFieldAvailable(sourceDataset, chartSpec.chartType, "value", encoding.field))
+      );
     const encodingIssues = resolveChartEncodingIssues(chartSpec);
     const complete = hasRequiredChartEncodings(chartSpec)
       && encodingIssues.length === 0

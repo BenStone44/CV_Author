@@ -71,6 +71,33 @@ export function useCanvasImportOperations(context: any) {
   function createInitialChartSpec(chartType: string, datasetId: string): ChartSpec {
     const defaultSpec = createDefaultChartSpec(chartType);
     const unbound = createUnboundChartSpec(chartType, datasetId);
+    const normalizedChartType = chartType.replace(/[\s_-]/g, "").toLowerCase();
+    const dataset = getDataset(datasetId);
+    if (normalizedChartType === "forcedirectedgraph" && dataset?.graph) {
+      const nodeColumns = dataset.graph.nodes.columns;
+      const edgeColumns = dataset.graph.edges.columns;
+      const findColumn = (columns: typeof nodeColumns, names: string[]) => {
+        const column = columns.find((candidate) => names.includes(candidate.name.toLowerCase()));
+        return column ? { field: column.name, type: column.type } : undefined;
+      };
+      const key = findColumn(nodeColumns, ["id", "node_id", "key"]);
+      const source = findColumn(edgeColumns, ["source", "from", "source_id"]);
+      const target = findColumn(edgeColumns, ["target", "to", "target_id"]);
+      const value = findColumn(edgeColumns, ["value", "weight", "link_value"]);
+      const color = findColumn(nodeColumns, ["group", "category", "color"]);
+      const size = findColumn(nodeColumns, ["size", "weight", "value"]);
+      return {
+        ...unbound,
+        encodings: {
+          ...(key ? { key } : {}),
+          ...(source ? { source } : {}),
+          ...(target ? { target } : {}),
+          ...(value?.type === "quantitative" ? { value } : {}),
+          ...(color ? { color } : {}),
+          ...(size?.type === "quantitative" ? { size } : {}),
+        },
+      };
+    }
     return defaultSpec ? { ...unbound, defaultDataBinding: true } : unbound;
   }
   function resetChartBindingsForDataset(datasetId: string) {

@@ -3015,7 +3015,14 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const dataset = inputDatasetId ? getDataset(inputDatasetId) : axisBindingDataset.value;
     if (!node?.chartSpec || !dataset) return;
     const config = getEncodingChannelConfigsForSpec(node.chartSpec).find((item) => item.channel === channel);
-    const column = fieldName ? dataset.columns.find((item) => item.name === fieldName) : undefined;
+    const graphTable = dataset.graph
+      ? channel === "source" || channel === "target" || channel === "value"
+        ? dataset.graph.edges
+        : dataset.graph.nodes
+      : null;
+    const column = fieldName
+      ? (graphTable?.columns ?? dataset.columns).find((item) => item.name === fieldName)
+      : undefined;
     if (!config || (fieldName && (!column || !isDataColumnTypeCompatible(config.accepts, column.type)))) return;
     if (channel === "y" && (node.chartSpec.valueFields?.length ?? 0) > 0) {
       setImportNotice("Y is derived from quantitative Series Items and cannot be bound separately.");

@@ -140,7 +140,17 @@ const seriesItemsRequired = computed(() => supportsSeriesItems.value
 const seriesItemLabel = computed(() => seriesRole.value?.semanticLabel ?? "Series");
 const isParallel = computed(() => template.value === "parallel");
 const isHierarchy = computed(() => template.value === "hierarchy");
+const isForceDirected = computed(() => normalizedChartType.value === "forcedirectedgraph");
 const nodeLabelsVisible = computed(() => props.markConfig.nodeLabelsVisible !== false);
+function markNumber(name: string, fallback: number) {
+  const value = Number(props.markConfig[name]);
+  return Number.isFinite(value) ? value : fallback;
+}
+const forceChargeStrength = computed(() => Math.abs(markNumber("chargeStrength", -120)));
+const forceLinkDistance = computed(() => markNumber("linkDistance", 80));
+const forceLinkStrength = computed(() => markNumber("linkStrength", 0.7));
+const forceCenterStrength = computed(() => markNumber("centerStrength", 0.08));
+const forceCollisionRadius = computed(() => markNumber("collisionRadius", 10));
 const standardConfigs = computed(() => configs.value.filter((config) => {
   if (isCartesian.value && (config.channel === "x" || config.channel === "y")) return false;
   if (isPolar.value && config.channel === "segment") return false;
@@ -1168,6 +1178,35 @@ function updateSingleBarTopN(rawValue: string) {
           :checked="nodeLabelsVisible"
           @change="emit('markConfigChange', { nodeLabelsVisible: ($event.target as HTMLInputElement).checked })"
         />
+      </label>
+    </section>
+
+    <section v-if="isForceDirected" class="encoding-config__appearance" aria-label="Force layout">
+      <strong>Force layout</strong>
+      <label class="encoding-config__static">
+        <span>Repulsion</span>
+        <output>{{ forceChargeStrength }}</output>
+        <input type="range" min="0" max="400" step="1" :value="forceChargeStrength" aria-label="Repulsion" @input="emit('markConfigChange', { chargeStrength: -Number(($event.target as HTMLInputElement).value) })" />
+      </label>
+      <label class="encoding-config__static">
+        <span>Link distance</span>
+        <output>{{ Math.round(forceLinkDistance) }} px</output>
+        <input type="range" min="8" max="240" step="1" :value="forceLinkDistance" aria-label="Link distance" @input="emit('markConfigChange', { linkDistance: Number(($event.target as HTMLInputElement).value) })" />
+      </label>
+      <label class="encoding-config__static">
+        <span>Link strength</span>
+        <output>{{ forceLinkStrength.toFixed(2) }}</output>
+        <input type="range" min="0" max="2" step="0.05" :value="forceLinkStrength" aria-label="Link strength" @input="emit('markConfigChange', { linkStrength: Number(($event.target as HTMLInputElement).value) })" />
+      </label>
+      <label class="encoding-config__static">
+        <span>Center attraction</span>
+        <output>{{ forceCenterStrength.toFixed(2) }}</output>
+        <input type="range" min="0" max="1" step="0.01" :value="forceCenterStrength" aria-label="Center attraction" @input="emit('markConfigChange', { centerStrength: Number(($event.target as HTMLInputElement).value) })" />
+      </label>
+      <label class="encoding-config__static">
+        <span>Collision radius</span>
+        <output>{{ Math.round(forceCollisionRadius) }} px</output>
+        <input type="range" min="0" max="40" step="1" :value="forceCollisionRadius" aria-label="Collision radius" @input="emit('markConfigChange', { collisionRadius: Number(($event.target as HTMLInputElement).value) })" />
       </label>
     </section>
 

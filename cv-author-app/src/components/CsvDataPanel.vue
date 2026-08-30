@@ -21,6 +21,8 @@ import case2Csv from "../../../data/case2.csv?raw";
 import case3Csv from "../../../data/case3.csv?raw";
 import academicScoresCsv from "../../../data/academic_scores.csv?raw";
 import treeNodesCsv from "../../../data/tree_nodes.csv?raw";
+import graphNodesCsv from "../../../data/nodes.csv?raw";
+import graphEdgesCsv from "../../../data/edges.csv?raw";
 import { useDatasetStore } from "../stores/useDatasetStore";
 import type {
   ChartDataTransform,
@@ -547,6 +549,13 @@ async function ensurePresetDatasets() {
     if (!datasets.value.some((dataset) => dataset.name === preset.name)) {
       await importDataset(new File([preset.source], preset.name, { type: "text/csv" }));
     }
+  }
+  if (!datasets.value.some((dataset) => dataset.name === "nodes.csv + edges.csv")) {
+    await importGraphDataset(
+      new File([graphNodesCsv], "nodes.csv", { type: "text/csv" }),
+      new File([graphEdgesCsv], "edges.csv", { type: "text/csv" }),
+      "nodes.csv + edges.csv",
+    );
   }
   const preferred = presetDatasets.value.find((dataset) => dataset.name === "case1.csv") ?? presetDatasets.value[0];
   if (preferred) setActiveDataset(preferred.id);

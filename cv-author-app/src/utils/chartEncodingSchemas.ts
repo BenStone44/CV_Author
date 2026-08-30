@@ -174,7 +174,10 @@ export const chartEncodingSchemas = {
     { channel: "color", label: "Color", role: "series", required: false, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Static" },
   ]),
   Icicle: defineSchema("Icicle", "Icicle", "hierarchy", hierarchyChannels),
-  Sunburst: defineSchema("Sunburst", "Sunburst", "hierarchy", hierarchyChannels),
+  Sunburst: defineSchema("Sunburst", "Sunburst", "hierarchy", hierarchyChannels, {
+    coordinateSystem: "Polar",
+    shareableChannels: ["angle", "radius"],
+  }),
   Treemap: defineSchema("Treemap", "Treemap", "hierarchy", hierarchyChannels),
   Dendrogram: defineSchema("Dendrogram", "Dendrogram", "hierarchy", hierarchyChannels),
   RadialDendrogram: defineSchema("RadialDendrogram", "Radial Dendrogram", "hierarchy", [
@@ -222,6 +225,17 @@ export const chartEncodingSchemas = {
   ]),
   Chord: defineSchema("Chord", "Chord", "flow", flowChannels),
   Sankey: defineSchema("Sankey", "Sankey", "flow", flowChannels),
+  ForceDirectedGraph: defineSchema("ForceDirectedGraph", "Force-Directed Graph", "flow", [
+    { channel: "key", label: "Node ID", role: "dimension", required: false, accepts: ["nominal", "ordinal", "temporal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "source", label: "Source", role: "dimension", required: true, accepts: ["nominal", "ordinal", "temporal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "target", label: "Target", role: "dimension", required: true, accepts: ["nominal", "ordinal", "temporal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "value", label: "Link value", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Not bound" },
+    { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" },
+    { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
+  ], {
+    markRole: "node",
+    aggregationPolicy: "forbidden",
+  }),
 } satisfies Record<string, ChartEncodingSchema>;
 
 export type SupportedChartType = keyof typeof chartEncodingSchemas;

@@ -12,6 +12,13 @@ import {
   interpolatePiYG,
   interpolateRainbow,
   line as d3Line,
+  forceCenter,
+  forceCollide,
+  forceLink,
+  forceManyBody,
+  forceX,
+  forceY,
+  forceSimulation,
   linkRadial,
   partition,
   quantileSorted,
@@ -60,6 +67,15 @@ import type { GenericRenderInput } from "./semanticRenderer";
 import { renderLineChart } from "./lineRenderer";
 import { csvRowKey } from "./csvDataEngine";
 import { cartesianAxisEncoding } from "./chartTemplates";
+import {
+  isCategoricalColorMapping,
+  isLinearColorMapping,
+  isLinearSizeMapping,
+  mapColorValue,
+  mapSizeValue,
+  parseVisualValue,
+  visualDomain,
+} from "./visualMapping";
 import {
   createRadialClusterLayout,
   RADIAL_DENDROGRAM_DEFAULT_LEAF_RADIUS,
@@ -583,7 +599,10 @@ function renderHierarchy(input: GenericRenderInput) {
   }
 
   if (type.includes("sunburst")) {
-    const radius = Math.max(1, Math.min(area.width, area.height) / 2);
+    const guide = input.coordinateGuide?.type === "Polar" ? input.coordinateGuide : null;
+    const cx = guide?.origin.x ?? area.x + area.width / 2;
+    const cy = guide?.origin.y ?? area.y + area.height / 2;
+    const radius = Math.max(1, Math.min(area.width, area.height) / 2 * (guide?.radiusScale ?? 1));
     const layoutRoot = partition<Dataset["rows"][number]>().size([Math.PI * 2, radius])(root.sort((a, b) => (b.value ?? 0) - (a.value ?? 0)));
     type Node = ReturnType<typeof layoutRoot.descendants>[number];
     const arc = d3Arc<Node>()
@@ -600,7 +619,11 @@ function renderHierarchy(input: GenericRenderInput) {
       const radiusPosition = (node.y0 + node.y1) / 2;
       return `<text transform="rotate(${angle - 90}) translate(${radiusPosition} 0) rotate(${angle < 180 ? 0 : 180})" dy="0.35em" text-anchor="middle" font-size="10" font-family="sans-serif">${esc(node.id ?? "")}</text>`;
     }).join("") : "";
-    return { content: `<g transform="translate(${area.x + area.width / 2} ${area.y + area.height / 2})" data-chart-id="${esc(input.chartId)}" data-chart-type="sunburst" data-renderer="observable-sunburst@2">${marks}<g pointer-events="none">${labels}</g></g>`, plotArea: area };
+    return {
+      content: `<g transform="translate(${cx} ${cy})" data-chart-id="${esc(input.chartId)}" data-chart-type="sunburst" data-renderer="observable-sunburst@2">${marks}<g pointer-events="none">${labels}</g></g>`,
+      plotArea: { x: cx - radius, y: cy - radius, width: radius * 2, height: radius * 2 },
+      polarArea: { startAngle: 0, angleSpan: 360, innerRadius: 0, outerRadius: radius },
+    };
   }
 
   if (type.includes("icicle")) {
@@ -818,6 +841,112 @@ function flowLinks(input: GenericRenderInput) {
   return Array.from(links.values());
 }
 
+function renderForceDirected(input: GenericRenderInput) {
+  const graph = input.dataset.graph;
+  if (!graph) throw new Error("Force-Directed Graph requires separate nodes and edges tables.");
+  const nodeIdField = input.chartSpec.encodings.key?.field
+    ?? graph.nodes.columns.find((column) => column.name === "id" || column.name === "node_id")?.name
+    ?? graph.nodes.columns[0]?.name;
+  const sourceField = input.chartSpec.encodings.source?.field ?? "source";
+  const targetField = input.chartSpec.encodings.target?.field ?? "target";
+  if (!nodeIdField) throw new Error("Force-Directed Graph requires a node ID column.");
+
+  const area = plotArea(input, 0);
+  const centerX = area.x + area.width / 2;
+  const centerY = area.y + area.height / 2;
+  const forceConfig = sharedConfig(input, "node");
+  const numberConfig = (name: string, fallback: number) => {
+    const value = Number(forceConfig[name]);
+    return Number.isFinite(value) ? value : fallback;
+  };
+  const chargeStrength = Math.min(0, numberConfig("chargeStrength", -120));
+  const linkDistance = Math.max(8, numberConfig("linkDistance", Math.min(area.width, area.height) * 0.18));
+  const linkStrength = Math.max(0, numberConfig("linkStrength", 0.7));
+  const centerStrength = Math.max(0, numberConfig("centerStrength", 0.08));
+  const collisionRadius = Math.max(0, numberConfig("collisionRadius", 10));
+  const nodeRows = graph.nodes.rows.flatMap((row, index) => {
+    const id = (row[nodeIdField] ?? "").trim();
+    return id ? [{ id, row, index, x: centerX, y: centerY }] : [];
+  });
+  const nodeIds = new Set(nodeRows.map((node) => node.id));
+  const links = graph.edges.rows.flatMap((row, index) => {
+    const source = (row[sourceField] ?? "").trim();
+    const target = (row[targetField] ?? "").trim();
+    return source && target && nodeIds.has(source) && nodeIds.has(target)
+      ? [{ source, target, value: numeric(row, input.chartSpec.encodings.value, 1), index }]
+      : [];
+  });
+  const seededNodes = nodeRows.map((node, index) => {
+    const angle = index * Math.PI * (3 - Math.sqrt(5));
+    const distance = Math.min(area.width, area.height) * 0.28 * Math.sqrt((index + 1) / Math.max(nodeRows.length, 1));
+    return { ...node, x: centerX + Math.cos(angle) * distance, y: centerY + Math.sin(angle) * distance };
+  });
+  // d3-force mutates link.source/link.target from ids into node objects. Keep
+  // the original endpoint ids in `links` so the SVG data attributes remain
+  // stable and can still resolve through the node index below.
+  const simulationLinks = links.map((link) => ({ ...link }));
+  const simulation = forceSimulation(seededNodes as any)
+    .force("link", forceLink(simulationLinks as any)
+      .id((node: any) => node.id)
+      .distance(linkDistance)
+      .strength(linkStrength))
+    .force("charge", forceManyBody().strength(chargeStrength))
+    .force("center", forceCenter(centerX, centerY))
+    .force("x", forceX(centerX).strength(centerStrength))
+    .force("y", forceY(centerY).strength(centerStrength))
+    .force("collide", forceCollide(collisionRadius))
+    .stop();
+  for (let tick = 0; tick < 180; tick += 1) simulation.tick();
+
+  const colorEncoding = input.chartSpec.encodings.color;
+  const colorDomain = colorEncoding
+    ? Array.from(new Set(nodeRows.map((node) => node.row[colorEncoding.field] ?? "")))
+    : [];
+  const colors = scaleOrdinal<string, string>().domain(colorDomain).range(tableau);
+  const numericColorDomain = visualDomain(nodeRows.map((node) => node.row), colorEncoding);
+  const colorMapping = forceConfig.colorMapping;
+  const sizeEncoding = input.chartSpec.encodings.size;
+  const sizeDomain = finiteDomain(sizeEncoding
+    ? nodeRows.map((node) => Number(node.row[sizeEncoding.field] ?? ""))
+    : [], [1, 1]);
+  const sizeMapping = isLinearSizeMapping(forceConfig.sizeMapping) ? forceConfig.sizeMapping : null;
+  const radiusFor = (node: typeof nodeRows[number]) => {
+    if (!sizeEncoding) return typeof forceConfig.size === "number" ? Math.max(1, forceConfig.size) : 6;
+    const value = Number(node.row[sizeEncoding.field] ?? "");
+    if (sizeMapping && Number.isFinite(value)) return mapSizeValue(value, sizeDomain, sizeMapping);
+    if (sizeDomain[1] <= sizeDomain[0]) return 6;
+    return scaleLinear().domain(sizeDomain).range([4, 11]).clamp(true)(value);
+  };
+  const nodeById = new Map(seededNodes.map((node) => [node.id, node]));
+  const linkMarks = links.map((link) => {
+    const source = nodeById.get(link.source);
+    const target = nodeById.get(link.target);
+    if (!source || !target) return "";
+    return `<line data-chart-id="${esc(input.chartId)}" data-mark-role="link" data-mark-group-id="mark-group:${esc(input.chartId)}:link" data-source="${esc(link.source)}" data-target="${esc(link.target)}" x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}" stroke="#94a3b8" stroke-opacity="0.55" stroke-width="${Math.max(1, Math.min(4, link.value || 1))}"/>`;
+  }).join("");
+  const nodeMarks = seededNodes.map((node) => {
+    const rawColor = colorEncoding ? node.row[colorEncoding.field] ?? "" : "";
+    const mappedColor = isCategoricalColorMapping(colorMapping)
+      ? colorMapping.values[rawColor]
+      : isLinearColorMapping(colorMapping) && colorEncoding && numericColorDomain
+        ? (() => {
+          const value = parseVisualValue(rawColor, colorEncoding);
+          return value === null ? undefined : mapColorValue(value, numericColorDomain, colorMapping);
+        })()
+        : undefined;
+    const color = mappedColor
+      ?? (colorEncoding ? colors(rawColor) : undefined)
+      ?? (typeof forceConfig.color === "string" ? forceConfig.color : tableau[node.index % tableau.length]!);
+    const radius = radiusFor(node);
+    const label = node.row.label ?? node.id;
+    return `<g data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id)}"><circle cx="${node.x}" cy="${node.y}" r="${radius}" fill="${color}" stroke="#fff" stroke-width="1.5"><title>${esc(String(label))}</title></circle><text x="${node.x + radius + 3}" y="${node.y}" dy="0.35em" font-size="10" fill="currentColor">${esc(String(label))}</text></g>`;
+  }).join("");
+  return {
+    content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="force-directed-graph" data-renderer="observable-force-directed@1">${linkMarks}${nodeMarks}</g>`,
+    plotArea: area,
+  };
+}
+
 function renderChord(input: GenericRenderInput) {
   const links = flowLinks(input);
   const area = plotArea(input, 0);
@@ -894,6 +1023,7 @@ function renderSankey(input: GenericRenderInput) {
 
 export function renderAdvancedChart(input: GenericRenderInput) {
   const type = normalizedType(input.chartSpec.chartType);
+  if (type.includes("forcedirected")) return renderForceDirected(input);
   if (type.includes("area") || type.includes("stream") || type.includes("horizon")) return renderArea(input);
   if (type.includes("parallel")) return renderParallel(input);
   if (["icicle", "sunburst", "treemap", "dendrogram"].some((name) => type.includes(name))) return renderHierarchy(input);
