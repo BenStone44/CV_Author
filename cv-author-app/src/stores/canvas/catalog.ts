@@ -36,6 +36,11 @@ const defaultDataTemplateDefinitions = [
   { id: "builtin-template:pie", name: "Pie Chart", chartType: "PieChart", coordinateSystem: "Polar" },
   { id: "builtin-template:donut", name: "Donut", chartType: "DonutChart", coordinateSystem: "Polar" },
   { id: "builtin-template:radial-bar-chart", name: "Radial Bar Chart", chartType: "RadialBarChart", coordinateSystem: "Polar" },
+  { id: "builtin-template:icicle", name: "Icicle", chartType: "Icicle", coordinateSystem: "CoordinateFree" },
+  { id: "builtin-template:sunburst", name: "Sunburst", chartType: "Sunburst", coordinateSystem: "CoordinateFree" },
+  { id: "builtin-template:treemap", name: "Treemap", chartType: "Treemap", coordinateSystem: "CoordinateFree" },
+  { id: "builtin-template:dendrogram", name: "Dendrogram", chartType: "Dendrogram", coordinateSystem: "CoordinateFree" },
+  { id: "builtin-template:radial-dendrogram", name: "Radial Dendrogram", chartType: "RadialDendrogram", coordinateSystem: "Polar" },
 ] satisfies Array<Omit<SvgCandidate, "src" | "svgMarkup">>;
 
 export const implementedTemplateDefinitions: SvgCandidate[] = ([

@@ -188,6 +188,14 @@ export type DatasetTable = {
   rows: DataRow[];
 };
 
+export type GraphTableName = "nodes" | "edges";
+
+export type GraphFieldRef = {
+  table: GraphTableName;
+  field: string;
+  type: DataColumnType;
+};
+
 export type GraphTables = {
   nodes: DatasetTable;
   edges: DatasetTable;

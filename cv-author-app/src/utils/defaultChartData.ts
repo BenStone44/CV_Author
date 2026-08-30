@@ -7,13 +7,20 @@ import type {
 } from "../types";
 import Papa from "papaparse";
 import defaultChartDataCsv from "../../../data/default_chart_data.csv?raw";
+import defaultTreeDataCsv from "../../../data/tree_nodes.csv?raw";
 import { getChartTemplateContract, normalizeChartTemplate } from "./chartTemplates";
 import { prepareChartData } from "./chartDataPipeline";
 import { renderDeterministicChart } from "./semanticRenderer";
 
 export const DEFAULT_CHART_DATASET_ID = "builtin:default-cartesian-data";
+export const DEFAULT_TREE_DATASET_ID = "builtin:default-tree-data";
 
 const defaultRows = Papa.parse<Record<string, string>>(defaultChartDataCsv, {
+  header: true,
+  skipEmptyLines: "greedy",
+}).data;
+
+const defaultTreeRows = Papa.parse<Record<string, string>>(defaultTreeDataCsv, {
   header: true,
   skipEmptyLines: "greedy",
 }).data;
@@ -39,6 +46,25 @@ export const defaultChartDataset: Dataset = {
   primaryKey: ["column", "group"],
 };
 
+/** A shared parent-linked hierarchy used by every built-in tree template. */
+export const defaultTreeDataset: Dataset = {
+  id: DEFAULT_TREE_DATASET_ID,
+  name: "Default tree data",
+  columns: [
+    { name: "node_id", type: "nominal" },
+    { name: "parent_id", type: "nominal" },
+    { name: "label", type: "nominal" },
+    { name: "weight", type: "quantitative" },
+    { name: "metric_1", type: "quantitative" },
+    { name: "metric_2", type: "quantitative" },
+    { name: "metric_3", type: "quantitative" },
+    { name: "metric_4", type: "quantitative" },
+    { name: "metric_5", type: "quantitative" },
+  ],
+  rows: defaultTreeRows,
+  primaryKey: ["node_id"],
+};
+
 function groupFilter(): ChartDataTransform[] {
   return [{
     id: "builtin-default:group-alpha",
@@ -59,17 +85,25 @@ export function supportsDefaultChartData(chartType: string) {
     || family === "scatter"
     || family === "matrix"
     || family === "pie"
-    || family === "donut";
+    || family === "donut"
+    || family === "hierarchy";
+}
+
+export function defaultDatasetForChartType(chartType: string): Dataset {
+  return normalizeChartTemplate(chartType) === "hierarchy"
+    ? defaultTreeDataset
+    : defaultChartDataset;
 }
 
 export function isDefaultChartDataSpec(spec: ChartSpec | null | undefined) {
-  return spec?.datasetId === DEFAULT_CHART_DATASET_ID;
+  return spec?.datasetId === DEFAULT_CHART_DATASET_ID
+    || spec?.datasetId === DEFAULT_TREE_DATASET_ID;
 }
 
 /** Start a real-data binding while retaining only chart-local appearance. */
 export function replaceDefaultDataBinding(spec: ChartSpec, datasetId: string): ChartSpec {
   if ((!isDefaultChartDataSpec(spec) && spec.defaultDataBinding !== true)
-    || datasetId === DEFAULT_CHART_DATASET_ID) return spec;
+    || datasetId === defaultDatasetForChartType(spec.chartType).id) return spec;
   return {
     chartType: spec.chartType,
     templateId: spec.templateId ?? normalizeChartTemplate(spec.chartType) ?? undefined,
@@ -96,6 +130,18 @@ export function createDefaultChartSpec(chartType: string): ChartSpec | null {
     datasetId: DEFAULT_CHART_DATASET_ID,
     encodings: {},
   };
+
+  if (family === "hierarchy") {
+    return {
+      ...base,
+      datasetId: DEFAULT_TREE_DATASET_ID,
+      encodings: {
+        key: { field: "node_id", type: "nominal" },
+        parent: { field: "parent_id", type: "nominal" },
+        value: { field: "weight", type: "quantitative" },
+      },
+    };
+  }
 
   if (family === "scatter") {
     return {
@@ -201,9 +247,10 @@ export function renderDefaultChartSvg(chartType: string, width = 320, height = 1
         origin: { x: width / 2, y: height / 2 },
       }
       : null;
+  const defaultDataset = defaultDatasetForChartType(chartType);
   const prepared = prepareChartData(
     `default-preview-${chartType}`,
-    defaultChartDataset,
+    defaultDataset,
     chartSpec,
   );
   const result = renderDeterministicChart({
@@ -216,7 +263,7 @@ export function renderDefaultChartSvg(chartType: string, width = 320, height = 1
     chartSpec: prepared.chartSpec,
     dataset: prepared.dataset,
   });
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" data-default-dataset-id="${DEFAULT_CHART_DATASET_ID}">${result.content}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" data-default-dataset-id="${defaultDataset.id}">${result.content}</svg>`;
 }
 
 export function createDefaultDataCandidate(

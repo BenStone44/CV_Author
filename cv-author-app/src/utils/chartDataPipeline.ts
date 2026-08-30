@@ -45,6 +45,18 @@ export function filterDatasetForChart(dataset: Dataset, spec: ChartSpec): Datase
   };
 }
 
+/** Select the graph table consumed by a chart while preserving graph lineage. */
+export function materializeGraphDataset(dataset: Dataset, spec: ChartSpec): Dataset {
+  if (!dataset.graph) return dataset;
+  const template = normalizeChartTemplate(spec.chartType);
+  const table = template === "flow" ? dataset.graph.edges : dataset.graph.nodes;
+  return {
+    ...dataset,
+    columns: table.columns,
+    rows: table.rows,
+  };
+}
+
 function normalizePositiveInteger(value: number | undefined) {
   if (!Number.isFinite(value) || value === undefined || value <= 0) return null;
   return Math.max(1, Math.floor(value));
@@ -279,7 +291,8 @@ export function prepareChartData(
   sourceDataset: Dataset,
   spec: ChartSpec,
 ) {
-  const filteredDataset = filterDatasetForChart(sourceDataset, spec);
+  const chartDataset = materializeGraphDataset(sourceDataset, spec);
+  const filteredDataset = filterDatasetForChart(chartDataset, spec);
   const transformedDataset = materializeChartDataTransforms(filteredDataset, spec.dataTransforms);
   const materialized = materializeCsvValueSeries(transformedDataset, spec);
   const dataset = materializeNumericBins(materialized.dataset, spec);

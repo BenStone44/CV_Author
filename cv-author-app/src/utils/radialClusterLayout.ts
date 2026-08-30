@@ -6,10 +6,14 @@ export type RadialClusterNode = HierarchyNode<Dataset["rows"][number]> & {
   y: number;
 };
 
+/** Local template units; the canvas transform scales these with the chart. */
+export const RADIAL_DENDROGRAM_DEFAULT_LEAF_RADIUS = 68;
+export const RADIAL_DENDROGRAM_SELECTION_PADDING = 8;
+
 type RadialClusterLayoutOptions = {
   keyField: string;
   parentField: string;
-  orderField: string;
+  orderField?: string;
   startAngle: number;
   angleSpan: number;
   innerRadius: number;
@@ -32,8 +36,8 @@ export function createRadialClusterLayout(
     .id((row) => row[options.keyField] ?? "")
     .parentId((row) => row[options.parentField] || null)(normalized)
     .sort((left, right) => {
-      const leftName = left.data[options.orderField] || left.id || "";
-      const rightName = right.data[options.orderField] || right.id || "";
+      const leftName = options.orderField ? left.data[options.orderField] || left.id || "" : left.id || "";
+      const rightName = options.orderField ? right.data[options.orderField] || right.id || "" : right.id || "";
       return leftName.localeCompare(rightName, "en", { numeric: true });
     });
   const radiusSpan = Math.max(0, options.outerRadius - options.innerRadius);

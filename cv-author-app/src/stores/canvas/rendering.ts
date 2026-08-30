@@ -483,7 +483,9 @@ export function useCanvasRendering(context: any) {
       return;
     }
     const renderingInputSpec = fallbackChartSpec ?? chartSpec;
-    const renderDataset = fallbackChartSpec ? defaultChartDataset : sourceDataset;
+    const renderDataset = fallbackChartSpec
+      ? getDataset(renderingInputSpec.datasetId) ?? defaultChartDataset
+      : sourceDataset;
     if (!renderDataset) {
       node.renderedContent = null;
       node.chartSpec = {

@@ -18,16 +18,21 @@ const polar: CoordinateGuide = {
   origin: { x: 250, y: 150 },
 };
 
-function render(chartType: string, dataset: Dataset, chartSpec: Omit<ChartSpec, "chartType" | "datasetId">) {
+function render(
+  chartType: string,
+  dataset: Dataset,
+  chartSpec: Omit<ChartSpec, "chartType" | "datasetId">,
+  coordinateGuide?: CoordinateGuide,
+) {
   return renderDeterministicChart({
     chartId: chartType,
     width: 500,
     height: 300,
     minX: 0,
     minY: 0,
-    coordinateGuide: getChartTemplateContract(chartType)?.coordinateSystem === "Cartesian"
+    coordinateGuide: coordinateGuide ?? (getChartTemplateContract(chartType)?.coordinateSystem === "Cartesian"
       ? cartesian
-      : getChartTemplateContract(chartType)?.coordinateSystem === "Polar" ? polar : null,
+      : getChartTemplateContract(chartType)?.coordinateSystem === "Polar" ? polar : null),
     chartSpec: { chartType, datasetId: dataset.id, ...chartSpec },
     dataset,
   });
@@ -136,7 +141,9 @@ describe("advanced chart cards", () => {
       expect(card.svgMarkup).toContain("<svg");
     });
     const radialCluster = advancedTemplateDefinitions.find((card) => card.chartType === "RadialDendrogram");
-    expect(radialCluster?.svgMarkup).toContain('data-renderer="observable-radial-cluster@2"');
+    expect(radialCluster?.svgMarkup).toContain('data-renderer="observable-radial-cluster@3"');
+    expect(radialCluster?.svgMarkup).toContain('data-leaf-radius="68"');
+    expect(radialCluster?.svgMarkup).toContain('data-selection-radius="76"');
     expect(radialCluster?.svgMarkup).toContain('stroke-opacity="0.4"');
     expect(radialCluster?.svgMarkup).toContain('fill="#555"');
     expect(radialCluster?.svgMarkup).toContain('fill="#999"');
@@ -434,7 +441,7 @@ describe("advanced chart cards", () => {
     });
 
     expect(dendrogram.content).toContain('data-chart-type="radial-dendrogram"');
-    expect(dendrogram.content).toContain('data-renderer="observable-radial-cluster@2"');
+    expect(dendrogram.content).toContain('data-renderer="observable-radial-cluster@3"');
     expect(dendrogram.content).toContain('fill="#555"');
     expect(dendrogram.content).toContain('fill="#999"');
     expect(dendrogram.content.match(/data-mark-role="node"/g)).toHaveLength(5);
@@ -458,6 +465,32 @@ describe("advanced chart cards", () => {
     });
     expect(mappedTheta.content).toContain('data-theta-mode="mapped"');
     expect(mappedTheta.content).toContain('data-theta-value="3"');
+  });
+
+  it("fits a radial dendrogram to the polar angle span and configured leaf radius", () => {
+    const dendrogram = render("RadialDendrogram", radialHierarchyDataset, {
+      encodings: {
+        key: { field: "id", type: "nominal" },
+        parent: { field: "parent", type: "nominal" },
+        theta: { field: "leaf", type: "nominal" },
+      },
+      markGroups: [{
+        id: "mark-group:radial:node",
+        chartId: "radial",
+        role: "node",
+        memberKeys: [],
+        sharedConfig: { leafRadius: 54 },
+      }],
+    }, {
+      type: "Polar",
+      origin: { x: 160, y: 90 },
+      angleSpan: 120,
+    });
+
+    expect(dendrogram.content).toContain('data-angle-span="120"');
+    expect(dendrogram.content).toContain('data-leaf-radius="54"');
+    expect(dendrogram.content).toContain('data-selection-radius="62"');
+    expect(dendrogram.polarArea).toMatchObject({ angleSpan: 120, outerRadius: 54 });
   });
 
   it("renders calendar and box plot marks", () => {

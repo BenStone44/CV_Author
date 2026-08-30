@@ -7,6 +7,7 @@ import type {
   ChartSpec,
 } from "../types";
 import { getChartEncodingSchema } from "./chartEncodingSchemas";
+import { RADIAL_DENDROGRAM_SELECTION_PADDING } from "./radialClusterLayout";
 
 export function clamp(value: number, min: number, max: number) {
   if (max < min) return min;
@@ -117,6 +118,31 @@ export type PolarOccupiedGeometry = {
   bounds: Bounds;
   path: string;
 };
+
+/** Selection-only polar outline, kept outside the chart's true occupied area. */
+export function getPolarSelectionGeometry(node: CanvasNode): PolarOccupiedGeometry | null {
+  const geometry = getPolarOccupiedGeometry(node);
+  if (!geometry) return null;
+  const chartType = node.chartSpec?.chartType.replace(/[\s_-]/g, "").toLowerCase();
+  if (chartType !== "radialdendrogram") return geometry;
+  const padding = RADIAL_DENDROGRAM_SELECTION_PADDING;
+  const outerRadius = geometry.outerRadius + padding;
+  const points = [geometry.startAngle, geometry.endAngle, 0, 90, 180, 270]
+    .filter((angle, index, values) => angleWithinClockwiseSpan(angle, geometry.startAngle, geometry.angleSpan)
+      && values.indexOf(angle) === index)
+    .map((angle) => polarPoint(geometry.origin, outerRadius, angle));
+  if (geometry.innerRadius <= 0) points.push(geometry.origin);
+  const minX = Math.min(...points.map((point) => point.x));
+  const minY = Math.min(...points.map((point) => point.y));
+  const maxX = Math.max(...points.map((point) => point.x));
+  const maxY = Math.max(...points.map((point) => point.y));
+  return {
+    ...geometry,
+    outerRadius,
+    bounds: { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY },
+    path: polarOccupiedPath(geometry.origin, geometry.innerRadius, outerRadius, geometry.startAngle, geometry.angleSpan),
+  };
+}
 
 function polarPoint(origin: Point, radius: number, angle: number): Point {
   const radians = angle * Math.PI / 180;

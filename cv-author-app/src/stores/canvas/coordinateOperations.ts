@@ -1,6 +1,7 @@
 import { computed, nextTick } from "vue";
 import type { Bounds, CanvasGroupNode, CanvasNode, ChartEncodingChannel, CoordinateChannel, CoordinateSystemSpec, DataBindingDropZone, Point } from "../../types";
 import type { CsvColumnDragPayload } from "../../utils/csvColumnDrag";
+import { materializeGraphDataset } from "../../utils/chartDataPipeline";
 import type { Matrix } from "./coordinates";
 
 export function useCanvasCoordinateOperations(context: any) {
@@ -795,10 +796,16 @@ export function useCanvasCoordinateOperations(context: any) {
       const inputSpec = isDefaultChartDataSpec(spec) || spec.defaultDataBinding === true
         ? replaceDefaultDataBinding(spec, payload.datasetId)
         : spec;
-      const dataset = getDataset(inputSpec.datasetId);
+      const sourceDataset = getDataset(inputSpec.datasetId);
+      const dataset = sourceDataset ? materializeGraphDataset(sourceDataset, inputSpec) : null;
       const column = dataset?.columns.find((item) => item.name === payload.field);
       const itemBinding = barItemAxisBinding(node);
-      if (inputSpec.datasetId === payload.datasetId && column?.type === payload.type && itemBinding) {
+      const expectedTable = sourceDataset?.graph
+        ? normalizeChartTemplate(inputSpec.chartType) === "flow" ? "edges" : "nodes"
+        : undefined;
+      if (inputSpec.datasetId === payload.datasetId
+        && (!payload.table || !expectedTable || payload.table === expectedTable)
+        && column?.type === payload.type && itemBinding) {
         const bounds = seriesItemDropBounds(node);
         if (pointInBounds(point, bounds)) {
           const categoricalFields = seriesItemCategoricalFields(inputSpec);
@@ -839,6 +846,7 @@ export function useCanvasCoordinateOperations(context: any) {
       if (!guide || nearestDistance < 0) return;
       const accepts = (channel: ChartEncodingChannel) => {
         if (inputSpec.datasetId !== payload.datasetId || !dataset || !column || column.type !== payload.type) return false;
+        if (payload.table && expectedTable && payload.table !== expectedTable) return false;
         const logicalChannel = logicalAxisChannel(node, channel);
         if (logicalChannel === "y" && (inputSpec.valueFields?.length ?? 0) > 0) return false;
         return inferColumnIntents(dataset, inputSpec, column, {
@@ -932,9 +940,14 @@ export function useCanvasCoordinateOperations(context: any) {
     const bodyTarget = [...getSelectionScopeNodes()].reverse().find((node) => {
       const spec = node.chartSpec;
       if (!spec || spec.datasetId !== payload.datasetId || !hasRequiredChartEncodings(spec)) return false;
-      const dataset = getDataset(spec.datasetId);
+      const sourceDataset = getDataset(spec.datasetId);
+      const dataset = sourceDataset ? materializeGraphDataset(sourceDataset, spec) : null;
       const column = dataset?.columns.find((item) => item.name === payload.field);
-      if (!column || column.type !== payload.type) return false;
+      const expectedTable = sourceDataset?.graph
+        ? normalizeChartTemplate(spec.chartType) === "flow" ? "edges" : "nodes"
+        : undefined;
+      if (!column || column.type !== payload.type
+        || (payload.table && expectedTable && payload.table !== expectedTable)) return false;
       const boundFields = new Set([
         ...Object.values(spec.encodings).flatMap((encoding) => encoding ? [encoding.field] : []),
         ...(spec.seriesFields?.map((encoding) => encoding.field) ?? []),
@@ -948,7 +961,8 @@ export function useCanvasCoordinateOperations(context: any) {
         && local.y >= minY && local.y <= minY + node.height;
     });
     if (!bodyTarget?.chartSpec) return null;
-    const dataset = getDataset(bodyTarget.chartSpec.datasetId);
+    const sourceDataset = getDataset(bodyTarget.chartSpec.datasetId);
+    const dataset = sourceDataset ? materializeGraphDataset(sourceDataset, bodyTarget.chartSpec) : null;
     const column = dataset?.columns.find((item) => item.name === payload.field);
     if (!dataset || !column) return null;
     const analysis = inferColumnIntents(dataset, bodyTarget.chartSpec, column, { type: "chart-body" });

@@ -1,7 +1,12 @@
 import { linkRadial } from "d3";
 import type { Dataset, SvgCandidate } from "../types";
 import { renderDefaultChartSvg } from "./defaultChartData";
-import { createRadialClusterLayout, type RadialClusterNode } from "./radialClusterLayout";
+import {
+  createRadialClusterLayout,
+  RADIAL_DENDROGRAM_DEFAULT_LEAF_RADIUS,
+  RADIAL_DENDROGRAM_SELECTION_PADDING,
+  type RadialClusterNode,
+} from "./radialClusterLayout";
 
 const frame = (content: string, viewBox = "0 0 320 180") => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" font-family="sans-serif">${content}</svg>`;
 const axis = `<g fill="none" stroke="#111" stroke-width="1"><path d="M28 18V152H304"/></g>`;
@@ -41,6 +46,8 @@ function radialClusterTemplateSvg() {
   };
   const cx = 160;
   const cy = 90;
+  const leafRadius = RADIAL_DENDROGRAM_DEFAULT_LEAF_RADIUS;
+  const selectionRadius = leafRadius + RADIAL_DENDROGRAM_SELECTION_PADDING;
   const radial = createRadialClusterLayout(dataset, {
     keyField: "id",
     parentField: "parent",
@@ -48,7 +55,7 @@ function radialClusterTemplateSvg() {
     startAngle: Math.PI / 2,
     angleSpan: Math.PI * 2,
     innerRadius: 0,
-    outerRadius: 68,
+    outerRadius: leafRadius,
   });
   const nodes = radial.root.descendants().filter(radial.visible) as RadialClusterNode[];
   const radialLink = linkRadial<any, RadialClusterNode>()
@@ -68,7 +75,7 @@ function radialClusterTemplateSvg() {
     const labelOnOutside = !onLeft === !node.children;
     return `<text transform="rotate(${rotation}) translate(${node.y},0) rotate(${onLeft ? 180 : 0})" dy="0.31em" x="${labelOnOutside ? 6 : -6}" text-anchor="${labelOnOutside ? "start" : "end"}">${node.id ?? ""}</text>`;
   }).join("");
-  return frame(`<g transform="translate(${cx} ${cy})" data-renderer="observable-radial-cluster@2"><g fill="none" stroke="#555" stroke-opacity="0.4" stroke-width="1.5">${links}</g><g>${marks}</g><g stroke-linejoin="round" stroke-width="3" paint-order="stroke" stroke="white" fill="currentColor" font-size="8">${labels}</g></g>`);
+  return frame(`<g transform="translate(${cx} ${cy})" data-renderer="observable-radial-cluster@3" data-angle-span="360" data-leaf-radius="${leafRadius}" data-selection-radius="${selectionRadius}"><g fill="none" stroke="#555" stroke-opacity="0.4" stroke-width="1.5">${links}</g><g>${marks}</g><g stroke-linejoin="round" stroke-width="3" paint-order="stroke" stroke="white" fill="currentColor" font-size="8">${labels}</g></g>`);
 }
 
 export const advancedTemplateSvgs = {

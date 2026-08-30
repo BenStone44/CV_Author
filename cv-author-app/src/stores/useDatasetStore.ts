@@ -14,7 +14,9 @@ import type {
 import { inferCsvPrimaryKey } from "../utils/csvDataEngine";
 import {
   DEFAULT_CHART_DATASET_ID,
+  DEFAULT_TREE_DATASET_ID,
   defaultChartDataset,
+  defaultTreeDataset,
 } from "../utils/defaultChartData";
 
 type ParsedCsv = {
@@ -76,6 +78,28 @@ function parseFile(file: File) {
       error: reject,
     });
   });
+}
+
+function parsedCsvToTable(result: ParsedCsv): DatasetTable {
+  const parsedRows = result.data.map((row) =>
+    row.map((cell) => (cell == null ? "" : String(cell))),
+  );
+  const columnCount = parsedRows.reduce(
+    (maximum, row) => Math.max(maximum, row.length),
+    0,
+  );
+  if (parsedRows.length === 0 || columnCount === 0) {
+    throw new Error("The CSV file is empty.");
+  }
+  const headers = normalizeHeaders(parsedRows[0] ?? [], columnCount);
+  const rows: DataRow[] = parsedRows.slice(1).map((row) =>
+    Object.fromEntries(headers.map((header, index) => [header, row[index] ?? ""])),
+  );
+  const columns = headers.map((name) => ({
+    name,
+    type: inferColumnType(rows.map((row) => row[name] ?? "")),
+  } satisfies DataColumn));
+  return { columns, rows };
 }
 
 function jsonValueToString(value: unknown) {
@@ -215,6 +239,39 @@ export function parseGraphDataset(source: string, name = "graph.json"): Dataset 
   };
 }
 
+/** Build one graph dataset from separate node and edge CSV files. */
+async function importGraphDataset(nodeFile: File, edgeFile: File, name = "graph") {
+  isLoading.value = true;
+  parseError.value = "";
+  parseWarning.value = "";
+  try {
+    const [nodeResult, edgeResult] = await Promise.all([parseFile(nodeFile), parseFile(edgeFile)]);
+    const graph: GraphTables = {
+      nodes: parsedCsvToTable(nodeResult),
+      edges: parsedCsvToTable(edgeResult),
+    };
+    const dataset: Dataset = {
+      id: `dataset:${crypto.randomUUID()}`,
+      name,
+      columns: [],
+      rows: [],
+      graph,
+    };
+    datasets.value = [...datasets.value, dataset];
+    activeDatasetId.value = dataset.id;
+    const warningCount = nodeResult.errors.length + edgeResult.errors.length;
+    parseWarning.value = warningCount > 0
+      ? `${warningCount} parsing warning${warningCount === 1 ? "" : "s"}`
+      : "";
+    return dataset;
+  } catch (error) {
+    parseError.value = error instanceof Error ? error.message : "Unable to read graph CSV files.";
+    return null;
+  } finally {
+    isLoading.value = false;
+  }
+}
+
 async function importDataset(file: File) {
   const extension = file.name.toLowerCase().split(".").pop();
   if (extension !== "csv" && extension !== "json") {
@@ -233,33 +290,12 @@ async function importDataset(file: File) {
       return dataset;
     }
     const result = await parseFile(file);
-    const parsedRows = result.data.map((row) =>
-      row.map((cell) => (cell == null ? "" : String(cell))),
-    );
-    const columnCount = parsedRows.reduce(
-      (maximum, row) => Math.max(maximum, row.length),
-      0,
-    );
-    if (parsedRows.length === 0 || columnCount === 0) {
-      parseError.value = "The CSV file is empty.";
-      return null;
-    }
-
-    const headers = normalizeHeaders(parsedRows[0] ?? [], columnCount);
-    const rows: DataRow[] = parsedRows.slice(1).map((row) =>
-      Object.fromEntries(
-        headers.map((header, index) => [header, row[index] ?? ""]),
-      ),
-    );
-    const columns = headers.map((name) => ({
-      name,
-      type: inferColumnType(rows.map((row) => row[name] ?? "")),
-    } satisfies DataColumn));
+    const table = parsedCsvToTable(result);
     const parsedDataset: Dataset = {
       id: `dataset:${crypto.randomUUID()}`,
       name: file.name,
-      columns,
-      rows,
+      columns: table.columns,
+      rows: table.rows,
     };
     const dataset = { ...parsedDataset, primaryKey: inferCsvPrimaryKey(parsedDataset) };
     datasets.value = [...datasets.value, dataset];
@@ -289,6 +325,7 @@ function clearActiveDataset() {
 
 function getDataset(datasetId: string) {
   if (datasetId === DEFAULT_CHART_DATASET_ID) return defaultChartDataset;
+  if (datasetId === DEFAULT_TREE_DATASET_ID) return defaultTreeDataset;
   return datasets.value.find((dataset) => dataset.id === datasetId) ?? null;
 }
 
@@ -339,6 +376,7 @@ export function useDatasetStore() {
     parseWarning,
     isLoading,
     importDataset,
+    importGraphDataset,
     geometrySources,
     activeGeometrySource,
     activeGeometrySourceId,

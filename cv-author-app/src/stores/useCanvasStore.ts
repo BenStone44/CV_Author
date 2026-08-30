@@ -97,6 +97,7 @@ import {
   cloneChartSpec,
   getNodeSelectionBounds,
   getPolarOccupiedGeometry,
+  getPolarSelectionGeometry,
   getLeafNodeTransform,
   getNodeTransform,
 } from "../utils/canvasUtils";
@@ -110,7 +111,7 @@ import {
   normalizeChartTemplate,
 } from "../utils/chartTemplates";
 export { getDimensionChartUpgradeOptions } from "../utils/chartTemplates";
-import { prepareChartData, rowMatchesChartFilters } from "../utils/chartDataPipeline";
+import { materializeGraphDataset, prepareChartData, rowMatchesChartFilters } from "../utils/chartDataPipeline";
 import { materializeChartDataTransforms } from "../utils/chartDataTransforms";
 import { csvRowKey } from "../utils/csvDataEngine";
 import {
@@ -894,7 +895,10 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const datasetId = chartNode?.chartSpec?.datasetId;
     const dataset = datasetId ? getDataset(datasetId) : activeDataset.value;
     return dataset && chartNode?.chartSpec
-      ? materializeChartDataTransforms(dataset, chartNode.chartSpec.dataTransforms)
+      ? materializeChartDataTransforms(
+        materializeGraphDataset(dataset, chartNode.chartSpec),
+        chartNode.chartSpec.dataTransforms,
+      )
       : dataset;
   });
   const axisBindingColumns = computed(() => axisBindingDataset.value?.columns ?? []);
@@ -1130,7 +1134,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     });
     if (nodes.length !== selectedIds.value.length) return [];
     const outlines = nodes.flatMap((node) => {
-      const geometry = getPolarOccupiedGeometry(node);
+      const geometry = getPolarSelectionGeometry(node);
       if (!geometry) return [];
       return [{
         key: node.id,

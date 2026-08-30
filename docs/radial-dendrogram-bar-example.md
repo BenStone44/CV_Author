@@ -8,7 +8,7 @@ Import `data/radial_dendrogram_bars.csv` and create the two Polar templates with
 | --- | --- | --- |
 | Radial Dendrogram | Node ID | `node_id` |
 | Radial Dendrogram | Parent ID | `parent_id` |
-| Radial Dendrogram | Leaf order | `leaf_id` |
+| Radial Dendrogram | Leaf order (optional) | `leaf_id` |
 | Radial Bar Chart | Node ID | `node_id` |
 | Radial Bar Chart | Parent ID | `parent_id` |
 | Radial Bar Chart | Leaf | `leaf_id` |
@@ -18,3 +18,8 @@ Import `data/radial_dendrogram_bars.csv` and create the two Polar templates with
 Rows with an empty `leaf_id` are internal hierarchy nodes. Rows with a `leaf_id` are leaves and contain one numeric `value`, so every dendrogram leaf has exactly one radial bar.
 
 Place the Radial Bar Chart outside the Radial Dendrogram with radial concat. Both templates use the same D3 radial-cluster layout and expose `leaf_id` through the shared angle channel, so each bar center uses the exact angle of its hierarchy leaf. Keep the dendrogram as the inner member and the bars as the outer member.
+
+The Radial Dendrogram follows the active Polar guide's angle span and offset.
+Its node mark configuration accepts `leafRadius` in chart-local units. The
+selection outline is rendered 8 units outside that radius, while coordinate
+controls and radial concat continue to use the actual leaf radius.

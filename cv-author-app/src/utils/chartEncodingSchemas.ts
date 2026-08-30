@@ -107,6 +107,7 @@ const hierarchyChannels: ChartEncodingChannelSchema[] = [
   { channel: "parent", label: "Parent ID", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
   { channel: "value", label: "Node value", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Not bound" },
   { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "quantitative"], emptyLabel: "Static" },
+  { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
 ];
 const flowChannels: ChartEncodingChannelSchema[] = [
   { channel: "source", label: "Source", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
@@ -179,9 +180,14 @@ export const chartEncodingSchemas = {
   RadialDendrogram: defineSchema("RadialDendrogram", "Radial Dendrogram", "hierarchy", [
     { channel: "key", label: "Node ID", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
     { channel: "parent", label: "Parent ID", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
-    { channel: "theta", label: "Leaf order", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+    // Leaf order is an optional refinement. A regular tree CSV only needs
+    // node_id and parent_id; the renderer falls back to Node ID ordering.
+    { channel: "theta", label: "Leaf order", role: "dimension", required: false, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Static" },
+    { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "quantitative"], emptyLabel: "Static" },
+    { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
   ], {
     coordinateSystem: "Polar",
+    rendererVersion: 3,
     shareableChannels: ["angle", "radius"],
   }),
   RadialBarChart: defineSchema("RadialBarChart", "Radial Bar Chart", "bar", [

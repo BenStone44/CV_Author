@@ -30,6 +30,7 @@ import type {
   SvgCandidate,
 } from "../types";
 import { materializeChartDataTransforms } from "../utils/chartDataTransforms";
+import { materializeGraphDataset } from "../utils/chartDataPipeline";
 import {
   useCanvasStore,
   coordinateOptions,
@@ -380,7 +381,10 @@ const axisBindingRows = computed(() => {
   const datasetId = axisBindingNode.value?.chartSpec?.datasetId;
   const dataset = datasetId ? getDataset(datasetId) : activeDataset.value;
   return dataset && axisBindingNode.value?.chartSpec
-    ? materializeChartDataTransforms(dataset, axisBindingNode.value.chartSpec.dataTransforms).rows
+    ? materializeChartDataTransforms(
+      materializeGraphDataset(dataset, axisBindingNode.value.chartSpec),
+      axisBindingNode.value.chartSpec.dataTransforms,
+    ).rows
     : dataset?.rows ?? [];
 });
 
@@ -409,7 +413,10 @@ function findFirstChartNodeInTree(nodes: CanvasNode[]): CanvasNode | null {
 function encodingDatasetFor(node: CanvasNode) {
   const dataset = node.chartSpec ? getDataset(node.chartSpec.datasetId) : null;
   return dataset && node.chartSpec
-    ? materializeChartDataTransforms(dataset, node.chartSpec.dataTransforms)
+    ? materializeChartDataTransforms(
+      materializeGraphDataset(dataset, node.chartSpec),
+      node.chartSpec.dataTransforms,
+    )
     : null;
 }
 

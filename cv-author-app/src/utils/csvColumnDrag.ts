@@ -6,6 +6,8 @@ export type CsvColumnDragPayload = {
   datasetId: string;
   field: string;
   type: DataColumnType;
+  /** Source table for graph datasets; omitted for a regular wide table. */
+  table?: "nodes" | "edges";
 };
 
 let activeCsvColumnDragPayload: CsvColumnDragPayload | null = null;
@@ -23,7 +25,8 @@ export function decodeCsvColumnDragPayload(value: string | null | undefined): Cs
       || typeof parsed.field !== "string" || !parsed.field
       || (parsed.type !== "nominal" && parsed.type !== "ordinal" && parsed.type !== "temporal" && parsed.type !== "quantitative")
     ) return null;
-    return { datasetId: parsed.datasetId, field: parsed.field, type: parsed.type };
+    const table = parsed.table === "nodes" || parsed.table === "edges" ? parsed.table : undefined;
+    return { datasetId: parsed.datasetId, field: parsed.field, type: parsed.type, ...(table ? { table } : {}) };
   } catch {
     return null;
   }

@@ -19,6 +19,7 @@ import {
 import { renderAdvancedChart } from "./advancedRenderer";
 import { csvRowKey } from "./csvDataEngine";
 import { chartAxisLabelsVisible, chartAxisVisible } from "./chartAxes";
+import { materializeGraphDataset } from "./chartDataPipeline";
 
 const POLAR_CONCAT_SEAM_RATIO = 0.06;
 
@@ -1002,7 +1003,10 @@ export function renderDeterministicChart(input: GenericRenderInput) {
   const pipeline = deterministicChartPipelines[schema.renderer];
   const coordinateSystem = schema.coordinateSystem ?? pipeline.coordinateSystem;
   if (coordinateSystem !== "CoordinateFree") requireCoordinateGuide(input, coordinateSystem);
-  return pipeline.render(input);
+  return pipeline.render({
+    ...input,
+    dataset: materializeGraphDataset(input.dataset, input.chartSpec),
+  });
 }
 
 export function renderLayerChart(input: LineRenderInput & { layerSpec: LayerSpec; childCharts?: ChartSpec[] }) {

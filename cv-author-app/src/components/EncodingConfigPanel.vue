@@ -41,6 +41,7 @@ import {
   decodeCsvColumnDragPayload,
   getActiveCsvColumnDrag,
 } from "../utils/csvColumnDrag";
+import { RADIAL_DENDROGRAM_DEFAULT_LEAF_RADIUS } from "../utils/radialClusterLayout";
 
 const props = defineProps<{
   chartName: string;
@@ -138,6 +139,8 @@ const seriesItemsRequired = computed(() => supportsSeriesItems.value
   && (seriesRole.value?.required === true || isExplicitMultiLine.value));
 const seriesItemLabel = computed(() => seriesRole.value?.semanticLabel ?? "Series");
 const isParallel = computed(() => template.value === "parallel");
+const isHierarchy = computed(() => template.value === "hierarchy");
+const nodeLabelsVisible = computed(() => props.markConfig.nodeLabelsVisible !== false);
 const standardConfigs = computed(() => configs.value.filter((config) => {
   if (isCartesian.value && (config.channel === "x" || config.channel === "y")) return false;
   if (isPolar.value && config.channel === "segment") return false;
@@ -308,6 +311,9 @@ const staticColor = computed(() => typeof props.markConfig.color === "string" ? 
 const staticSize = computed(() => typeof props.markConfig.size === "number" ? props.markConfig.size : 4);
 const horizonBands = computed(() => typeof props.markConfig.bands === "number" ? props.markConfig.bands : 7);
 const treemapTile = computed(() => typeof props.markConfig.tile === "string" ? props.markConfig.tile : "binary");
+const radialDendrogramLeafRadius = computed(() => typeof props.markConfig.leafRadius === "number"
+  ? props.markConfig.leafRadius
+  : RADIAL_DENDROGRAM_DEFAULT_LEAF_RADIUS);
 const hexbinRadius = computed(() => typeof props.markConfig.radius === "number" ? props.markConfig.radius : 8);
 const sankeyAlignment = computed(() => typeof props.markConfig.nodeAlign === "string" ? props.markConfig.nodeAlign : "justify");
 const sankeyLinkColor = computed(() => typeof props.markConfig.linkColor === "string" ? props.markConfig.linkColor : "source-target");
@@ -572,7 +578,7 @@ function updateSingleBarTopN(rawValue: string) {
 </script>
 
 <template>
-  <div class="encoding-config">
+  <div class="encoding-config" :class="{ 'encoding-config--hierarchy': isHierarchy }">
     <header class="encoding-config__header">
       <div>
         <strong>{{ sectionLabel ?? 'MARK ENCODINGS' }}</strong>
@@ -1154,6 +1160,39 @@ function updateSingleBarTopN(rawValue: string) {
       </label>
     </section>
 
+    <section v-if="isHierarchy" class="encoding-config__appearance">
+      <label class="encoding-config__option encoding-config__node-label-toggle">
+        <span>Show node labels</span>
+        <input
+          type="checkbox"
+          :checked="nodeLabelsVisible"
+          @change="emit('markConfigChange', { nodeLabelsVisible: ($event.target as HTMLInputElement).checked })"
+        />
+      </label>
+    </section>
+
+    <section v-if="normalizedChartType.includes('radialdendrogram')" class="encoding-config__appearance">
+      <label class="encoding-config__static">
+        <span>Leaf radius</span>
+        <output>{{ radialDendrogramLeafRadius }} px</output>
+        <input
+          type="range"
+          min="16"
+          max="160"
+          step="1"
+          :value="radialDendrogramLeafRadius"
+          aria-label="Leaf radius"
+          @pointerdown="emit('markConfigEditStart', 'leafRadius')"
+          @focus="emit('markConfigEditStart', 'leafRadius')"
+          @pointerup="emit('markConfigEditEnd')"
+          @pointercancel="emit('markConfigEditEnd')"
+          @blur="emit('markConfigEditEnd')"
+          @change="emit('markConfigEditEnd')"
+          @input="emit('markConfigChange', { leafRadius: Number(($event.target as HTMLInputElement).value) })"
+        />
+      </label>
+    </section>
+
     <section v-if="normalizedChartType.includes('hexbin')" class="encoding-config__appearance">
       <label class="encoding-config__static">
         <span>Radius</span>
@@ -1229,6 +1268,15 @@ function updateSingleBarTopN(rawValue: string) {
 .encoding-config__channel-row :deep(.encoding-channel-field__label) { justify-content: center; min-width: 0; text-align: center; }
 .encoding-config__channel-row :deep(.encoding-channel-field select) { grid-column: 2; min-width: 0; }
 .encoding-config__channel-row::after { content: ""; grid-column: 3; min-width: 0; }
+.encoding-config--hierarchy .encoding-config__channel-row,
+.encoding-config--hierarchy .encoding-config__detail-row {
+  grid-template-columns: minmax(82px, 0.3fr) minmax(164px, 0.7fr) minmax(0, 0.1fr);
+}
+.encoding-config--hierarchy .encoding-config__channel-row :deep(.encoding-channel-field select),
+.encoding-config--hierarchy .encoding-config__detail-row :deep(.encoding-channel-field select) {
+  justify-self: end;
+  width: min(100%, 220px);
+}
 .encoding-config__column { display: grid; min-width: 0; align-content: start; gap: 7px; padding: 8px; border: 1px solid rgba(24, 33, 47, 0.1); border-radius: 6px; background: #fbfcfe; }
 .encoding-config__column--composition { background: #f8fbff; }
 .encoding-config__column--composition-summary { background: #f4f8fc; }
@@ -1263,6 +1311,7 @@ function updateSingleBarTopN(rawValue: string) {
 .encoding-config__details-button:hover, .encoding-config__details-button[aria-expanded="true"] { border-color: rgba(21, 84, 178, 0.4); background: #edf5fc; color: #1554b2; }
 .encoding-config__color-scale-preview { display: block; width: 100%; height: 12px; border: 1px solid rgba(24, 33, 47, 0.16); border-radius: 3px; }
 .encoding-config__static-color-picker { width: 38px; height: 28px; padding: 2px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 5px; background: #fff; cursor: pointer; }
+.encoding-config__node-label-toggle { grid-template-columns: minmax(0, 1fr) auto; }
 .encoding-config__static-value { color: #526174; font-size: var(--encoding-config-font-size); white-space: nowrap; }
 .encoding-config__inline-slider { width: 55px; min-width: 0; accent-color: #1980bd; }
 .encoding-config__details-popover { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 20; display: grid; width: min(320px, calc(100vw - 32px)); max-height: min(440px, 70vh); overflow: auto; gap: 8px; padding: 10px; border: 1px solid rgba(24, 33, 47, 0.16); border-radius: 6px; background: #fff; box-shadow: 0 10px 28px rgba(24, 33, 47, 0.18); }

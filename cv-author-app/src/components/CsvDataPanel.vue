@@ -8,6 +8,7 @@ import {
   Filter,
   GripVertical,
   ListFilter,
+  MapPinned,
   Plus,
   Rows3,
   Sigma,
@@ -19,12 +20,14 @@ import case1Csv from "../../../data/case1.csv?raw";
 import case2Csv from "../../../data/case2.csv?raw";
 import case3Csv from "../../../data/case3.csv?raw";
 import academicScoresCsv from "../../../data/academic_scores.csv?raw";
+import treeNodesCsv from "../../../data/tree_nodes.csv?raw";
 import { useDatasetStore } from "../stores/useDatasetStore";
 import type {
   ChartDataTransform,
   ChartNumericFilterTransform,
   ChartSpec,
   DataColumnType,
+  Dataset,
   DatasetTable,
 } from "../types";
 import { materializeChartDataTransforms } from "../utils/chartDataTransforms";
@@ -50,6 +53,12 @@ const emit = defineEmits<{
 
 const panelRef = ref<HTMLElement | null>(null);
 const geometryFileInput = ref<HTMLInputElement | null>(null);
+const csvFileInput = ref<HTMLInputElement | null>(null);
+const graphNodesFileInput = ref<HTMLInputElement | null>(null);
+const graphEdgesFileInput = ref<HTMLInputElement | null>(null);
+const graphNodesFile = ref<File | null>(null);
+const graphEdgesFile = ref<File | null>(null);
+const importMenuOpen = ref(false);
 const expandedWidth = ref(304);
 const canExpand = ref(false);
 const isExpanded = ref(false);
@@ -61,6 +70,7 @@ const {
   parseWarning,
   isLoading,
   importDataset,
+  importGraphDataset,
   getDataset,
   setActiveDataset,
   setColumnType,
@@ -91,14 +101,32 @@ const binMethod = ref<"equal-width" | "fixed-width" | "quantile">("equal-width")
 const binParameter = ref(5);
 const outputField = ref("");
 
-const presetNames = ["case1.csv", "case2.csv", "case3.csv", "academic_scores.csv"] as const;
-const presetDatasets = computed(() =>
-  presetNames
-    .map((name) => datasets.value.find((dataset) => dataset.name === name))
-    .filter((dataset): dataset is NonNullable<typeof dataset> => !!dataset),
-);
+const presetDatasets = computed(() => {
+  // Dataset ids are intentionally unique, but the panel labels datasets by
+  // filename. Keep the newest dataset for a filename so re-imports do not
+  // create indistinguishable options in the selector.
+  const byName = new Map<string, Dataset>();
+  datasets.value.forEach((dataset) => byName.set(dataset.name, dataset));
+  return Array.from(byName.values());
+});
 const isGraph = computed(() => !!activeDataset.value?.graph);
 const columns = computed(() => activeDataset.value?.columns ?? []);
+const geographicJoinField = ref("");
+const geographicJoinStatus = computed(() => {
+  const source = activeGeometrySource.value;
+  const field = geographicJoinField.value;
+  if (!source || !field || !activeDataset.value) return null;
+  const ids = new Set(source.features.map((feature) => feature.id));
+  const values = activeDataset.value.rows
+    .map((row) => (row[field] ?? "").trim())
+    .filter(Boolean);
+  const matched = values.filter((value) => ids.has(value)).length;
+  return { matched, total: values.length, unmatched: values.length - matched };
+});
+const localGeometryBindings = [
+  { datasetName: "case2.csv", field: "incident_zip", sourceName: "nyc-zip-boundaries.geojson", path: "/geodata/nyc-zip-boundaries.geojson" },
+] as const;
+const localGeometryLoading = new Set<string>();
 const chartDataset = computed(() => props.chartSpec ? getDataset(props.chartSpec.datasetId) : null);
 const transformedChartDataset = computed(() => chartDataset.value
   ? materializeChartDataTransforms(chartDataset.value, props.chartSpec?.dataTransforms)
@@ -223,16 +251,48 @@ function onDatasetChange(event: Event) {
   }
 }
 
-function onGeometrySourceChange(event: Event) {
-  const sourceId = (event.target as HTMLSelectElement).value;
-  if (sourceId) setActiveGeometrySource(sourceId);
-}
-
 async function onGeometryFileChange(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
   if (file) await importGeometrySource(file);
+  importMenuOpen.value = false;
   input.value = "";
+}
+
+async function onCsvFileChange(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (file) await importDataset(file);
+  importMenuOpen.value = false;
+  input.value = "";
+}
+
+function onGraphFileChange(kind: "nodes" | "edges", event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0] ?? null;
+  if (kind === "nodes") graphNodesFile.value = file;
+  else graphEdgesFile.value = file;
+  input.value = "";
+}
+
+async function importGraphFiles() {
+  if (!graphNodesFile.value || !graphEdgesFile.value) return;
+  await importGraphDataset(
+    graphNodesFile.value,
+    graphEdgesFile.value,
+    `${graphNodesFile.value.name} + ${graphEdgesFile.value.name}`,
+  );
+  graphNodesFile.value = null;
+  graphEdgesFile.value = null;
+  importMenuOpen.value = false;
+}
+
+function isGeographicJoinColumn(field: string) {
+  const binding = localGeometryBindings.find((item) => item.datasetName === activeDataset.value?.name);
+  return !!binding
+    && !!activeGeometrySource.value
+    && field === binding.field
+    && !!geographicJoinStatus.value?.matched;
 }
 
 function onColumnDragStart(column: { name: string; type: DataColumnType }, event: DragEvent) {
@@ -246,6 +306,25 @@ function onColumnDragStart(column: { name: string; type: DataColumnType }, event
   beginCsvColumnDrag(columnPayload);
   event.dataTransfer.setData(csvColumnDragMime, encodeCsvColumnDragPayload(columnPayload));
   event.dataTransfer.setData("text/plain", column.name);
+  event.dataTransfer.effectAllowed = "copy";
+}
+
+function onGraphColumnDragStart(
+  table: "nodes" | "edges",
+  column: { name: string; type: DataColumnType },
+  event: DragEvent,
+) {
+  const dataset = activeDataset.value;
+  if (!dataset || !event.dataTransfer) return;
+  const columnPayload = {
+    datasetId: dataset.id,
+    table,
+    field: column.name,
+    type: displayColumnType(column.type) ?? "nominal",
+  };
+  beginCsvColumnDrag(columnPayload);
+  event.dataTransfer.setData(csvColumnDragMime, encodeCsvColumnDragPayload(columnPayload));
+  event.dataTransfer.setData("text/plain", `${table}.${column.name}`);
   event.dataTransfer.effectAllowed = "copy";
 }
 
@@ -462,29 +541,45 @@ async function ensurePresetDatasets() {
     { name: "case2.csv", source: case2Csv },
     { name: "case3.csv", source: case3Csv },
     { name: "academic_scores.csv", source: academicScoresCsv },
+    { name: "tree_nodes.csv", source: treeNodesCsv },
   ];
   for (const preset of presets) {
     if (!datasets.value.some((dataset) => dataset.name === preset.name)) {
       await importDataset(new File([preset.source], preset.name, { type: "text/csv" }));
     }
   }
-  const preferred = datasets.value.find((dataset) => dataset.name === "case1.csv") ?? presetDatasets.value[0];
+  const preferred = presetDatasets.value.find((dataset) => dataset.name === "case1.csv") ?? presetDatasets.value[0];
   if (preferred) setActiveDataset(preferred.id);
   await nextTick(updateExpandedWidth);
 }
 
-async function ensurePresetGeometrySource() {
-  if (geometrySources.value.some((source) => source.name === "nyc-zip-boundaries.geojson")) return;
+async function syncLocalGeometry(dataset: Dataset) {
+  const binding = localGeometryBindings.find((item) => item.datasetName === dataset.name);
+  if (!binding || !dataset.columns.some((column) => column.name === binding.field)) return;
+  geographicJoinField.value = binding.field;
+  const existing = geometrySources.value.find((source) => source.name === binding.sourceName);
+  if (existing) {
+    setActiveGeometrySource(existing.id);
+    return;
+  }
+  if (localGeometryLoading.has(binding.sourceName)) return;
+  localGeometryLoading.add(binding.sourceName);
   try {
-    const response = await fetch("/geodata/nyc-zip-boundaries.geojson");
+    const response = await fetch(binding.path);
     if (!response.ok) return;
-    await importGeometrySource(new File(
+    const source = await importGeometrySource(new File(
       [await response.blob()],
-      "nyc-zip-boundaries.geojson",
+      binding.sourceName,
       { type: "application/geo+json" },
     ));
+    if (source) {
+      setActiveGeometrySource(source.id);
+      geographicJoinField.value = binding.field;
+    }
   } catch {
-    // Custom GeoJSON can still be imported from the data panel.
+    // Local pairing is optional; users can import another geometry source.
+  } finally {
+    localGeometryLoading.delete(binding.sourceName);
   }
 }
 
@@ -492,7 +587,6 @@ onMounted(() => {
   window.addEventListener("resize", updateExpandedWidth);
   window.addEventListener("keydown", onWindowKeydown);
   void ensurePresetDatasets();
-  void ensurePresetGeometrySource();
 });
 onBeforeUnmount(() => {
   window.removeEventListener("resize", updateExpandedWidth);
@@ -501,6 +595,9 @@ onBeforeUnmount(() => {
 
 watch(() => props.chartId, closeTransformEditor);
 watch(headers, () => void nextTick(updateExpandedWidth));
+watch(activeDataset, (dataset) => {
+  if (dataset) void syncLocalGeometry(dataset);
+}, { immediate: true });
 </script>
 
 <template>
@@ -517,6 +614,13 @@ watch(headers, () => void nextTick(updateExpandedWidth));
       </div>
       <div class="data-panel__actions">
         <input
+          ref="csvFileInput"
+          class="data-panel__file-input"
+          type="file"
+          accept=".csv,text/csv"
+          @change="onCsvFileChange"
+        />
+        <input
           ref="geometryFileInput"
           class="data-panel__file-input"
           type="file"
@@ -526,9 +630,10 @@ watch(headers, () => void nextTick(updateExpandedWidth));
         <button
           class="data-panel__icon-button"
           type="button"
-          title="Import GeoJSON geometry"
-          aria-label="Import GeoJSON geometry"
-          @click="geometryFileInput?.click()"
+          title="Import data"
+          aria-label="Import data"
+          :aria-expanded="importMenuOpen"
+          @click="importMenuOpen = !importMenuOpen"
         >
           <Upload :size="15" aria-hidden="true" />
         </button>
@@ -561,6 +666,59 @@ watch(headers, () => void nextTick(updateExpandedWidth));
       </div>
     </header>
 
+    <div v-if="importMenuOpen" class="import-menu" role="menu" aria-label="Import data type">
+      <button type="button" role="menuitem" @click="csvFileInput?.click()">
+        <FileSpreadsheet :size="14" aria-hidden="true" />
+        <span>CSV table</span>
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        :disabled="presetDatasets.length === 0"
+        :title="presetDatasets.length === 0 ? 'Import a CSV table first' : 'Import GeoJSON geometry'"
+        @click="geometryFileInput?.click()"
+      >
+        <MapPinned :size="14" aria-hidden="true" />
+        <span>GeoJSON geometry</span>
+      </button>
+      <section class="graph-import" aria-label="Import graph tables">
+        <header class="graph-import__header">
+          <strong>Graph</strong>
+          <small>Nodes and edges</small>
+        </header>
+        <input
+          ref="graphNodesFileInput"
+          class="data-panel__file-input"
+          type="file"
+          accept=".csv,text/csv"
+          @change="onGraphFileChange('nodes', $event)"
+        />
+        <input
+          ref="graphEdgesFileInput"
+          class="data-panel__file-input"
+          type="file"
+          accept=".csv,text/csv"
+          @change="onGraphFileChange('edges', $event)"
+        />
+        <div class="graph-import__controls">
+          <button type="button" @click="graphNodesFileInput?.click()">
+            {{ graphNodesFile?.name ?? "Select nodes CSV" }}
+          </button>
+          <button type="button" @click="graphEdgesFileInput?.click()">
+            {{ graphEdgesFile?.name ?? "Select edges CSV" }}
+          </button>
+          <button
+            type="button"
+            class="graph-import__submit"
+            :disabled="!graphNodesFile || !graphEdgesFile || isLoading"
+            @click="importGraphFiles"
+          >
+            Import graph
+          </button>
+        </div>
+      </section>
+    </div>
+
     <div
       class="data-panel__meta"
       :class="{ 'data-panel__meta--empty': presetDatasets.length === 0 }"
@@ -577,17 +735,6 @@ watch(headers, () => void nextTick(updateExpandedWidth));
         </option>
       </select>
       <span>{{ tableStatus }}</span>
-      <select
-        v-if="geometrySources.length"
-        class="data-panel__dataset-select data-panel__geometry-select"
-        :value="activeGeometrySource?.id ?? ''"
-        aria-label="Select GeoJSON geometry source"
-        @change="onGeometrySourceChange"
-      >
-        <option v-for="source in geometrySources" :key="source.id" :value="source.id">
-          {{ source.name }} · {{ source.features.length }} geometries
-        </option>
-      </select>
     </div>
 
     <p v-if="parseError" class="data-panel__message data-panel__message--error">
@@ -620,6 +767,7 @@ watch(headers, () => void nextTick(updateExpandedWidth));
               >
                 <GripVertical :size="12" :stroke-width="1.8" aria-hidden="true" />
                 <span class="data-table__column-label">{{ header }}</span>
+                <MapPinned v-if="isGeographicJoinColumn(header)" :size="12" aria-label="Geographic join field" />
               </span>
               <select
                 :value="displayColumnType(columns[columnIndex]?.type)"
@@ -683,6 +831,7 @@ watch(headers, () => void nextTick(updateExpandedWidth));
               >
                 <GripVertical :size="12" :stroke-width="1.8" aria-hidden="true" />
                 <span class="data-table__column-label">{{ column.name }}</span>
+                <MapPinned v-if="isGeographicJoinColumn(column.name)" :size="12" aria-label="Geographic join field" />
               </span>
               <select
                 :value="displayColumnType(column.type)"
@@ -731,7 +880,15 @@ watch(headers, () => void nextTick(updateExpandedWidth));
                 scope="col"
                 :title="header"
               >
-                <span>{{ header }}</span>
+                <span
+                  class="data-table__draggable-field"
+                  draggable="true"
+                  @dragstart="onGraphColumnDragStart(graphTable.key, graphTable.table.columns[columnIndex]!, $event)"
+                  @dragend="endCsvColumnDrag"
+                >
+                  <GripVertical :size="12" :stroke-width="1.8" aria-hidden="true" />
+                  <span class="data-table__column-label">{{ header }}</span>
+                </span>
                 <select
                   :value="displayColumnType(graphTable.table.columns[columnIndex]?.type)"
                   aria-label="Column type"
@@ -784,7 +941,15 @@ watch(headers, () => void nextTick(updateExpandedWidth));
               :key="`${columnIndex}-${column.name}`"
             >
               <th class="data-table__field-name" scope="row" :title="column.name">
-                <span>{{ column.name }}</span>
+                <span
+                  class="data-table__draggable-field"
+                  draggable="true"
+                  @dragstart="onGraphColumnDragStart(graphTable.key, column, $event)"
+                  @dragend="endCsvColumnDrag"
+                >
+                  <GripVertical :size="12" :stroke-width="1.8" aria-hidden="true" />
+                  <span class="data-table__column-label">{{ column.name }}</span>
+                </span>
                 <select
                   :value="displayColumnType(column.type)"
                   :aria-label="`${column.name} column type`"
@@ -1139,6 +1304,41 @@ watch(headers, () => void nextTick(updateExpandedWidth));
   display: none;
 }
 
+.import-menu {
+  display: grid;
+  gap: 5px;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(24, 33, 47, 0.1);
+  background: #f4f8fc;
+}
+
+.import-menu > button {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid rgba(24, 33, 47, 0.12);
+  border-radius: 5px;
+  background: #fff;
+  color: #33465b;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.import-menu > button:hover {
+  border-color: rgba(28, 126, 214, 0.3);
+  background: #edf5fc;
+  color: #1554b2;
+}
+
+.import-menu > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .data-panel__icon-button {
   display: inline-flex;
   align-items: center;
@@ -1211,12 +1411,6 @@ watch(headers, () => void nextTick(updateExpandedWidth));
 .data-panel__dataset-select:disabled {
   opacity: 0.62;
   cursor: wait;
-}
-
-.data-panel__geometry-select {
-  margin-top: 4px;
-  border-color: rgba(5, 150, 105, 0.24);
-  background: #f5fbf8;
 }
 
 .data-panel__message {
@@ -1302,6 +1496,14 @@ watch(headers, () => void nextTick(updateExpandedWidth));
   color: #7a8797;
   font-size: 10px;
 }
+.graph-import { display: grid; gap: 8px; padding: 10px 12px; border-top: 1px solid rgba(24, 33, 47, 0.1); border-bottom: 1px solid rgba(24, 33, 47, 0.1); background: #f8fafc; }
+.graph-import__header { display: grid; gap: 2px; }
+.graph-import__header strong { color: #263548; font-size: 11px; }
+.graph-import__header small { color: #718096; font-size: 10px; }
+.graph-import__controls { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.graph-import__controls button { min-width: 0; overflow: hidden; padding: 6px 8px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 5px; background: #fff; color: #42546c; font: inherit; font-size: 10px; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.graph-import__controls button:disabled { cursor: not-allowed; opacity: 0.55; }
+.graph-import__controls .graph-import__submit { background: #1554b2; color: #fff; font-weight: 700; text-align: center; }
 
 .graph-table-section__empty {
   margin: 0;
@@ -1447,6 +1649,22 @@ watch(headers, () => void nextTick(updateExpandedWidth));
   width: 1px;
   background: #d7e0e9;
   content: "";
+}
+
+/* Keep graph table labels readable while either table is scrolled horizontally. */
+.graph-table-section .data-table__row-number,
+.graph-table-section .data-table__field-name {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  background: #f1f5f8;
+  background-clip: padding-box;
+}
+
+.graph-table-section .data-table thead .data-table__row-number,
+.graph-table-section .data-table thead .data-table__field-name {
+  z-index: 5;
+  background: #e5edf4;
 }
 
 .data-table thead .data-table__field-name {

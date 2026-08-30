@@ -1,0 +1,16 @@
+node_id,parent_id,label,weight,metric_1,metric_2,metric_3,metric_4,metric_5
+root,,Global,100,100,82,76,91,88
+north,root,North,54,54,44,39,48,46
+south,root,South,46,46,38,37,43,42
+north_a,north,North A,18,18,15,12,17,16
+north_b,north,North B,20,20,14,16,18,15
+north_c,north,North C,16,16,15,11,13,15
+south_a,south,South A,14,14,12,13,15,14
+south_b,south,South B,17,17,13,11,16,15
+south_c,south,South C,15,15,13,13,12,13
+north_a_1,north_a,North A 1,9,9,7,6,8,8
+north_a_2,north_a,North A 2,9,9,8,6,9,8
+north_b_1,north_b,North B 1,11,11,7,9,10,8
+north_b_2,north_b,North B 2,9,9,7,7,8,7
+south_b_1,south_b,South B 1,8,8,6,5,9,8
+south_b_2,south_b,South B 2,9,9,7,6,7,7

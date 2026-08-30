@@ -60,7 +60,12 @@ import type { GenericRenderInput } from "./semanticRenderer";
 import { renderLineChart } from "./lineRenderer";
 import { csvRowKey } from "./csvDataEngine";
 import { cartesianAxisEncoding } from "./chartTemplates";
-import { createRadialClusterLayout, type RadialClusterNode } from "./radialClusterLayout";
+import {
+  createRadialClusterLayout,
+  RADIAL_DENDROGRAM_DEFAULT_LEAF_RADIUS,
+  RADIAL_DENDROGRAM_SELECTION_PADDING,
+  type RadialClusterNode,
+} from "./radialClusterLayout";
 
 const tableau = schemeTableau10;
 
@@ -419,7 +424,7 @@ function renderParallel(input: GenericRenderInput) {
 function hierarchyRoot(input: GenericRenderInput) {
   const keyEncoding = input.chartSpec.encodings.key;
   const parentEncoding = input.chartSpec.encodings.parent;
-  const valueEncoding = input.chartSpec.encodings.value;
+  const valueEncoding = input.chartSpec.encodings.value ?? input.chartSpec.encodings.size;
   if (!keyEncoding || !parentEncoding) throw new Error("Hierarchy renderer requires Node ID and Parent ID encodings.");
   const rows = input.dataset.rows.filter((row) => (row[keyEncoding.field] ?? "").trim());
   const ids = new Set(rows.map((row) => row[keyEncoding.field] ?? ""));
@@ -446,6 +451,44 @@ function renderHierarchy(input: GenericRenderInput) {
   const type = normalizedType(input.chartSpec.chartType);
   const area = plotArea(input, 4);
   const { root, synthetic } = hierarchyRoot(input);
+  const nodeConfig = sharedConfig(input, "node");
+  const colorEncoding = input.chartSpec.encodings.color;
+  const sizeEncoding = input.chartSpec.encodings.size;
+  const colorValues = colorEncoding
+    ? root.descendants().map((node) => node.data[colorEncoding.field] ?? "")
+    : [];
+  const colorDomain = colorEncoding?.type === "quantitative"
+    ? finiteDomain(colorValues.map((value) => Number(value)))
+    : Array.from(new Set(colorValues));
+  const ordinalNodeColor = colorEncoding && colorEncoding.type !== "quantitative"
+    ? scaleOrdinal<string, string>().domain(colorDomain as string[]).range(tableau)
+    : null;
+  const sequentialNodeColor = colorEncoding?.type === "quantitative"
+    ? scaleSequential(interpolateBuPu).domain(colorDomain as [number, number])
+    : null;
+  const sizeDomain = sizeEncoding
+    ? finiteDomain(root.descendants().map((node) => Number(node.data[sizeEncoding.field] ?? "")))
+    : [0, 1] as [number, number];
+  const nodeRadius = (node: { data: Dataset["rows"][number] }) => {
+    if (!sizeEncoding) {
+      const configured = Number(nodeConfig.size);
+      return Number.isFinite(configured) ? Math.max(2, Math.min(12, configured)) : 2.5;
+    }
+    const value = Number(node.data[sizeEncoding.field] ?? "");
+    return Number.isFinite(value) && sizeDomain[1] > sizeDomain[0]
+      ? scaleLinear().domain(sizeDomain).range([2, 8]).clamp(true)(value)
+      : 2.5;
+  };
+  const nodeColor = (node: { data: Dataset["rows"][number] }, fallback: string) => {
+    if (!colorEncoding) return typeof nodeConfig.color === "string" ? nodeConfig.color : fallback;
+    const value = node.data[colorEncoding.field] ?? "";
+    if (sequentialNodeColor) {
+      const numericValue = Number(value);
+      return Number.isFinite(numericValue) ? sequentialNodeColor(numericValue) : fallback;
+    }
+    return ordinalNodeColor?.(value) ?? fallback;
+  };
+  const nodeLabelsVisible = nodeConfig.nodeLabelsVisible !== false;
   const topNames = root.children?.map((node) => node.id ?? "") ?? [];
   const rainbow = scaleOrdinal<string, string>().domain(topNames).range(quantize(interpolateRainbow, topNames.length + 1));
   const visible = <T extends { id?: string }>(node: T) => !(synthetic && node.id === "__root__");
@@ -454,17 +497,25 @@ function renderHierarchy(input: GenericRenderInput) {
     const keyEncoding = input.chartSpec.encodings.key;
     const parentEncoding = input.chartSpec.encodings.parent;
     const thetaEncoding = input.chartSpec.encodings.theta ?? input.chartSpec.encodings.angle;
-    if (!keyEncoding || !parentEncoding || !thetaEncoding) {
-      throw new Error("Radial Dendrogram renderer requires Node ID, Parent ID, and Leaf order encodings.");
+    if (!keyEncoding || !parentEncoding) {
+      throw new Error("Radial Dendrogram renderer requires Node ID and Parent ID encodings.");
     }
     const guide = input.coordinateGuide?.type === "Polar" ? input.coordinateGuide : null;
     const cx = guide?.origin.x ?? input.minX + input.width / 2;
     const cy = guide?.origin.y ?? input.minY + input.height / 2;
-    const baseRadius = Math.max(8, Math.min(input.width, input.height) * 0.38 * (guide?.radiusScale ?? 1));
+    const configuredLeafRadius = Number(nodeConfig.leafRadius ?? RADIAL_DENDROGRAM_DEFAULT_LEAF_RADIUS);
+    const baseLeafRadius = Math.max(
+      8,
+      (Number.isFinite(configuredLeafRadius)
+        ? configuredLeafRadius
+        : RADIAL_DENDROGRAM_DEFAULT_LEAF_RADIUS)
+        * (guide?.radiusScale ?? 1),
+    );
     const innerRatio = Math.max(0, Math.min(guide?.innerRadiusRatio ?? 0, 0.98));
     const outerRatio = Math.max(innerRatio + 0.01, Math.min(guide?.outerRadiusRatio ?? 1, 1));
-    const innerRadius = baseRadius * innerRatio;
-    const outerRadius = baseRadius * outerRatio;
+    const innerRadius = baseLeafRadius * innerRatio;
+    const leafRadius = baseLeafRadius * outerRatio;
+    const selectionRadius = leafRadius + RADIAL_DENDROGRAM_SELECTION_PADDING;
     const angleSpan = Math.max(1, Math.min(guide?.angleSpan ?? 360, 360));
     const angleOffset = guide?.angleOffset ?? 0;
     const startAngle = (-270 + angleOffset) * Math.PI / 180;
@@ -472,14 +523,13 @@ function renderHierarchy(input: GenericRenderInput) {
     const radial = createRadialClusterLayout(input.dataset, {
       keyField: keyEncoding.field,
       parentField: parentEncoding.field,
-      orderField: thetaEncoding.field,
+      orderField: thetaEncoding?.field,
       startAngle,
       angleSpan: spanRadians,
       innerRadius,
-      outerRadius,
+      outerRadius: leafRadius,
     });
     const radialRoot = radial.root;
-    const nodeConfig = sharedConfig(input, "node");
     const nodes = radialRoot.descendants().filter(radial.visible) as RadialClusterNode[];
     const radialLink = linkRadial<any, RadialClusterNode>()
       .angle((node) => node.x)
@@ -489,23 +539,23 @@ function renderHierarchy(input: GenericRenderInput) {
       .map((link) => `<path data-mark-role="link" d="${radialLink(link as any) ?? ""}" fill="none" stroke="#555" stroke-opacity="0.4" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`)
       .join("");
     const marks = nodes.map((node) => {
-      const color = typeof nodeConfig.color === "string"
+      const color = nodeColor(node, typeof nodeConfig.color === "string"
         ? nodeConfig.color
-        : node.children ? "#555" : "#999";
+        : node.children ? "#555" : "#999");
       const rotation = node.x * 180 / Math.PI - 90;
-      return `<circle data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-angle="${node.x}" transform="rotate(${rotation}) translate(${node.y},0)" r="2.5" fill="${color}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}</title></circle>`;
+      return `<circle data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-angle="${node.x}" transform="rotate(${rotation}) translate(${node.y},0)" r="${nodeRadius(node)}" fill="${color}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}</title></circle>`;
     }).join("");
-    const labels = nodes.map((node) => {
+    const labels = nodeLabelsVisible ? nodes.map((node) => {
       const onLeft = Math.sin(node.x) < 0;
       const rotation = node.x * 180 / Math.PI - 90;
-      const label = node.data[thetaEncoding.field] || node.id || "";
+      const label = node.id || "";
       const labelOnOutside = !onLeft === !node.children;
       return `<text data-mark-role="node-label" transform="rotate(${rotation}) translate(${node.y},0) rotate(${onLeft ? 180 : 0})" dy="0.31em" x="${labelOnOutside ? 6 : -6}" text-anchor="${labelOnOutside ? "start" : "end"}" paint-order="stroke" stroke="white" stroke-width="3" stroke-linejoin="round" fill="currentColor" font-size="10">${esc(label)}</text>`;
-    }).join("");
+    }).join("") : "";
     return {
-      content: `<g transform="translate(${cx} ${cy})" data-chart-id="${esc(input.chartId)}" data-chart-type="radial-dendrogram" data-renderer="observable-radial-cluster@2">${links}${marks}${labels}</g>`,
-      plotArea: { x: cx - outerRadius, y: cy - outerRadius, width: outerRadius * 2, height: outerRadius * 2 },
-      polarArea: { startAngle: angleOffset, angleSpan, innerRadius, outerRadius },
+      content: `<g transform="translate(${cx} ${cy})" data-chart-id="${esc(input.chartId)}" data-chart-type="radial-dendrogram" data-renderer="observable-radial-cluster@3" data-angle-span="${angleSpan}" data-leaf-radius="${leafRadius}" data-selection-radius="${selectionRadius}">${links}${marks}${labels}</g>`,
+      plotArea: { x: cx - leafRadius, y: cy - leafRadius, width: leafRadius * 2, height: leafRadius * 2 },
+      polarArea: { startAngle: angleOffset, angleSpan, innerRadius, outerRadius: leafRadius },
     };
   }
 
@@ -526,7 +576,8 @@ function renderHierarchy(input: GenericRenderInput) {
       const clipId = `treemap-${input.chartId.replace(/[^a-z0-9_-]/gi, "-")}-${index}`;
       const labelLines = (node.id ?? "").split(/(?=[A-Z][a-z])|\s+/g).filter(Boolean).concat(formatTick(node.value ?? 0));
       const labels = labelLines.map((line, lineIndex) => `<tspan x="3" y="${(lineIndex === labelLines.length - 1 ? 1.4 : 1.1) + lineIndex * 0.9}em" fill-opacity="${lineIndex === labelLines.length - 1 ? 0.7 : 1}">${esc(line)}</tspan>`).join("");
-      return `<g transform="translate(${x} ${y})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("."))}\n${formatTick(node.value ?? 0)}</title><rect width="${width}" height="${height}" fill="${topAncestorColor(node, color)}" fill-opacity="0.6"/><clipPath id="${clipId}"><rect width="${width}" height="${height}"/></clipPath><text clip-path="url(#${clipId})" font-size="10" font-family="sans-serif">${labels}</text></g>`;
+      const fill = nodeColor(node, topAncestorColor(node, color));
+      return `<g transform="translate(${x} ${y})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("."))}\n${formatTick(node.value ?? 0)}</title><rect width="${width}" height="${height}" fill="${fill}" fill-opacity="0.6"/><clipPath id="${clipId}"><rect width="${width}" height="${height}"/></clipPath>${nodeLabelsVisible ? `<text clip-path="url(#${clipId})" font-size="10" font-family="sans-serif">${labels}</text>` : ""}</g>`;
     }).join("");
     return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="treemap" data-tile="${esc(tileName)}" data-renderer="observable-treemap@2">${leaves}</g>`, plotArea: area };
   }
@@ -543,12 +594,12 @@ function renderHierarchy(input: GenericRenderInput) {
       .innerRadius((node) => node.y0)
       .outerRadius((node) => Math.max(node.y0, node.y1 - 1));
     const nodes = layoutRoot.descendants().filter((node) => node.depth && visible(node));
-    const marks = nodes.map((node) => `<path data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" d="${arc(node) ?? ""}" fill="${topAncestorColor(node, rainbow)}" fill-opacity="0.6"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}\n${formatTick(node.value ?? 0)}</title></path>`).join("");
-    const labels = nodes.filter((node) => ((node.y0 + node.y1) / 2) * (node.x1 - node.x0) > 10).map((node) => {
+    const marks = nodes.map((node) => `<path data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" d="${arc(node) ?? ""}" fill="${nodeColor(node, topAncestorColor(node, rainbow))}" fill-opacity="0.6"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}\n${formatTick(node.value ?? 0)}</title></path>`).join("");
+    const labels = nodeLabelsVisible ? nodes.filter((node) => ((node.y0 + node.y1) / 2) * (node.x1 - node.x0) > 10).map((node) => {
       const angle = (node.x0 + node.x1) / 2 * 180 / Math.PI;
       const radiusPosition = (node.y0 + node.y1) / 2;
       return `<text transform="rotate(${angle - 90}) translate(${radiusPosition} 0) rotate(${angle < 180 ? 0 : 180})" dy="0.35em" text-anchor="middle" font-size="10" font-family="sans-serif">${esc(node.id ?? "")}</text>`;
-    }).join("");
+    }).join("") : "";
     return { content: `<g transform="translate(${area.x + area.width / 2} ${area.y + area.height / 2})" data-chart-id="${esc(input.chartId)}" data-chart-type="sunburst" data-renderer="observable-sunburst@2">${marks}<g pointer-events="none">${labels}</g></g>`, plotArea: area };
   }
 
@@ -557,8 +608,9 @@ function renderHierarchy(input: GenericRenderInput) {
     const cells = layoutRoot.descendants().filter(visible).map((node) => {
       const width = Math.max(0, node.y1 - node.y0);
       const height = Math.max(0, node.x1 - node.x0);
-      const label = height > 16 ? `<text x="4" y="13" font-size="10" font-family="sans-serif"><tspan>${esc(node.id ?? "")}</tspan><tspan fill-opacity="0.7"> ${formatTick(node.value ?? 0)}</tspan></text>` : "";
-      return `<g transform="translate(${area.x + node.y0} ${area.y + node.x0})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}\n${formatTick(node.value ?? 0)}</title><rect width="${width}" height="${height}" fill="${topAncestorColor(node, rainbow)}" fill-opacity="0.6"/>${label}</g>`;
+      const label = nodeLabelsVisible && height > 16 ? `<text x="4" y="13" font-size="10" font-family="sans-serif"><tspan>${esc(node.id ?? "")}</tspan><tspan fill-opacity="0.7"> ${formatTick(node.value ?? 0)}</tspan></text>` : "";
+      const fill = nodeColor(node, topAncestorColor(node, rainbow));
+      return `<g transform="translate(${area.x + node.y0} ${area.y + node.x0})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}\n${formatTick(node.value ?? 0)}</title><rect width="${width}" height="${height}" fill="${fill}" fill-opacity="0.6"/>${label}</g>`;
     }).join("");
     return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="icicle" data-renderer="observable-icicle@2">${cells}</g>`, plotArea: area };
   }
@@ -582,7 +634,9 @@ function renderHierarchy(input: GenericRenderInput) {
   const marks = nodes.map((node) => {
     const x = area.x + node.y;
     const y = offsetY + node.x;
-    return `<g transform="translate(${x} ${y})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}"><circle r="2.5" fill="${node.children ? "#555" : "#999"}"/><text dy="0.31em" x="${node.children ? -6 : 6}" text-anchor="${node.children ? "end" : "start"}" font-size="10" font-family="sans-serif" stroke="white" paint-order="stroke">${esc(node.id ?? "")}</text></g>`;
+    const fill = nodeColor(node, node.children ? "#555" : "#999");
+    const label = nodeLabelsVisible ? `<text dy="0.31em" x="${node.children ? -6 : 6}" text-anchor="${node.children ? "end" : "start"}" font-size="10" font-family="sans-serif" stroke="white" paint-order="stroke">${esc(node.id ?? "")}</text>` : "";
+    return `<g transform="translate(${x} ${y})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}"><circle r="${nodeRadius(node)}" fill="${fill}"/>${label}</g>`;
   }).join("");
   return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="dendrogram" data-renderer="observable-cluster@2">${links}${marks}</g>`, plotArea: area };
 }
