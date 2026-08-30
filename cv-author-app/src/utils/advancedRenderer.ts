@@ -86,11 +86,19 @@ import {
   cartesianTreeDirection,
   cartesianTreeLeafAxis,
 } from "./treeLayout";
+import { adaptiveAxisFontSize, adaptiveLabel } from "./adaptiveLabels";
 
 const tableau = schemeTableau10;
 
 function esc(value: string) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+}
+
+function adaptiveText(text: string, attributes: string, width: number, height: number, background?: string, fontSize = 10) {
+  const style = adaptiveLabel({ text, width, height, background, fontSize, minFontSize: 6, maxFontSize: 12, padding: 2 });
+  return style.text
+    ? `<text ${attributes} font-size="${style.fontSize}" fill="${style.color}">${esc(style.text)}</text>`
+    : "";
 }
 
 function normalizedType(chartType: string) {
@@ -304,7 +312,9 @@ function renderArea(input: GenericRenderInput) {
       const clipId = `${uid}-clip-${seriesIndex}`;
       const data = table.map((datum) => ({ x: datum.x ?? "", value: Number(datum[series] ?? 0) }));
       const uses = d3Range(bands).map((band) => `<use href="#${pathId}" fill="${palette[band] ?? palette.at(-1) ?? "#08306b"}" transform="translate(0 ${band * size})"/>`).join("");
-      return `<g transform="translate(0 ${top})"><defs><clipPath id="${clipId}"><rect x="${input.minX}" y="${padding}" width="${width}" height="${Math.max(0, size - padding)}"/></clipPath><path id="${pathId}" d="${area(data) ?? ""}"/></defs><g clip-path="url(#${clipId})" data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series)}">${uses}</g><text x="${input.minX + 4}" y="${(size + padding) / 2}" dy="0.35em" font-size="10" fill="currentColor">${esc(series === "__single__" ? yEncoding.field : series)}</text></g>`;
+      const seriesLabel = series === "__single__" ? yEncoding.field : series;
+      const label = adaptiveText(seriesLabel, `x="${input.minX + 4}" y="${(size + padding) / 2}" dy="0.35em"`, width * 0.32, Math.max(8, size), "#ffffff");
+      return `<g transform="translate(0 ${top})"><defs><clipPath id="${clipId}"><rect x="${input.minX}" y="${padding}" width="${width}" height="${Math.max(0, size - padding)}"/></clipPath><path id="${pathId}" d="${area(data) ?? ""}"/></defs><g clip-path="url(#${clipId})" data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series)}">${uses}</g>${label}</g>`;
     }).join("");
     const temporalDomain = x.spec.domain as [string, string] | [number, number];
     const start = new Date(temporalDomain[0]);
@@ -316,7 +326,9 @@ function renderArea(input: GenericRenderInput) {
         label: value.toLocaleString("en-US", { month: "short", year: start.getUTCFullYear() === end.getUTCFullYear() ? undefined : "numeric", timeZone: "UTC" }),
       }))
       : ticks(Number(temporalDomain[0]), Number(temporalDomain[1]), tickCount).map((value) => ({ position: x.scale(String(value)), label: formatTick(value) }));
-    const axis = axisTicks.filter((tick) => tick.position >= input.minX + marginLeft && tick.position < input.minX + width - marginRight).map((tick) => `<g class="tick" transform="translate(${tick.position} ${input.minY + marginTop})"><line y2="-6" stroke="currentColor"/><text y="-9" text-anchor="middle" font-size="10" fill="currentColor">${esc(tick.label)}</text></g>`).join("");
+    const visibleTicks = axisTicks.filter((tick) => tick.position >= input.minX + marginLeft && tick.position < input.minX + width - marginRight);
+    const axisFontSize = adaptiveAxisFontSize(visibleTicks.map((tick) => tick.label), visibleTicks.map((tick) => tick.position), 10, 6, 10);
+    const axis = visibleTicks.map((tick) => `<g class="tick" transform="translate(${tick.position} ${input.minY + marginTop})"><line y2="-6" stroke="currentColor"/>${adaptiveText(tick.label, `y="-9" text-anchor="middle"`, Math.max(12, width / Math.max(visibleTicks.length, 1)), 16, "#ffffff", axisFontSize)}</g>`).join("");
     return {
       content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="horizon" data-bands="${bands}" data-renderer="observable-horizon@2" font-family="sans-serif">${seriesGroups}<g data-mark-role="horizon-axis">${axis}</g></g>`,
       plotArea: { x: input.minX, y: input.minY + marginTop, width, height: availableHeight },
@@ -437,7 +449,8 @@ function renderParallel(input: GenericRenderInput) {
     const domain = scale.domain();
     const tickMarks = scale.ticks(Math.max(3, Math.floor(area.height / 44))).map((value) => {
       const yPosition = scale(value);
-      return `<g class="tick" transform="translate(${axisX} ${yPosition})"><line x1="-5" x2="5" stroke="currentColor"/><text x="8" y="3" text-anchor="start" font-size="9" fill="currentColor">${esc(formatTick(value))}</text></g>`;
+      const tickLabel = formatTick(value);
+      return `<g class="tick" transform="translate(${axisX} ${yPosition})"><line x1="-5" x2="5" stroke="currentColor"/>${adaptiveText(tickLabel, `x="8" y="3" text-anchor="start"`, 52, Math.max(12, area.height / 6), "#ffffff", 9)}</g>`;
     }).join("");
     const boxplotField = input.chartSpec.parallelAxisBoxplots?.[field.field];
     const boxValues = boxplotField
@@ -464,7 +477,8 @@ function renderParallel(input: GenericRenderInput) {
         return `<g data-mark-role="nested-boxplot" data-parent-axis="${esc(field.field)}" data-field="${esc(boxplotField!.field)}" aria-label="Boxplot for ${esc(boxplotField!.field)}"><line x1="${axisX}" x2="${axisX}" y1="${low}" y2="${high}" stroke="#b45309" stroke-width="1.5"/><line x1="${axisX - width / 2}" x2="${axisX + width / 2}" y1="${low}" y2="${low}" stroke="#b45309"/><line x1="${axisX - width / 2}" x2="${axisX + width / 2}" y1="${high}" y2="${high}" stroke="#b45309"/><rect x="${axisX - width / 2}" y="${Math.min(q1, q3)}" width="${width}" height="${Math.max(1, Math.abs(q3 - q1))}" fill="#f59e0b" fill-opacity="0.35" stroke="#b45309"/><line x1="${axisX - width / 2}" x2="${axisX + width / 2}" y1="${median}" y2="${median}" stroke="#92400e" stroke-width="2"/></g>`;
       })()
       : "";
-    return `<g data-mark-role="parallel-axis" data-field="${esc(field.field)}"><line x1="${axisX}" x2="${axisX}" y1="${area.y}" y2="${area.y + area.height}" stroke="currentColor"/>${tickMarks}<text x="${axisX}" y="${area.y - 7}" text-anchor="middle" font-size="10" fill="currentColor" stroke="white" stroke-width="5" stroke-linejoin="round" paint-order="stroke">${esc(field.field)}</text>${box}<title>${domain.map(formatTick).join(" - ")}</title></g>`;
+    const axisLabel = adaptiveText(field.field, `x="${axisX}" y="${area.y - 7}" text-anchor="middle" stroke="white" stroke-width="5" stroke-linejoin="round" paint-order="stroke"`, Math.max(16, area.width / Math.max(fields.length, 1) * 0.9), 18, "#ffffff", 10);
+    return `<g data-mark-role="parallel-axis" data-field="${esc(field.field)}"><line x1="${axisX}" x2="${axisX}" y1="${area.y}" y2="${area.y + area.height}" stroke="currentColor"/>${tickMarks}${axisLabel}${box}<title>${domain.map(formatTick).join(" - ")}</title></g>`;
   }).join("");
   return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="parallel" data-axis-orientation="vertical" data-renderer="observable-parallel@2" font-family="sans-serif">${paths}${axes}</g>`, plotArea: area };
 }
@@ -598,7 +612,10 @@ function renderHierarchy(input: GenericRenderInput) {
       const rotation = node.x * 180 / Math.PI - 90;
       const label = node.id || "";
       const labelOnOutside = !onLeft === !node.children;
-      return `<text data-mark-role="node-label" transform="rotate(${rotation}) translate(${node.y},0) rotate(${onLeft ? 180 : 0})" dy="0.31em" x="${labelOnOutside ? 6 : -6}" text-anchor="${labelOnOutside ? "start" : "end"}" paint-order="stroke" stroke="white" stroke-width="3" stroke-linejoin="round" fill="currentColor" font-size="10">${esc(label)}</text>`;
+      const style = adaptiveLabel({ text: label, width: Math.max(12, node.y * 0.35), height: 16, background: "#ffffff", fontSize: 10, minFontSize: 6, maxFontSize: 10, padding: 1 });
+      return style.text
+        ? `<text data-mark-role="node-label" transform="rotate(${rotation}) translate(${node.y},0) rotate(${onLeft ? 180 : 0})" dy="0.31em" x="${labelOnOutside ? 6 : -6}" text-anchor="${labelOnOutside ? "start" : "end"}" paint-order="stroke" stroke="white" stroke-width="3" stroke-linejoin="round" fill="${style.color}" font-size="${style.fontSize}">${esc(style.text)}</text>`
+        : "";
     }).join("") : "";
     return {
       content: `<g transform="translate(${cx} ${cy})" data-chart-id="${esc(input.chartId)}" data-chart-type="radial-dendrogram" data-renderer="observable-radial-cluster@3" data-angle-span="${angleSpan}" data-leaf-radius="${leafRadius}" data-selection-radius="${selectionRadius}">${links}${marks}${labels}</g>`,
@@ -623,9 +640,14 @@ function renderHierarchy(input: GenericRenderInput) {
       const height = Math.max(0, node.y1 - node.y0);
       const clipId = `treemap-${input.chartId.replace(/[^a-z0-9_-]/gi, "-")}-${index}`;
       const labelLines = (node.id ?? "").split(/(?=[A-Z][a-z])|\s+/g).filter(Boolean).concat(formatTick(node.value ?? 0));
-      const labels = labelLines.map((line, lineIndex) => `<tspan x="3" y="${(lineIndex === labelLines.length - 1 ? 1.4 : 1.1) + lineIndex * 0.9}em" fill-opacity="${lineIndex === labelLines.length - 1 ? 0.7 : 1}">${esc(line)}</tspan>`).join("");
       const fill = nodeColor(node, topAncestorColor(node, color));
-      return `<g transform="translate(${x} ${y})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("."))}\n${formatTick(node.value ?? 0)}</title><rect width="${width}" height="${height}" fill="${fill}" fill-opacity="0.6"/><clipPath id="${clipId}"><rect width="${width}" height="${height}"/></clipPath>${nodeLabelsVisible ? `<text clip-path="url(#${clipId})" font-size="10" font-family="sans-serif">${labels}</text>` : ""}</g>`;
+      const labels = labelLines.map((line, lineIndex) => {
+        const style = adaptiveLabel({ text: line, width: width - 6, height: Math.max(8, height / labelLines.length), background: fill, fontSize: 10, minFontSize: 5, maxFontSize: 10, padding: 1 });
+        return style.text
+          ? `<tspan x="3" y="${(lineIndex === labelLines.length - 1 ? 1.4 : 1.1) + lineIndex * 0.9}em" fill="${style.color}" fill-opacity="${lineIndex === labelLines.length - 1 ? 0.7 : 1}">${esc(style.text)}</tspan>`
+          : "";
+      }).join("");
+      return `<g transform="translate(${x} ${y})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("."))}\n${formatTick(node.value ?? 0)}</title><rect width="${width}" height="${height}" fill="${fill}" fill-opacity="0.6"/><clipPath id="${clipId}"><rect width="${width}" height="${height}"/></clipPath>${nodeLabelsVisible ? `<text clip-path="url(#${clipId})" font-family="sans-serif">${labels}</text>` : ""}</g>`;
     }).join("");
     return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="treemap" data-tile="${esc(tileName)}" data-renderer="observable-treemap@2">${leaves}</g>`, plotArea: area };
   }
@@ -649,7 +671,11 @@ function renderHierarchy(input: GenericRenderInput) {
     const labels = nodeLabelsVisible ? nodes.filter((node) => ((node.y0 + node.y1) / 2) * (node.x1 - node.x0) > 10).map((node) => {
       const angle = (node.x0 + node.x1) / 2 * 180 / Math.PI;
       const radiusPosition = (node.y0 + node.y1) / 2;
-      return `<text transform="rotate(${angle - 90}) translate(${radiusPosition} 0) rotate(${angle < 180 ? 0 : 180})" dy="0.35em" text-anchor="middle" font-size="10" font-family="sans-serif">${esc(node.id ?? "")}</text>`;
+      const label = node.id ?? "";
+      const style = adaptiveLabel({ text: label, width: Math.max(8, radiusPosition * (node.x1 - node.x0)), height: 16, background: nodeColor(node, topAncestorColor(node, rainbow)), fontSize: 10, minFontSize: 5, maxFontSize: 10, padding: 1 });
+      return style.text
+        ? `<text transform="rotate(${angle - 90}) translate(${radiusPosition} 0) rotate(${angle < 180 ? 0 : 180})" dy="0.35em" text-anchor="middle" font-size="${style.fontSize}" font-family="sans-serif" fill="${style.color}">${esc(style.text)}</text>`
+        : "";
     }).join("") : "";
     return {
       content: `<g transform="translate(${cx} ${cy})" data-chart-id="${esc(input.chartId)}" data-chart-type="sunburst" data-renderer="observable-sunburst@2">${marks}<g pointer-events="none">${labels}</g></g>`,
@@ -663,8 +689,10 @@ function renderHierarchy(input: GenericRenderInput) {
     const cells = layoutRoot.descendants().filter(visible).map((node) => {
       const width = Math.max(0, node.y1 - node.y0);
       const height = Math.max(0, node.x1 - node.x0);
-      const label = nodeLabelsVisible && height > 16 ? `<text x="4" y="13" font-size="10" font-family="sans-serif"><tspan>${esc(node.id ?? "")}</tspan><tspan fill-opacity="0.7"> ${formatTick(node.value ?? 0)}</tspan></text>` : "";
       const fill = nodeColor(node, topAncestorColor(node, rainbow));
+      const label = nodeLabelsVisible && height > 16
+        ? adaptiveText(`${node.id ?? ""} ${formatTick(node.value ?? 0)}`, `x="4" y="13" font-family="sans-serif"`, width - 8, height - 4, fill, 10)
+        : "";
       return `<g transform="translate(${area.x + node.y0} ${area.y + node.x0})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}\n${formatTick(node.value ?? 0)}</title><rect width="${width}" height="${height}" fill="${fill}" fill-opacity="0.6"/>${label}</g>`;
     }).join("");
     return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="icicle" data-renderer="observable-icicle@2">${cells}</g>`, plotArea: area };
@@ -761,15 +789,17 @@ function renderHierarchy(input: GenericRenderInput) {
       : `M${source.x},${source.y}C${source.x},${(source.y + target.y) / 2} ${target.x},${(source.y + target.y) / 2} ${target.x},${target.y}`;
     return `<path data-mark-role="link" d="${path}" fill="none" stroke="#555" stroke-opacity="0.4" stroke-width="1.5"/>`;
   }).join("");
-  const marks = nodes.map((node) => {
-    const { x, y } = point(node);
-    const fill = nodeColor(node, node.children ? "#555" : "#999");
-    const isLeaf = !node.children?.length;
-    const label = !nodeLabelsVisible
-      ? ""
-      : horizontal
-        ? `<text dy="0.31em" x="${(direction === "right") === isLeaf ? 6 : -6}" text-anchor="${(direction === "right") === isLeaf ? "start" : "end"}" font-size="10" font-family="sans-serif" stroke="white" paint-order="stroke">${esc(node.id ?? "")}</text>`
-        : `<text y="${(direction === "down") === isLeaf ? 8 : -8}" text-anchor="middle" dominant-baseline="${(direction === "down") === isLeaf ? "hanging" : "auto"}" font-size="10" font-family="sans-serif" stroke="white" paint-order="stroke">${esc(node.id ?? "")}</text>`;
+    const marks = nodes.map((node) => {
+      const { x, y } = point(node);
+      const fill = nodeColor(node, node.children ? "#555" : "#999");
+      const isLeaf = !node.children?.length;
+      const labelText = node.id ?? "";
+      const labelStyle = adaptiveLabel({ text: labelText, width: Math.max(12, horizontal ? treeArea.width / Math.max(2, nodes.length) : treeArea.width * 0.22), height: 18, background: fill, fontSize: 10, minFontSize: 6, maxFontSize: 10, padding: 1 });
+      const label = !nodeLabelsVisible
+        ? ""
+        : horizontal
+        ? labelStyle.text ? `<text dy="0.31em" x="${(direction === "right") === isLeaf ? 6 : -6}" text-anchor="${(direction === "right") === isLeaf ? "start" : "end"}" font-size="${labelStyle.fontSize}" font-family="sans-serif" fill="${labelStyle.color}" stroke="white" paint-order="stroke">${esc(labelStyle.text)}</text>` : ""
+        : labelStyle.text ? `<text y="${(direction === "down") === isLeaf ? 8 : -8}" text-anchor="middle" dominant-baseline="${(direction === "down") === isLeaf ? "hanging" : "auto"}" font-size="${labelStyle.fontSize}" font-family="sans-serif" fill="${labelStyle.color}" stroke="white" paint-order="stroke">${esc(labelStyle.text)}</text>` : "";
     return `<g transform="translate(${x} ${y})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-row-key="${esc(rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)))}"><circle r="${nodeRadius(node)}" fill="${fill}"/>${label}</g>`;
   }).join("");
   const scales = leafAxis === "x"
@@ -819,13 +849,13 @@ function renderCalendar(input: GenericRenderInput) {
   const groups = years.map(([year, values], yearIndex) => {
     const originX = input.minX + left;
     const originY = input.minY + yearHeight * yearIndex + cellSize * 1.5;
-    const labels = d3Range(1, 6).map((day) => `<text x="-5" y="${(countDay(day) + 0.5) * cellSize}" dy="0.31em" text-anchor="end" font-size="10">${"SMTWTFS"[day]}</text>`).join("");
+    const labels = d3Range(1, 6).map((day) => adaptiveText("SMTWTFS"[day] ?? "", `x="-5" y="${(countDay(day) + 0.5) * cellSize}" dy="0.31em" text-anchor="end"`, Math.max(8, cellSize * 2), Math.max(8, cellSize), "#ffffff", 10)).join("");
     const cells = values.filter((item) => ![0, 6].includes(item.date.getUTCDay())).map((item) => `<rect data-chart-id="${esc(input.chartId)}" data-mark-role="cell" data-mark-group-id="mark-group:${esc(input.chartId)}:cell" data-row-key="${esc(rowKey(input.dataset, item.row, item.index))}" data-change="${item.change}" x="${utcMonday.count(utcYear(item.date), item.date) * cellSize + 0.5}" y="${countDay(item.date.getUTCDay()) * cellSize + 0.5}" width="${Math.max(0, cellSize - 1)}" height="${Math.max(0, cellSize - 1)}" fill="${color(item.change)}"><title>${item.date.toISOString().slice(0, 10)}\n${(item.change * 100).toFixed(2)}%\n${formatTick(item.value)}</title></rect>`).join("");
     const first = values[0]?.date;
     const last = values.at(-1)?.date;
     const months = first && last ? utcMonths(utcMonth(first), last) : [];
-    const monthMarks = months.map((month, monthIndex) => `${monthIndex ? `<path d="${pathMonth(month)}" fill="none" stroke="#fff" stroke-width="3"/>` : ""}<text x="${utcMonday.count(utcYear(month), utcMonday.ceil(month)) * cellSize + 2}" y="-5" font-size="10">${month.toLocaleString("en-US", { month: "short", timeZone: "UTC" })}</text>`).join("");
-    return `<g transform="translate(${originX} ${originY})"><text x="-5" y="-5" font-weight="bold" text-anchor="end" font-size="10">${year}</text>${labels}${cells}<g data-mark-role="month-boundaries">${monthMarks}</g></g>`;
+    const monthMarks = months.map((month, monthIndex) => `${monthIndex ? `<path d="${pathMonth(month)}" fill="none" stroke="#fff" stroke-width="3"/>` : ""}${adaptiveText(month.toLocaleString("en-US", { month: "short", timeZone: "UTC" }), `x="${utcMonday.count(utcYear(month), utcMonday.ceil(month)) * cellSize + 2}" y="-5"`, Math.max(12, cellSize * 4), Math.max(8, cellSize), "#ffffff", 10)}`).join("");
+    return `<g transform="translate(${originX} ${originY})">${adaptiveText(String(year), `x="-5" y="-5" font-weight="bold" text-anchor="end"`, 30, Math.max(8, cellSize), "#ffffff", 10)}${labels}${cells}<g data-mark-role="month-boundaries">${monthMarks}</g></g>`;
   }).join("");
   return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="calendar" data-week-start="monday" data-weekends="excluded" data-renderer="observable-calendar@2" font-family="sans-serif">${groups}</g>`, plotArea: { x: input.minX + left, y: input.minY, width: cellSize * 53, height: yearHeight * years.length } };
 }
@@ -1057,7 +1087,9 @@ function renderForceDirected(input: GenericRenderInput) {
       ?? (typeof forceConfig.color === "string" ? forceConfig.color : tableau[node.index % tableau.length]!);
     const radius = radiusFor(node);
     const label = node.row.label ?? node.id;
-    return `<g data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id)}" data-row-key="${esc(rowKey(graph.nodes, node.row, node.index))}"><circle cx="${node.x}" cy="${node.y}" r="${radius}" fill="${color}" stroke="#fff" stroke-width="1.5"><title>${esc(String(label))}</title></circle><text x="${node.x + radius + 3}" y="${node.y}" dy="0.35em" font-size="10" fill="currentColor">${esc(String(label))}</text></g>`;
+    const labelStyle = adaptiveLabel({ text: String(label), width: Math.max(18, area.width * 0.22), height: 18, background: "#ffffff", fontSize: 10, minFontSize: 6, maxFontSize: 10, padding: 1 });
+    const labelMarkup = labelStyle.text ? `<text x="${node.x + radius + 3}" y="${node.y}" dy="0.35em" font-size="${labelStyle.fontSize}" fill="${labelStyle.color}">${esc(labelStyle.text)}</text>` : "";
+    return `<g data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id)}" data-row-key="${esc(rowKey(graph.nodes, node.row, node.index))}"><circle cx="${node.x}" cy="${node.y}" r="${radius}" fill="${color}" stroke="#fff" stroke-width="1.5"><title>${esc(String(label))}</title></circle>${labelMarkup}</g>`;
   }).join("");
   return {
     content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="force-directed-graph" data-renderer="observable-force-directed@1">${linkMarks}${nodeMarks}</g>`,
@@ -1091,7 +1123,9 @@ function renderChord(input: GenericRenderInput) {
     const tickMarks = tickValues.map((value) => {
       const angle = value * k + group.startAngle;
       const major = majorStep > 0 && Math.abs(value / majorStep - Math.round(value / majorStep)) < 1e-6;
-      return `<g transform="rotate(${angle * 180 / Math.PI - 90}) translate(${outerRadius} 0)"><line x2="6" stroke="currentColor"/>${major ? `<text x="8" dy="0.35em" transform="${angle > Math.PI ? "rotate(180) translate(-16)" : ""}" text-anchor="${angle > Math.PI ? "end" : "start"}" font-size="10">${esc(formatTick(value))}</text>` : ""}</g>`;
+      const tickLabel = formatTick(value);
+      const label = major ? adaptiveText(tickLabel, `x="8" dy="0.35em" transform="${angle > Math.PI ? "rotate(180) translate(-16)" : ""}" text-anchor="${angle > Math.PI ? "end" : "start"}"`, Math.max(16, outerRadius * 0.22), 16, "#ffffff", 10) : "";
+      return `<g transform="rotate(${angle * 180 / Math.PI - 90}) translate(${outerRadius} 0)"><line x2="6" stroke="currentColor"/>${label}</g>`;
     }).join("");
     return `<g data-mark-role="node" data-node-key="${esc(names[group.index] ?? "")}"><path d="${arc(group) ?? ""}" fill="${color(group.index)}"><title>${formatTick(group.value)} ${esc(names[group.index] ?? "")}</title></path><g data-mark-role="group-ticks">${tickMarks}</g></g>`;
   }).join("");
@@ -1134,7 +1168,7 @@ function renderSankey(input: GenericRenderInput) {
   const nodes = result.nodes.map((node) => `<rect data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.name)}" x="${node.x0 ?? 0}" y="${node.y0 ?? 0}" width="${Math.max(1, (node.x1 ?? 0) - (node.x0 ?? 0))}" height="${Math.max(1, (node.y1 ?? 0) - (node.y0 ?? 0))}" fill="${color(node.category)}" stroke="#000"><title>${esc(node.name)}\n${formatTick(node.value ?? 0)}</title></rect>`).join("");
   const labels = result.nodes.map((node) => {
     const leftSide = (node.x0 ?? 0) < area.x + area.width / 2;
-    return `<text x="${leftSide ? (node.x1 ?? 0) + 6 : (node.x0 ?? 0) - 6}" y="${((node.y1 ?? 0) + (node.y0 ?? 0)) / 2}" dy="0.35em" text-anchor="${leftSide ? "start" : "end"}" font-size="10">${esc(node.name)}</text>`;
+    return adaptiveText(node.name, `x="${leftSide ? (node.x1 ?? 0) + 6 : (node.x0 ?? 0) - 6}" y="${((node.y1 ?? 0) + (node.y0 ?? 0)) / 2}" dy="0.35em" text-anchor="${leftSide ? "start" : "end"}"`, Math.max(20, area.width * 0.25), Math.max(12, (node.y1 ?? 0) - (node.y0 ?? 0)), "#ffffff", 10);
   }).join("");
   return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="sankey" data-node-align="${esc(alignmentName)}" data-link-color="${esc(linkColor)}" data-renderer="observable-sankey@2" font-family="sans-serif"><g fill="none">${linkMarks}</g><g>${nodes}</g><g>${labels}</g></g>`, plotArea: area };
 }

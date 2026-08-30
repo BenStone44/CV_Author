@@ -8,6 +8,7 @@ import type {
 } from "../types";
 import { getLeafNodeTransform, getNodeTransform } from "../utils/canvasUtils";
 import { chartAxisLabelsVisible, chartAxisVisible } from "../utils/chartAxes";
+import { adaptiveAxisFontSize, adaptiveLabel, readableTextColor } from "../utils/adaptiveLabels";
 import {
   cartesianTreeDirection,
   cartesianTreeLeafAxis,
@@ -131,7 +132,16 @@ export function createCartesianAxisModel(node: CanvasNode): CartesianAxisModel |
   };
   const tokens = node.chartSpec?.styleTokens;
   const renderedScale = Math.max(Math.abs(node.scaleX), Math.abs(node.scaleY), 0.0001);
-  const screenFontSize = Math.max(8, Math.min(tokens?.fontSize ?? 9, 9, Math.min(node.width, node.height) * 0.04));
+  const xTicks = axisTicks(xScale, Math.max(2, Math.min(8, Math.floor(plot.width / 64))));
+  const yTicks = axisTicks(yScale, Math.max(2, Math.min(8, Math.floor(plot.height / 36))));
+  const requestedFontSize = tokens?.fontSize ?? 9;
+  const screenFontSize = Math.max(7, Math.min(
+    requestedFontSize,
+    12,
+    Math.min(node.width, node.height) * 0.04,
+    adaptiveAxisFontSize(xTicks.map((tick) => tick.label), xTicks.map((tick) => tick.position), requestedFontSize, 7, 12),
+    adaptiveAxisFontSize(yTicks.map((tick) => tick.label), yTicks.map((tick) => tick.position), requestedFontSize, 7, 12),
+  ));
   const fontSize = screenFontSize / renderedScale;
   return {
     left,
@@ -143,8 +153,8 @@ export function createCartesianAxisModel(node: CanvasNode): CartesianAxisModel |
     yEnd: { x: origin.x, y: yDirection === -1 ? top : bottom },
     xDirection,
     yDirection,
-    xTicks: axisTicks(xScale, Math.max(2, Math.min(6, Math.floor(plot.width / 80)))),
-    yTicks: axisTicks(yScale, Math.max(2, Math.min(6, Math.floor(plot.height / 42)))),
+    xTicks,
+    yTicks,
     // Axis titles duplicated the bound CSV column names. The encoding panel
     // remains the source of truth for those bindings, so keep the canvas axes
     // free of field-name labels.
@@ -153,7 +163,7 @@ export function createCartesianAxisModel(node: CanvasNode): CartesianAxisModel |
     fontFamily: tokens?.fontFamily ?? "Inter, ui-sans-serif, system-ui, sans-serif",
     fontSize,
     axisColor: tokens?.axisColor ?? "#64748b",
-    textColor: tokens?.textColor ?? "#334155",
+    textColor: readableTextColor("#ffffff", tokens?.textColor ?? "#334155"),
   };
 }
 
@@ -226,17 +236,37 @@ export const CartesianCoordinateSystem = defineComponent({
               || props.node.chartSpec?.axes?.y?.labelsVisible !== undefined
               || showDiscreteLabels);
           axisNodes.push(...model.yTicks.flatMap((tick) => {
+            const tickIndex = model.yTicks.indexOf(tick);
+            const previous = model.yTicks[tickIndex - 1];
+            const next = model.yTicks[tickIndex + 1];
+            const verticalGap = Math.min(
+              previous ? Math.abs(tick.position - previous.position) : Infinity,
+              next ? Math.abs(next.position - tick.position) : Infinity,
+            );
+            const labelStyle = adaptiveLabel({
+              text: tick.label,
+              width: Math.max(24, Math.min(props.node.width * 0.24, props.node.width - 8)),
+              height: Number.isFinite(verticalGap) ? Math.max(8, verticalGap * 0.86) : model.fontSize * 1.3,
+              fontSize: model.fontSize,
+              minFontSize: 7,
+              maxFontSize: model.fontSize,
+              background: "#ffffff",
+              fontFamily: model.fontFamily,
+              padding: 1,
+            });
             const tickEnd = model.origin.x + (xDirection === 1 ? -5 : 5);
             const textOffset = model.fontSize * textScale / nodeScaleX * 0.8;
             const textX = model.origin.x + (xDirection === 1 ? -textOffset : textOffset);
             return [
               ...(showYLine ? [h("line", { class: "cartesian-axis-tick", x1: model.origin.x, y1: tick.position, x2: tickEnd, y2: tick.position, stroke: model.axisColor, "vector-effect": "non-scaling-stroke" })] : []),
-              ...(showLabels ? [h("text", {
+              ...(showLabels && labelStyle.text ? [h("text", {
                 class: "cartesian-axis-tick-label",
                 transform: textTransform(textX, tick.position),
                 "text-anchor": xDirection === 1 ? "end" : "start",
                 "dominant-baseline": "middle",
-              }, tick.label)] : []),
+                "font-size": labelStyle.fontSize,
+                fill: labelStyle.color,
+              }, labelStyle.text)] : []),
             ];
           }));
           if (model.yTitle) axisNodes.push(h("text", {
@@ -260,16 +290,36 @@ export const CartesianCoordinateSystem = defineComponent({
               || props.node.chartSpec?.axes?.x?.labelsVisible !== undefined
               || showDiscreteLabels);
           axisNodes.push(...model.xTicks.flatMap((tick) => {
+            const tickIndex = model.xTicks.indexOf(tick);
+            const previous = model.xTicks[tickIndex - 1];
+            const next = model.xTicks[tickIndex + 1];
+            const horizontalGap = Math.min(
+              previous ? Math.abs(tick.position - previous.position) : Infinity,
+              next ? Math.abs(next.position - tick.position) : Infinity,
+            );
+            const labelStyle = adaptiveLabel({
+              text: tick.label,
+              width: Number.isFinite(horizontalGap) ? Math.max(8, horizontalGap * 0.86) : Math.max(24, props.node.width * 0.2),
+              height: Math.max(10, model.fontSize * 1.3),
+              fontSize: model.fontSize,
+              minFontSize: 7,
+              maxFontSize: model.fontSize,
+              background: "#ffffff",
+              fontFamily: model.fontFamily,
+              padding: 1,
+            });
             const tickEnd = model.origin.y + (yDirection === -1 ? 5 : -5);
             const textOffset = model.fontSize * textScale / nodeScaleY;
             const textY = model.origin.y + (yDirection === -1 ? textOffset * 1.6 : -textOffset * 0.8);
             return [
               ...(showXLine ? [h("line", { class: "cartesian-axis-tick", x1: tick.position, y1: model.origin.y, x2: tick.position, y2: tickEnd, stroke: model.axisColor, "vector-effect": "non-scaling-stroke" })] : []),
-              ...(showLabels ? [h("text", {
+              ...(showLabels && labelStyle.text ? [h("text", {
                 class: "cartesian-axis-tick-label",
                 transform: textTransform(tick.position, textY),
                 "text-anchor": "middle",
-              }, tick.label)] : []),
+                "font-size": labelStyle.fontSize,
+                fill: labelStyle.color,
+              }, labelStyle.text)] : []),
             ];
           }));
           if (model.xTitle) axisNodes.push(h("text", {
@@ -288,16 +338,26 @@ export const CartesianCoordinateSystem = defineComponent({
             ? facet.facetRadiusField
             : facet.facetGrid?.rowField ?? (facet.facetDirection === "row" ? facet.facetField : undefined);
           const caption = (field: string) => filters[field] === undefined ? field : `${field}: ${filters[field]}`;
-          if (horizontalField) axisNodes.push(h("text", {
-            class: ["cartesian-axis-title", "facet-coordinate-axis-label", facet.facetCoordinateSystem === "Polar" ? "facet-coordinate-axis-label--theta" : "facet-coordinate-axis-label--column"],
-            transform: textTransform((model.left + model.right) / 2, model.top - model.fontSize * 1.4),
-            "text-anchor": "middle",
-          }, caption(horizontalField)));
-          if (verticalField) axisNodes.push(h("text", {
-            class: ["cartesian-axis-title", "facet-coordinate-axis-label", facet.facetCoordinateSystem === "Polar" ? "facet-coordinate-axis-label--radius" : "facet-coordinate-axis-label--row"],
-            transform: `${textTransform(model.left - model.fontSize * 1.8, (model.top + model.bottom) / 2)} rotate(-90)`,
-            "text-anchor": "middle",
-          }, caption(verticalField)));
+          if (horizontalField) {
+            const label = adaptiveLabel({ text: caption(horizontalField), width: model.right - model.left, height: model.fontSize * 1.6, fontSize: model.fontSize, minFontSize: 7, maxFontSize: model.fontSize, background: "#ffffff", fontFamily: model.fontFamily, padding: 2 });
+            if (label.text) axisNodes.push(h("text", {
+              class: ["cartesian-axis-title", "facet-coordinate-axis-label", facet.facetCoordinateSystem === "Polar" ? "facet-coordinate-axis-label--theta" : "facet-coordinate-axis-label--column"],
+              transform: textTransform((model.left + model.right) / 2, model.top - model.fontSize * 1.4),
+              "text-anchor": "middle",
+              "font-size": label.fontSize,
+              fill: label.color,
+            }, label.text));
+          }
+          if (verticalField) {
+            const label = adaptiveLabel({ text: caption(verticalField), width: Math.max(24, model.bottom - model.top), height: model.fontSize * 1.6, fontSize: model.fontSize, minFontSize: 7, maxFontSize: model.fontSize, background: "#ffffff", fontFamily: model.fontFamily, padding: 2 });
+            if (label.text) axisNodes.push(h("text", {
+              class: ["cartesian-axis-title", "facet-coordinate-axis-label", facet.facetCoordinateSystem === "Polar" ? "facet-coordinate-axis-label--radius" : "facet-coordinate-axis-label--row"],
+              transform: `${textTransform(model.left - model.fontSize * 1.8, (model.top + model.bottom) / 2)} rotate(-90)`,
+              "text-anchor": "middle",
+              "font-size": label.fontSize,
+              fill: label.color,
+            }, label.text));
+          }
         }
       } else if (renderAxes) {
         if (includes("x") && showXLine) axisNodes.push(

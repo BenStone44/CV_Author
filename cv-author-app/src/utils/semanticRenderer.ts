@@ -20,6 +20,7 @@ import { renderAdvancedChart } from "./advancedRenderer";
 import { csvRowKey } from "./csvDataEngine";
 import { chartAxisLabelsVisible, chartAxisVisible } from "./chartAxes";
 import { materializeGraphDataset } from "./chartDataPipeline";
+import { adaptiveLabel } from "./adaptiveLabels";
 
 const POLAR_CONCAT_SEAM_RATIO = 0.06;
 
@@ -487,7 +488,24 @@ function renderRadialBarChart(input: GenericRenderInput) {
       const x = cx + Math.sin(angle) * (outerRadius + 7);
       const y = cy - Math.cos(angle) * (outerRadius + 7);
       const onLeft = Math.sin(angle) < 0;
-      return `<text data-mark-role="bar-label" x="${x}" y="${y}" transform="rotate(${degrees} ${x} ${y})" text-anchor="${onLeft ? "end" : "start"}" dominant-baseline="middle" font-size="9" fill="${esc(input.chartSpec.styleTokens?.textColor ?? "#334155")}">${esc(datum.category)}</text>`;
+      const previous = angleLayout[index - 1];
+      const next = angleLayout[index + 1];
+      const arcGap = Math.max(12, Math.min(
+        previous ? Math.abs(angle - (previous.startAngle + previous.endAngle) / 2) : Math.abs((next?.startAngle ?? angle) - angle),
+        next ? Math.abs((next.startAngle + next.endAngle) / 2 - angle) : Math.abs(angle - (previous?.endAngle ?? angle)),
+      ) * (outerRadius + 7));
+      const style = adaptiveLabel({
+        text: datum.category,
+        width: arcGap,
+        height: 18,
+        fontSize: input.chartSpec.styleTokens?.fontSize ?? 9,
+        minFontSize: 7,
+        maxFontSize: 11,
+        background: "#ffffff",
+        fontFamily: input.chartSpec.styleTokens?.fontFamily,
+        padding: 2,
+      });
+      return `<text data-mark-role="bar-label" x="${x}" y="${y}" transform="rotate(${degrees} ${x} ${y})" text-anchor="${onLeft ? "end" : "start"}" dominant-baseline="middle" font-size="${style.fontSize}" fill="${esc(style.color)}">${esc(style.text)}</text>`;
     }).join("") : "";
 
   return {
@@ -686,7 +704,22 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
         // d3-shape measures arc angles clockwise from 12 o'clock.
         const x = cx + Math.sin(angle) * labelRadius;
         const y = cy - Math.cos(angle) * labelRadius;
-        return `<text data-mark-role="arc-label" data-category-key="${esc(component.categoryKey)}" x="${x}" y="${y}" text-anchor="middle" dominant-baseline="middle" fill="#1554b2" font-size="11" font-weight="650">${esc(component.field)}</text>`;
+        const arcLength = Math.max(8, Math.abs(datum.endAngle - datum.startAngle) * labelRadius * 0.82);
+        const style = adaptiveLabel({
+          text: component.field,
+          width: arcLength,
+          height: Math.max(8, componentOuterRadius - markInnerRadius),
+          fontSize: input.chartSpec.styleTokens?.fontSize ?? 11,
+          minFontSize: 6,
+          maxFontSize: 11,
+          background: seriesStyles[component.field]?.color
+            ?? palette[(segmentPaletteIndexes.get(component.field) ?? index) % palette.length],
+          fontFamily: input.chartSpec.styleTokens?.fontFamily,
+          padding: 2,
+        });
+        return style.text
+          ? `<text data-mark-role="arc-label" data-category-key="${esc(component.categoryKey)}" x="${x}" y="${y}" text-anchor="middle" dominant-baseline="middle" fill="${esc(style.color)}" font-size="${style.fontSize}" font-weight="650">${esc(style.text)}</text>`
+          : "";
       }).join("")
       : "";
     const thetaFields = Array.from(new Set(components.map((component) => component.thetaField)));
