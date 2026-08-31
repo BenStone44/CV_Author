@@ -40,4 +40,16 @@ describe("D3 Gallery thumbnails", () => {
     expect(d3GalleryThumbnailUrl("MatrixDiagram")).toBeNull();
     expect(withD3GalleryThumbnail(candidate)).toBe(candidate);
   });
+
+  it.each(["observable-contours@2", "observable-hexbin@2"])("preserves local %s templates", (renderer) => {
+    const candidate = {
+      id: renderer,
+      name: renderer,
+      chartType: renderer.includes("contours") ? "Contour" : "Hexbin",
+      coordinateSystem: "Cartesian" as const,
+      src: `data:image/svg+xml,${renderer}`,
+      svgMarkup: `<svg data-renderer="${renderer}"><path/></svg>`,
+    };
+    expect(withD3GalleryThumbnail(candidate)).toBe(candidate);
+  });
 });

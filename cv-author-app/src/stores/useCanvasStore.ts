@@ -14,6 +14,7 @@ import type {
   CanvasGroupNode,
   CanvasHistorySnapshot,
   CanvasHistoryPositionPatch,
+  MarkGroupConfigValue,
   ContextMenuState,
   CoordinateSystem,
   Interaction,
@@ -339,6 +340,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const polarAngleInputVisible = ref(false);
   const undoStack = ref<Array<CanvasHistorySnapshot | CanvasHistoryPositionPatch>>([]);
   const redoStack = ref<Array<CanvasHistorySnapshot | CanvasHistoryPositionPatch>>([]);
+  const pendingMarkConfigEdit = ref<{
+    snapshot: CanvasHistorySnapshot;
+    field: string;
+    changes: Array<{ nodeId: string; role: string; before: MarkGroupConfigValue | undefined }>;
+  } | null>(null);
   const clipboardNodes = ref<CanvasNode[]>([]);
   const interaction = ref<Interaction | null>(null);
   const nestedPreparedDataCache = new Map<string, {
@@ -777,7 +783,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
 
   function layerChannelsForNodes(nodes: CanvasNode[]) {
     const contracts = nodes.map((node) => node.chartSpec ? getChartTemplateContract(node.chartSpec.chartType) : null);
-    if (contracts.some((contract) => !contract)) return null;
+    if (contracts.some((contract) => !contract || !contract.supportsLayerComposition)) return null;
     const compatible = contracts[0]!.shareableChannels.filter((channel) =>
       contracts.every((contract) => contract!.shareableChannels.includes(channel))
       && sharedChannelEncodingsAreCompatible(nodes, channel),
@@ -1806,7 +1812,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     }
     if (updates.length === 0) return false;
 
-    if (recordHistory) pushCanvasHistory();
+    const field = Object.keys(patch).length === 1 ? Object.keys(patch)[0] : undefined;
+    const deferred = !!field
+      && pendingMarkConfigEdit.value?.field === field
+      && pendingMarkConfigEdit.value.changes.some((change) => change.nodeId === node.id && change.role === role);
+    if (recordHistory && !deferred) pushCanvasHistory();
     updates.forEach(({ group }) => {
       group.sharedConfig = { ...group.sharedConfig, ...patch };
       if (chartRelationships.value.markGroups[group.id]) {
@@ -1828,9 +1838,47 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       updateNodeMarkGroupConfig(node, patch);
       return;
     }
-    pushCanvasHistory();
+    if (!pendingMarkConfigEdit.value) pushCanvasHistory();
     targets.forEach((target) => updateNodeMarkGroupConfig(target, patch, undefined, false));
     reconcileRelationshipNodes(canvasNodes.value);
+  }
+
+  function markConfigGroup(node: CanvasNode, role: string) {
+    return node.chartSpec?.markGroups?.find((group) => group.role === role)
+      ?? node.chartSpec?.markGroups?.[0];
+  }
+
+  function beginMarkConfigEdit(nodeId: string, role: string, field: string) {
+    if (pendingMarkConfigEdit.value) commitMarkConfigEdit();
+    const node = findCanvasNode(nodeId);
+    if (!node) return;
+    const changes = encodingTargets(node).flatMap((target) => {
+      const group = markConfigGroup(target, role);
+      return group
+        ? [{ nodeId: target.id, role, before: group.sharedConfig[field] }]
+        : [];
+    });
+    if (changes.length === 0) return;
+    pendingMarkConfigEdit.value = {
+      snapshot: captureCanvasHistory(),
+      field,
+      changes,
+    };
+  }
+
+  function commitMarkConfigEdit() {
+    const edit = pendingMarkConfigEdit.value;
+    pendingMarkConfigEdit.value = null;
+    if (!edit) return;
+    const changed = edit.changes.some((change) => {
+      const node = findCanvasNode(change.nodeId);
+      const group = node ? markConfigGroup(node, change.role) : null;
+      return !!group && !Object.is(group.sharedConfig[edit.field], change.before);
+    });
+    if (!changed) return;
+    undoStack.value.push(edit.snapshot);
+    if (undoStack.value.length > 50) undoStack.value.shift();
+    redoStack.value = [];
   }
 
   function updateSelectedChartMarkGroupConfig(patch: MarkGroupSharedConfig) {
@@ -1853,11 +1901,33 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       .filter((member): member is CanvasNode => !!member?.chartSpec);
   }
 
+  function nestedBatchEncodingTargets(node: CanvasNode) {
+    const relationship = Object.values(chartRelationships.value.nestedRelationships).find((candidate) =>
+      candidate.status === "active" && candidate.childChartId === node.id,
+    );
+    if (!relationship) return [node];
+    const parameters = relationship.parameters as Partial<RelativeNestedParameters>;
+    const batchId = parameters.batchId;
+    const relationships = Object.values(chartRelationships.value.nestedRelationships).filter((candidate) => {
+      if (candidate.status !== "active") return false;
+      if (batchId) return (candidate.parameters as Partial<RelativeNestedParameters>).batchId === batchId;
+      return candidate.id === relationship.id;
+    });
+    const targets = relationships
+      .map((candidate) => findCanvasNode(candidate.childChartId))
+      .filter((candidate): candidate is CanvasNode => !!candidate?.chartSpec);
+    return targets.length > 0 ? targets : [node];
+  }
+
   function encodingTargets(node: CanvasNode) {
+    const nestedTargets = nestedBatchEncodingTargets(node);
+    if (nestedTargets.length > 1) return nestedTargets;
     if (node.compositionSpec?.type === "layer" || node.compositionSpec?.type === "concat") {
       return node.chartSpec ? [node] : [];
     }
-    return dimensionDecisionTargets(node);
+    const targets = dimensionDecisionTargets(node);
+    if (targets.length !== 1 || targets[0]?.id !== node.id) return targets;
+    return nestedTargets;
   }
 
   function updateEncodingTargets(
@@ -2253,12 +2323,17 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const parentXField = parentSpec.encodings.x?.field ?? parentSpec.encodings.column?.field;
     const parentYField = parentSpec.encodings.y?.field ?? parentSpec.encodings.row?.field;
     const parentStructuralFields = getNestedParentContextFields(parentSpec);
+    const hierarchyKeyField = normalizeChartTemplate(parentSpec.chartType) === "hierarchy"
+      ? parentSpec.encodings.key?.field
+      : undefined;
     const parentDimensionFields = chartRoleFields(parentSpec, new Set<NestedContextRole>(["dimension"]));
     const parentSeriesFields = chartRoleFields(parentSpec, new Set<NestedContextRole>(["series"]));
     const clues = nestClueTransforms(child.chartSpec);
     const fieldsToResolve = clues.length > 0
       ? clues.map((clue) => clue.field)
-      : parentStructuralFields;
+      : hierarchyKeyField
+        ? [hierarchyKeyField]
+        : parentStructuralFields;
     let identity: {
       rowKey?: string;
       categoryKey?: string;
@@ -2589,7 +2664,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     createLayer, createStructuralComposition, executeComposition,
     beginNestedRelationshipDraft, ensureCommittedNestedRelationship, createNestedPie,
     nestedPieValueFields, applyNestedPiesToNode, closeNestedBinding, confirmNestedBinding,
-    openNestedPositionEditor, updateNestedPosition, resetNestedPosition,
+    openNestedPositionEditor, updateNestedPosition, updateNestedChildScale, resetNestedPosition,
     closeNestedPositionEditor, scatterPointDropZone, nestedTargetWouldCreateCycle,
     semanticItemDropZone, enterNestedDropLevel, enterCompositionDropLevel,
     localRectDropGeometry, polarSectorGeometry, polarCompositionDropZoneAtPoint,
@@ -2601,7 +2676,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const node = findCanvasNode(target.id);
     if (node?.coordinateGuide?.type !== "Cartesian") return;
     pushCanvasHistory();
-    const targets = coordinateTargets(node.id, axis);
+    const nestedTargets = nestedBatchEncodingTargets(node);
+    const targets = nestedTargets.length > 1 ? nestedTargets : coordinateTargets(node.id, axis);
     const currentDirection = axis === "x" ? node.coordinateGuide.xDirection : node.coordinateGuide.yDirection;
     const nextDirection: 1 | -1 = currentDirection === 1 ? -1 : 1;
     const axisIds = new Set<string>();
@@ -2662,16 +2738,20 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   ) {
     const node = axisBindingNode.value;
     if (!node?.chartSpec) return;
+    const targets = encodingTargets(node);
     pushCanvasHistory();
-    node.chartSpec = {
-      ...node.chartSpec,
-      axes: {
-        ...node.chartSpec.axes,
-        [axis]: { ...node.chartSpec.axes?.[axis], ...patch },
-      },
-    };
-    renderChartNode(node);
-    registerChartRelationship(node);
+    targets.forEach((target) => {
+      if (!target.chartSpec) return;
+      target.chartSpec = {
+        ...target.chartSpec,
+        axes: {
+          ...target.chartSpec.axes,
+          [axis]: { ...target.chartSpec.axes?.[axis], ...patch },
+        },
+      };
+      renderChartNode(target);
+      registerChartRelationship(target);
+    });
   }
   function closeAxisBinding() {
     axisBindingTarget.value = null;
@@ -2895,9 +2975,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       valueFields: spec.valueFields?.map((encoding) => replaceEncoding(encoding)!),
       angleFields: spec.angleFields?.map((encoding) => replaceEncoding(encoding)!),
       parallelFields: spec.parallelFields?.map((encoding) => replaceEncoding(encoding)!),
-      parallelAxisBoxplots: spec.parallelAxisBoxplots
-        ? Object.fromEntries(Object.entries(spec.parallelAxisBoxplots).map(([axis, encoding]) => [replaceField(axis), replaceEncoding(encoding)!]))
-        : undefined,
       series: replaceEncoding(spec.series),
       seriesFields: spec.seriesFields?.map((encoding) => replaceEncoding(encoding)!),
     });
@@ -2966,11 +3043,13 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const node = axisBindingNode.value;
     const dataset = axisBindingDataset.value;
     if (!node?.chartSpec || !dataset) return false;
+    const seriesConfig = getEncodingChannelConfigsForSpec(node.chartSpec)
+      .find((config) => config.role === "series");
     const selected = Array.from(new Set(fieldNames)).flatMap((field) => {
       const column = dataset.columns.find((item) => item.name === field
         && (item.type === "nominal" || item.type === "ordinal" || item.type === "temporal"));
       return column ? [{ field: column.name, type: column.type }] : [];
-    }).slice(0, 1);
+    }).filter((_encoding, index) => seriesConfig?.multiple === true || index === 0);
     const inputSpec = replaceDefaultDataBinding(node.chartSpec, dataset.id);
     const occupied = new Set(Object.values(inputSpec.encodings)
       .filter((encoding): encoding is NonNullable<typeof encoding> => !!encoding)
@@ -3232,7 +3311,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const radialBar = node.chartSpec?.chartType.replace(/[\s_-]/g, "").toLowerCase() === "radialbarchart";
     if (!node.chartSpec || (template !== "pie" && template !== "donut" && !radialBar)) return 0;
     const selected = Array.from(new Set(fieldNames)).flatMap((field) => {
-      const column = dataset.columns.find((item) => item.name === field && item.type === "quantitative");
+      const column = dataset.columns.find((item) => item.name === field
+        && (item.type === "quantitative" || item.type === "nominal" || item.type === "ordinal" || item.type === "temporal"));
       return column ? [{ field: column.name, type: column.type }] : [];
     }).slice(0, 1);
     updateEncodingTargets(node, (_target, spec) => {
@@ -3402,16 +3482,16 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const node = axisBindingNode.value;
     const dataset = axisBindingDataset.value;
     if (!node?.chartSpec || !dataset) return;
+    const dimensions = getEncodingChannelConfigsForSpec(node.chartSpec)
+      .find((config) => config.channel === "dimensions");
+    if (!dimensions) return;
     const fields = Array.from(new Set(fieldNames)).flatMap((field) => {
-      const column = dataset.columns.find((item) => item.name === field && item.type === "quantitative");
+      const column = dataset.columns.find((item) => item.name === field && dimensions.accepts.includes(item.type));
       return column ? [{ field: column.name, type: column.type }] : [];
     });
     updateEncodingTargets(node, (_target, spec) => ({
-      ...spec,
+      ...replaceDefaultDataBinding(spec, dataset.id),
       parallelFields: fields,
-      parallelAxisBoxplots: spec.parallelAxisBoxplots
-        ? Object.fromEntries(Object.entries(spec.parallelAxisBoxplots).filter(([axis]) => fields.some((field) => field.field === axis)))
-        : undefined,
       scales: undefined,
       plotArea: undefined,
       renderer: undefined,
@@ -3583,7 +3663,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     setAxisBindingTarget, setImportNotice, setSelection, scheduleCompositionDropZone,
     scheduleNestedChildLayout,
     selectionTestOnly, standaloneCoordinateSystem, toCanvasPoint, toNodeLocalPoint,
-    toSelectionScopePoint, transformPoint, toggleSelection, measureSelectionStage,
+    toSelectionScopePoint, transformPoint, toggleSelection, walkCanvasNodes, measureSelectionStage,
     topLevelSelectionNodeId, viewPan, viewZoom, MAX_ZOOM, MIN_ZOOM, contextMenu,
   });
   const {
@@ -3973,22 +4053,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       return child.kind === "leaf" ? [flat as CanvasLeafNode] : flattenGroupToLeaves(flat as CanvasGroupNode);
     });
   }
-  function setParallelAxisBoxplot(axisField: string, valueField?: string) {
-    const node = axisBindingNode.value;
-    const dataset = axisBindingDataset.value;
-    if (!node?.chartSpec || !dataset || normalizeChartTemplate(node.chartSpec.chartType) !== "parallel") return;
-    const axis = dataset.columns.find((column) => column.name === axisField && column.type === "quantitative");
-    if (!axis) return;
-    const value = valueField
-      ? dataset.columns.find((column) => column.name === valueField && column.type === "quantitative")
-      : undefined;
-    updateEncodingTargets(node, (_target, spec) => {
-      const next = { ...(spec.parallelAxisBoxplots ?? {}) };
-      if (value) next[axis.field] = { field: value.field, type: value.type };
-      else delete next[axis.field];
-      return { ...spec, parallelAxisBoxplots: Object.keys(next).length ? next : undefined, renderer: undefined };
-    });
-  }
   function dissolveSelectedGroups() {
     const groupIds = new Set(
       selectedNodes.value.filter((n): n is CanvasGroupNode => n.kind === "group").map((n) => n.id),
@@ -4135,11 +4199,14 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           : [];
         const targetMarks = identityMarks.length > 0 ? identityMarks : groupMarks;
         if (targetMarks.length === 0) return;
+        const targetGeometryMarks = normalizeChartTemplate(parent.chartSpec?.chartType ?? "") === "hierarchy"
+          ? targetMarks.map((mark) => mark.querySelector<SVGGraphicsElement>("circle, rect, path") ?? mark)
+          : targetMarks;
         const scopeGroupId = parentGroupIds.get(child.id) ?? null;
         const boundsCacheKey = `${relationship.parentChartId}:${relationship.parentDataKey ?? "*"}:${scopeGroupId ?? ""}`;
         let bounds = targetBoundsCache.get(boundsCacheKey);
         if (bounds === undefined) {
-          bounds = semanticSelectionBounds(targetMarks, scopeGroupId);
+          bounds = semanticSelectionBounds(targetGeometryMarks, scopeGroupId);
           targetBoundsCache.set(boundsCacheKey, bounds);
         }
         if (!bounds || bounds.width <= 0 || bounds.height <= 0) return;
@@ -4288,6 +4355,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     updateSemanticMarkGroupConfig,
     updateAxisBindingMarkGroupConfig,
     updateSelectedChartMarkGroupConfig,
+    beginMarkConfigEdit,
+    commitMarkConfigEdit,
     applyDimensionRecommendation,
     applyDimensionAggregation,
     applyDimensionChartUpgrade,
@@ -4336,7 +4405,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     addBarItemField,
     removeBarItemField,
     setParallelFields,
-    setParallelAxisBoxplot,
     closeAxisBinding,
     setSelectionRotation,
     setPolarAngleSpan,
@@ -4359,6 +4427,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     confirmNestedBinding,
     closeNestedBinding,
     updateNestedPosition,
+    updateNestedChildScale,
     resetNestedPosition,
     closeNestedPositionEditor,
     groupSelectedItems,

@@ -95,6 +95,7 @@ export function useCanvasInteraction(context: any) {
     topLevelSelectionNodeId,
     transformPoint,
     toggleSelection,
+    walkCanvasNodes,
     measureSelectionStage,
     viewPan,
     viewZoom,

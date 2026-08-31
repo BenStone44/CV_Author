@@ -27,10 +27,11 @@ export function d3GalleryPlaceholderSvg(chartType: string) {
 }
 
 export function withD3GalleryThumbnail(candidate: SvgCandidate): SvgCandidate {
-  // Data-backed previews are the source of truth for built-in templates. Do
-  // not replace them with a remote image, otherwise the preview and the first
-  // canvas render show different data and the SVG is no longer inspectable.
-  if (candidate.svgMarkup?.includes("data-default-dataset-id=")) return candidate;
+  // Native previews are the source of truth for built-in and locally rendered
+  // D3 templates. Keep them inspectable instead of replacing them with images.
+  if (candidate.svgMarkup?.includes("data-default-dataset-id=")
+    || candidate.svgMarkup?.includes('data-renderer="observable-contours@')
+    || candidate.svgMarkup?.includes('data-renderer="observable-hexbin@')) return candidate;
   const src = d3GalleryThumbnailUrl(candidate.chartType);
   const svgMarkup = d3GalleryPlaceholderSvg(candidate.chartType);
   return src && svgMarkup ? { ...candidate, src, svgMarkup } : candidate;

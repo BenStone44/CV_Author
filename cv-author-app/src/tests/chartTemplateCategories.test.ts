@@ -31,7 +31,6 @@ describe("chart template categories", () => {
       "Arc",
       "Chord",
       "Sankey",
-      "Parallel coordinates",
       "Tree",
       "Calendar",
       "Boxplot",
@@ -39,7 +38,7 @@ describe("chart template categories", () => {
     expect(grouped).toHaveLength(candidates.length);
     expect(new Set(grouped.map((candidate) => candidate.id)).size).toBe(candidates.length);
     expect(categories.find((category) => category.id === "barchart")?.candidates).toHaveLength(6);
-    expect(categories.find((category) => category.id === "linechart")?.candidates).toHaveLength(2);
+    expect(categories.find((category) => category.id === "linechart")?.candidates).toHaveLength(3);
     expect(categories.find((category) => category.id === "areachart")?.candidates).toHaveLength(4);
     expect(categories.find((category) => category.id === "heatmap")?.candidates.map((candidate) => candidate.chartType)).toEqual([
       "MatrixDiagram",
@@ -72,5 +71,29 @@ describe("chart template categories", () => {
     };
     const categories = groupChartTemplateCandidates([candidate]);
     expect(categories).toEqual([{ id: "barchart", label: "Bar chart", candidates: [candidate] }]);
+  });
+
+  it("groups parallel coordinates with line charts", () => {
+    const parallel = advancedTemplateDefinitions.find((candidate) => candidate.chartType === "ParallelCoordinatesPlot")!;
+
+    expect(groupChartTemplateCandidates([parallel])).toEqual([{
+      id: "linechart",
+      label: "Line chart",
+      candidates: [parallel],
+    }]);
+  });
+
+  it("places geographic template families after non-geographic families", () => {
+    const geographic: SvgCandidate[] = [
+      { id: "geo-point", name: "Geo point", chartType: "ScatterplotLayer", coordinateSystem: "Geographic", layerType: "ScatterplotLayer", src: "preview" },
+      { id: "geo-line", name: "Geo line", chartType: "ArcLayer", coordinateSystem: "Geographic", layerType: "ArcLayer", src: "preview" },
+      { id: "geo-area", name: "Geo area", chartType: "GeoJsonLayer", coordinateSystem: "Geographic", layerType: "GeoJsonLayer", src: "preview" },
+    ];
+
+    expect(groupChartTemplateCandidates([...existing, ...geographic]).map((category) => category.id).slice(-3)).toEqual([
+      "geographic-point",
+      "geographic-line",
+      "geographic-area",
+    ]);
   });
 });

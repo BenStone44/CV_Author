@@ -375,16 +375,25 @@ export function useCanvasImportOperations(context: any) {
       const templateFamily = normalizeChartTemplate(candidate.chartType);
       const usesBarTemplateFrame = candidate.id.startsWith("builtin-template:")
         && candidate.coordinateSystem === "Cartesian"
-        && (templateFamily === "line" || templateFamily === "area");
+        && templateFamily === "line";
       const barCandidate = usesBarTemplateFrame
         ? getCandidate("builtin-template:single-bar")
         : undefined;
       const barTemplate = barCandidate?.svgMarkup
         ? parseSvgTemplate(barCandidate.svgMarkup)
         : undefined;
-      const rootSizingBounds = barTemplate?.nodes.length === 1
-        ? barTemplate.nodes[0]?.bounds
-        : undefined;
+      const rootSizingBounds = templateFamily === "area"
+        ? {
+          minX: template.minX,
+          minY: template.minY,
+          maxX: template.minX + template.width,
+          maxY: template.minY + template.height,
+          width: template.width,
+          height: template.height,
+        }
+        : barTemplate?.nodes.length === 1
+          ? barTemplate.nodes[0]?.bounds
+          : undefined;
       return createCanvasNodesFromTemplate(
         candidate.id,
         candidate.name,

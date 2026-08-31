@@ -694,11 +694,11 @@
   transition: opacity 120ms ease;
 }
 .canvas-object--composition-drag-source {
-  opacity: 0.28;
+  opacity: 0.3;
 }
 .canvas-coordinate-system-node--drag-source,
 .coordinate-control--drag-source {
-  opacity: 0.28;
+  opacity: 0.3;
 }
 .canvas-object--interactive {
   /* Let the explicit frame or occupied-geometry hit target receive events. */
@@ -873,6 +873,7 @@
 .canvas-scene :deep(.canvas-coordinate-system-node) {
   overflow: visible;
   pointer-events: none;
+  transition: opacity 120ms ease;
 }
 .canvas-scene :deep(.cartesian-coordinate-system--static) {
   font-weight: 400;

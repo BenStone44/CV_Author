@@ -14,6 +14,11 @@ import type {
   SvgCandidate,
 } from "../../types";
 
+// Nested children use an independent visual size scale. The parent mark only
+// supplies the anchor location; it must not determine the child's base size.
+const NESTED_DEFAULT_DIAMETER = 140;
+const NESTED_MAX_DIAMETER = 360;
+
 export function useCanvasCompositionOperations(context: any) {
   const {
     activeDropZone,
@@ -972,6 +977,45 @@ export function useCanvasCompositionOperations(context: any) {
     scheduleNestedChildLayout(nestedPositionRelationshipIds.value);
   }
 
+  function updateNestedChildScale(childNodeId: string, sizeRatio: number) {
+    const child = findCanvasNode(childNodeId);
+    if (!child) return;
+    const ratio = clamp(Number.isFinite(sizeRatio) ? sizeRatio : 1, 0, 1);
+    const relationships = Object.values(chartRelationships.value.nestedRelationships)
+      .filter((relationship) => relationship.status === "active"
+        && relationship.relationType === "relative-position"
+        && (relationship.childChartId === childNodeId
+          || (relationship.parameters as Partial<RelativeNestedParameters>).sourceChildId === childNodeId));
+    if (relationships.length === 0) return;
+    const batchIds = new Set(relationships
+      .map((relationship) => (relationship.parameters as Partial<RelativeNestedParameters>).batchId)
+      .filter((batchId): batchId is string => !!batchId));
+    const targets = Object.values(chartRelationships.value.nestedRelationships).filter((relationship) => {
+      if (relationship.status !== "active" || relationship.relationType !== "relative-position") return false;
+      const parameters = relationship.parameters as Partial<RelativeNestedParameters>;
+      return relationship.childChartId === childNodeId
+        || (batchIds.size > 0 && !!parameters.batchId && batchIds.has(parameters.batchId));
+    });
+    const maxDimension = Math.max(child.width, child.height, 1);
+    const scale = ratio * NESTED_MAX_DIAMETER / maxDimension;
+    pushCanvasHistory();
+    targets.forEach((relationship) => {
+      const parameters = relationship.parameters as Partial<RelativeNestedParameters>;
+      if (!parameters.parentAnchor || !parameters.childAnchor || !parameters.offset) return;
+      dispatchRelationship({
+        type: "update-nested",
+        relationshipId: relationship.id,
+        changes: {
+          parameters: {
+            ...parameters,
+            scale: { x: scale, y: scale },
+          } as RelativeNestedParameters,
+        },
+      });
+    });
+    scheduleNestedChildLayout(targets.map((relationship) => relationship.id));
+  }
+
   function resetNestedPosition() {
     updateNestedPosition({
       parentAnchor: { x: 0.5, y: 0.5 },
@@ -1047,16 +1091,25 @@ export function useCanvasCompositionOperations(context: any) {
 
   function semanticItemDropZone(node: CanvasNode, point: Point, sourceNodeId: string): ChartDropZone | null {
     if (!node.chartSpec || node.id === sourceNodeId) return null;
+    const contract = getChartTemplateContract(node.chartSpec.chartType);
+    const directMarkNesting = contract?.family === "hierarchy";
     const nodeElement = Array.from(canvasRef.value?.querySelectorAll<SVGGraphicsElement>("[data-node-id]") ?? [])
       .find((element) => element.dataset.nodeId === node.id);
     if (!nodeElement) return null;
-    const allMarks = Array.from(nodeElement.querySelectorAll<SVGGraphicsElement>("[data-mark-role]"));
+    const allMarks = Array.from(nodeElement.querySelectorAll<SVGGraphicsElement>("[data-mark-role]"))
+      .filter((element) => !directMarkNesting || (
+        element.getAttribute("data-mark-role") === contract?.markRole
+        && element.getAttribute("data-chart-id") === node.id
+      ));
     const activePath = nestedDropPath.value.at(-1);
     const marks = activePath?.nodeId === node.id
       ? activePath.childMarkIndexes.flatMap((index) => allMarks[index] ?? [])
       : allMarks;
+    const markGeometryElement = (element: SVGGraphicsElement) => directMarkNesting
+      ? element.querySelector<SVGGraphicsElement>("circle, rect, path") ?? element
+      : element;
     const markFrames = marks
-      .map((element) => ({ element, bounds: semanticSelectionBounds([element]) }))
+      .map((element) => ({ element, bounds: semanticSelectionBounds([markGeometryElement(element)]) }))
       .filter((candidate): candidate is { element: SVGGraphicsElement; bounds: Bounds } => !!candidate.bounds);
     const directHit = markFrames
       .filter(({ bounds }) => {
@@ -1112,7 +1165,9 @@ export function useCanvasCompositionOperations(context: any) {
       rowKey,
     });
     const itemElements = compositeHit?.elements ?? semanticMarkElements(hit.element, match.mode, categoryKey);
-    const itemBounds = semanticSelectionBounds(itemElements) ?? hit.bounds;
+    const itemBounds = directMarkNesting
+      ? hit.bounds
+      : semanticSelectionBounds(itemElements) ?? hit.bounds;
     const canEnter = !!compositeHit || (drilldownLevel === "item" && match.canEnter);
     const enterDiameter = canEnter
       ? Math.min(itemBounds.width, itemBounds.height, 72 / Math.max(viewZoom.value, 0.25))
@@ -1151,7 +1206,9 @@ export function useCanvasCompositionOperations(context: any) {
         markGroupId: unitElement.getAttribute("data-mark-group-id") ?? undefined,
         dataKey,
         rowKey: unitElement.getAttribute("data-row-key") ?? undefined,
-        bounds: semanticSelectionBounds(unit.kind === "structural" ? [unitElement] : unit.elements) ?? unit.bounds,
+        bounds: directMarkNesting
+          ? unit.bounds
+          : semanticSelectionBounds(unit.kind === "structural" ? [unitElement] : unit.elements) ?? unit.bounds,
       };
     });
     const hitUnitIndex = siblingUnits.findIndex((unit) =>
@@ -1542,16 +1599,18 @@ export function useCanvasCompositionOperations(context: any) {
         if (nestedItem) return nestedItem;
         continue;
       }
-      // Hierarchy and force-directed charts expose their nodes as the
-      // smallest, directly nestable targets. Resolve the hovered node before
-      // the chart-level enter portal so a drop can be aimed at a concrete
-      // node without first entering an unrelated chart center.
-      const targetTemplate = normalizeChartTemplate(target.chartSpec?.chartType ?? "");
-      if (targetTemplate === "hierarchy"
+      // Hierarchy charts expose node marks directly and have no chart-level
+      // layer or enter portal. A drop must touch a concrete node.
+      const targetContract = target.chartSpec
+        ? getChartTemplateContract(target.chartSpec.chartType)
+        : null;
+      const directMarkNesting = targetContract?.family === "hierarchy";
+      if (directMarkNesting
         || target.chartSpec?.chartType.replace(/[\s_-]/g, "").toLowerCase().includes("forcedirected")) {
         const nestedItem = semanticItemDropZone(target, point, sourceNodeId);
         if (nestedItem) return nestedItem;
       }
+      if (directMarkNesting) continue;
       const enterZone = chartEnterZone(target);
       if (!enterZone) continue;
       if (enterZone.enterCompositionId
@@ -1573,7 +1632,10 @@ export function useCanvasCompositionOperations(context: any) {
       if (target.coordinateGuide.type === "Polar") {
         if (nestedLevelEntered) continue;
         const polarZone = polarCompositionDropZoneAtPoint(target, source, point);
-        if (polarZone) return withNestedEnter(polarZone);
+        if (polarZone && (polarZone.type !== "layer"
+          || getChartTemplateContract(target.chartSpec.chartType)?.supportsLayerComposition)) {
+          return withNestedEnter(polarZone);
+        }
         continue;
       }
       const localPoint = toNodeLocalPoint(target, point);
@@ -1727,6 +1789,8 @@ export function useCanvasCompositionOperations(context: any) {
 
       if (!inside) continue;
 
+      if (!getChartTemplateContract(target.chartSpec.chartType)?.supportsLayerComposition) continue;
+
       const compositionNodes = repeatableCompositionPairNodes(source, target, "layer");
       const sharedChannels = compositionNodes ? compatibleLayerChannels(compositionNodes) ?? [] : [];
       const compatible = sharedChannels.length > 0;
@@ -1855,7 +1919,9 @@ export function useCanvasCompositionOperations(context: any) {
         selectedIds.value = [];
         return true;
       }
-      if (chartDrilldown.value?.nodeId !== target.id || chartDrilldown.value.level !== "part") return false;
+      const directMarkNesting = getChartTemplateContract(target.chartSpec.chartType)?.family === "hierarchy";
+      if (!directMarkNesting
+        && (chartDrilldown.value?.nodeId !== target.id || chartDrilldown.value.level !== "part")) return false;
       const rowKey = zone.targetRowKey;
       if (rowKey && nestedCompositionFromBlock(target, source, rowKey)) {
         const scopeNodes = getSelectionScopeNodes();
@@ -1920,10 +1986,7 @@ export function useCanvasCompositionOperations(context: any) {
       const childInstances = nestedTargets.map((nestedTarget, index) => {
         const child = index === 0 ? source : cloneCanvasNodeForPaste(source, false);
         inheritParentFacetClues(target, child);
-        const fitScale = Math.max(0.01, Math.min(
-          nestedTarget.bounds.width * 0.78 / Math.max(child.width, 1),
-          nestedTarget.bounds.height * 0.78 / Math.max(child.height, 1),
-        ));
+        const fitScale = NESTED_DEFAULT_DIAMETER / Math.max(child.width, child.height, 1);
         child.name = `${sourceName} nested ${index + 1}`;
         child.scaleX = fitScale;
         child.scaleY = fitScale;
@@ -2006,6 +2069,7 @@ export function useCanvasCompositionOperations(context: any) {
     confirmNestedBinding,
     openNestedPositionEditor,
     updateNestedPosition,
+    updateNestedChildScale,
     resetNestedPosition,
     closeNestedPositionEditor,
     scatterPointDropZone,

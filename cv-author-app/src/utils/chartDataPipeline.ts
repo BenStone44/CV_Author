@@ -184,11 +184,6 @@ export function synchronizeChartEncodingTypes(spec: ChartSpec, dataset: Dataset)
   const parallelFields = spec.parallelFields
     ?.map((encoding) => synchronizeEncodingType(encoding, dataset))
     .filter((encoding): encoding is ChartEncoding => !!encoding);
-  const parallelAxisBoxplots = spec.parallelAxisBoxplots
-    ? Object.fromEntries(Object.entries(spec.parallelAxisBoxplots)
-      .map(([axis, encoding]) => [axis, synchronizeEncodingType(encoding, dataset)] as const)
-      .filter((entry): entry is readonly [string, ChartEncoding] => !!entry[1]))
-    : undefined;
   const valueFields = spec.valueFields
     ?.map((encoding) => synchronizeEncodingType(encoding, dataset))
     .filter((encoding): encoding is ChartEncoding => !!encoding);
@@ -207,7 +202,6 @@ export function synchronizeChartEncodingTypes(spec: ChartSpec, dataset: Dataset)
     encodings,
     angleFields,
     parallelFields,
-    parallelAxisBoxplots,
     valueFields,
     seriesFields,
     componentRadiusFields,

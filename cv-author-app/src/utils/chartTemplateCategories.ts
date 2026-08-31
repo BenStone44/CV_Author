@@ -21,7 +21,7 @@ const familyDefinitions: Array<{
   {
     id: "linechart",
     label: "Line chart",
-    chartTypes: new Set(["linegraph", "multilinechart"]),
+    chartTypes: new Set(["linegraph", "multilinechart", "parallelcoordinatesplot"]),
   },
   {
     id: "areachart",
@@ -29,6 +29,15 @@ const familyDefinitions: Array<{
     chartTypes: new Set(["areachart", "stackedareachart", "streamgraph", "horizonchart"]),
   },
   { id: "point", label: "Point", chartTypes: new Set(["scatterplot"]) },
+  { id: "heatmap", label: "Heatmap", chartTypes: new Set(["matrixdiagram", "contour", "hexbin"]) },
+  { id: "arc", label: "Arc", chartTypes: new Set(["piechart", "donutchart"]) },
+  { id: "tree", label: "Tree", chartTypes: new Set(["sunburst", "icicle", "treemap", "dendrogram", "radialdendrogram"]) },
+  { id: "network", label: "Network", chartTypes: new Set(["forcedirectedgraph"]) },
+
+  { id: "sankey", label: "Sankey", chartTypes: new Set(["sankey"]) },
+  { id: "calendar", label: "Calendar", chartTypes: new Set(["calendar"]) },
+  { id: "boxplot", label: "Boxplot", chartTypes: new Set(["boxplot", "boxandwhisker"]) },
+  { id: "chord", label: "Chord", chartTypes: new Set(["chord"]) },
   {
     id: "geographic-point",
     label: "Geographic point",
@@ -50,15 +59,6 @@ const familyDefinitions: Array<{
     matches: (candidate) => candidate.coordinateSystem === "Geographic"
       && getGeographicLayerFamily(candidate.layerType ?? candidate.chartType) === "area",
   },
-  { id: "heatmap", label: "Heatmap", chartTypes: new Set(["matrixdiagram", "contour", "hexbin"]) },
-  { id: "arc", label: "Arc", chartTypes: new Set(["piechart", "donutchart"]) },
-  { id: "chord", label: "Chord", chartTypes: new Set(["chord"]) },
-  { id: "sankey", label: "Sankey", chartTypes: new Set(["sankey"]) },
-  { id: "parallel-coordinates", label: "Parallel coordinates", chartTypes: new Set(["parallelcoordinatesplot"]) },
-  { id: "tree", label: "Tree", chartTypes: new Set(["sunburst", "icicle", "treemap", "dendrogram", "radialdendrogram"]) },
-  { id: "network", label: "Network", chartTypes: new Set(["forcedirectedgraph"]) },
-  { id: "calendar", label: "Calendar", chartTypes: new Set(["calendar"]) },
-  { id: "boxplot", label: "Boxplot", chartTypes: new Set(["boxplot", "boxandwhisker"]) },
 ];
 
 function normalizedChartType(chartType: string) {

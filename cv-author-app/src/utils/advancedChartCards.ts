@@ -1,5 +1,20 @@
-import { linkRadial } from "d3";
+import {
+  contours as d3Contours,
+  geoPath,
+  interpolateBuPu,
+  interpolateMagma,
+  linkRadial,
+  range as d3Range,
+  scaleLinear,
+  scaleLog,
+  scaleSequential,
+  scaleSequentialLog,
+  ticks,
+} from "d3";
+import { hexbin } from "d3-hexbin";
+import Papa from "papaparse";
 import type { Dataset, SvgCandidate } from "../types";
+import diamondsCsv from "../../../data/d3_hexbin_diamonds.csv?raw";
 import { renderDefaultChartSvg } from "./defaultChartData";
 import {
   createRadialClusterLayout,
@@ -18,10 +33,90 @@ const calendarCells = Array.from({ length: 53 * 5 }, (_, index) => {
   return `<rect x="${42 + week * 5.08}" y="${54 + day * 18}" width="4.2" height="17" fill="${colors[(week * 3 + day * 2) % colors.length]}"/>`;
 }).join("");
 
-const hexagons = [[53,48,2],[75,61,4],[97,45,3],[119,71,5],[141,56,4],[163,84,6],[185,66,5],[207,96,4],[229,76,6],[251,111,3],[273,91,5],[64,107,4],[91,126,5],[127,113,6],[160,139,4],[198,126,6],[236,142,5]].map(([x, y, level]) => {
-  const palette = ["#f7fcfd", "#e0ecf4", "#bfd3e6", "#9ebcda", "#8c96c6", "#8856a7", "#810f7c"];
-  return `<path d="M${x} ${y! - 8}L${x! + 7} ${y! - 4}V${y! + 4}L${x} ${y! + 8}L${x! - 7} ${y! + 4}V${y! - 4}Z" fill="${palette[level!]}" stroke="#000" stroke-width="0.8"/>`;
-}).join("");
+function observableContourTemplateSvg() {
+  const width = 928;
+  const height = 600;
+  const viewWidth = width + 28;
+  const q = 4;
+  const x = scaleLinear().domain([-2, 2]).range([0, viewWidth]);
+  const y = scaleLinear().domain([-2, 1]).range([height, 0]);
+  const value = (px: number, py: number) =>
+    (1 + (px + py + 1) ** 2 * (19 - 14 * px + 3 * px ** 2 - 14 * py + 6 * px * py + 3 * py ** 2))
+    * (30 + (2 * px - 3 * py) ** 2 * (18 - 32 * px + 12 * px ** 2 + 48 * py - 36 * px * py + 27 * py ** 2));
+  const x0 = -q / 2;
+  const x1 = viewWidth + q;
+  const y0 = -q / 2;
+  const y1 = height + q;
+  const columns = Math.ceil((x1 - x0) / q);
+  const rows = Math.ceil((y1 - y0) / q);
+  const values = Array.from({ length: columns * rows }, (_, index) => {
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+    return value(x.invert(column * q + x0), y.invert(row * q + y0));
+  });
+  const thresholds = d3Range(1, 20).map((index) => 2 ** index);
+  const color = scaleSequentialLog(interpolateMagma).domain([thresholds[0]!, thresholds.at(-1)!]);
+  const path = geoPath();
+  const contourMarks = d3Contours()
+    .size([columns, rows])
+    .thresholds(thresholds)(values)
+    .map((contour) => ({
+      ...contour,
+      coordinates: contour.coordinates.map((polygons) => polygons.map((points) => points.map(([px = 0, py = 0]) => [
+        -q + q * px,
+        -q + q * py,
+      ]))),
+    }))
+    .map((contour) => `<path d="${path(contour as any) ?? ""}" fill="${color(contour.value)}" stroke="#fff" stroke-opacity="0.5"/>`)
+    .join("");
+  const xTicks = ticks(-2, 2, 8).filter((tick) => tick !== -2 && tick !== 2)
+    .map((tick) => `<g transform="translate(${x(tick)} ${height})"><line y2="-5" stroke="currentColor"/><text y="-8" text-anchor="middle" font-size="10">${tick}</text></g>`)
+    .join("");
+  const yTicks = ticks(-2, 1, 6).filter((tick) => tick !== -2 && tick !== 1)
+    .map((tick) => `<g transform="translate(0 ${y(tick)})"><line x2="5" stroke="currentColor"/><text x="8" dy="0.32em" font-size="10">${tick}</text></g>`)
+    .join("");
+  return frame(`<g data-chart-type="contour" data-renderer="observable-contours@2"><g>${contourMarks}</g><g fill="currentColor">${xTicks}${yTicks}</g></g>`, `0 0 ${viewWidth} ${height}`);
+}
+
+type DiamondDatum = { carat: number; price: number };
+
+function observableHexbinTemplateSvg() {
+  const diamonds = Papa.parse<{ carat?: string; price?: string }>(diamondsCsv, {
+    header: true,
+    skipEmptyLines: "greedy",
+  }).data.flatMap((row) => {
+    const carat = Number(row.carat);
+    const price = Number(row.price);
+    return carat > 0 && price > 0 ? [{ carat, price }] : [];
+  });
+  const width = 928;
+  const height = width;
+  const marginTop = 20;
+  const marginRight = 20;
+  const marginBottom = 30;
+  const marginLeft = 40;
+  const xDomain = [Math.min(...diamonds.map((row) => row.carat)), Math.max(...diamonds.map((row) => row.carat))] as [number, number];
+  const yDomain = [Math.min(...diamonds.map((row) => row.price)), Math.max(...diamonds.map((row) => row.price))] as [number, number];
+  const x = scaleLog().domain(xDomain).range([marginLeft, width - marginRight]);
+  const y = scaleLog().domain(yDomain).rangeRound([height - marginBottom, marginTop]);
+  const radius = 8 * width / 928;
+  const layout = hexbin<DiamondDatum>()
+    .x((row) => x(row.carat))
+    .y((row) => y(row.price))
+    .radius(radius)
+    .extent([[marginLeft, marginTop], [width - marginRight, height - marginBottom]]);
+  const bins = layout(diamonds);
+  const maximum = Math.max(1, ...bins.map((bin) => bin.length));
+  const color = scaleSequential(interpolateBuPu).domain([0, maximum / 2]);
+  const marks = bins.map((bin) => `<path transform="translate(${bin.x} ${bin.y})" d="${layout.hexagon()}" fill="${color(bin.length)}" stroke="black" stroke-width="0.75"/>`).join("");
+  const xTicks = [0.2, 0.5, 1, 2, 5].filter((tick) => tick >= xDomain[0] && tick <= xDomain[1])
+    .map((tick) => `<g transform="translate(${x(tick)} ${height - marginBottom})"><line y2="5" stroke="currentColor"/><text y="14" text-anchor="middle" font-size="10">${tick}</text></g>`)
+    .join("");
+  const yTicks = [300, 1000, 3000, 10000].filter((tick) => tick >= yDomain[0] && tick <= yDomain[1])
+    .map((tick) => `<g transform="translate(${marginLeft} ${y(tick)})"><line x2="-5" stroke="currentColor"/><text x="-8" dy="0.32em" text-anchor="end" font-size="10">${tick >= 1000 ? `${tick / 1000}k` : tick}</text></g>`)
+    .join("");
+  return frame(`<g data-chart-type="hexbin" data-renderer="observable-hexbin@2" data-source-row-count="${diamonds.length}"><g>${marks}</g><g fill="currentColor">${xTicks}${yTicks}<text x="${width - marginRight}" y="${height - marginBottom - 4}" text-anchor="end" font-size="12" font-weight="bold">Carats</text><text x="${marginLeft + 4}" y="${marginTop + 8}" font-size="12" font-weight="bold">$ Price</text></g></g>`, `0 0 ${width} ${height}`);
+}
 
 function radialClusterTemplateSvg() {
   const dataset: Dataset = {
@@ -92,8 +187,8 @@ export const advancedTemplateSvgs = {
   RadialBarChart: frame(`<g transform="translate(160 90)">${[42,58,35,66,49,73,54,62,38,69,45,76].map((radius, index) => { const start = index * Math.PI * 2 / 12; const end = (index + .72) * Math.PI * 2 / 12; const x0 = Math.sin(start) * 28; const y0 = -Math.cos(start) * 28; const x1 = Math.sin(end) * 28; const y1 = -Math.cos(end) * 28; const x2 = Math.sin(end) * radius; const y2 = -Math.cos(end) * radius; const x3 = Math.sin(start) * radius; const y3 = -Math.cos(start) * radius; return `<path d="M${x0} ${y0}A28 28 0 0 1 ${x1} ${y1}L${x2} ${y2}A${radius} ${radius} 0 0 0 ${x3} ${y3}Z" fill="${["#4e79a7", "#f28e2c", "#e15759", "#76b7b2"][index % 4]}" fill-opacity=".9"/>`; }).join("")}</g>`),
   Calendar: frame(`<text x="36" y="43" text-anchor="end" font-size="9" font-weight="bold">2025</text><g font-size="7" text-anchor="end"><text x="36" y="65">M</text><text x="36" y="83">T</text><text x="36" y="101">W</text><text x="36" y="119">T</text><text x="36" y="137">F</text></g><g font-size="7"><text x="42" y="43">Jan</text><text x="108" y="43">Apr</text><text x="175" y="43">Jul</text><text x="241" y="43">Oct</text></g><g stroke="#fff" stroke-width="0.8">${calendarCells}</g>`),
   Boxplot: frame(`${axis}<g stroke="#111"><path d="M46 48V132M73 41V139M100 35V125M127 53V143M154 29V117M181 46V135M208 38V129M235 56V145M262 42V122M289 31V137"/></g><g fill="#ddd">${[46,73,100,127,154,181,208,235,262,289].map((x, index) => `<rect x="${x-10}" y="${55 + index%3*8}" width="20" height="${48-index%2*10}"/>`).join("")}</g><g stroke="#111" stroke-width="2">${[46,73,100,127,154,181,208,235,262,289].map((x,index) => `<path d="M${x-10} ${76+index%4*5}H${x+10}"/>`).join("")}</g><g fill="#111" fill-opacity="0.2"><circle cx="101" cy="24" r="2"/><circle cx="154" cy="139" r="2"/><circle cx="236" cy="31" r="2"/></g>`),
-  Contour: frame(`<path d="M0 180V0H320V180Z" fill="#000004"/><path d="M18 139C21 71 76 25 142 34S258 18 306 73V166C250 146 214 165 154 148S61 179 18 139Z" fill="#51127c" stroke="#fff" stroke-opacity="0.5"/><path d="M56 129C58 84 98 54 148 63S229 44 274 81S263 135 217 140S151 120 111 141S55 153 56 129Z" fill="#b73779" stroke="#fff" stroke-opacity="0.5"/><path d="M101 117C104 89 132 81 160 91S201 72 226 94S213 123 190 121S153 109 134 127S98 134 101 117Z" fill="#fc8961" stroke="#fff" stroke-opacity="0.5"/><path d="M137 108C140 95 152 94 165 99S183 91 193 101S185 112 174 111S155 107 148 115S135 116 137 108Z" fill="#fcfdbf" stroke="#fff" stroke-opacity="0.5"/>`),
-  Hexbin: frame(`${axis}<g>${hexagons}</g>`),
+  Contour: observableContourTemplateSvg,
+  Hexbin: observableHexbinTemplateSvg,
   Chord: frame(`<g transform="translate(160 90)"><g>${[["M0-71A71 71 0 0 1 68 21","#4e79a7"],["M68 21A71 71 0 0 1-44 56","#f28e2c"],["M-44 56A71 71 0 0 1-63-33","#e15759"],["M-63-33A71 71 0 0 1 0-71","#76b7b2"]].map(([d,color]) => `<path d="${d}" fill="none" stroke="${color}" stroke-width="20"/>`).join("")}</g><g fill-opacity="0.7" stroke="#fff"><path d="M0-60Q9 15 58 18Q12 24-37 47Q-17 1 0-60Z" fill="#f28e2c"/><path d="M58 18Q-8 8-37 47Q0 8-53-28Q17-6 58 18Z" fill="#e15759"/><path d="M-53-28Q-17-3 0-60Q-7 18-53-28Z" fill="#4e79a7"/></g><g stroke="#111">${[-80,-52,-24,4,32,60,88,116,144,172,200,228,256].map((angle) => `<line transform="rotate(${angle}) translate(81 0)" x2="5"/>`).join("")}</g></g>`),
   Sankey: frame(`<defs><linearGradient id="sg1" x1="0" x2="1"><stop stop-color="#1f77b4"/><stop offset="1" stop-color="#2ca02c"/></linearGradient><linearGradient id="sg2" x1="0" x2="1"><stop stop-color="#ff7f0e"/><stop offset="1" stop-color="#d62728"/></linearGradient></defs><g fill="none" stroke-opacity="0.5"><path d="M42 39C115 39 115 75 190 75S252 43 286 43" stroke="url(#sg1)" stroke-width="22"/><path d="M42 123C115 123 115 102 190 102S252 130 286 130" stroke="url(#sg2)" stroke-width="18"/><path d="M42 56C116 56 116 121 190 121S251 66 286 66" stroke="url(#sg1)" stroke-width="10"/></g><g stroke="#000"><rect x="27" y="25" width="15" height="45" fill="#1f77b4"/><rect x="27" y="108" width="15" height="36" fill="#ff7f0e"/><rect x="190" y="61" width="15" height="72" fill="#2ca02c"/><rect x="286" y="29" width="15" height="52" fill="#d62728"/><rect x="286" y="115" width="15" height="31" fill="#9467bd"/></g><g font-size="8"><text x="46" y="49">source</text><text x="46" y="129">supply</text><text x="209" y="99">process</text><text x="282" y="54" text-anchor="end">use</text><text x="282" y="134" text-anchor="end">loss</text></g>`),
 } as const;
@@ -119,7 +214,9 @@ const definitions: Array<[keyof typeof advancedTemplateSvgs, string, string, Svg
 ];
 
 export const advancedTemplateDefinitions: SvgCandidate[] = definitions.map(([key, name, chartType, coordinateSystem]) => {
-  const svgMarkup = renderDefaultChartSvg(chartType) ?? advancedTemplateSvgs[key];
+  const fallback = advancedTemplateSvgs[key];
+  const svgMarkup = renderDefaultChartSvg(chartType)
+    ?? (typeof fallback === "function" ? fallback() : fallback);
   return {
     id: `builtin-template:${chartType.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase()}`,
     name,

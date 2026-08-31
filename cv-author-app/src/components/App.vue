@@ -27,6 +27,7 @@ import type {
   CoordinateChannel,
   EncodingChannel,
   GeographicMapViewState,
+  MarkGroupSharedConfig,
   SvgCandidate,
 } from "../types";
 import { materializeChartDataTransforms } from "../utils/chartDataTransforms";
@@ -55,6 +56,7 @@ import {
 } from "../utils/treeLayout";
 
 const EMPTY_SELECTION_IDS: string[] = [];
+const NESTED_MAX_DIAMETER = 360;
 
 const canvasRef = ref<HTMLElement | null>(null);
 const encodingInspectorOpen = ref(true);
@@ -178,7 +180,6 @@ const {
   setValueSeriesFields,
   removeBarItemField,
   setParallelFields,
-  setParallelAxisBoxplot,
   setChartDataTransforms,
   resetChartBindingsForDataset,
   setDeckglMapStyle,
@@ -212,6 +213,7 @@ const {
   confirmNestedBinding,
   closeNestedBinding,
   updateNestedPosition,
+  updateNestedChildScale,
   resetNestedPosition,
   closeNestedPositionEditor,
   applyInputColumnIntent,
@@ -1128,7 +1130,34 @@ function withEncodingNode(node: CanvasNode, action: () => void) {
 }
 
 function nestedMarkConfig(node: CanvasNode) {
-  return node.chartSpec?.markGroups?.[0]?.sharedConfig ?? {};
+  const config = node.chartSpec?.markGroups?.[0]?.sharedConfig ?? {};
+  const relationship = Object.values(chartRelationships.value.nestedRelationships).find((candidate) =>
+    candidate.status === "active" && candidate.childChartId === node.id,
+  );
+  if (!relationship || !node.chartSpec || getChartTemplateContract(node.chartSpec.chartType)?.coordinateSystem !== "Polar") {
+    return config;
+  }
+  const scale = (relationship.parameters as { scale?: { x?: number; y?: number } }).scale;
+  const diameter = Math.max(node.width * (scale?.x ?? 1), node.height * (scale?.y ?? 1));
+  return { ...config, outerRadius: Math.max(0, Math.min(diameter / NESTED_MAX_DIAMETER, 1)) };
+}
+
+function onNestedMarkConfigChange(node: CanvasNode, patch: MarkGroupSharedConfig) {
+  const isNestedChild = Object.values(chartRelationships.value.nestedRelationships).some((candidate) =>
+    candidate.status === "active" && candidate.childChartId === node.id,
+  );
+  if (isNestedChild
+    && typeof patch.outerRadius === "number"
+    && node.chartSpec
+    && getChartTemplateContract(node.chartSpec.chartType)?.coordinateSystem === "Polar") {
+    updateNestedChildScale(node.id, patch.outerRadius);
+    const { outerRadius: _outerRadius, ...remaining } = patch;
+    if (Object.keys(remaining).length > 0) {
+      withEncodingNode(node, () => updateAxisBindingMarkGroupConfig(remaining));
+    }
+    return;
+  }
+  withEncodingNode(node, () => updateAxisBindingMarkGroupConfig(patch));
 }
 
 function beginNestedMarkConfigEdit(node: CanvasNode, field: string) {

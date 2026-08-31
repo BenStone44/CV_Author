@@ -200,9 +200,15 @@ describe("card encoding configuration", () => {
   it("derives type compatibility from the channel contract", () => {
     const barY = getEncodingChannelConfigs("SingleBarChart").find((config) => config.channel === "y")!;
     const barColor = getEncodingChannelConfigs("SingleBarChart").find((config) => config.channel === "color")!;
+    const parallelDimensions = getEncodingChannelConfigs("ParallelCoordinatesPlot").find((config) => config.channel === "dimensions")!;
     expect(isEncodingColumnCompatible(barY, "quantitative")).toBe(true);
     expect(isEncodingColumnCompatible(barY, "nominal")).toBe(false);
     expect(isEncodingColumnCompatible(barColor, "quantitative")).toBe(true);
+    expect(parallelDimensions).toMatchObject({ label: "Dimensions", role: "dimension", multiple: true });
+    expect(isEncodingColumnCompatible(parallelDimensions, "quantitative")).toBe(true);
+    expect(isEncodingColumnCompatible(parallelDimensions, "nominal")).toBe(true);
+    expect(isEncodingColumnCompatible(parallelDimensions, "ordinal")).toBe(true);
+    expect(isEncodingColumnCompatible(parallelDimensions, "temporal")).toBe(true);
   });
 
   it("maps renderer channels to template semantic slots", () => {

@@ -15,9 +15,11 @@ import { inferCsvPrimaryKey } from "../utils/csvDataEngine";
 import {
   DEFAULT_CHART_DATASET_ID,
   DEFAULT_GRAPH_DATASET_ID,
+  DEFAULT_HEXBIN_DATASET_ID,
   DEFAULT_TREE_DATASET_ID,
   defaultChartDataset,
   defaultGraphDataset,
+  defaultHexbinDataset,
   defaultTreeDataset,
 } from "../utils/defaultChartData";
 
@@ -328,6 +330,7 @@ function clearActiveDataset() {
 function getDataset(datasetId: string) {
   if (datasetId === DEFAULT_CHART_DATASET_ID) return defaultChartDataset;
   if (datasetId === DEFAULT_GRAPH_DATASET_ID) return defaultGraphDataset;
+  if (datasetId === DEFAULT_HEXBIN_DATASET_ID) return defaultHexbinDataset;
   if (datasetId === DEFAULT_TREE_DATASET_ID) return defaultTreeDataset;
   return datasets.value.find((dataset) => dataset.id === datasetId) ?? null;
 }

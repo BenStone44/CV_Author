@@ -5,6 +5,7 @@ import {
   chord as d3Chord,
   cluster,
   contours as d3Contours,
+  curveBasis,
   descending,
   interpolateBrBG,
   interpolateBuPu,
@@ -19,6 +20,7 @@ import {
   forceX,
   forceY,
   forceSimulation,
+  geoPath,
   linkRadial,
   partition,
   quantileSorted,
@@ -36,7 +38,7 @@ import {
   schemeCategory10,
   schemeTableau10,
   stack,
-  stackOffsetWiggle,
+  stackOffsetSilhouette,
   stackOrderInsideOut,
   stratify,
   tickStep,
@@ -196,12 +198,17 @@ function areaPath(
   baseline: number,
 ) {
   if (points.length === 0) return "";
-  const first = points[0]!;
-  const last = points[points.length - 1]!;
-  const coordinates = points.slice(1).map((point) => `L ${point.x} ${point.y}`).join(" ");
   return axisSwapped
-    ? `M ${baseline} ${first.y} L ${first.x} ${first.y} ${coordinates} L ${baseline} ${last.y} Z`
-    : `M ${first.x} ${baseline} L ${first.x} ${first.y} ${coordinates} L ${last.x} ${baseline} Z`;
+    ? d3Area<{ x: number; y: number }>()
+      .y((point) => point.y)
+      .x0(baseline)
+      .x1((point) => point.x)
+      .curve(curveBasis)(points) ?? ""
+    : d3Area<{ x: number; y: number }>()
+      .x((point) => point.x)
+      .y0(baseline)
+      .y1((point) => point.y)
+      .curve(curveBasis)(points) ?? "";
 }
 
 function formatTick(value: number) {
@@ -219,6 +226,7 @@ function renderArea(input: GenericRenderInput) {
       coordinateGuide: input.coordinateGuide,
       chartSpec: { ...input.chartSpec, chartType: "LineGraph" },
       includeZeroValueDomain: true,
+      plotAspectRatio: 2,
     });
     const axisSwapped = input.chartSpec.axisSwapped === true;
     const valueScale = axisSwapped ? lineResult.scales.x : lineResult.scales.y;
@@ -232,7 +240,7 @@ function renderArea(input: GenericRenderInput) {
       return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series.key)}" data-point-count="${points.length}" data-row-keys="${esc(rowKeys.join(","))}" d="${path}" fill="${esc(series.color)}" fill-opacity="${opacity}" stroke="${esc(series.color)}" stroke-width="${series.lineWidth}" stroke-linejoin="round" vector-effect="non-scaling-stroke"><title>${esc(series.key === "__single__" ? (cartesianAxisEncoding(input.chartSpec, "y")?.field ?? "") : series.key)}</title></path>`;
     }).join("");
     return {
-      content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="area" data-axis-swapped="${axisSwapped}" data-renderer="deterministic-area@1">${marks}</g>`,
+      content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="area" data-axis-swapped="${axisSwapped}" data-area-curve="basis" data-renderer="deterministic-area@1">${marks}</g>`,
       plotArea: lineResult.plotArea,
       scales: lineResult.scales,
     };
@@ -303,7 +311,8 @@ function renderArea(input: GenericRenderInput) {
       .defined((datum) => Number.isFinite(Number(datum.value)))
       .x((datum) => x.scale(String(datum.x ?? "")))
       .y0(size)
-      .y1((datum) => y(Number(datum.value)));
+      .y1((datum) => y(Number(datum.value)))
+      .curve(curveBasis);
     const palette = (schemeBlues[Math.max(3, bands)] ?? schemeBlues[9]!).slice(Math.max(0, 3 - bands));
     const uid = `horizon-${input.chartId.replace(/[^a-z0-9_-]/gi, "-")}`;
     const seriesGroups = seriesValues.map((series, seriesIndex) => {
@@ -330,7 +339,7 @@ function renderArea(input: GenericRenderInput) {
     const axisFontSize = adaptiveAxisFontSize(visibleTicks.map((tick) => tick.label), visibleTicks.map((tick) => tick.position), 10, 6, 10);
     const axis = visibleTicks.map((tick) => `<g class="tick" transform="translate(${tick.position} ${input.minY + marginTop})"><line y2="-6" stroke="currentColor"/>${adaptiveText(tick.label, `y="-9" text-anchor="middle"`, Math.max(12, width / Math.max(visibleTicks.length, 1)), 16, "#ffffff", axisFontSize)}</g>`).join("");
     return {
-      content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="horizon" data-bands="${bands}" data-renderer="observable-horizon@2" font-family="sans-serif">${seriesGroups}<g data-mark-role="horizon-axis">${axis}</g></g>`,
+      content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="horizon" data-area-curve="basis" data-bands="${bands}" data-renderer="observable-horizon@2" font-family="sans-serif">${seriesGroups}<g data-mark-role="horizon-axis">${axis}</g></g>`,
       plotArea: { x: input.minX, y: input.minY + marginTop, width, height: availableHeight },
     };
   }
@@ -343,12 +352,13 @@ function renderArea(input: GenericRenderInput) {
     coordinateGuide: input.coordinateGuide,
     chartSpec: { ...input.chartSpec, chartType: "MultiLineChart" },
     includeZeroValueDomain: true,
+    plotAspectRatio: 2,
   });
   // With one selected series, stacked area is the same visual contract as a
   // line with a filled baseline. Reuse the line's ordered points so duplicate
   // X rows follow the same path instead of entering d3.stack as duplicate
   // columns.
-  if (seriesValues.length === 1) {
+  if (seriesValues.length === 1 && !isStream) {
     const axisSwapped = input.chartSpec.axisSwapped === true;
     const valueScale = axisSwapped ? lineResult.scales.x : lineResult.scales.y;
     const baseline = areaValuePosition(valueScale, 0);
@@ -359,7 +369,7 @@ function renderArea(input: GenericRenderInput) {
       const opacity = Number(sharedConfig(input, "area").opacity ?? 0.42);
       const mark = `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series.key)}" data-point-count="${series.points.length}" data-row-keys="${esc(rowKeys.join(","))}" d="${path}" fill="${esc(series.color)}" fill-opacity="${opacity}" stroke="${esc(series.color)}" stroke-width="${series.lineWidth}" stroke-linejoin="round" vector-effect="non-scaling-stroke"><title>${esc(series.key === "__single__" ? yEncoding.field : series.key)}</title></path>`;
       return {
-        content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="${isStream ? "streamgraph" : isStacked ? "stacked" : "area"}" data-axis-swapped="${axisSwapped}" data-stack-offset="${isStream ? "wiggle" : "zero"}" data-stack-order="${isStream ? "inside-out" : "none"}" data-renderer="observable-area@3">${mark}</g>`,
+        content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="${isStream ? "streamgraph" : isStacked ? "stacked" : "area"}" data-axis-swapped="${axisSwapped}" data-stack-offset="${isStream ? "silhouette" : "zero"}" data-stack-order="${isStream ? "inside-out" : "none"}" data-area-curve="basis" data-renderer="observable-area@3">${mark}</g>`,
         plotArea: lineResult.plotArea,
         scales: lineResult.scales,
       };
@@ -370,7 +380,10 @@ function renderArea(input: GenericRenderInput) {
   const progressionScale = axisSwapped ? lineResult.scales.y : lineResult.scales.x;
   const progressionPosition = (value: string) => areaAxisPosition(progressionScale, value);
   const stackGenerator = stack<Record<string, string | number>>().keys(seriesValues);
-  if (isStream) stackGenerator.offset(stackOffsetWiggle).order(stackOrderInsideOut);
+  // A silhouette offset centers the total stream thickness at every
+  // progression value. Wiggle minimizes baseline movement but intentionally
+  // does not produce a symmetric stream.
+  if (isStream) stackGenerator.offset(stackOffsetSilhouette).order(stackOrderInsideOut);
   const layers = isStacked
     ? stackGenerator(table)
     : seriesValues.map((series) => table.map((datum) => [0, Number(datum[series] ?? 0)] as [number, number]));
@@ -393,12 +406,13 @@ function renderArea(input: GenericRenderInput) {
       .x((_, index) => progressionPosition(String(table[index]?.x ?? "")))
       .y0((point) => valuePosition(point[0]))
       .y1((point) => valuePosition(point[1]));
+  area.curve(curveBasis);
   const marks = layers.map((layer, index) => {
     const color = !isStacked && seriesValues.length === 1 ? "steelblue" : tableau[index % tableau.length]!;
     return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(seriesValues[index] ?? "")}" data-point-count="${layer.length}" d="${area(layer as Array<[number, number]>) ?? ""}" fill="${color}"><title>${esc(seriesValues[index] === "__single__" ? yEncoding.field : seriesValues[index] ?? "")}</title></path>`;
   }).join("");
   return {
-    content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="${isStream ? "streamgraph" : isStacked ? "stacked" : "area"}" data-axis-swapped="${axisSwapped}" data-stack-offset="${isStream ? "wiggle" : "zero"}" data-stack-order="${isStream ? "inside-out" : "none"}" data-renderer="observable-area@3">${marks}</g>`,
+    content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="${isStream ? "streamgraph" : isStacked ? "stacked" : "area"}" data-axis-swapped="${axisSwapped}" data-stack-offset="${isStream ? "silhouette" : "zero"}" data-stack-order="${isStream ? "inside-out" : "none"}" data-area-curve="basis" data-renderer="observable-area@3">${marks}</g>`,
     plotArea: areaPlot,
     scales: axisSwapped
       ? { x: valueScale, y: progressionScale }
@@ -408,7 +422,7 @@ function renderArea(input: GenericRenderInput) {
 
 function renderParallel(input: GenericRenderInput) {
   const fields = input.chartSpec.parallelFields ?? [];
-  if (fields.length < 2) throw new Error("Parallel Coordinates requires at least two numeric dimensions.");
+  if (fields.length < 2) throw new Error("Parallel Coordinates requires at least two dimensions.");
   const marginTop = 22;
   const marginRight = 18;
   const marginBottom = 24;
@@ -420,10 +434,62 @@ function renderParallel(input: GenericRenderInput) {
     height: Math.max(1, input.height - marginTop - marginBottom),
   };
   const x = scalePoint<string>().domain(fields.map((field) => field.field)).range([area.x, area.x + area.width]).padding(0.35);
-  const scales = new Map(fields.map((field) => {
-    const domain = finiteDomain(input.dataset.rows.map((row) => numeric(row, field)));
-    return [field.field, scaleLinear().domain(domain).range([area.y + area.height, area.y])] as const;
-  }));
+  type ParallelAxis = {
+    scale: "linear" | "point" | "utc";
+    domain: string[];
+    position: (row: Dataset["rows"][number]) => number;
+    ticks: Array<{ label: string; position: number }>;
+  };
+  const tickCount = Math.max(3, Math.floor(area.height / 44));
+  const axesByField = new Map<string, ParallelAxis>();
+  fields.forEach((field) => {
+    const categorical = field.type === "nominal" || field.type === "ordinal";
+    if (categorical) {
+      const domain = Array.from(new Set(input.dataset.rows.map((row) => row[field.field] ?? "")));
+      const scale = scalePoint<string>().domain(domain).range([area.y + area.height, area.y]).padding(0.8);
+      axesByField.set(field.field, {
+        scale: "point",
+        domain,
+        position: (row) => scale(row[field.field] ?? "") ?? Number.NaN,
+        ticks: domain.flatMap((value) => {
+          const position = scale(value);
+          return position === undefined ? [] : [{ label: value, position }];
+        }),
+      });
+      return;
+    }
+    if (field.type === "temporal") {
+      const dataDomain = finiteDomain(input.dataset.rows.map((row) => Date.parse(row[field.field] ?? "")));
+      const span = dataDomain[1] - dataDomain[0];
+      const padding = span > 0 ? span * 0.06 : 86_400_000;
+      const domain: [Date, Date] = [new Date(dataDomain[0] - padding), new Date(dataDomain[1] + padding)];
+      const scale = scaleUtc().domain(domain).range([area.y + area.height, area.y]);
+      axesByField.set(field.field, {
+        scale: "utc",
+        domain: domain.map((value) => value.toISOString().slice(0, 10)),
+        position: (row) => {
+          const value = Date.parse(row[field.field] ?? "");
+          return Number.isFinite(value) ? scale(new Date(value)) : Number.NaN;
+        },
+        ticks: scale.ticks(tickCount).map((value) => ({
+          label: value.toISOString().slice(0, 10),
+          position: scale(value),
+        })),
+      });
+      return;
+    }
+    const dataDomain = finiteDomain(input.dataset.rows.map((row) => numeric(row, field)));
+    const span = dataDomain[1] - dataDomain[0];
+    const padding = span > 0 ? span * 0.06 : Math.max(1, Math.abs(dataDomain[0]) * 0.06);
+    const domain: [number, number] = [dataDomain[0] - padding, dataDomain[1] + padding];
+    const scale = scaleLinear().domain(domain).range([area.y + area.height, area.y]);
+    axesByField.set(field.field, {
+      scale: "linear",
+      domain: domain.map(formatTick),
+      position: (row) => scale(numeric(row, field)),
+      ticks: scale.ticks(tickCount).map((value) => ({ label: formatTick(value), position: scale(value) })),
+    });
+  });
   const colorEncoding = input.chartSpec.encodings.color;
   const colorField = colorEncoding?.field ?? fields[0]!.field;
   const colorValues = input.dataset.rows.map((row) => Number(row[colorField] ?? "")).filter(Number.isFinite);
@@ -435,50 +501,27 @@ function renderParallel(input: GenericRenderInput) {
   const line = d3Line<[string, number]>()
     .defined(([, value]) => Number.isFinite(value))
     .x(([field]) => x(field) ?? area.x)
-    .y(([field, value]) => scales.get(field)?.(value) ?? area.y + area.height);
+    .y(([, value]) => value);
   const sortedRows = input.dataset.rows.slice().sort((left, right) => Number(left[colorField] ?? 0) - Number(right[colorField] ?? 0));
   const paths = sortedRows.map((row) => {
     const index = input.dataset.rows.indexOf(row);
-    const points = fields.map((field) => [field.field, numeric(row, field)] as [string, number]);
+    const points = fields.map((field) => [field.field, axesByField.get(field.field)?.position(row) ?? Number.NaN] as [string, number]);
     const stroke = colorEncoding?.type === "nominal" || colorEncoding?.type === "ordinal" ? ordinal(row[colorField] ?? "") : sequential(Number(row[colorField] ?? 0));
     return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="path" data-mark-group-id="mark-group:${esc(input.chartId)}:path" data-row-key="${esc(rowKey(input.dataset, row, index))}" d="${line(points) ?? ""}" fill="none" stroke="${stroke}" stroke-width="1.5" stroke-opacity="0.4"/>`;
   }).join("");
   const axes = fields.map((field) => {
-    const scale = scales.get(field.field)!;
+    const axis = axesByField.get(field.field)!;
     const axisX = x(field.field) ?? area.x;
-    const domain = scale.domain();
-    const tickMarks = scale.ticks(Math.max(3, Math.floor(area.height / 44))).map((value) => {
-      const yPosition = scale(value);
-      const tickLabel = formatTick(value);
-      return `<g class="tick" transform="translate(${axisX} ${yPosition})"><line x1="-5" x2="5" stroke="currentColor"/>${adaptiveText(tickLabel, `x="8" y="3" text-anchor="start"`, 52, Math.max(12, area.height / 6), "#ffffff", 9)}</g>`;
+    const tickFontSize = adaptiveAxisFontSize(axis.ticks.map((tick) => tick.label), axis.ticks.map((tick) => tick.position), 7, 5, 7);
+    const tickMarks = axis.ticks.map((tick) => {
+      return `<g class="tick" data-tick-kind="${axis.scale === "point" ? "category" : "value"}" transform="translate(${axisX} ${tick.position})"><line x1="-3" x2="3" stroke="currentColor"/>${adaptiveText(tick.label, `x="6" y="2.5" text-anchor="start"`, 54, Math.max(10, area.height / 7), "#ffffff", tickFontSize)}</g>`;
     }).join("");
-    const boxplotField = input.chartSpec.parallelAxisBoxplots?.[field.field];
-    const boxValues = boxplotField
-      ? input.dataset.rows.map((row) => numeric(row, boxplotField)).filter(Number.isFinite).sort((a, b) => a - b)
-      : [];
-    const boxScale = boxValues.length > 0
-      ? scaleLinear().domain(finiteDomain(boxValues)).range([area.y + area.height, area.y])
-      : scale;
-    const quantile = (q: number) => {
-      if (boxValues.length === 0) return Number.NaN;
-      const position = (boxValues.length - 1) * q;
-      const lower = Math.floor(position);
-      const upper = Math.ceil(position);
-      return boxValues[lower]! + (boxValues[upper]! - boxValues[lower]!) * (position - lower);
-    };
-    const box = boxValues.length > 0
-      ? (() => {
-        const low = boxScale(quantile(0.05));
-        const q1 = boxScale(quantile(0.25));
-        const median = boxScale(quantile(0.5));
-        const q3 = boxScale(quantile(0.75));
-        const high = boxScale(quantile(0.95));
-        const width = 10;
-        return `<g data-mark-role="nested-boxplot" data-parent-axis="${esc(field.field)}" data-field="${esc(boxplotField!.field)}" aria-label="Boxplot for ${esc(boxplotField!.field)}"><line x1="${axisX}" x2="${axisX}" y1="${low}" y2="${high}" stroke="#b45309" stroke-width="1.5"/><line x1="${axisX - width / 2}" x2="${axisX + width / 2}" y1="${low}" y2="${low}" stroke="#b45309"/><line x1="${axisX - width / 2}" x2="${axisX + width / 2}" y1="${high}" y2="${high}" stroke="#b45309"/><rect x="${axisX - width / 2}" y="${Math.min(q1, q3)}" width="${width}" height="${Math.max(1, Math.abs(q3 - q1))}" fill="#f59e0b" fill-opacity="0.35" stroke="#b45309"/><line x1="${axisX - width / 2}" x2="${axisX + width / 2}" y1="${median}" y2="${median}" stroke="#92400e" stroke-width="2"/></g>`;
-      })()
-      : "";
-    const axisLabel = adaptiveText(field.field, `x="${axisX}" y="${area.y - 7}" text-anchor="middle" stroke="white" stroke-width="5" stroke-linejoin="round" paint-order="stroke"`, Math.max(16, area.width / Math.max(fields.length, 1) * 0.9), 18, "#ffffff", 10);
-    return `<g data-mark-role="parallel-axis" data-field="${esc(field.field)}"><line x1="${axisX}" x2="${axisX}" y1="${area.y}" y2="${area.y + area.height}" stroke="currentColor"/>${tickMarks}${axisLabel}${box}<title>${domain.map(formatTick).join(" - ")}</title></g>`;
+    const titleFontSize = adaptiveAxisFontSize(fields.map((item) => item.field), fields.map((item) => x(item.field) ?? area.x), 8, 6, 8);
+    const axisLine = axis.scale === "point"
+      ? `<line x1="${axisX}" x2="${axisX}" y1="${area.y}" y2="${area.y + area.height}" stroke="currentColor" stroke-dasharray="2 3"/>`
+      : `<line x1="${axisX}" x2="${axisX}" y1="${area.y}" y2="${area.y + area.height}" stroke="currentColor"/>`;
+    const axisLabel = `<text data-mark-role="parallel-axis-title" x="${axisX}" y="${area.y - 8}" text-anchor="middle" fill="currentColor" font-size="${titleFontSize}">${esc(field.field)}</text>`;
+    return `<g data-mark-role="parallel-axis" data-field="${esc(field.field)}" data-axis-scale="${axis.scale}">${axisLine}${tickMarks}${axisLabel}<title>${axis.domain.join(" - ")}</title></g>`;
   }).join("");
   return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="parallel" data-axis-orientation="vertical" data-renderer="observable-parallel@2" font-family="sans-serif">${paths}${axes}</g>`, plotArea: area };
 }
@@ -647,7 +690,7 @@ function renderHierarchy(input: GenericRenderInput) {
           ? `<tspan x="3" y="${(lineIndex === labelLines.length - 1 ? 1.4 : 1.1) + lineIndex * 0.9}em" fill="${style.color}" fill-opacity="${lineIndex === labelLines.length - 1 ? 0.7 : 1}">${esc(style.text)}</tspan>`
           : "";
       }).join("");
-      return `<g transform="translate(${x} ${y})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("."))}\n${formatTick(node.value ?? 0)}</title><rect width="${width}" height="${height}" fill="${fill}" fill-opacity="0.6"/><clipPath id="${clipId}"><rect width="${width}" height="${height}"/></clipPath>${nodeLabelsVisible ? `<text clip-path="url(#${clipId})" font-family="sans-serif">${labels}</text>` : ""}</g>`;
+      return `<g transform="translate(${x} ${y})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-row-key="${esc(rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)))}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("."))}\n${formatTick(node.value ?? 0)}</title><rect width="${width}" height="${height}" fill="${fill}" fill-opacity="0.6"/><clipPath id="${clipId}"><rect width="${width}" height="${height}"/></clipPath>${nodeLabelsVisible ? `<text clip-path="url(#${clipId})" font-family="sans-serif">${labels}</text>` : ""}</g>`;
     }).join("");
     return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="treemap" data-tile="${esc(tileName)}" data-renderer="observable-treemap@2">${leaves}</g>`, plotArea: area };
   }
@@ -667,7 +710,7 @@ function renderHierarchy(input: GenericRenderInput) {
       .innerRadius((node) => node.y0)
       .outerRadius((node) => Math.max(node.y0, node.y1 - 1));
     const nodes = layoutRoot.descendants().filter((node) => node.depth && visible(node));
-    const marks = nodes.map((node) => `<path data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" d="${arc(node) ?? ""}" fill="${nodeColor(node, topAncestorColor(node, rainbow))}" fill-opacity="0.6"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}\n${formatTick(node.value ?? 0)}</title></path>`).join("");
+    const marks = nodes.map((node) => `<path data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-row-key="${esc(rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)))}" d="${arc(node) ?? ""}" fill="${nodeColor(node, topAncestorColor(node, rainbow))}" fill-opacity="0.6"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}\n${formatTick(node.value ?? 0)}</title></path>`).join("");
     const labels = nodeLabelsVisible ? nodes.filter((node) => ((node.y0 + node.y1) / 2) * (node.x1 - node.x0) > 10).map((node) => {
       const angle = (node.x0 + node.x1) / 2 * 180 / Math.PI;
       const radiusPosition = (node.y0 + node.y1) / 2;
@@ -693,7 +736,7 @@ function renderHierarchy(input: GenericRenderInput) {
       const label = nodeLabelsVisible && height > 16
         ? adaptiveText(`${node.id ?? ""} ${formatTick(node.value ?? 0)}`, `x="4" y="13" font-family="sans-serif"`, width - 8, height - 4, fill, 10)
         : "";
-      return `<g transform="translate(${area.x + node.y0} ${area.y + node.x0})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}\n${formatTick(node.value ?? 0)}</title><rect width="${width}" height="${height}" fill="${fill}" fill-opacity="0.6"/>${label}</g>`;
+      return `<g transform="translate(${area.x + node.y0} ${area.y + node.x0})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-row-key="${esc(rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)))}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}\n${formatTick(node.value ?? 0)}</title><rect width="${width}" height="${height}" fill="${fill}" fill-opacity="0.6"/>${label}</g>`;
     }).join("");
     return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="icicle" data-renderer="observable-icicle@2">${cells}</g>`, plotArea: area };
   }
@@ -899,8 +942,11 @@ function renderBoxplot(input: GenericRenderInput) {
   return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="boxplot" data-binning="continuous" data-threshold-count="${thresholdCount}" data-renderer="observable-boxplot@2" text-anchor="middle">${marks}</g>`, plotArea: area, scales: { x: { type: "linear", domain: xDomain, range: [area.x, area.x + area.width] }, y: { type: "linear", domain: y.domain() as [number, number], range: [area.y + area.height, area.y] } } };
 }
 
-function contourPath(coordinates: number[][][][], x: (value: number) => number, y: (value: number) => number) {
-  return coordinates.map((polygon) => polygon.map((ring) => ring.map(([px = 0, py = 0], index) => `${index ? "L" : "M"}${x(px)},${y(py)}`).join("") + "Z").join("")).join("");
+function isRegularGridAxis(values: number[]) {
+  if (values.length < 3) return true;
+  const step = values[1]! - values[0]!;
+  const tolerance = Math.max(1, Math.abs(step)) * 1e-9;
+  return values.slice(2).every((value, index) => Math.abs(value - values[index + 1]! - step) <= tolerance);
 }
 
 function renderContour(input: GenericRenderInput) {
@@ -909,37 +955,57 @@ function renderContour(input: GenericRenderInput) {
   const valueEncoding = input.chartSpec.encodings.color ?? input.chartSpec.encodings.value;
   if (!xEncoding || !yEncoding || !valueEncoding) throw new Error("Contour renderer requires X, Y and Grid value encodings.");
   const area = input.sharedPlotArea ?? plotArea(input, 28);
-  const xValues = Array.from(new Set(input.dataset.rows.map((row) => numeric(row, xEncoding)).filter(Number.isFinite))).sort((a, b) => a - b);
-  const yValues = Array.from(new Set(input.dataset.rows.map((row) => numeric(row, yEncoding)).filter(Number.isFinite))).sort((a, b) => b - a);
-  const lookup = new Map(input.dataset.rows.map((row) => [`${numeric(row, xEncoding)}\u0000${numeric(row, yEncoding)}`, numeric(row, valueEncoding)]));
-  const values = yValues.flatMap((yValue) => xValues.map((xValue) => lookup.get(`${xValue}\u0000${yValue}`) ?? Number.NaN));
-  const clean = values.filter(Number.isFinite);
-  const fallback = clean.length ? Math.min(...clean) : 0;
-  const grid = values.map((value) => Number.isFinite(value) ? value : fallback);
-  const valueDomain = finiteDomain(clean, [1, 2]);
-  const positive = valueDomain[0] > 0;
-  let thresholds: number[];
-  if (positive) {
-    const minPower = Math.ceil(Math.log2(valueDomain[0]));
-    const maxPower = Math.floor(Math.log2(valueDomain[1]));
-    const powers = d3Range(minPower, maxPower + 1).map((power) => 2 ** power);
-    thresholds = powers.length > 19 ? powers.filter((_, index) => index % Math.ceil(powers.length / 19) === 0) : powers;
-  } else {
-    thresholds = ticks(valueDomain[0], valueDomain[1], 19);
+  const samples = input.dataset.rows.flatMap((row) => {
+    const xRaw = row[xEncoding.field]?.trim();
+    const yRaw = row[yEncoding.field]?.trim();
+    const valueRaw = row[valueEncoding.field]?.trim();
+    if (!xRaw || !yRaw || !valueRaw) return [];
+    const x = Number(xRaw);
+    const y = Number(yRaw);
+    const value = Number(valueRaw);
+    return Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(value)
+      ? [{ x, y, value }]
+      : [];
+  });
+  const xValues = Array.from(new Set(samples.map((sample) => sample.x))).sort((a, b) => a - b);
+  const yValues = Array.from(new Set(samples.map((sample) => sample.y))).sort((a, b) => b - a);
+  if (xValues.length < 2 || yValues.length < 2) {
+    throw new Error("Contour renderer requires at least a 2 x 2 grid.");
   }
-  if (!thresholds.length) thresholds = ticks(valueDomain[0], valueDomain[1], 10);
-  const contours = xValues.length >= 2 && yValues.length >= 2
-    ? d3Contours().size([xValues.length, yValues.length]).thresholds(thresholds)(grid)
-    : [];
-  const color = positive
-    ? scaleSequentialLog(interpolateMagma).domain([Math.max(Number.MIN_VALUE, thresholds[0] ?? valueDomain[0]), thresholds.at(-1) ?? valueDomain[1]])
-    : scaleSequential(interpolateMagma).domain(valueDomain);
-  const gx = scaleLinear().domain([0, Math.max(1, xValues.length - 1)]).range([area.x, area.x + area.width]);
-  const gy = scaleLinear().domain([0, Math.max(1, yValues.length - 1)]).range([area.y, area.y + area.height]);
-  const marks = contours.map((contour) => `<path data-chart-id="${esc(input.chartId)}" data-mark-role="contour" data-mark-group-id="mark-group:${esc(input.chartId)}:contour" data-value="${contour.value}" d="${contourPath(contour.coordinates, gx, gy)}" fill="${color(contour.value)}" stroke="#fff" stroke-opacity="0.5"><title>${formatTick(contour.value)}</title></path>`).join("");
+  if (!isRegularGridAxis(xValues) || !isRegularGridAxis(yValues)) {
+    throw new Error("Contour renderer requires evenly spaced X and Y grid coordinates.");
+  }
+  const lookup = new Map<string, number>();
+  samples.forEach((sample) => {
+    const key = `${sample.x}\u0000${sample.y}`;
+    if (lookup.has(key)) throw new Error("Contour renderer requires exactly one value for each X/Y grid coordinate.");
+    lookup.set(key, sample.value);
+  });
+  const grid = yValues.flatMap((yValue) => xValues.map((xValue) => lookup.get(`${xValue}\u0000${yValue}`)));
+  if (grid.some((value) => value === undefined)) {
+    throw new Error("Contour renderer requires a complete rectangular X/Y value grid.");
+  }
+  const values = grid as number[];
+  if (values.some((value) => value <= 0)) {
+    throw new Error("Contour renderer requires positive values for its logarithmic color scale.");
+  }
+  const thresholds = d3Range(1, 20).map((index) => 2 ** index);
+  const contours = d3Contours().size([xValues.length, yValues.length]).thresholds(thresholds)(values);
+  const color = scaleSequentialLog(interpolateMagma).domain([thresholds[0]!, thresholds.at(-1)!]);
+  const gx = scaleLinear().domain([0.5, xValues.length - 0.5]).range([area.x, area.x + area.width]);
+  const gy = scaleLinear().domain([0.5, yValues.length - 0.5]).range([area.y, area.y + area.height]);
+  const path = geoPath();
+  const clipId = `contour-clip-${input.chartId.replace(/[^a-z0-9_-]/gi, "-")}`;
+  const marks = contours.map((contour) => {
+    const transformed = {
+      ...contour,
+      coordinates: contour.coordinates.map((polygons) => polygons.map((points) => points.map(([x = 0, y = 0]) => [gx(x), gy(y)]))),
+    };
+    return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="contour" data-mark-group-id="mark-group:${esc(input.chartId)}:contour" data-value="${contour.value}" d="${path(transformed as any) ?? ""}" fill="${color(contour.value)}" stroke="#fff" stroke-opacity="0.5"><title>${formatTick(contour.value)}</title></path>`;
+  }).join("");
   const xDomain = finiteDomain(xValues);
   const yDomain = finiteDomain(yValues);
-  return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="contour" data-grid-width="${xValues.length}" data-grid-height="${yValues.length}" data-color-scale="${positive ? "sequential-log-magma" : "sequential-magma"}" data-renderer="observable-contours@1">${marks}</g>`, plotArea: area, scales: { x: { type: "linear", domain: xDomain, range: [area.x, area.x + area.width] }, y: { type: "linear", domain: yDomain, range: [area.y + area.height, area.y] } } };
+  return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="contour" data-grid-width="${xValues.length}" data-grid-height="${yValues.length}" data-color-scale="sequential-log-magma" data-renderer="observable-contours@2"><defs><clipPath id="${clipId}"><rect x="${area.x}" y="${area.y}" width="${area.width}" height="${area.height}"/></clipPath></defs><g clip-path="url(#${clipId})">${marks}</g></g>`, plotArea: area, scales: { x: { type: "linear", domain: xDomain, range: [area.x, area.x + area.width] }, y: { type: "linear", domain: yDomain, range: [area.y + area.height, area.y] } } };
 }
 
 function renderHexbin(input: GenericRenderInput) {
@@ -947,28 +1013,31 @@ function renderHexbin(input: GenericRenderInput) {
   const yEncoding = cartesianAxisEncoding(input.chartSpec, "y");
   if (!xEncoding || !yEncoding) throw new Error("Hexbin renderer requires X and Y encodings.");
   const area = input.sharedPlotArea ?? plotArea(input, 30);
-  const rows = input.dataset.rows.filter((row) => numeric(row, xEncoding) > 0 && numeric(row, yEncoding) > 0);
-  const xDomain = finiteDomain(rows.map((row) => numeric(row, xEncoding)), [1, 10]);
-  const yDomain = finiteDomain(rows.map((row) => numeric(row, yEncoding)), [1, 10]);
-  if (xDomain[0] <= 0) xDomain[0] = Math.max(Number.MIN_VALUE, xDomain[1] / 100);
-  if (yDomain[0] <= 0) yDomain[0] = Math.max(Number.MIN_VALUE, yDomain[1] / 100);
+  const points = input.dataset.rows.flatMap((row, rowIndex) => {
+    const x = numeric(row, xEncoding);
+    const y = numeric(row, yEncoding);
+    return x > 0 && y > 0 ? [{ row, rowIndex, x, y }] : [];
+  });
+  if (!points.length) throw new Error("Hexbin renderer requires positive X and Y values for logarithmic scales.");
+  const xDomain = finiteDomain(points.map((point) => point.x), [1, 10]);
+  const yDomain = finiteDomain(points.map((point) => point.y), [1, 10]);
   const x = scaleLog().domain(xDomain).range([area.x, area.x + area.width]);
   const y = scaleLog().domain(yDomain).rangeRound([area.y + area.height, area.y]);
   const configuredRadius = Math.max(2, Math.min(20, Number(sharedConfig(input, "hexagon").radius ?? 8)));
   const radius = configuredRadius * input.width / 928;
-  const layout = hexbin<Dataset["rows"][number]>()
-    .x((row) => x(numeric(row, xEncoding)))
-    .y((row) => y(numeric(row, yEncoding)))
+  const layout = hexbin<typeof points[number]>()
+    .x((point) => x(point.x))
+    .y((point) => y(point.y))
     .radius(radius)
     .extent([[area.x, area.y], [area.x + area.width, area.y + area.height]]);
-  const bins = layout(rows);
+  const bins = layout(points);
   const maximum = Math.max(1, ...bins.map((bin) => bin.length));
   const color = scaleSequential(interpolateBuPu).domain([0, maximum / 2]);
   const marks = bins.map((bin) => {
-    const indices = bin.map((row) => input.dataset.rows.indexOf(row));
+    const indices = bin.map((point) => point.rowIndex);
     return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="hexagon" data-mark-group-id="mark-group:${esc(input.chartId)}:hexagon" data-count="${bin.length}" data-row-indices="${indices.join(",")}" transform="translate(${bin.x} ${bin.y})" d="${layout.hexagon()}" fill="${color(bin.length)}" stroke="black"><title>${bin.length}</title></path>`;
   }).join("");
-  return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="hexbin" data-radius="${configuredRadius}" data-scale="log-log" data-renderer="observable-hexbin@1">${marks}</g>`, plotArea: area, scales: { x: { type: "log", domain: xDomain, range: [area.x, area.x + area.width] }, y: { type: "log", domain: yDomain, range: [area.y + area.height, area.y] } } };
+  return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="hexbin" data-radius="${configuredRadius}" data-scale="log-log" data-source-row-count="${points.length}" data-renderer="observable-hexbin@2">${marks}</g>`, plotArea: area, scales: { x: { type: "log", domain: xDomain, range: [area.x, area.x + area.width] }, y: { type: "log", domain: yDomain, range: [area.y + area.height, area.y] } } };
 }
 
 function flowLinks(input: GenericRenderInput) {

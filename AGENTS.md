@@ -300,7 +300,9 @@ The following issues remain to be solved before the workflow is fully unified:
 
 ## Testing
 
-Test drag-triggered inference independently from optional automatic detection. Cover axis drops, ambiguous chart-body drops, one input column with multiple valid intents, incompatible and constant inputs, no silent substitution of other columns, and confirmation before mutation. Retain overflow and underflow coverage for automatic analysis, including multiple inclusion-minimal solutions. Primary coverage is in `csvColumnDrag.test.ts`, `useCanvasStore.test.ts`, `csvDataEngine.test.ts`, `dimensionInference.test.ts`, and `chartDataPipeline.test.ts`. The user performs verification; do not run tests, type-check, build, code-level diff checks, or `git diff --check` unless explicitly requested.
+Test drag-triggered inference independently from optional automatic detection. Cover axis drops, ambiguous chart-body drops, one input column with multiple valid intents, incompatible and constant inputs, no silent substitution of other columns, and confirmation before mutation. Retain overflow and underflow coverage for automatic analysis, including multiple inclusion-minimal solutions. Primary coverage is in `csvColumnDrag.test.ts`, `useCanvasStore.test.ts`, `csvDataEngine.test.ts`, `dimensionInference.test.ts`, and `chartDataPipeline.test.ts`.
+
+Agents should run relevant validation after making code changes. Prefer targeted Vitest runs for the affected file and case, for example `npm test -- src/tests/useCanvasStore.test.ts -t "nested"` or `npm test -- src/tests/encodingConfig.test.ts -t "bar"`; do not run the complete test suite unless explicitly requested or targeted coverage cannot validate the change. Run `npm run type-check` when Vue/TypeScript contracts or shared types change, and run `npm run build` for production-bundle or cross-module changes. Report any validation that was not run and why.
 
 Do not start a development server or choose a new port. The user starts the server before coding work and provides the port to use.
 

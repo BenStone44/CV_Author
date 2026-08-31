@@ -44,6 +44,9 @@ const seriesDataset: Dataset = {
   columns: [
     { name: "date", type: "temporal" },
     { name: "series", type: "nominal" },
+    { name: "person", type: "nominal" },
+    { name: "department", type: "nominal" },
+    { name: "priority", type: "ordinal" },
     { name: "value", type: "quantitative" },
     { name: "a", type: "quantitative" },
     { name: "b", type: "quantitative" },
@@ -52,6 +55,9 @@ const seriesDataset: Dataset = {
   rows: Array.from({ length: 24 }, (_, index) => ({
     date: `2026-01-${String(index % 12 + 1).padStart(2, "0")}`,
     series: index % 2 ? "B" : "A",
+    person: index % 2 ? "Person_B" : "Person_A",
+    department: ["Sales", "Support", "Product"][index % 3]!,
+    priority: ["Low", "Medium", "High"][index % 3]!,
     value: String((index % 8) - 2),
     a: String(index + 1),
     b: String((index * 7) % 19),
@@ -141,12 +147,27 @@ describe("advanced chart cards", () => {
       expect(card.svgMarkup).toContain("<svg");
     });
     const radialCluster = advancedTemplateDefinitions.find((card) => card.chartType === "RadialDendrogram");
+    expect(getChartTemplateContract("Dendrogram")?.supportsLayerComposition).toBe(false);
+    expect(getChartTemplateContract("RadialDendrogram")?.supportsLayerComposition).toBe(false);
     expect(radialCluster?.svgMarkup).toContain('data-renderer="observable-radial-cluster@3"');
     expect(radialCluster?.svgMarkup).toContain('data-leaf-radius="68"');
     expect(radialCluster?.svgMarkup).toContain('data-selection-radius="76"');
     expect(radialCluster?.svgMarkup).toContain('stroke-opacity="0.4"');
     expect(radialCluster?.svgMarkup).toContain('fill="#555"');
     expect(radialCluster?.svgMarkup).toContain('fill="#999"');
+    const contour = advancedTemplateDefinitions.find((card) => card.chartType === "Contour");
+    const hexbin = advancedTemplateDefinitions.find((card) => card.chartType === "Hexbin");
+    expect(contour?.svgMarkup).toContain('data-renderer="observable-contours@2"');
+    expect(contour?.svgMarkup).toContain('viewBox="0 0 956 600"');
+    expect(contour?.svgMarkup).toContain('stroke-opacity="0.5"');
+    expect(contour?.svgMarkup).not.toContain("<image");
+    expect(hexbin?.svgMarkup).toContain('data-renderer="observable-hexbin@2"');
+    expect(hexbin?.svgMarkup).toContain('viewBox="0 0 320 180"');
+    expect(hexbin?.svgMarkup).toContain('data-default-dataset-id="builtin:d3-hexbin-diamonds"');
+    expect(hexbin?.svgMarkup).toContain('data-source-row-count="53940"');
+    expect(hexbin?.svgMarkup?.match(/<path/g)?.length).toBeGreaterThan(500);
+    expect(hexbin?.svgMarkup).toContain('stroke="black"');
+    expect(hexbin?.svgMarkup).not.toContain("<image");
   });
 
   it("keeps semantic encoding channels for every new card family", () => {
@@ -160,8 +181,13 @@ describe("advanced chart cards", () => {
     expect(channels("Calendar")).toEqual(["date", "value", "color"]);
     expect(channels("Boxplot")).toEqual(["x", "y", "color"]);
     expect(channels("Contour")).toEqual(["x", "y", "color"]);
-    expect(channels("Hexbin")).toEqual(["x", "y", "color", "size"]);
+    expect(channels("Hexbin")).toEqual(["x", "y"]);
     expect(channels("Sankey")).toEqual(["source", "target", "value", "color"]);
+  });
+
+  it("exposes only the channels consumed by the D3 contour and hexbin examples", () => {
+    expect(getEncodingChannelConfigs("Contour").map((config) => config.channel)).toEqual(["x", "y", "color"]);
+    expect(getEncodingChannelConfigs("Hexbin").map((config) => config.channel)).toEqual(["x", "y"]);
   });
 
   it.each(["AreaChart", "StackedAreaChart", "Streamgraph", "HorizonChart"])("renders %s area marks", (chartType) => {
@@ -173,11 +199,14 @@ describe("advanced chart cards", () => {
       },
     });
     expect(result.content).toContain('data-mark-role="area"');
+    expect(result.content).toContain('data-area-curve="basis"');
+    expect(result.content).toMatch(/d="[^"]*C/);
     if (chartType === "HorizonChart") {
       expect(result.content).toContain('data-bands="7"');
       expect(result.content).toContain('data-mark-role="horizon-axis"');
     } else {
       expect(result.scales?.x.type).toBe("utc");
+      expect(result.plotArea.width / result.plotArea.height).toBeCloseTo(2);
     }
   });
 
@@ -375,7 +404,7 @@ describe("advanced chart cards", () => {
     expect(result.scales?.y.type).toBe("utc");
   });
 
-  it("uses the gallery streamgraph offset and ordering", () => {
+  it("centers and smooths streamgraph layers", () => {
     const result = render("Streamgraph", seriesDataset, {
       encodings: {
         x: { field: "date", type: "temporal" },
@@ -383,8 +412,36 @@ describe("advanced chart cards", () => {
         color: { field: "series", type: "nominal" },
       },
     });
-    expect(result.content).toContain('data-stack-offset="wiggle"');
+    expect(result.content).toContain('data-stack-offset="silhouette"');
     expect(result.content).toContain('data-stack-order="inside-out"');
+    expect(result.content).toContain('data-area-curve="basis"');
+    expect(result.content).toMatch(/d="[^"]*C/);
+  });
+
+  it("centers a single streamgraph layer instead of falling back to a zero baseline", () => {
+    const result = render("Streamgraph", {
+      id: "single-stream",
+      name: "single-stream.csv",
+      columns: [
+        { name: "date", type: "temporal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { date: "2026-01-01", value: "2" },
+        { date: "2026-01-02", value: "6" },
+        { date: "2026-01-03", value: "4" },
+      ],
+    }, {
+      encodings: {
+        x: { field: "date", type: "temporal" },
+        y: { field: "value", type: "quantitative" },
+      },
+    });
+
+    const domain = result.scales?.y.domain as [number, number];
+    expect(domain[0]).toBeCloseTo(-domain[1]);
+    expect(result.content).toContain('data-stack-offset="silhouette"');
+    expect(result.content).toMatch(/d="[^"]*C/);
   });
 
   it.each(["StackedAreaChart", "Streamgraph"])("swaps %s like MultiLine while preserving every series", (chartType) => {
@@ -403,14 +460,28 @@ describe("advanced chart cards", () => {
     expect(result.scales?.y.type).toBe("utc");
   });
 
-  it("renders parallel coordinates from multiple numeric dimensions", () => {
+  it("renders quantitative, nominal, and ordinal parallel dimensions without axis boxplots", () => {
     const result = render("ParallelCoordinatesPlot", seriesDataset, {
       encodings: { color: { field: "series", type: "nominal" } },
-      parallelFields: ["a", "b", "c"].map((field) => ({ field, type: "quantitative" as const })),
+      parallelFields: [
+        { field: "a", type: "quantitative" as const },
+        { field: "person", type: "nominal" as const },
+        { field: "priority", type: "ordinal" as const },
+        { field: "date", type: "temporal" as const },
+      ],
     });
-    expect(result.content.match(/data-mark-role="parallel-axis"/g)).toHaveLength(3);
+    expect(result.content.match(/data-mark-role="parallel-axis"/g)).toHaveLength(4);
     expect(result.content.match(/data-mark-role="path"/g)).toHaveLength(seriesDataset.rows.length);
-    expect(result.content).toContain('data-axis-orientation="horizontal"');
+    expect(result.content.match(/data-axis-scale="point"/g)).toHaveLength(2);
+    expect(result.content).toContain('data-axis-scale="linear"');
+    expect(result.content).toContain('data-axis-scale="utc"');
+    expect(result.content.match(/stroke-dasharray="2 3"/g)).toHaveLength(2);
+    const axisTitleSizes = Array.from(result.content.matchAll(/data-mark-role="parallel-axis-title"[^>]*font-size="([^"]+)"/g), (match) => Number(match[1]));
+    expect(new Set(axisTitleSizes).size).toBe(1);
+    expect(axisTitleSizes[0]).toBeLessThanOrEqual(8);
+    expect(result.content).not.toContain('<title>1 - 24</title>');
+    expect(result.content).not.toContain('data-mark-role="nested-boxplot"');
+    expect(result.content).toContain('data-axis-orientation="vertical"');
   });
 
   it.each(["Icicle", "Sunburst", "Treemap", "Dendrogram"])("renders %s hierarchy nodes", (chartType) => {
@@ -423,6 +494,7 @@ describe("advanced chart cards", () => {
     });
     expect(result.content).toContain('data-mark-role="node"');
     expect(result.content).toContain('data-node-key="a1"');
+    expect(result.content).toContain('data-row-key=');
   });
 
   it.each([
@@ -556,11 +628,26 @@ describe("advanced chart cards", () => {
     } });
     expect(contour.content).toContain('data-mark-role="contour"');
     expect(contour.content).toContain('data-color-scale="sequential-log-magma"');
+    expect(contour.content).toContain('data-renderer="observable-contours@2"');
+    expect(contour.content).toContain("clip-path=");
     expect(contour.content).toContain('stroke="#fff"');
     expect(hexbin.content).toContain('data-mark-role="hexagon"');
     expect(hexbin.content).toContain("data-count=");
     expect(hexbin.content).toContain('data-scale="log-log"');
+    expect(hexbin.content).toContain('data-renderer="observable-hexbin@2"');
     expect(hexbin.scales?.x.type).toBe("log");
+  });
+
+  it("rejects sparse contour input instead of filling missing grid cells", () => {
+    const sparse = {
+      ...contourDataset,
+      rows: contourDataset.rows.slice(1),
+    };
+    expect(() => render("Contour", sparse, { encodings: {
+      x: { field: "x", type: "quantitative" },
+      y: { field: "y", type: "quantitative" },
+      value: { field: "z", type: "quantitative" },
+    } })).toThrow("complete rectangular X/Y value grid");
   });
 
   it.each(["Chord", "Sankey"])("renders %s links and nodes", (chartType) => {

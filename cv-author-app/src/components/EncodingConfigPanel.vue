@@ -76,7 +76,6 @@ const emit = defineEmits<{
   valueSeriesFieldsChange: [fields: string[]];
   segmentFieldsChange: [fields: string[]];
   parallelFieldsChange: [fields: string[]];
-  parallelAxisBoxplotChange: [axisField: string, valueField?: string];
   aggregationChange: [channel: ChartEncodingChannel, aggregation?: "sum" | "avg"];
   singleBarValueOrderChange: [direction: "source" | "ascending" | "descending", topN?: number];
   markConfigChange: [patch: MarkGroupSharedConfig];
@@ -230,6 +229,8 @@ const seriesStyleMapping = computed<SeriesStyleMapping>(() => {
 });
 const legendVisible = computed(() => props.markConfig.legendVisible === true);
 const quantitativeColumns = computed(() => props.columns.filter((column) => column.type === "quantitative"));
+const parallelColumns = computed(() => props.columns.filter((column) =>
+  column.type === "quantitative" || column.type === "nominal" || column.type === "ordinal" || column.type === "temporal"));
 const aggregationEntries = computed(() => {
   const configured = Object.entries(props.chartSpec.aggregations ?? {})
     .flatMap(([channel, aggregation]) => {
@@ -291,7 +292,6 @@ const polarSegmentColumns = computed(() => {
   return props.columns.filter((column) => config.accepts.includes(column.type));
 });
 const selectedParallelFields = computed(() => props.chartSpec.parallelFields?.map((encoding) => encoding.field) ?? []);
-const parallelAxisBoxplots = computed(() => props.chartSpec.parallelAxisBoxplots ?? {});
 const staticRadius = computed(() => typeof props.markConfig.outerRadius === "number"
   ? props.markConfig.outerRadius
   : 1);
@@ -432,8 +432,9 @@ function axisConfig(config: EncodingChannelConfig) {
 
 const axisRows = computed(() => (["x", "y"] as const).flatMap((axis) => {
   if (axis === "y" && seriesItemMode.value === "quantitative" && selectedValueSeriesFields.value.length > 1) return [];
-  const config = configs.value.find((item) => item.channel === axis);
-  return config ? [{ axis, config: { ...config, label: axis.toUpperCase() } }] : [];
+  const bindingAxis = axisChannel(axis);
+  const config = configs.value.find((item) => item.channel === bindingAxis);
+  return config ? [{ axis, bindingAxis, config: { ...config, label: bindingAxis.toUpperCase() } }] : [];
 }));
 
 function axisVisibility(axis: "x" | "y") {
@@ -475,7 +476,15 @@ function toggleDetailPanel(channel: "color" | "size") {
 function isSeriesItemDisabled(field: string) {
   const column = props.columns.find((item) => item.name === field);
   if (!column || !seriesItemMode.value) return false;
-  if (seriesItemMode.value === "categorical") return !selectedSeriesFields.value.includes(field);
+  if (seriesItemMode.value === "categorical") {
+    // Bar group/segment roles explicitly allow multiple categorical fields;
+    // line, area, and scatter series roles remain single-select.
+    const categorical = column.type === "nominal"
+      || column.type === "ordinal"
+      || column.type === "temporal";
+    return !categorical
+      || (seriesRole.value?.multiple !== true && !selectedSeriesFields.value.includes(field));
+  }
   return column.type !== "quantitative";
 }
 
@@ -488,7 +497,13 @@ function toggleSeriesItemField(field: string) {
       : [...selectedValueSeriesFields.value, field]);
     return;
   }
-  emit("seriesFieldsChange", selectedSeriesFields.value.includes(field) ? [] : [field]);
+  if (seriesRole.value?.multiple === true) {
+    emit("seriesFieldsChange", selectedSeriesFields.value.includes(field)
+      ? selectedSeriesFields.value.filter((item) => item !== field)
+      : [...selectedSeriesFields.value, field]);
+  } else {
+    emit("seriesFieldsChange", selectedSeriesFields.value.includes(field) ? [] : [field]);
+  }
 }
 
 function seriesItemDragColumn(event: DragEvent) {
@@ -523,7 +538,11 @@ function onSeriesItemDrop(event: DragEvent) {
     }
     return;
   }
-  if (!selectedSeriesFields.value.includes(column.name)) emit("seriesFieldsChange", [column.name]);
+  if (!selectedSeriesFields.value.includes(column.name)) {
+    emit("seriesFieldsChange", seriesRole.value?.multiple === true
+      ? [...selectedSeriesFields.value, column.name]
+      : [column.name]);
+  }
 }
 
 function toggleSegmentField(field: string) {
@@ -582,10 +601,6 @@ function toggleParallelField(field: string) {
   emit("parallelFieldsChange", selectedParallelFields.value.includes(field)
     ? selectedParallelFields.value.filter((item) => item !== field)
     : [...selectedParallelFields.value, field]);
-}
-
-function updateParallelAxisBoxplot(axisField: string, valueField: string) {
-  emit("parallelAxisBoxplotChange", axisField, valueField || undefined);
 }
 
 function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
@@ -697,9 +712,9 @@ function updateSingleBarTopN(rawValue: string) {
               <output>{{ Math.round(staticRadius * 100) }}%</output>
               <input
                 type="range"
-                min="0.15"
+                min="0"
                 max="1"
-                step="0.05"
+                step="0.01"
                 :value="staticRadius"
                 aria-label="Static R value"
                 @pointerdown="emit('markConfigEditStart', 'outerRadius')"
@@ -753,7 +768,7 @@ function updateSingleBarTopN(rawValue: string) {
         </div>
         <div v-for="row in axisRows" :key="row.axis" class="encoding-config__axis-row">
           <div class="encoding-config__axis-channel-label">
-            <span class="encoding-config__axis-row-label">{{ row.axis.toUpperCase() }}</span>
+            <span class="encoding-config__axis-row-label">{{ row.bindingAxis.toUpperCase() }}</span>
             <button
               type="button"
               class="encoding-config__axis-direction-button"
@@ -768,8 +783,8 @@ function updateSingleBarTopN(rawValue: string) {
             :config="row.config"
             :columns="columns"
             :father-columns="fatherColumns"
-            :value="displayedEncodingField(row.axis)"
-            @change="updateMappingDefaults(row.axis, $event)"
+            :value="displayedEncodingField(row.bindingAxis)"
+            @change="updateMappingDefaults(row.bindingAxis, $event)"
           />
           <div class="encoding-config__axis-controls">
             <label class="encoding-config__axis-toggle">
@@ -964,8 +979,8 @@ function updateSingleBarTopN(rawValue: string) {
       </section>
 
       <section v-if="isParallel" class="encoding-config__angle" aria-label="Parallel dimensions">
-        <span>Numeric dimensions <abbr title="At least two required" aria-label="At least two required">*</abbr></span>
-        <label v-for="column in quantitativeColumns" :key="column.name">
+        <span>Dimensions <abbr title="At least two required" aria-label="At least two required">*</abbr></span>
+        <label v-for="column in parallelColumns" :key="column.name">
           <input
             type="checkbox"
             :checked="selectedParallelFields.includes(column.name)"
@@ -973,22 +988,6 @@ function updateSingleBarTopN(rawValue: string) {
           />
           <span>{{ columnDisplayLabel(column.name) }}</span>
         </label>
-        <div v-if="selectedParallelFields.length" class="encoding-config__parallel-boxplots">
-          <span>Axis boxplots</span>
-          <label v-for="axisField in selectedParallelFields" :key="axisField">
-            <span>{{ columnDisplayLabel(axisField) }}</span>
-            <select
-              :value="parallelAxisBoxplots[axisField]?.field ?? ''"
-              :aria-label="`Boxplot for ${axisField}`"
-              @change="updateParallelAxisBoxplot(axisField, ($event.target as HTMLSelectElement).value)"
-            >
-              <option value="">None</option>
-              <option v-for="column in quantitativeColumns" :key="column.name" :value="column.name">
-                {{ columnDisplayLabel(column.name) }}
-              </option>
-            </select>
-          </label>
-        </div>
       </section>
 
       <template v-if="!compositionOnly">
@@ -1291,7 +1290,21 @@ function updateSingleBarTopN(rawValue: string) {
       <label class="encoding-config__static">
         <span>Radius</span>
         <output>{{ hexbinRadius }} px</output>
-        <input type="range" min="2" max="20" step="1" :value="hexbinRadius" aria-label="Radius" @input="emit('markConfigChange', { radius: Number(($event.target as HTMLInputElement).value) })" />
+        <input
+          type="range"
+          min="2"
+          max="20"
+          step="1"
+          :value="hexbinRadius"
+          aria-label="Radius"
+          @pointerdown="emit('markConfigEditStart', 'radius')"
+          @focus="emit('markConfigEditStart', 'radius')"
+          @pointerup="emit('markConfigEditEnd')"
+          @pointercancel="emit('markConfigEditEnd')"
+          @blur="emit('markConfigEditEnd')"
+          @change="emit('markConfigEditEnd')"
+          @input="emit('markConfigChange', { radius: Number(($event.target as HTMLInputElement).value) })"
+        />
       </label>
     </section>
 

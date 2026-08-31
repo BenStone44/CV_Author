@@ -29,6 +29,59 @@ Object.defineProperty(globalThis, "window", {
   },
 });
 
+class SvgMarkStub {
+  dataset: Record<string, string>;
+  children: SvgMarkStub[];
+
+  constructor(
+    private readonly attributes: Record<string, string>,
+    private readonly bounds: { left: number; top: number; right: number; bottom: number },
+    children: SvgMarkStub[] = [],
+    private readonly geometry: SvgMarkStub | null = null,
+  ) {
+    this.dataset = attributes["data-node-id"] ? { nodeId: attributes["data-node-id"] } : {};
+    this.children = children;
+  }
+
+  getAttribute(name: string) {
+    return this.attributes[name] ?? null;
+  }
+
+  hasAttribute(name: string) {
+    return this.attributes[name] !== undefined;
+  }
+
+  querySelectorAll() {
+    return this.children;
+  }
+
+  querySelector() {
+    return this.geometry;
+  }
+
+  closest(selector: string) {
+    return selector === "[data-row-key]" && this.hasAttribute("data-row-key") ? this : null;
+  }
+
+  getScreenCTM() {
+    return null;
+  }
+
+  getBoundingClientRect() {
+    return {
+      ...this.bounds,
+      x: this.bounds.left,
+      y: this.bounds.top,
+      width: this.bounds.right - this.bounds.left,
+      height: this.bounds.bottom - this.bounds.top,
+      toJSON: () => ({}),
+    };
+  }
+}
+
+Object.defineProperty(globalThis, "Element", { configurable: true, value: SvgMarkStub });
+Object.defineProperty(globalThis, "SVGGraphicsElement", { configurable: true, value: SvgMarkStub });
+
 const {
   canResolveNestedParentField,
   getDimensionChartUpgradeOptions,
@@ -372,7 +425,7 @@ describe("implemented chart template cards", () => {
     expect((multiLine?.svgMarkup?.match(/<path/g) ?? []).length).toBe(3);
   });
 
-  it("uses data-rendered SVGs for bar, line, area, point, and matrix templates", () => {
+  it("uses data-rendered SVGs for bar, line, parallel, area, point, and matrix templates", () => {
     const store = useCanvasStore(ref(null));
     const nativeSvgChartTypes = new Set([
       "SingleBarChart",
@@ -386,6 +439,7 @@ describe("implemented chart template cards", () => {
       "StackedAreaChart",
       "Streamgraph",
       "HorizonChart",
+      "ParallelCoordinatesPlot",
       "Scatterplot",
       "MatrixDiagram",
     ]);
@@ -398,6 +452,44 @@ describe("implemented chart template cards", () => {
     expect(candidates.every((candidate) => candidate.svgMarkup?.startsWith("<svg"))).toBe(true);
     expect(candidates.every((candidate) => candidate.svgMarkup?.includes("data-default-dataset-id"))).toBe(true);
     expect(candidates.every((candidate) => !candidate.svgMarkup?.includes("<image"))).toBe(true);
+  });
+
+  it("keeps case1 person and time as parallel coordinate dimensions", () => {
+    const dataset: Dataset = {
+      id: "case1-parallel-data",
+      name: "case1.csv",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "time", type: "temporal" },
+        { name: "weight_kg", type: "quantitative" },
+      ],
+      rows: [
+        { person: "Person_A", time: "2025-01-01", weight_kg: "88.0" },
+        { person: "Person_B", time: "2025-02-01", weight_kg: "84.2" },
+      ],
+      primaryKey: ["person", "time"],
+    };
+    const chart = leaf("case1-parallel", 0, 0);
+    chart.chartSpec = {
+      chartType: "ParallelCoordinatesPlot",
+      datasetId: dataset.id,
+      encodings: { color: { field: "person", type: "nominal" } },
+    };
+    const store = useCanvasStore(ref(null));
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [chart];
+    store.axisBindingTarget.value = { nodeId: chart.id, channel: "x" };
+
+    store.setParallelFields(["time", "person"]);
+
+    expect(chart.chartSpec?.parallelFields).toEqual([
+      { field: "time", type: "temporal" },
+      { field: "person", type: "nominal" },
+    ]);
+    expect(chart.chartSpec?.renderer?.status).not.toBe("error");
+    expect(chart.renderedContent).toContain('data-axis-scale="utc"');
+    expect(chart.renderedContent).toContain('data-axis-scale="point"');
   });
 
   it("binds Matrix value through the generic encoding API", () => {
@@ -2779,6 +2871,114 @@ describe("composition coordinate editing", () => {
     expect(bars.chartSpec?.scales?.x.domain).toEqual(barDomain);
     expect(bars.renderedContent?.match(/data-mark-role="bar"/g)).toHaveLength(barDomain.length);
     expect(hasNonLeafBars).toBe(barDomain.some((value) => value === "Root" || value === "Branch"));
+  });
+
+  it("centers a five-metric pie on every Dendrogram node without entering or layering", async () => {
+    listeners.clear();
+    const metrics = ["metric_1", "metric_2", "metric_3", "metric_4", "metric_5"];
+    const dataset: Dataset = {
+      id: "dendrogram-nested-pies",
+      name: "dendrogram-nested-pies.csv",
+      columns: [
+        { name: "node_id", type: "nominal" },
+        { name: "parent_id", type: "nominal" },
+        ...metrics.map((name) => ({ name, type: "quantitative" as const })),
+      ],
+      rows: [
+        { node_id: "root", parent_id: "", metric_1: "5", metric_2: "4", metric_3: "3", metric_4: "2", metric_5: "1" },
+        { node_id: "branch", parent_id: "root", metric_1: "1", metric_2: "2", metric_3: "3", metric_4: "4", metric_5: "5" },
+        { node_id: "leaf", parent_id: "branch", metric_1: "2", metric_2: "3", metric_3: "5", metric_4: "7", metric_5: "11" },
+      ],
+      primaryKey: ["node_id"],
+    };
+    const tree = lineChart("direct-nested-dendrogram", 100, false);
+    tree.chartSpec = {
+      chartType: "Dendrogram",
+      datasetId: dataset.id,
+      encodings: {
+        key: { field: "node_id", type: "nominal" },
+        parent: { field: "parent_id", type: "nominal" },
+      },
+      plotArea: { x: 40, y: 40, width: 640, height: 320 },
+      markGroups: [{
+        id: `mark-group:${tree.id}:node`,
+        chartId: tree.id,
+        role: "node",
+        memberKeys: [],
+        sharedConfig: {},
+      }],
+    };
+    tree.renderedContent = '<g data-chart-type="dendrogram"/>';
+
+    const pie = polarChart("five-metric-nested-pie", 1000, 360);
+    pie.chartSpec = {
+      ...pie.chartSpec!,
+      datasetId: dataset.id,
+      encodings: {},
+    };
+    const nodeCenters = dataset.rows.map((_row, index) => ({ x: 226 + index * 120, y: 246 }));
+    const marks = dataset.rows.map((row, index) => {
+      const circle = new SvgMarkStub({}, {
+        left: 220 + index * 120,
+        top: 240,
+        right: 232 + index * 120,
+        bottom: 252,
+      });
+      return new SvgMarkStub({
+        "data-chart-id": tree.id,
+        "data-mark-role": "node",
+        "data-mark-group-id": `mark-group:${tree.id}:node`,
+        "data-row-key": row.node_id!,
+      }, {
+        left: 220 + index * 120,
+        top: 240,
+        right: 292 + index * 120,
+        bottom: 252,
+      }, [], circle);
+    });
+    const treeElement = new SvgMarkStub({ "data-node-id": tree.id }, {
+      left: tree.x,
+      top: tree.y,
+      right: tree.x + tree.width,
+      bottom: tree.y + tree.height,
+    }, marks);
+    const canvasRef = ref({
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1800, height: 1000 }),
+      querySelectorAll: () => [treeElement],
+    } as unknown as HTMLElement);
+    const store = useCanvasStore(canvasRef);
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [tree, pie];
+    store.selectedIds.value = [pie.id];
+    store.axisBindingTarget.value = { nodeId: pie.id, channel: "angle" };
+    store.setPolarSegmentFields(metrics);
+
+    store.onCanvasNodePointerDown(pie, pointerEvent(pie.x + 20, pie.y + 20));
+    listeners.get("pointermove")?.(pointerEvent(226, 246));
+
+    expect(store.activeDropZone.value).toMatchObject({
+      targetNodeId: tree.id,
+      type: "nested",
+      nestedAction: "embed",
+    });
+    expect(store.activeDropZone.value?.enterBounds).toBeUndefined();
+
+    listeners.get("pointerup")?.(pointerEvent(226, 246));
+    await nextTick();
+
+    const nestedPies = store.canvasNodes.value.filter((node) => node.id !== tree.id);
+    expect(nestedPies).toHaveLength(dataset.rows.length);
+    expect(nestedPies.every((node) => node.chartSpec?.angleFields?.map((field) => field.field).join("|") === metrics.join("|"))).toBe(true);
+    expect(nestedPies.every((node) => node.renderedContent?.match(/data-mark-role="arc"/g)?.length === metrics.length)).toBe(true);
+    const relationships = Object.values(store.relationshipStore.state.value.nestedRelationships);
+    expect(relationships).toHaveLength(dataset.rows.length);
+    expect(relationships.every((relationship) => relationship.inheritedFilterContexts?.length === 1
+      && relationship.inheritedFilterContexts[0]?.parentField === "node_id")).toBe(true);
+    nestedPies.forEach((node, index) => {
+      expect(node.x + node.width * node.scaleX / 2).toBeCloseTo(nodeCenters[index]!.x);
+      expect(node.y + node.height * node.scaleY / 2).toBeCloseTo(nodeCenters[index]!.y);
+    });
   });
 
   it("extends Polar layer and concat compositions without replacing their members", () => {

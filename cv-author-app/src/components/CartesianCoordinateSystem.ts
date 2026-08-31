@@ -47,22 +47,14 @@ export function getCartesianAxisChannels(
   node: CanvasNode,
   mode: "static" | "interactive",
 ): EncodingChannel[] {
+  if (isCartesianTreeChart(node.chartSpec?.chartType)) return [];
   const system = node.coordinateSystem;
   const isLayer = node.compositionSpec?.type === "layer";
   const isOwner = !system || system.ownerNodeId === node.id;
-  const treeLeafAxis = isCartesianTreeChart(node.chartSpec?.chartType)
-    ? cartesianTreeLeafAxis(cartesianTreeDirection(node.chartSpec))
-    : null;
   if (isLayer) {
     return mode === "static" && isOwner
-      ? treeLeafAxis ? [treeLeafAxis] : [...cartesianChannels]
+      ? [...cartesianChannels]
       : [];
-  }
-  if (treeLeafAxis) {
-    if (mode === "interactive" && node.compositionSpec?.type === "concat") {
-      return node.compositionSpec.sharedChannels.includes(treeLeafAxis) ? [treeLeafAxis] : [];
-    }
-    return [treeLeafAxis];
   }
   // Interactive concat controls expose only channels shared by its recorded
   // links; independent member axes remain local to their charts.
@@ -482,7 +474,7 @@ export const CanvasCoordinateSystemLayer: any = defineComponent({
       if (props.hiddenNodeIds?.has(node.id) && props.allowHiddenNodeId !== node.id) return null;
       const editingLayer = node.compositionSpec?.type === "layer"
         && props.editingCompositionId === node.compositionSpec.id;
-      const channels = editingLayer
+      const channels = editingLayer && !isCartesianTreeChart(node.chartSpec?.chartType)
         ? [...cartesianChannels]
         : getCartesianAxisChannels(node, "static");
       if (node.coordinateGuide?.type === "Cartesian"

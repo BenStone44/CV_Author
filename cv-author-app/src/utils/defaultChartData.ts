@@ -10,6 +10,7 @@ import defaultChartDataCsv from "../../../data/default_chart_data.csv?raw";
 import defaultTreeDataCsv from "../../../data/tree_nodes.csv?raw";
 import defaultGraphNodesCsv from "../../../data/nodes.csv?raw";
 import defaultGraphEdgesCsv from "../../../data/edges.csv?raw";
+import d3HexbinDiamondsCsv from "../../../data/d3_hexbin_diamonds.csv?raw";
 import { getChartTemplateContract, normalizeChartTemplate } from "./chartTemplates";
 import { prepareChartData } from "./chartDataPipeline";
 import { renderDeterministicChart } from "./semanticRenderer";
@@ -17,6 +18,7 @@ import { renderDeterministicChart } from "./semanticRenderer";
 export const DEFAULT_CHART_DATASET_ID = "builtin:default-cartesian-data";
 export const DEFAULT_TREE_DATASET_ID = "builtin:default-tree-data";
 export const DEFAULT_GRAPH_DATASET_ID = "builtin:default-force-graph-data";
+export const DEFAULT_HEXBIN_DATASET_ID = "builtin:d3-hexbin-diamonds";
 
 const defaultRows = Papa.parse<Record<string, string>>(defaultChartDataCsv, {
   header: true,
@@ -34,6 +36,11 @@ const defaultGraphNodeRows = Papa.parse<Record<string, string>>(defaultGraphNode
 }).data;
 
 const defaultGraphEdgeRows = Papa.parse<Record<string, string>>(defaultGraphEdgesCsv, {
+  header: true,
+  skipEmptyLines: "greedy",
+}).data;
+
+const defaultHexbinRows = Papa.parse<Record<string, string>>(d3HexbinDiamondsCsv, {
   header: true,
   skipEmptyLines: "greedy",
 }).data;
@@ -57,6 +64,17 @@ export const defaultChartDataset: Dataset = {
   ],
   rows: defaultRows,
   primaryKey: ["column", "group"],
+};
+
+/** Complete diamonds attachment used by the Observable D3 Hexbin example. */
+export const defaultHexbinDataset: Dataset = {
+  id: DEFAULT_HEXBIN_DATASET_ID,
+  name: "D3 Hexbin diamonds",
+  columns: [
+    { name: "carat", type: "quantitative" },
+    { name: "price", type: "quantitative" },
+  ],
+  rows: defaultHexbinRows,
 };
 
 /** A shared parent-linked hierarchy used by every built-in tree template. */
@@ -123,8 +141,10 @@ export function supportsDefaultChartData(chartType: string) {
   return family === "bar"
     || family === "line"
     || family === "area"
+    || family === "parallel"
     || family === "scatter"
     || family === "matrix"
+    || family === "hexbin"
     || family === "pie"
     || family === "donut"
     || family === "hierarchy"
@@ -133,6 +153,7 @@ export function supportsDefaultChartData(chartType: string) {
 
 export function defaultDatasetForChartType(chartType: string): Dataset {
   const normalized = chartType.replace(/[\s_-]/g, "").toLowerCase();
+  if (normalizeChartTemplate(chartType) === "hexbin") return defaultHexbinDataset;
   if (normalizeChartTemplate(chartType) === "hierarchy") return defaultTreeDataset;
   if (normalized === "forcedirectedgraph") return defaultGraphDataset;
   return defaultChartDataset;
@@ -141,7 +162,8 @@ export function defaultDatasetForChartType(chartType: string): Dataset {
 export function isDefaultChartDataSpec(spec: ChartSpec | null | undefined) {
   return spec?.datasetId === DEFAULT_CHART_DATASET_ID
     || spec?.datasetId === DEFAULT_TREE_DATASET_ID
-    || spec?.datasetId === DEFAULT_GRAPH_DATASET_ID;
+    || spec?.datasetId === DEFAULT_GRAPH_DATASET_ID
+    || spec?.datasetId === DEFAULT_HEXBIN_DATASET_ID;
 }
 
 /** Start a real-data binding while retaining only chart-local appearance. */
@@ -226,6 +248,31 @@ export function createDefaultChartSpec(chartType: string): ChartSpec | null {
       },
     };
   }
+  if (family === "hexbin") {
+    return {
+      ...base,
+      datasetId: DEFAULT_HEXBIN_DATASET_ID,
+      encodings: {
+        x: { field: "carat", type: "quantitative" },
+        y: { field: "price", type: "quantitative" },
+      },
+    };
+  }
+  if (family === "parallel") {
+    return {
+      ...base,
+      encodings: {
+        color: { field: "group", type: "nominal" },
+      },
+      parallelFields: [
+        { field: "column", type: "ordinal" },
+        { field: "group", type: "nominal" },
+        { field: "value", type: "quantitative" },
+        { field: "change", type: "quantitative" },
+        { field: "magnitude", type: "quantitative" },
+      ],
+    };
+  }
   if (family === "pie" || family === "donut") {
     return {
       ...base,
@@ -294,7 +341,11 @@ export function defaultChartSpecWithAppearance(chartSpec: ChartSpec, chartId: st
   } satisfies ChartSpec;
 }
 
-export function renderDefaultChartSvg(chartType: string, width = 320, height = 180) {
+export function renderDefaultChartSvg(
+  chartType: string,
+  width = 320,
+  height = normalizeChartTemplate(chartType) === "area" ? width / 2 : 180,
+) {
   const chartSpec = createDefaultChartSpec(chartType);
   const contract = getChartTemplateContract(chartType);
   if (!chartSpec || !contract) return null;

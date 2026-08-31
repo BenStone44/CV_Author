@@ -7,6 +7,7 @@ import { cartesianAxisEncoding, normalizeBarChartVariant, normalizeChartTemplate
 import { getChartEncodingSchema, type ChartRendererKey } from "./chartEncodingSchemas";
 import { resolvedPolarRadiusMode } from "./encodingConfig";
 import {
+  defaultColorMapping,
   isCategoricalColorMapping,
   isLinearColorMapping,
   isLinearSizeMapping,
@@ -63,8 +64,10 @@ function visualColor(
   config: MarkGroupSharedConfig,
   fallback: string,
 ) {
-  const mapping = config.colorMapping;
-  if (encoding && domain && isLinearColorMapping(mapping)) {
+  const mapping = isLinearColorMapping(config.colorMapping)
+    ? config.colorMapping
+    : defaultColorMapping;
+  if (encoding && domain && encoding.type !== "nominal" && encoding.type !== "ordinal" && isLinearColorMapping(mapping)) {
     const value = parseVisualValue(row[encoding.field] ?? "", encoding);
     if (value !== null) return mapColorValue(value, domain, mapping);
   }
@@ -537,7 +540,7 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
     ?? input.chartSpec.aggregations?.angle
     ?? input.chartSpec.aggregations?.y;
   const staticRadiusRatio = typeof config.outerRadius === "number"
-    ? Math.max(0.15, Math.min(config.outerRadius, 1))
+    ? Math.max(0, Math.min(config.outerRadius, 1))
     : 1;
   const baseOuterRadius = Math.max(8, Math.min(input.width, input.height) * 0.38
     * (input.coordinateGuide?.type === "Polar" ? input.coordinateGuide.radiusScale ?? 1 : 1)
@@ -932,7 +935,7 @@ function renderMatrixChart(input: GenericRenderInput) {
     const color = visualColor(representative, colorEncoding, colorDomain, config, palette[colorIndex % palette.length] ?? "#2563eb");
     const centerX = xPositionByValue.get(columnKey);
     const centerY = yPositionByValue.get(rowKey);
-    if (!Number.isFinite(centerX) || !Number.isFinite(centerY)) return "";
+    if (centerX === undefined || centerY === undefined || !Number.isFinite(centerX) || !Number.isFinite(centerY)) return "";
     const renderedOpacity = Number(config.opacity ?? alpha);
     const rowKeys = cell.rows
       .map((row, rowIndex) => key(input.dataset, row, cell.rowIndexes[rowIndex] ?? rowIndex))

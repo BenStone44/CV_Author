@@ -147,7 +147,7 @@ describe("independent Cartesian axis component", () => {
     ["left", "y", { x: 192, y: 389 }],
     ["down", "x", { x: 192, y: 389 }],
     ["up", "x", { x: 192, y: 73 }],
-  ] as const)("exposes only the %s tree's %s leaf axis", (direction, leafAxis, origin) => {
+  ] as const)("keeps the %s tree's %s leaf scale without displaying an axis", (direction, _leafAxis, origin) => {
     const node = chartNode({
       chartSpec: {
         ...chartNode().chartSpec!,
@@ -167,9 +167,10 @@ describe("independent Cartesian axis component", () => {
       },
     });
 
-    expect(getCartesianAxisChannels(node, "static")).toEqual([leafAxis]);
-    expect(getCartesianAxisChannels(node, "interactive")).toEqual([leafAxis]);
+    expect(getCartesianAxisChannels(node, "static")).toEqual([]);
+    expect(getCartesianAxisChannels(node, "interactive")).toEqual([]);
     expect(createCartesianAxisModel(node)?.origin).toEqual(origin);
+    expect((CanvasCoordinateSystemLayer as any).setup({ node })()).toBeNull();
   });
 
   it("renders directly from ChartSpec axis checkbox values", () => {

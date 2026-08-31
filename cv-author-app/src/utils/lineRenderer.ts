@@ -71,6 +71,7 @@ export type LineRenderInput = {
   sharedPlotArea?: ChartPlotArea;
   sharedScales?: Partial<{ x: ChartScaleSpec; y: ChartScaleSpec }>;
   includeZeroValueDomain?: boolean;
+  plotAspectRatio?: number;
 };
 
 export function isLineChartType(chartType: string) {
@@ -292,8 +293,9 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
   const bottomMargin = Math.min(Math.max(fontSize * 3.6, height * 0.14), height * 0.3);
   const availablePlotWidth = Math.max(1, width - leftMargin - rightMargin);
   const availablePlotHeight = Math.max(1, height - topMargin - bottomMargin);
-  const basePlotWidth = Math.min(availablePlotWidth, availablePlotHeight * defaultCartesianAspectRatio);
-  const basePlotHeight = Math.min(availablePlotHeight, basePlotWidth / defaultCartesianAspectRatio);
+  const targetAspectRatio = input.plotAspectRatio ?? defaultCartesianAspectRatio;
+  const basePlotWidth = Math.min(availablePlotWidth, availablePlotHeight * targetAspectRatio);
+  const basePlotHeight = Math.min(availablePlotHeight, basePlotWidth / targetAspectRatio);
   const basePlotX = minX + leftMargin + (availablePlotWidth - basePlotWidth) / 2;
   const basePlotY = minY + topMargin + (availablePlotHeight - basePlotHeight) / 2;
   const xDiscreteSpacing = xEncoding.type === "nominal" || xEncoding.type === "ordinal"

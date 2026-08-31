@@ -1,4 +1,5 @@
 import type { CanvasNode, ChartScaleSpec, ChartSpec, Dataset, Point } from "../../types";
+import { isCartesianTreeChart } from "../../utils/treeLayout";
 import { chartDataPreparationKey, mergeSharedScale } from "./renderingData";
 
 export function useCanvasRendering(context: any) {
@@ -295,7 +296,9 @@ export function useCanvasRendering(context: any) {
           const member = byId.get(id);
           return member ? [member] : [];
         });
-        const axisOwner = component.sort((left, right) => {
+        const visibleAxisCandidates = component.filter((member) =>
+          !isCartesianTreeChart(member.chartSpec?.chartType));
+        const axisOwner = (visibleAxisCandidates.length > 0 ? visibleAxisCandidates : component).sort((left, right) => {
           const leftBounds = collectNodeSelectionBounds(left);
           const rightBounds = collectNodeSelectionBounds(right);
           const spatialDifference = channel === "y"

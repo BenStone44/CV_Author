@@ -394,8 +394,6 @@ export type ChartSpec = {
   valueFields?: ChartEncoding[];
   angleFields?: ChartEncoding[];
   parallelFields?: ChartEncoding[];
-  /** Optional numeric distribution rendered as a boxplot on each parallel axis. */
-  parallelAxisBoxplots?: Record<string, ChartEncoding>;
   flattenFields?: string[];
   radiusMode?: "shared" | "per-component";
   componentRadiusFields?: Record<string, ChartEncoding>;
