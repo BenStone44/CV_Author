@@ -30,7 +30,6 @@ export function useCanvasCompositionOperations(context: any) {
     chartScalePosition,
     chartRelationships,
     clamp,
-    clearNestedEnterHover,
     cloneCanvasNodeForPaste,
     collectNodeSelectionBounds,
     compositionCoordinateTargets,
@@ -969,7 +968,7 @@ export function useCanvasCompositionOperations(context: any) {
             offset: config.offset && Number.isFinite(config.offset.x) && Number.isFinite(config.offset.y)
               ? { ...config.offset }
               : { ...parameters.offset },
-            retainParent: config.retainParent ?? parameters.retainParent ?? true,
+            retainParent: config.retainParent ?? parameters.retainParent ?? false,
           } as RelativeNestedParameters,
         },
       });

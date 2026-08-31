@@ -365,12 +365,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     frames: Record<string, CompositionEditFrame>;
   } | null>(null);
   const compositionFrameAnimations = new Map<SVGGraphicsElement, Animation>();
-  const nestedEnterHover = ref<{ key: string; timeoutId: number } | null>(null);
-  function clearNestedEnterHover() {
-    if (nestedEnterHover.value) window.clearTimeout(nestedEnterHover.value.timeoutId);
-    nestedEnterHover.value = null;
-  }
-
   function scheduleCompositionDropZone(point: Point, sourceNodeId: string) {
     pendingDropZoneUpdate = { point, sourceNodeId };
     if (dropZoneUpdateFrame !== null) return;
@@ -454,15 +448,21 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (!parameters.parentAnchor || !parameters.childAnchor || !parameters.offset) return null;
     const parent = findCanvasNode(relationship.parentChartId);
     const child = findCanvasNode(relationship.childChartId);
+    if (!parent || !child) return null;
     return {
       relationshipIds: relationships.map((item) => item.id),
-      parentName: parent?.name ?? "Parent",
-      childName: child?.name.replace(/ nested \d+$/, "") ?? "Child",
+      parent,
+      child,
+      parentName: parent.name,
+      childName: child.name.replace(/ nested \d+$/, ""),
+      parentMarkGroupId: relationship.parentMarkGroupId,
+      parentDataKey: relationship.parentDataKey,
       instanceCount: relationships.length,
       parameters: {
         parentAnchor: { ...parameters.parentAnchor },
         childAnchor: { ...parameters.childAnchor },
         offset: { ...parameters.offset },
+        scale: { ...(parameters.scale ?? { x: 1, y: 1 }) },
         retainParent: relationships.every((item) =>
           (item.parameters as Partial<RelativeNestedParameters>).retainParent !== false),
       },
@@ -2632,7 +2632,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     activeDropZone, activeNestedRelationshipId, axisBindingTarget, beginCompositionEditing,
     canvasRef,
     chartDrilldown, chartScalePosition,
-    chartRelationships, clamp, clearNestedEnterHover, cloneCanvasNodeForPaste,
+    chartRelationships, clamp, cloneCanvasNodeForPaste,
     collectNodeSelectionBounds, compositionCoordinateTargets, compositionDragSourceId,
     concatEdgeNodesAreCompatible, concatGraphMembers, concatLinkId, concatLinksFor,
     concatMemberChannelsForLinks, concatMemberSharedChannels, concatNodesAreCompatible,
@@ -3643,15 +3643,15 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     activeDropZone, axisBindingTarget, beginCompositionEditing, bindingForChartChannel,
     canConfigureSelectionComposition, canEnterSelection, canRemoveSelectionComposition,
     canvasRef, chartDrilldown, chartRelationships, clamp, clearCompositionDropZoneSchedule,
-    clearNestedEnterHover,
-    collectNodeSelectionBounds, commitCompositionDrop, compositionDragSourceId, concatEditableAxis,
+    collectNodeSelectionBounds, commitCompositionDrop, compositionDropZoneAtPoint,
+    compositionDragSourceId, concatEditableAxis,
     concatLinkId, concatLinksFor,
     coordinateTargets, coordinateTransformItemIds, dispatchRelationship, dragTestStage,
-    editingCompositionId, editingGroupPath, findCanvasNode, finishCompositionEditing,
+    editingCompositionId, editingGroupPath, enterCompositionDropLevel, enterNestedDropLevel,
+    findCanvasNode, finishCompositionEditing,
     firstChartNode, flushCompositionDropZone, getCanvasViewport, getCanvasBounds,
     getChartTemplateContract, getGroupAtPath,
     getRootNode, getSelectionNode, getSelectionScopeNodes, interaction, nestedDropPath,
-    nestedEnterHover,
     nestedPositionEditor, nestedSelectionRelationships, nodeLocalToSelectionScopePoint,
     normalizeBounds, normalizeChartTemplate, normalizeSelection, openNestedPositionEditor, pointInBounds,
     polarAngleSpanFromPoint, polarPointAtAngle, polarAngleInputVisible,

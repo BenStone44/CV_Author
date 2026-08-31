@@ -3,6 +3,12 @@ import { useChartRelationshipStore } from "../stores/useChartRelationshipStore";
 import type { ChartRelationshipState } from "../types";
 
 describe("Chart relationship snapshots", () => {
+  it("does not retain the parent mark by default for new relative nesting", () => {
+    const store = useChartRelationshipStore();
+
+    expect(store.defaultRelativeParameters().retainParent).toBe(false);
+  });
+
   it("migrates legacy None axes to CoordinateFree when restoring a project", () => {
     const store = useChartRelationshipStore();
     store.restore({

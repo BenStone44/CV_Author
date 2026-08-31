@@ -29,9 +29,9 @@ export function useCanvasInteraction(context: any) {
     chartRelationships,
     clamp,
     clearCompositionDropZoneSchedule,
-    clearNestedEnterHover,
     commitCompositionDrop,
     collectNodeSelectionBounds,
+    compositionDropZoneAtPoint,
     compositionDragSourceId,
     concatEditableAxis,
     concatLinkId,
@@ -42,6 +42,8 @@ export function useCanvasInteraction(context: any) {
     dragTestStage,
     editingCompositionId,
     editingGroupPath,
+    enterCompositionDropLevel,
+    enterNestedDropLevel,
     findCanvasNode,
     finishCompositionEditing,
     firstChartNode,
@@ -55,7 +57,6 @@ export function useCanvasInteraction(context: any) {
     getSelectionScopeNodes,
     interaction,
     nestedDropPath,
-    nestedEnterHover,
     nestedPositionEditor,
     nestedSelectionRelationships,
     nodeLocalToSelectionScopePoint,
@@ -1391,7 +1392,6 @@ export function useCanvasInteraction(context: any) {
     if (nestedLayoutIds.length > 0) scheduleNestedChildLayout(nestedLayoutIds);
     compositionDragSourceId.value = null;
     clearCompositionDropZoneSchedule();
-    clearNestedEnterHover();
     activeDropZone.value = null;
     detachPointerListeners();
   }
@@ -1427,6 +1427,9 @@ export function useCanvasInteraction(context: any) {
       if (dragTestStage === "position") return;
       if (compositionDragSourceId.value) {
         scheduleCompositionDropZone(movePoint, compositionDragSourceId.value);
+        // Enter portals change the editing scope, so resolve them on the
+        // pointer event rather than waiting for another movement or hover delay.
+        flushCompositionDropZone();
       } else {
         activeDropZone.value = null;
       }
@@ -1434,35 +1437,12 @@ export function useCanvasInteraction(context: any) {
       const enteringComposition = !!dropZone?.enterCompositionId;
       const enteringNested = dropZone?.type === "nested" && dropZone.nestedAction === "enter";
       if (dropZone && (enteringComposition || enteringNested)) {
-        const key = enteringComposition
-          ? `composition:${dropZone.enterCompositionId}`
-          : `${dropZone.targetNodeId}:${dropZone.targetElementId ?? "item"}`;
-        if (nestedEnterHover.value?.key !== key) {
-          clearNestedEnterHover();
-          const sourceNodeId = compositionDragSourceId.value;
-          if (sourceNodeId) {
-            const timeoutId = window.setTimeout(() => {
-              const currentZone = activeDropZone.value;
-              const currentKey = currentZone?.enterCompositionId
-                ? `composition:${currentZone.enterCompositionId}`
-                : currentZone?.type === "nested" && currentZone.nestedAction === "enter"
-                  ? `${currentZone.targetNodeId}:${currentZone.targetElementId ?? "item"}`
-                  : null;
-              if (interaction.value?.type === "move"
-                && compositionDragSourceId.value === sourceNodeId
-                && currentKey === key
-                && currentZone) {
-                if (currentZone.enterCompositionId) enterCompositionDropLevel(currentZone);
-                else enterNestedDropLevel(currentZone);
-                activeDropZone.value = compositionDropZoneAtPoint(movePoint, sourceNodeId);
-              }
-              nestedEnterHover.value = null;
-            }, 450);
-            nestedEnterHover.value = { key, timeoutId };
-          }
+        const sourceNodeId = compositionDragSourceId.value;
+        if (sourceNodeId) {
+          if (dropZone.enterCompositionId) enterCompositionDropLevel(dropZone);
+          else enterNestedDropLevel(dropZone);
+          activeDropZone.value = compositionDropZoneAtPoint(movePoint, sourceNodeId);
         }
-      } else {
-        clearNestedEnterHover();
       }
       return;
     }

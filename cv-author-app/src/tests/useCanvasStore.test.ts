@@ -1144,6 +1144,9 @@ describe("composition selection hierarchy", () => {
     expect(store.nestedPositionEditor.value).toBeNull();
     expect(store.configureSelectionComposition()).toBe(true);
     expect(store.nestedPositionEditor.value?.relationshipIds).toEqual(["nested:configure"]);
+    expect(store.nestedPositionEditor.value?.parent.id).toBe(parent.id);
+    expect(store.nestedPositionEditor.value?.child.id).toBe(child.id);
+    expect(store.nestedPositionEditor.value?.parameters.retainParent).toBe(false);
   });
 });
 
@@ -3115,14 +3118,13 @@ describe("composition coordinate editing", () => {
       y: parent.y + (plotArea?.y ?? 0) + (plotArea?.height ?? 0) / 2,
     };
     listeners.get("pointermove")?.(pointerEvent(chartCenter.x, chartCenter.y));
-    expect(store.activeDropZone.value).toMatchObject({
-      targetNodeId: parent.id,
-      type: "nested",
-      nestedAction: "enter",
+    expect(store.chartDrilldown.value).toEqual({
+      nodeId: parent.id,
+      level: "part",
     });
 
-    store.chartDrilldown.value = { nodeId: parent.id, level: "part" };
     listeners.get("pointermove")?.(pointerEvent(firstPoint.x, firstPoint.y));
+    expect(store.chartDrilldown.value).toEqual({ nodeId: parent.id, level: "part" });
     expect(store.activeDropZone.value).toMatchObject({
       targetNodeId: parent.id,
       type: "nested",

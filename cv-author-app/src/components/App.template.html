@@ -628,50 +628,6 @@
             </header>
 
             <div class="nested-position-editor__body">
-              <section class="nested-anchor-panel" aria-label="Nested anchors">
-                <div class="nested-anchor-selector">
-                  <header>
-                    <span class="nested-anchor-selector__role nested-anchor-selector__role--parent">Parent anchor</span>
-                    <strong>{{ nestedPositionEditor.parentName }}</strong>
-                  </header>
-                  <div class="nested-anchor-map nested-anchor-map--parent">
-                    <button
-                      v-for="anchor in nestedAnchorOptions"
-                      :key="`parent-${anchor.x}-${anchor.y}`"
-                      class="nested-anchor-option"
-                      :class="{ 'nested-anchor-option--selected': isNestedAnchorSelected('parentAnchor', anchor) }"
-                      :style="nestedAnchorOptionStyle(anchor)"
-                      type="button"
-                      :title="`Parent ${anchor.label}`"
-                      :aria-label="`Use ${anchor.label} as parent anchor`"
-                      :aria-pressed="isNestedAnchorSelected('parentAnchor', anchor)"
-                      @click="selectNestedAnchor('parentAnchor', anchor)"
-                    ></button>
-                  </div>
-                </div>
-
-                <div class="nested-anchor-selector">
-                  <header>
-                    <span class="nested-anchor-selector__role nested-anchor-selector__role--child">Child pin</span>
-                    <strong>{{ nestedPositionEditor.childName }}</strong>
-                  </header>
-                  <div class="nested-anchor-map nested-anchor-map--child">
-                    <button
-                      v-for="anchor in nestedAnchorOptions"
-                      :key="`child-${anchor.x}-${anchor.y}`"
-                      class="nested-anchor-option"
-                      :class="{ 'nested-anchor-option--selected': isNestedAnchorSelected('childAnchor', anchor) }"
-                      :style="nestedAnchorOptionStyle(anchor)"
-                      type="button"
-                      :title="`Child ${anchor.label}`"
-                      :aria-label="`Use ${anchor.label} as child anchor`"
-                      :aria-pressed="isNestedAnchorSelected('childAnchor', anchor)"
-                      @click="selectNestedAnchor('childAnchor', anchor)"
-                    ></button>
-                  </div>
-                </div>
-              </section>
-
               <section class="nested-position-workspace" aria-label="Nested relative position">
                 <header>
                   <strong>Relative position</strong>
@@ -684,39 +640,95 @@
                   <div
                     class="nested-position-parent"
                     :class="{ 'nested-position-parent--omitted': !nestedPositionEditor.parameters.retainParent }"
+                    :style="nestedParentPreviewStyle"
                   >
-                    <span class="nested-position-parent__label">{{ nestedPositionEditor.parentName }}</span>
-                    <i
-                      class="nested-position-anchor nested-position-anchor--parent"
-                      :style="nestedParentAnchorStyle"
+                    <svg
+                      v-if="nestedParentPreview"
+                      class="nested-position-rendered-preview"
+                      :viewBox="nestedParentPreview.viewBox"
+                      preserveAspectRatio="xMidYMid meet"
                       aria-hidden="true"
-                    ></i>
+                    ><g v-html="nestedParentPreview.content"></g></svg>
+                    <div
+                      class="nested-position-sample nested-position-sample--parent"
+                      :class="{ 'nested-position-sample--rendered': nestedParentPreview }"
+                    >
+                      <span class="nested-position-sample__eyebrow">Parent element</span>
+                      <strong>{{ nestedPositionEditor.parentName }}</strong>
+                      <span v-if="!nestedParentPreview" class="nested-position-sample__marks" aria-hidden="true"><i></i><i></i><i></i></span>
+                    </div>
+                    <button
+                      v-for="anchor in nestedAnchorOptions"
+                      :key="`parent-${anchor.x}-${anchor.y}`"
+                      class="nested-position-anchor-button nested-position-anchor-button--parent"
+                      :class="{ 'nested-position-anchor-button--selected': isNestedAnchorSelected('parentAnchor', anchor) }"
+                      :style="nestedAnchorOptionStyle(anchor)"
+                      type="button"
+                      :title="`Parent: ${anchor.label}`"
+                      :aria-label="`Use ${anchor.label} as parent anchor`"
+                      :aria-pressed="isNestedAnchorSelected('parentAnchor', anchor)"
+                      @click="selectNestedAnchor('parentAnchor', anchor)"
+                    ></button>
                   </div>
                   <i
                     class="nested-position-offset-guide"
                     :style="nestedOffsetGuideStyle"
                     aria-hidden="true"
                   ></i>
-                  <button
+                  <div
                     class="nested-position-child"
-                    type="button"
                     :style="nestedChildPreviewStyle"
                     title="Drag child to adjust offset"
-                    :aria-label="`Move ${nestedPositionEditor.childName}`"
+                    role="group"
+                    :aria-label="`${nestedPositionEditor.childName} child element`"
                     @pointerdown.prevent="onNestedPreviewPointerDown"
                     @pointermove.prevent="onNestedPreviewPointerMove"
                     @pointerup.prevent="onNestedPreviewPointerUp"
                     @pointercancel.prevent="onNestedPreviewPointerUp"
                   >
-                    <Move :size="16" :stroke-width="1.7" aria-hidden="true" />
-                    <span>{{ nestedPositionEditor.childName }}</span>
-                    <i
-                      class="nested-position-anchor nested-position-anchor--child"
-                      :style="nestedChildAnchorStyle"
+                    <svg
+                      v-if="nestedChildPreview"
+                      class="nested-position-rendered-preview"
+                      :viewBox="nestedChildPreview.viewBox"
+                      preserveAspectRatio="xMidYMid meet"
                       aria-hidden="true"
-                    ></i>
-                  </button>
+                    ><g v-html="nestedChildPreview.content"></g></svg>
+                    <div
+                      class="nested-position-sample nested-position-sample--child"
+                      :class="{ 'nested-position-sample--rendered': nestedChildPreview }"
+                    >
+                      <Move v-if="!nestedChildPreview" class="nested-position-sample__move" :size="15" :stroke-width="1.7" aria-hidden="true" />
+                      <span class="nested-position-sample__eyebrow">Child element</span>
+                      <strong>{{ nestedPositionEditor.childName }}</strong>
+                    </div>
+                    <button
+                      v-for="anchor in nestedAnchorOptions"
+                      :key="`child-${anchor.x}-${anchor.y}`"
+                      class="nested-position-anchor-button nested-position-anchor-button--child"
+                      :class="{ 'nested-position-anchor-button--selected': isNestedAnchorSelected('childAnchor', anchor) }"
+                      :style="nestedAnchorOptionStyle(anchor)"
+                      type="button"
+                      :title="`Child: ${anchor.label}`"
+                      :aria-label="`Use ${anchor.label} as child anchor`"
+                      :aria-pressed="isNestedAnchorSelected('childAnchor', anchor)"
+                      @pointerdown.stop
+                      @click.stop="selectNestedAnchor('childAnchor', anchor)"
+                    ></button>
+                  </div>
                 </div>
+                <label class="nested-position-scale-control">
+                  <span>Child size</span>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="1"
+                    step="0.01"
+                    :value="nestedChildScaleRatio"
+                    aria-label="Child size relative to the parent"
+                    @input="setNestedChildScale"
+                  />
+                  <output>{{ Math.round(nestedChildScaleRatio * 100) }}%</output>
+                </label>
               </section>
             </div>
 

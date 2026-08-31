@@ -54,6 +54,7 @@ import {
   cartesianTreeLeafAxis,
   isCartesianTreeChart,
 } from "../utils/treeLayout";
+import { markMatchesNestedDataKey } from "../stores/canvas/nestedMarkIdentity";
 
 const EMPTY_SELECTION_IDS: string[] = [];
 const NESTED_MAX_DIAMETER = 360;
@@ -633,11 +634,7 @@ const nestedAnchorOptions = [
 ] as const;
 
 const nestedPreviewGeometry = {
-  parentInsetX: 40,
-  parentY: 34,
-  parentHeight: 188,
-  childWidth: 108,
-  childHeight: 68,
+  previewCenterY: 128,
   offsetScale: 2,
 };
 const nestedPreviewDrag = ref<{
@@ -651,36 +648,197 @@ const nestedPreviewDrag = ref<{
   minDeltaY: number;
   maxDeltaY: number;
 } | null>(null);
+type NestedElementPreview = {
+  content: string;
+  viewBox: string;
+  width: number;
+  height: number;
+};
+
+function nestedMarkBounds(mark: SVGGraphicsElement, reference: SVGGraphicsElement) {
+  const bounds = mark.getBBox();
+  const markMatrix = mark.getCTM();
+  const referenceMatrix = reference.getCTM();
+  if (!markMatrix || !referenceMatrix) return bounds;
+  const matrix = referenceMatrix.inverse().multiply(markMatrix);
+  const points = [
+    { x: bounds.x, y: bounds.y },
+    { x: bounds.x + bounds.width, y: bounds.y },
+    { x: bounds.x, y: bounds.y + bounds.height },
+    { x: bounds.x + bounds.width, y: bounds.y + bounds.height },
+  ].map((point) => ({
+    x: matrix.a * point.x + matrix.c * point.y + matrix.e,
+    y: matrix.b * point.x + matrix.d * point.y + matrix.f,
+  }));
+  const minX = Math.min(...points.map((point) => point.x));
+  const minY = Math.min(...points.map((point) => point.y));
+  const maxX = Math.max(...points.map((point) => point.x));
+  const maxY = Math.max(...points.map((point) => point.y));
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+function nestedRenderedMarkBounds(node: CanvasNode) {
+  const liveNode = Array.from(canvasRef.value?.querySelectorAll<SVGGraphicsElement>("[data-node-id]") ?? [])
+    .find((element) => element.dataset.nodeId === node.id);
+  if (!liveNode) return null;
+  const marks = Array.from(liveNode?.querySelectorAll<SVGGraphicsElement>("[data-mark-role]") ?? [])
+    .filter((element) => !element.querySelector("[data-mark-role]"))
+    .filter((element) => !(element.getAttribute("data-mark-role") ?? "").includes("label"));
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  marks.forEach((mark) => {
+    try {
+      const bounds = nestedMarkBounds(mark, liveNode);
+      minX = Math.min(minX, bounds.x);
+      minY = Math.min(minY, bounds.y);
+      maxX = Math.max(maxX, bounds.x + bounds.width);
+      maxY = Math.max(maxY, bounds.y + bounds.height);
+    } catch {
+      // A mark without SVG geometry does not contribute to the preview box.
+    }
+  });
+  return minX < maxX && minY < maxY
+    ? { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+    : null;
+}
+
+function nestedElementPreview(node: CanvasNode | undefined, cropToMarks = false): NestedElementPreview | null {
+  if (!node?.renderedContent) return null;
+  const minX = node.kind === "leaf" ? node.contentMinX : 0;
+  const minY = node.kind === "leaf" ? node.contentMinY : 0;
+  const renderedBounds = cropToMarks ? nestedRenderedMarkBounds(node) : null;
+  const x = renderedBounds?.x ?? minX;
+  const y = renderedBounds?.y ?? minY;
+  const width = renderedBounds?.width ?? node.width;
+  const height = renderedBounds?.height ?? node.height;
+  return {
+    content: node.renderedContent,
+    viewBox: `${x} ${y} ${width} ${height}`,
+    width,
+    height,
+  };
+}
+
+function nestedMarkAtDataKey(elements: Element[], dataKey: string) {
+  return elements.find((element, index) => {
+    const role = element.getAttribute("data-mark-role");
+    const roleIndex = elements.slice(0, index)
+      .filter((candidate) => candidate.getAttribute("data-mark-role") === role).length;
+    return markMatchesNestedDataKey(element, dataKey, roleIndex);
+  });
+}
+
+function nestedParentMarkPreview(): NestedElementPreview | null {
+  const editor = nestedPositionEditor.value;
+  const parent = editor?.parent;
+  const fullPreview = nestedElementPreview(parent);
+  if (!editor || !parent || !fullPreview || !editor.parentDataKey || typeof DOMParser === "undefined") return null;
+  const document = new DOMParser().parseFromString(
+    `<svg xmlns="http://www.w3.org/2000/svg">${fullPreview.content}</svg>`,
+    "image/svg+xml",
+  );
+  const serializedMarks = Array.from(document.querySelectorAll("[data-mark-role]"));
+  const serializedGroupMarks = editor.parentMarkGroupId
+    ? serializedMarks.filter((element) => element.getAttribute("data-mark-group-id") === editor.parentMarkGroupId)
+    : serializedMarks;
+  const mark = nestedMarkAtDataKey(serializedGroupMarks, editor.parentDataKey);
+  if (!mark) return null;
+  const liveParent = Array.from(canvasRef.value?.querySelectorAll<SVGGraphicsElement>("[data-node-id]") ?? [])
+    .find((element) => element.dataset.nodeId === parent.id);
+  const liveMarks = Array.from(liveParent?.querySelectorAll<SVGGraphicsElement>("[data-mark-role]") ?? []);
+  const liveGroupMarks = editor.parentMarkGroupId
+    ? liveMarks.filter((element) => element.getAttribute("data-mark-group-id") === editor.parentMarkGroupId)
+    : liveMarks;
+  const liveMark = nestedMarkAtDataKey(liveGroupMarks, editor.parentDataKey);
+  if (!(liveMark instanceof SVGGraphicsElement)) return null;
+  let bounds: { x: number; y: number; width: number; height: number };
+  try {
+    bounds = nestedMarkBounds(liveMark, liveParent!);
+  } catch {
+    return null;
+  }
+  if (!(bounds.width > 0 && bounds.height > 0)) return null;
+  return {
+    content: mark.outerHTML,
+    viewBox: `${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`,
+    width: bounds.width,
+    height: bounds.height,
+  };
+}
+
+const nestedParentPreview = computed(nestedParentMarkPreview);
+const nestedChildPreview = computed(() => nestedElementPreview(nestedPositionEditor.value?.child, true));
+const nestedPreviewScale = computed(() => {
+  const editor = nestedPositionEditor.value;
+  if (!editor) return 1;
+  const parentPreview = nestedParentPreview.value;
+  const parentMaxDimension = Math.max(parentPreview?.width ?? editor.parent.width, parentPreview?.height ?? editor.parent.height, 1);
+  const childMaxDimension = Math.max(
+    editor.child.width * editor.parameters.scale.x,
+    editor.child.height * editor.parameters.scale.y,
+    1,
+  );
+  return 156 / Math.max(parentMaxDimension, childMaxDimension);
+});
+const nestedParentPreviewSize = computed(() => {
+  const editor = nestedPositionEditor.value;
+  const preview = nestedParentPreview.value;
+  const width = (preview?.width ?? editor?.parent.width ?? 120) * nestedPreviewScale.value;
+  const height = (preview?.height ?? editor?.parent.height ?? 120) * nestedPreviewScale.value;
+  const minDimension = 52;
+  const minimumScale = minDimension / Math.max(width, height, 1);
+  return minimumScale > 1
+    ? { width: width * minimumScale, height: height * minimumScale }
+    : { width, height };
+});
+const nestedParentPreviewStyle = computed(() => {
+  const size = nestedParentPreviewSize.value;
+  return {
+    width: `${size.width}px`,
+    height: `${size.height}px`,
+    left: `calc(50% - ${size.width / 2}px)`,
+    top: `${nestedPreviewGeometry.previewCenterY - size.height / 2}px`,
+  };
+});
+const nestedChildPreviewSize = computed(() => {
+  const editor = nestedPositionEditor.value;
+  if (!editor) return { width: 108, height: 68 };
+  const width = editor.child.width * editor.parameters.scale.x * nestedPreviewScale.value;
+  const height = editor.child.height * editor.parameters.scale.y * nestedPreviewScale.value;
+  const minDimension = 42;
+  const minimumScale = minDimension / Math.max(width, height, 1);
+  return minimumScale > 1
+    ? { width: width * minimumScale, height: height * minimumScale }
+    : { width, height };
+});
+const nestedChildScaleRatio = computed(() => {
+  const editor = nestedPositionEditor.value;
+  if (!editor) return 0;
+  return Math.max(
+    editor.child.width * editor.parameters.scale.x,
+    editor.child.height * editor.parameters.scale.y,
+  ) / NESTED_MAX_DIAMETER;
+});
 const nestedChildPreviewStyle = computed(() => {
   const parameters = nestedPositionEditor.value?.parameters;
   if (!parameters) return undefined;
   const geometry = nestedPreviewGeometry;
+  const childSize = nestedChildPreviewSize.value;
+  const parentSize = nestedParentPreviewSize.value;
   return {
-    left: `calc(${parameters.parentAnchor.x * 100}% + ${
-      geometry.parentInsetX * (1 - 2 * parameters.parentAnchor.x)
-      - parameters.childAnchor.x * geometry.childWidth
+    left: `calc(50% - ${parentSize.width / 2}px + ${
+      parameters.parentAnchor.x * parentSize.width
+      - parameters.childAnchor.x * childSize.width
       + parameters.offset.x * geometry.offsetScale
     }px)`,
-    top: `${geometry.parentY
-      + parameters.parentAnchor.y * geometry.parentHeight
-      - parameters.childAnchor.y * geometry.childHeight
+    top: `${geometry.previewCenterY - parentSize.height / 2
+      + parameters.parentAnchor.y * parentSize.height
+      - parameters.childAnchor.y * childSize.height
       + parameters.offset.y * geometry.offsetScale}px`,
-  };
-});
-const nestedParentAnchorStyle = computed(() => {
-  const anchor = nestedPositionEditor.value?.parameters.parentAnchor;
-  if (!anchor) return undefined;
-  return {
-    left: `${anchor.x * 100}%`,
-    top: `${anchor.y * 100}%`,
-  };
-});
-const nestedChildAnchorStyle = computed(() => {
-  const anchor = nestedPositionEditor.value?.parameters.childAnchor;
-  if (!anchor) return undefined;
-  return {
-    left: `${anchor.x * 100}%`,
-    top: `${anchor.y * 100}%`,
+    width: `${childSize.width}px`,
+    height: `${childSize.height}px`,
   };
 });
 const nestedOffsetGuideStyle = computed(() => {
@@ -689,9 +847,10 @@ const nestedOffsetGuideStyle = computed(() => {
   const geometry = nestedPreviewGeometry;
   const offsetX = parameters.offset.x * geometry.offsetScale;
   const offsetY = parameters.offset.y * geometry.offsetScale;
+  const parentSize = nestedParentPreviewSize.value;
   return {
-    left: `calc(${parameters.parentAnchor.x * 100}% + ${geometry.parentInsetX * (1 - 2 * parameters.parentAnchor.x)}px)`,
-    top: `${geometry.parentY + parameters.parentAnchor.y * geometry.parentHeight}px`,
+    left: `calc(50% - ${parentSize.width / 2}px + ${parameters.parentAnchor.x * parentSize.width}px)`,
+    top: `${geometry.previewCenterY - parentSize.height / 2 + parameters.parentAnchor.y * parentSize.height}px`,
     width: `${Math.hypot(offsetX, offsetY)}px`,
     transform: `rotate(${Math.atan2(offsetY, offsetX) * 180 / Math.PI}deg)`,
   };
@@ -732,6 +891,13 @@ function selectNestedAnchor(side: NestedAnchorSide, anchor: { x: number; y: numb
 
 function setNestedParentRetention(event: Event) {
   updateNestedPosition({ retainParent: (event.currentTarget as HTMLInputElement).checked });
+}
+
+function setNestedChildScale(event: Event) {
+  const editor = nestedPositionEditor.value;
+  const ratio = Number((event.currentTarget as HTMLInputElement).value);
+  if (!editor || !Number.isFinite(ratio)) return;
+  updateNestedChildScale(editor.child.id, ratio);
 }
 
 function isNestedAnchorSelected(side: NestedAnchorSide, anchor: { x: number; y: number }) {

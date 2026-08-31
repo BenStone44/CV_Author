@@ -607,7 +607,7 @@ function defaultRelativeParameters(): RelativeNestedParameters {
     offset: { x: 0, y: 0 },
     scale: { x: 1, y: 1 },
     rotation: 0,
-    retainParent: true,
+    retainParent: false,
   };
 }
 
