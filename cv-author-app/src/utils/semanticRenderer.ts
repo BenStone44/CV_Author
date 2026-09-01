@@ -1149,10 +1149,3 @@ export function renderNestedPie(input: {
   const content = `<g data-chart-id="${esc(input.chartId)}" data-chart-type="nested-pie" data-mark-role="nested-pies" data-composition-group-id="${esc(groupId)}" data-parent-mark-group-id="${esc(input.nestedSpec.parentMarkGroupId ?? "")}">${pies}</g>`;
   return { content, plotArea: scales.plotArea, pointCount: rows.length };
 }
-
-export function restoreScaleSpec(spec: ChartSpec) {
-  return spec.scales ? {
-    ...(spec.scales.x ? { x: { ...spec.scales.x } as ChartScaleSpec } : {}),
-    ...(spec.scales.y ? { y: { ...spec.scales.y } as ChartScaleSpec } : {}),
-  } : undefined;
-}

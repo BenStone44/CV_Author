@@ -9,6 +9,7 @@ const props = defineProps<{
   columns: DataColumn[];
   fatherColumns?: DataColumn[];
   value: string;
+  disabled?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -25,7 +26,7 @@ const localColumns = computed(() => props.columns.filter((column) => !fatherColu
       <span>{{ config.label }}</span>
       <abbr v-if="config.required" title="Required" aria-label="Required">*</abbr>
     </span>
-    <select :value="value" @change="emit('change', ($event.target as HTMLSelectElement).value)">
+    <select :value="value" :disabled="disabled" @change="emit('change', ($event.target as HTMLSelectElement).value)">
       <option value="">{{ config.emptyLabel }}</option>
       <option
         v-for="column in fatherColumns ?? []"
@@ -86,6 +87,12 @@ select {
 select:focus {
   border-color: rgba(153, 88, 42, 0.7);
   outline: 2px solid rgba(153, 88, 42, 0.12);
+}
+
+select:disabled {
+  background: #f1f3f5;
+  color: #97a1ae;
+  cursor: not-allowed;
 }
 
 option:disabled {

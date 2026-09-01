@@ -1549,7 +1549,7 @@ watch(activeDataset, (dataset) => {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: #bb9457;
+  background: #fefae0;
   color: #432818;
   font-weight: 700;
 }
@@ -1630,7 +1630,7 @@ watch(activeDataset, (dataset) => {
 
 .data-table thead .data-table__row-number {
   z-index: 3;
-  background: #bb9457;
+  background: #fefae0;
 }
 
 .data-table__field-name {
@@ -1674,12 +1674,12 @@ watch(activeDataset, (dataset) => {
 .graph-table-section .data-table thead .data-table__row-number,
 .graph-table-section .data-table thead .data-table__field-name {
   z-index: 5;
-  background: #bb9457;
+  background: #fefae0;
 }
 
 .data-table thead .data-table__field-name {
   z-index: 3;
-  background: #bb9457;
+  background: #fefae0;
 }
 
 .data-table--transposed .data-table__field-name span,
@@ -2091,7 +2091,7 @@ watch(activeDataset, (dataset) => {
 
 .transform-segmented__options label.transform-segmented__active {
   border-color: #438dcc;
-  background: #e5f1fb;
+  background: #fefae0;
   color: #432818;
   font-weight: 700;
 }

@@ -208,7 +208,8 @@ export function hasRequiredChartEncodings(spec: ChartSpec) {
     .filter((mapping) => mapping.required
       && !(template === "bar"
         && (barVariant === "grouped" || barVariant === "stacked" || barVariant === "divergent-stacked")
-        && mapping.channel === "y"))
+        && mapping.channel === "y"
+        && (spec.valueFields?.length ?? 0) > 1))
     .every((mapping) => !!spec.encodings[mapping.channel]
       || requiredEncodingFallbacks[template][mapping.channel]?.(spec) === true);
 }

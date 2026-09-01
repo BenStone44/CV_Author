@@ -9,10 +9,7 @@
     "dev:all": "run-p dev:api dev",
     "build": "run-p type-check \"build-only {@}\" --",
     "test": "vitest run",
-    "test:llm": "node --env-file=.env scripts/test-llm.mjs",
     "preview": "vite preview",
-    "generate:linegraph-template": "node scripts/build-linegraph-template.mjs",
-    "split:charts": "node --no-warnings scripts/split-chart-layers.mjs",
     "build-only": "vite build",
     "type-check": "vue-tsc --build"
   },
@@ -25,17 +22,14 @@
     "@deck.gl/mesh-layers": "^9.3.10",
     "@lucide/vue": "^1.28.0",
     "@types/d3": "^7.4.3",
-    "@types/d3-axis": "^3.0.6",
     "d3": "^7.9.0",
     "d3-array": "^3.2.4",
-    "d3-axis": "^3.0.0",
     "d3-hexbin": "^0.2.2",
     "d3-sankey": "^0.12.3",
     "d3-scale": "^4.0.2",
     "d3-shape": "^3.2.0",
     "mapbox-gl": "^3.29.0",
     "papaparse": "^5.5.4",
-    "svgson": "^5.3.1",
     "vue": "^3.5.40"
   },
   "devDependencies": {

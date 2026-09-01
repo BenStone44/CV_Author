@@ -1,38 +1,6 @@
 # cv-author-app
 
-The chart library uses the curated names in `src/selectedCharts.ts`. Preview
-images are loaded from `../VisAnatomy/charts_png`, and editable SVG sources are
-loaded from `../VisAnatomy/charts_svg`.
-
-## Generate separated chart layers
-
-The curated charts can be split into coordinate-system and content SVGs using
-their matching VisAnatomy annotations:
-
-```sh
-npm run split:charts
-```
-
-The command reads `src/selectedCharts.ts` and writes transparent coordinate
-layers, complete non-coordinate content layers, data-binding-only mark layers,
-and `manifest.json` to
-`../VisAnatomy/charts_svg_separated`. Source SVGs are never overwritten. Use
-`npm run split:charts -- --charts BarChart1,PolarAreaChart1` to process a small
-named subset. Known upstream SVG/annotation export mismatches are documented in
-`scripts/chart-layer-overrides.json` and reported as fallbacks in the manifest.
-The `data-binding` directory is the minimal layer for composition: it contains
-only graphical elements with non-empty `encodingInfo` (including expanded
-group bindings), without chart titles, legends, annotations, or backgrounds.
-The same command also writes `../VisAnatomy/charts_svg_separated/coordinate-systems.json`.
-It records each generated chart's axis origin and unit directions; unavailable
-values are `null` when the annotation does not provide enough axis geometry.
-Coordinates use the source SVG coordinate space (therefore positive Y points
-downward), and direction vectors are normalized.
-When a chart carrying this metadata is selected on the canvas, the editor draws
-the two corresponding arrows from the recorded origin; charts with `null`
-metadata remain unchanged.
-
-This template should help get you started developing with Vue 3 in Vite.
+This app is built with Vue 3 and Vite.
 
 ## Recommended IDE Setup
 

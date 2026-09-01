@@ -30,7 +30,7 @@
 
         <div class="sidebar__browser">
           <section class="implemented-templates" aria-label="Implemented chart templates">
-            <p class="implemented-templates__title">Chart templates</p>
+            <p class="implemented-templates__title">Chart Blocks</p>
             <div class="implemented-template-category-list">
               <button
                 v-for="category in implementedTemplateCategories"
@@ -315,24 +315,6 @@
                   <path d="M21 17v2a2 2 0 0 1-2 2h-2" />
                   <path d="M7 21H5a2 2 0 0 1-2-2v-2" />
                 </svg>
-              </button>
-            </div>
-            <div class="group-tools" role="group" aria-label="Grouping">
-              <button
-                class="ghost-button"
-                type="button"
-                :disabled="!canGroup"
-                @click="groupSelectedItems"
-              >
-                Group
-              </button>
-              <button
-                class="ghost-button"
-                type="button"
-                :disabled="!canUngroup"
-                @click="ungroupSelectedItems"
-              >
-                Ungroup
               </button>
             </div>
             <div
@@ -1020,7 +1002,7 @@
             <option value="#ffe6a7">#ffe6a7</option>
             <option value="#99582a">#99582a</option>
             <option value="#432818">#432818</option>
-            <option value="#bb9457">#bb9457</option>
+            <option value="#fefae0">#fefae0</option>
           </datalist>
 
           <div v-if="loadingDrop" class="loading-state">Loading SVG...</div>

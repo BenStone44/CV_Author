@@ -108,15 +108,6 @@ const flattenedSvgStyleProperties = [
   "writing-mode",
 ];
 
-export function toFileName(path: string) {
-  return (
-    path
-      .split("/")
-      .pop()
-      ?.replace(/\.(?:png|svg|webp)$/i, "") ?? path
-  );
-}
-
 function parseDimension(value: string | null) {
   if (!value) return Number.NaN;
   const match = value.match(/-?\d*\.?\d+/);

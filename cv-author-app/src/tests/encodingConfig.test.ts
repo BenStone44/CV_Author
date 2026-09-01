@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   getEncodingChannelConfigs,
   getEncodingChannelConfigsForSpec,
+  hasDerivedValueSeries,
   isEncodingColumnCompatible,
   resolvedPolarAxisRoles,
   resolvedPolarRadiusMode,
@@ -136,6 +137,14 @@ describe("card encoding configuration", () => {
       },
     })).toBe(false);
     expect(hasRequiredChartEncodings({
+      chartType: "GroupedBarChart",
+      datasetId: "data",
+      encodings: {
+        x: { field: "category", type: "nominal" },
+        color: { field: "group", type: "nominal" },
+      },
+    })).toBe(false);
+    expect(hasRequiredChartEncodings({
       chartType: "StackedBarChart",
       datasetId: "data",
       encodings: {
@@ -202,12 +211,43 @@ describe("card encoding configuration", () => {
     expect(grouped.find((config) => config.channel === "color")?.role).toBe("series");
     expect(grouped.find((config) => config.channel === "color")?.multiple).toBe(true);
     expect(stacked.find((config) => config.channel === "color")?.multiple).toBe(true);
+    expect(grouped.find((config) => config.channel === "x")?.accepts).toEqual(["nominal", "ordinal"]);
+    expect(grouped.find((config) => config.channel === "color")?.accepts).toEqual(["nominal", "ordinal"]);
+    expect(grouped.find((config) => config.channel === "color")?.categoricalExclusive).toBe(true);
+    expect(stacked.find((config) => config.channel === "color")?.categoricalExclusive).toBe(true);
   });
 
   it("declares measure-set and value-series slots for the Area family", () => {
     const area = getTemplateBindingContract("StackedAreaChart");
     expect(area?.slots.find((slot) => slot.id === "y")?.accepts).toContain("measure-set");
     expect(area?.slots.find((slot) => slot.id === "series")?.accepts).toContain("value-series");
+  });
+
+  it("marks derived measure sets so their axis controls can remain visible but disabled", () => {
+    expect(hasDerivedValueSeries({
+      chartType: "StackedBarChart",
+      datasetId: "data",
+      encodings: {},
+      valueFields: [
+        { field: "planned", type: "quantitative" },
+        { field: "actual", type: "quantitative" },
+      ],
+    })).toBe(true);
+    expect(hasDerivedValueSeries({
+      chartType: "PieChart",
+      datasetId: "data",
+      encodings: {},
+      angleFields: [
+        { field: "planned", type: "quantitative" },
+        { field: "actual", type: "quantitative" },
+      ],
+    }, "theta")).toBe(true);
+    expect(hasDerivedValueSeries({
+      chartType: "AreaChart",
+      datasetId: "data",
+      encodings: {},
+      valueFields: [{ field: "planned", type: "quantitative" }],
+    })).toBe(false);
   });
 
   it("derives type compatibility from the channel contract", () => {

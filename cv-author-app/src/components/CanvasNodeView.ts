@@ -1,8 +1,7 @@
 import { defineComponent, h, type PropType } from "vue";
-import type { CanvasNode, CoordinateChannel, EncodingChannel, NestedRenderPlacement, Point } from "../types";
+import type { CanvasNode, EncodingChannel, NestedRenderPlacement, Point } from "../types";
 import { getCanvasObjectHitTargetBounds, getNodeTransform, getLeafNodeTransform, getPolarOccupiedGeometry } from "../utils/canvasUtils";
 import { CanvasCoordinateSystemLayer } from "./CartesianCoordinateSystem";
-import { PolarCoordinateSystem } from "./PolarCoordinateSystem";
 
 function arrowHead(end: Point, direction: Point, size: number) {
   const perpendicular = { x: -direction.y, y: direction.x };
@@ -718,59 +717,6 @@ export const CanvasNodeView: any = defineComponent({
               }),
             ),
         ],
-      );
-    };
-  },
-});
-
-export const CanvasCoordinateGuideView = defineComponent({
-  name: "CanvasCoordinateGuideView",
-  props: {
-    node: { type: Object as PropType<CanvasNode>, required: true },
-    viewZoom: { type: Number, default: 1 },
-    onOriginPointerDown: {
-      type: Function as PropType<(node: CanvasNode, event: PointerEvent) => void>,
-      default: null,
-    },
-    onAxisReverse: {
-      type: Function as PropType<(node: CanvasNode, axis: "x" | "y") => void>,
-      default: null,
-    },
-    onAxisSelect: {
-      type: Function as PropType<(node: CanvasNode, channel: EncodingChannel, event: PointerEvent) => void>,
-      default: null,
-    },
-    onAxisScalePointerDown: {
-      type: Function as PropType<(node: CanvasNode, axis: CoordinateChannel, event: PointerEvent) => void>,
-      default: null,
-    },
-  },
-  setup(props) {
-    return () => {
-      const overlay = props.node.coordinateGuide?.type === "Cartesian"
-        ? cartesianCoordinateOverlay(
-          props.node,
-          props.viewZoom,
-          props.onOriginPointerDown ?? undefined,
-          props.onAxisReverse ?? undefined,
-          props.onAxisSelect ?? undefined,
-        )
-        : h(PolarCoordinateSystem, {
-          node: props.node,
-          viewZoom: props.viewZoom,
-          applyTransform: false,
-        });
-      if (!overlay) return null;
-      return h(
-        "g",
-        {
-          class: "coordinate-guide-layer",
-          "data-coordinate-node-id": props.node.id,
-          transform: props.node.kind === "leaf"
-            ? getLeafNodeTransform(props.node)
-            : getNodeTransform(props.node),
-        },
-        [overlay],
       );
     };
   },

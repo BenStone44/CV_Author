@@ -5,6 +5,7 @@ import EncodingChannelField from "./EncodingChannelField.vue";
 import VisualMappingEditor from "./VisualMappingEditor.vue";
 import {
   getEncodingChannelConfigsForSpec,
+  hasDerivedValueSeries,
   resolvedEncodingField,
   resolvedSeriesField,
   resolveChartTemplateVariant,
@@ -180,7 +181,6 @@ const standardConfigs = computed(() => configs.value.filter((config) => {
   if (usesPolarAxisRows.value && config.channel === "radius") return false;
   if (isParallel.value && config.channel === "dimensions") return false;
   if (supportsSeriesItems.value && config.role === "series" && template.value !== "scatter") return false;
-  if (supportsSeriesItems.value && seriesItemMode.value === "quantitative" && config.channel === "y") return false;
   return true;
 }));
 const compactConfigs = computed(() => standardConfigs.value.filter((config) =>
@@ -213,8 +213,8 @@ const seriesItemMode = computed<"categorical" | "quantitative" | null>(() => {
   return null;
 });
 const seriesItemColumns = computed(() => props.columns.filter((column) => template.value === "scatter"
-  ? column.type === "nominal" || column.type === "temporal"
-  : column.type === "nominal" || column.type === "temporal" || column.type === "quantitative"));
+  ? column.type === "nominal" || column.type === "temporal" || column.type === "ordinal"
+  : column.type === "nominal" || column.type === "temporal" || column.type === "ordinal" || column.type === "quantitative"));
 const seriesItemDropState = ref<"idle" | "valid" | "invalid">("idle");
 const segmentDropState = ref<"idle" | "valid" | "invalid">("idle");
 const detailPanel = ref<"color" | "size" | null>(null);
@@ -440,13 +440,22 @@ function axisConfig(config: EncodingChannelConfig) {
 }
 
 const axisRows = computed(() => (["x", "y"] as const).flatMap((axis) => {
-  if (axis === "y" && seriesItemMode.value === "quantitative" && selectedValueSeriesFields.value.length > 1) return [];
   const bindingAxis = axisChannel(axis);
   const config = configs.value.find((item) => item.channel === bindingAxis);
   // Keep the physical X/Y rows stable; only the selected binding shown in the
   // dropdown moves to the opposite row when axes are swapped.
   return config ? [{ axis, bindingAxis, config: { ...config, label: axis.toUpperCase() } }] : [];
 }));
+
+function isEncodingChannelDisabled(channel: ChartEncodingChannel) {
+  if (channel === "y") return hasDerivedValueSeries(props.chartSpec);
+  if (channel === "theta") return hasDerivedValueSeries(props.chartSpec, "theta");
+  return false;
+}
+
+function displayedEncodingConfig(config: EncodingChannelConfig) {
+  return isEncodingChannelDisabled(config.channel) ? { ...config, required: false } : config;
+}
 
 function axisVisibility(axis: "x" | "y") {
   return chartAxisVisible(props.chartSpec, props.coordinateGuide, axis);
@@ -488,12 +497,14 @@ function isSeriesItemDisabled(field: string) {
   const column = props.columns.find((item) => item.name === field);
   if (!column || !seriesItemMode.value) return false;
   if (seriesItemMode.value === "categorical") {
-    // Bar group/segment roles explicitly allow multiple categorical fields;
-    // line, area, and scatter series roles remain single-select.
+    // A categorical series/group/segment binding is exclusive; measure sets
+    // use the separate quantitative mode below and may contain multiple fields.
     const categorical = column.type === "nominal"
       || column.type === "ordinal"
-      || column.type === "temporal";
-    return !categorical
+      || ((template.value === "line" || template.value === "area" || template.value === "scatter")
+        && column.type === "temporal");
+    return (!categorical && !selectedSeriesFields.value.includes(field))
+      || (seriesRole.value?.categoricalExclusive === true && !selectedSeriesFields.value.includes(field))
       || (seriesRole.value?.multiple !== true && !selectedSeriesFields.value.includes(field));
   }
   return column.type !== "quantitative";
@@ -679,10 +690,11 @@ function updateSingleBarTopN(rawValue: string) {
             <span class="encoding-config__axis-row-label">THETA</span>
           </div>
           <EncodingChannelField
-            :config="{ ...polarThetaConfig, label: 'Theta' }"
+            :config="displayedEncodingConfig({ ...polarThetaConfig, label: 'Theta' })"
             :columns="columns"
             :father-columns="fatherColumns"
             :value="displayedEncodingField('theta')"
+            :disabled="isEncodingChannelDisabled('theta')"
             @change="updateMappingDefaults('theta', $event)"
           />
           <div class="encoding-config__axis-controls">
@@ -791,10 +803,11 @@ function updateSingleBarTopN(rawValue: string) {
             </button>
           </div>
           <EncodingChannelField
-            :config="row.config"
+            :config="displayedEncodingConfig(row.config)"
             :columns="columns"
             :father-columns="fatherColumns"
             :value="displayedEncodingField(row.bindingAxis)"
+            :disabled="isEncodingChannelDisabled(row.bindingAxis)"
             @change="updateMappingDefaults(row.bindingAxis, $event)"
           />
           <div class="encoding-config__axis-controls">
@@ -838,10 +851,11 @@ function updateSingleBarTopN(rawValue: string) {
       <template v-for="config in otherStandardConfigs" :key="config.channel">
         <div class="encoding-config__channel-row">
           <EncodingChannelField
-            :config="axisConfig(config)"
+            :config="displayedEncodingConfig(axisConfig(config))"
             :columns="columns"
             :father-columns="fatherColumns"
             :value="displayedEncodingField(config.channel)"
+            :disabled="isEncodingChannelDisabled(config.channel)"
             @change="updateMappingDefaults(config.channel, $event)"
           />
         </div>
@@ -1381,7 +1395,7 @@ function updateSingleBarTopN(rawValue: string) {
 .encoding-config__axis-toolbar-label { justify-self: center; white-space: nowrap; }
 .encoding-config__axis-toolbar-options { grid-column: 3; display: grid; grid-template-columns: 38px 48px; justify-content: center; gap: 2px; }
 .encoding-config__axis-switch { grid-column: 1 / span 2; justify-self: start; }
-.encoding-config__axis-row { display: grid; grid-template-columns: minmax(52px, 0.2fr) minmax(164px, 0.76fr) minmax(96px, 0.42fr); position: relative; align-items: center; gap: 2px; padding: 3px 4px; border: 1px solid rgba(67, 40, 24, 0.1); border-radius: 5px; background: #f8fafc; }
+.encoding-config__axis-row { display: grid; grid-template-columns: minmax(52px, 0.2fr) minmax(164px, 0.76fr) minmax(96px, 0.42fr); position: relative; align-items: center; gap: 2px; padding: 3px 4px; border: 1px solid rgba(67, 40, 24, 0.1); border-radius: 5px; background: #fefae0; }
 .encoding-config__axis-channel-label { display: inline-flex; align-items: center; justify-content: center; gap: 3px; min-width: 0; }
 .encoding-config__axis-row-label { color: #99582a; font-size: var(--encoding-config-font-size); font-weight: 700; }
 .encoding-config__axis-controls { display: grid; grid-template-columns: 38px 48px; justify-content: center; gap: 2px; }
@@ -1403,7 +1417,7 @@ function updateSingleBarTopN(rawValue: string) {
 .encoding-config__axis-direction-button { display: inline-grid; width: 22px; height: 22px; padding: 0; place-items: center; border: 1px solid rgba(67, 40, 24, 0.14); border-radius: 4px; background: var(--frontend-surface-raised); color: #99582a; cursor: pointer; }
 .encoding-config__axis-direction-button:hover { border-color: rgba(67, 40, 24, 0.4); background: var(--frontend-surface-soft); color: #432818; }
 .encoding-config__columns { display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; align-items: stretch; }
-.encoding-config__channel-row { display: grid; grid-template-columns: minmax(52px, 0.2fr) minmax(164px, 0.76fr) minmax(96px, 0.42fr); align-items: center; gap: 2px; min-height: 32px; padding: 3px 4px; border: 1px solid rgba(67, 40, 24, 0.1); border-radius: 5px; background: #fbfcfe; }
+.encoding-config__channel-row { display: grid; grid-template-columns: minmax(52px, 0.2fr) minmax(164px, 0.76fr) minmax(96px, 0.42fr); align-items: center; gap: 2px; min-height: 32px; padding: 3px 4px; border: 1px solid rgba(67, 40, 24, 0.1); border-radius: 5px; background: #fefae0; }
 .encoding-config__channel-row :deep(.encoding-channel-field) { display: contents; }
 .encoding-config__channel-row :deep(.encoding-channel-field__label) { justify-content: center; min-width: 0; text-align: center; }
 .encoding-config__channel-row :deep(.encoding-channel-field select) { grid-column: 2; min-width: 0; }
@@ -1417,14 +1431,14 @@ function updateSingleBarTopN(rawValue: string) {
   justify-self: end;
   width: min(100%, 220px);
 }
-.encoding-config__column { display: grid; min-width: 0; align-content: start; gap: 7px; padding: 8px; border: 1px solid rgba(67, 40, 24, 0.1); border-radius: 6px; background: #fbfcfe; }
+.encoding-config__column { display: grid; min-width: 0; align-content: start; gap: 7px; padding: 8px; border: 1px solid rgba(67, 40, 24, 0.1); border-radius: 6px; background: #fefae0; }
 .encoding-config__column--composition { background: #f8fbff; }
 .encoding-config__column--composition-summary { background: #f4f8fc; }
 .encoding-config__composition-summary { margin: 0; color: #99582a; font-size: var(--encoding-config-font-size); line-height: 1.35; }
 .encoding-config__column-heading { display: grid; gap: 2px; padding-bottom: 2px; border-bottom: 1px solid rgba(67, 40, 24, 0.09); }
 .encoding-config__column-heading strong { color: #263548; font-size: var(--encoding-config-font-size); letter-spacing: 0.08em; text-transform: uppercase; }
 .encoding-config__column-heading span, .encoding-config__column-empty { color: #718096; font-size: var(--encoding-config-font-size); line-height: 1.35; }
-.encoding-config__member-list { display: grid; gap: 6px; padding: 8px; border: 1px solid rgba(67, 40, 24, 0.1); border-radius: 6px; background: #f8fafc; }
+.encoding-config__member-list { display: grid; gap: 6px; padding: 8px; border: 1px solid rgba(67, 40, 24, 0.1); border-radius: 6px; background: #fefae0; }
 .encoding-config__member-list > header { display: grid; gap: 2px; }
 .encoding-config__member-list > header strong { color: #432818; font-size: var(--encoding-config-font-size); }
 .encoding-config__member-list > header span { color: #718096; font-size: var(--encoding-config-font-size); line-height: 1.35; }
@@ -1444,7 +1458,7 @@ function updateSingleBarTopN(rawValue: string) {
 .encoding-config__tree-direction button:hover { background: var(--frontend-surface-soft); color: #432818; }
 .encoding-config__tree-direction button.is-active { background: #432818; color: var(--frontend-surface-raised); }
 .encoding-config__detail-fields { display: grid; gap: 6px; }
-.encoding-config__detail-row { position: relative; display: grid; grid-template-columns: minmax(52px, 0.2fr) minmax(164px, 0.76fr) minmax(96px, 0.42fr); align-items: center; gap: 2px; min-height: 32px; padding: 3px 4px; border: 1px solid rgba(67, 40, 24, 0.1); border-radius: 5px; background: #fbfcfe; }
+.encoding-config__detail-row { position: relative; display: grid; grid-template-columns: minmax(52px, 0.2fr) minmax(164px, 0.76fr) minmax(96px, 0.42fr); align-items: center; gap: 2px; min-height: 32px; padding: 3px 4px; border: 1px solid rgba(67, 40, 24, 0.1); border-radius: 5px; background: #fefae0; }
 .encoding-config__detail-row :deep(.encoding-channel-field) { display: contents; }
 .encoding-config__detail-row :deep(.encoding-channel-field__label) { justify-content: center; min-width: 0; text-align: center; }
 .encoding-config__detail-row :deep(.encoding-channel-field select) { grid-column: 2; min-width: 0; }
@@ -1453,7 +1467,7 @@ function updateSingleBarTopN(rawValue: string) {
 .encoding-config__aggregation,
 .encoding-config__value-order,
 .encoding-config__radius { order: 3; }
-.encoding-config__details-button { min-width: 64px; max-width: 120px; height: 30px; overflow: hidden; padding: 0 8px; border: 1px solid rgba(67, 40, 24, 0.14); border-radius: 5px; background: #f8fafc; color: #99582a; font: inherit; font-size: var(--encoding-config-font-size); text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.encoding-config__details-button { min-width: 64px; max-width: 120px; height: 30px; overflow: hidden; padding: 0 8px; border: 1px solid rgba(67, 40, 24, 0.14); border-radius: 5px; background: #fefae0; color: #99582a; font: inherit; font-size: var(--encoding-config-font-size); text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .encoding-config__details-button:hover, .encoding-config__details-button[aria-expanded="true"] { border-color: rgba(67, 40, 24, 0.4); background: var(--frontend-surface-soft); color: #432818; }
 .encoding-config__color-scale-preview { display: block; width: 100%; height: 12px; border: 1px solid rgba(67, 40, 24, 0.16); border-radius: 3px; }
 .encoding-config__static-color-picker { width: 38px; height: 28px; padding: 2px; border: 1px solid rgba(67, 40, 24, 0.14); border-radius: 5px; background: var(--frontend-surface-raised); cursor: pointer; }
@@ -1468,7 +1482,7 @@ function updateSingleBarTopN(rawValue: string) {
 .encoding-config__slider-popover { position: absolute; right: 0; bottom: calc(100% + 5px); z-index: 2; display: flex; width: 150px; height: 34px; align-items: center; padding: 6px 9px; border: 1px solid rgba(67, 40, 24, 0.16); border-radius: 6px; background: var(--frontend-surface-raised); box-shadow: 0 8px 20px rgba(67, 40, 24, 0.16); }
 .encoding-config__slider-popover input { width: 100%; accent-color: var(--frontend-control-accent); }
 .encoding-config__static-size { position: relative; grid-template-columns: minmax(72px, 1fr) auto 22px; }
-.encoding-config__axis-options { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 6px 8px; padding: 7px 8px; border: 1px solid rgba(67, 40, 24, 0.1); border-radius: 6px; background: #f8fafc; }
+.encoding-config__axis-options { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 6px 8px; padding: 7px 8px; border: 1px solid rgba(67, 40, 24, 0.1); border-radius: 6px; background: #fefae0; }
 .encoding-config__axis-options > strong { color: #99582a; font-size: var(--encoding-config-font-size); }
 .encoding-config__axis-toggles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; }
 .encoding-config__axis-toggles label { display: flex; align-items: center; gap: 6px; min-width: 0; color: #99582a; font-size: var(--encoding-config-font-size); }
@@ -1483,7 +1497,7 @@ function updateSingleBarTopN(rawValue: string) {
 .encoding-config__axis-spacing { display: grid; grid-template-columns: minmax(0, 1fr) 88px 28px; align-items: center; gap: 6px; color: #99582a; font-size: var(--encoding-config-font-size); }
 .encoding-config__axis-spacing input { width: 100%; min-width: 0; }
 .encoding-config__axis-spacing output { color: #294a6d; text-align: right; }
-.encoding-config__summary { margin: 0; padding: 8px 9px; border-left: 3px solid #bb9457; background: #f3f7fa; color: #432818; font-size: var(--encoding-config-font-size); line-height: 1.45; }
+.encoding-config__summary { margin: 0; padding: 8px 9px; border-left: 3px solid #fefae0; background: #f3f7fa; color: #432818; font-size: var(--encoding-config-font-size); line-height: 1.45; }
 .encoding-config__derived-series { margin: -4px 0 0; color: #432818; font-size: var(--encoding-config-font-size); }
 .encoding-config__aggregation { display: grid; gap: 7px; padding: 8px; border: 1px solid rgba(67, 40, 24, 0.2); border-radius: 6px; background: #f8fbff; color: #432818; }
 .encoding-config__aggregation header { display: grid; gap: 2px; }
@@ -1493,7 +1507,7 @@ function updateSingleBarTopN(rawValue: string) {
 .encoding-config__aggregation label > span { display: inline-flex; align-items: center; gap: 6px; }
 .encoding-config__aggregation em { padding: 2px 4px; border-radius: 3px; background: #e0efff; color: #432818; font-size: var(--encoding-config-font-size); font-style: normal; font-weight: 700; text-transform: uppercase; }
 .encoding-config__aggregation select { width: 100%; height: 28px; padding: 0 6px; border: 1px solid rgba(67, 40, 24, 0.14); border-radius: 5px; background: var(--frontend-surface-raised); color: #432818; font: inherit; font-size: var(--encoding-config-font-size); }
-.encoding-config__value-order { display: grid; gap: 7px; padding: 8px; border: 1px solid rgba(67, 40, 24, 0.12); border-radius: 6px; background: #f8fafc; color: #432818; }
+.encoding-config__value-order { display: grid; gap: 7px; padding: 8px; border: 1px solid rgba(67, 40, 24, 0.12); border-radius: 6px; background: #fefae0; color: #432818; }
 .encoding-config__value-order header { display: grid; gap: 2px; }
 .encoding-config__value-order header span { font-size: var(--encoding-config-font-size); font-weight: 700; }
 .encoding-config__value-order label { display: grid; grid-template-columns: minmax(72px, 1fr) minmax(0, 1.4fr); align-items: center; gap: 8px; font-size: var(--encoding-config-font-size); }
@@ -1505,7 +1519,7 @@ function updateSingleBarTopN(rawValue: string) {
 .encoding-config__legend-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: transparent; color: #99582a; font-size: var(--encoding-config-font-size); white-space: nowrap; }
 .encoding-config__legend-toggle input { width: 12px; height: 12px; margin: 0; accent-color: var(--frontend-slider-thumb); }
 .encoding-config__angle abbr { color: #b42318; text-decoration: none; }
-.encoding-config__angle label { display: flex; align-items: center; min-width: 0; gap: 6px; padding: 4px 6px; border: 1px solid rgba(67, 40, 24, 0.1); border-radius: 5px; background: #f8fafc; color: #432818; cursor: pointer; }
+.encoding-config__angle label { display: flex; align-items: center; min-width: 0; gap: 6px; padding: 4px 6px; border: 1px solid rgba(67, 40, 24, 0.1); border-radius: 5px; background: #fefae0; color: #432818; cursor: pointer; }
 .encoding-config__angle label.is-disabled { background: #f1f3f5; color: #97a1ae; cursor: not-allowed; opacity: 0.68; }
 .encoding-config__angle input { width: 14px; height: 14px; flex: 0 0 14px; margin: 0; accent-color: var(--frontend-slider-thumb); }
 .encoding-config__angle label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

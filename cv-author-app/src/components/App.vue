@@ -370,7 +370,7 @@ function toggleTemplateCategory(category: ChartTemplateCategory, event: MouseEve
     return;
   }
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-  const preferredWidth = category.candidates.length <= 2 ? 360 : category.candidates.length <= 4 ? 540 : 680;
+  const preferredWidth = 420;
   const width = Math.min(preferredWidth, window.innerWidth - 32);
   templateCategoryMenuPosition.value = {
     left: Math.max(16, Math.min(rect.left, window.innerWidth - width - 16)),
@@ -980,15 +980,6 @@ const activeCompositionCandidates = computed(() =>
     (candidate) => candidate.compositionType === activeCompositionType.value,
   ),
 );
-const llmNode = computed(() => {
-  if (selectedIds.value.length !== 1) return null;
-  return selectedNodes.value[0] ?? null;
-});
-const llmDataset = computed(() => {
-  const datasetId =
-    llmNode.value?.layerSpec?.datasetId ?? llmNode.value?.chartSpec?.datasetId;
-  return datasetId ? getDataset(datasetId) : activeDataset.value;
-});
 const encodingTargetNode = computed(() => {
   const selectedNode = selectedNodes.value[0];
   if (selectedNode?.chartSpec || selectedNode?.layerKind === "deckgl") return selectedNode;

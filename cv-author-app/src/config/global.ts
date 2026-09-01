@@ -56,7 +56,7 @@ export const frontendPalette = {
     inverse: "#fefae0",
   },
   control: {
-    accent: "#bb9457",
+    accent: "#ffe6a7",
     accentStrong: "#99582a",
     sliderTrack: "#fffaee",
     sliderThumb: "#432818",
@@ -69,7 +69,7 @@ export const frontendPalette = {
     danger: "#b42318",
   },
   components: {
-    data: "#e5f1fb",
+    data: "#fefae0",
     chart: "#fefae0",
     composition: "#f3faf7",
     inspector: "#fff3d0",
@@ -77,7 +77,7 @@ export const frontendPalette = {
   series: [
     "#432818",
     "#99582a",
-    "#bb9457",
+    "#ffe6a7",
     "#606c38",
     "#669bbc",
   ],
@@ -117,7 +117,7 @@ export const frontendTypography = {
   family: "Arial, sans-serif",
   // style: "italic",
   weight: 700,
-  scale: 1.25,
+  scale: 1,
 } as const;
 
 export const frontendTypographyCssVariables = {

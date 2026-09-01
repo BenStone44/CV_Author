@@ -14,7 +14,7 @@
 }
 .recommendation-option-card > span:not(.recommendation-option-card__strategy) {
   min-height: 34px;
-  color: #bb9457;
+  color: #fefae0;
   font-size: calc(11px * var(--frontend-font-scale));
   line-height: 1.45;
 }

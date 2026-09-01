@@ -26,6 +26,8 @@ export type ChartEncodingChannelSchema = {
   accepts: DataColumnType[];
   emptyLabel: EncodingEmptyLabel;
   multiple?: boolean;
+  /** Categorical bindings stay single-select even when measure-set bindings are multi-select. */
+  categoricalExclusive?: boolean;
   configurable?: boolean;
 };
 
@@ -91,12 +93,13 @@ const yMeasure = { channel: "y", label: "Y", role: "measure", required: true, ac
 const multiLineYMeasure = { ...yMeasure, multiple: true } satisfies ChartEncodingChannelSchema;
 const lineSize = { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
 const lineShape = { channel: "shape", label: "Shape", role: "style", required: false, accepts: ["nominal"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
-const lineSeries = { channel: "color", label: "Color", semanticLabel: "Series", role: "series", required: false, accepts: ["nominal", "temporal", "ordinal"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
+const lineSeries = { channel: "color", label: "Color", semanticLabel: "Series", role: "series", required: false, accepts: ["nominal", "temporal", "ordinal"], emptyLabel: "Static", categoricalExclusive: true } satisfies ChartEncodingChannelSchema;
 const scatterColor = { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
 const barX = { channel: "x", label: "X", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
+const categoricalBarX = { ...barX, accepts: ["nominal", "ordinal"] } satisfies ChartEncodingChannelSchema;
 const barY = { channel: "y", label: "Y", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
 const barStyle = { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
-const barSeries = { channel: "color", label: "Color", semanticLabel: "Series", role: "series", required: true, accepts: ["nominal", "temporal", "ordinal"], emptyLabel: "Static", multiple: true } satisfies ChartEncodingChannelSchema;
+const barSeries = { channel: "color", label: "Color", semanticLabel: "Series", role: "series", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Static", multiple: true, categoricalExclusive: true } satisfies ChartEncodingChannelSchema;
 const barSize = { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
 const areaChannels = (requiresSeries: boolean): ChartEncodingChannelSchema[] => [
   xAny,
@@ -141,20 +144,20 @@ export const chartEncodingSchemas = {
       { chartType: "StackedBarChart", label: "Stacked bar", role: "series" },
     ],
   }),
-  GroupedBarChart: defineSchema("GroupedBarChart", "Grouped Bar", "bar", [barX, barY, { ...barSeries, semanticLabel: "Group item" }, barSize]),
-  StackedBarChart: defineSchema("StackedBarChart", "Stacked Bar", "bar", [barX, barY, { ...barSeries, semanticLabel: "Segment item" }, barSize]),
+  GroupedBarChart: defineSchema("GroupedBarChart", "Grouped Bar", "bar", [categoricalBarX, barY, { ...barSeries, semanticLabel: "Group item" }, barSize]),
+  StackedBarChart: defineSchema("StackedBarChart", "Stacked Bar", "bar", [categoricalBarX, barY, { ...barSeries, semanticLabel: "Segment item" }, barSize]),
   DivergentBarChart: defineSchema("DivergentBarChart", "Divergent Bar", "bar", [barX, barY, barStyle, barSize], {
     dimensionUpgrades: [{ chartType: "DivergentStackedBarChart", label: "Divergent stacked bar", role: "series" }],
   }),
-  DivergentStackedBarChart: defineSchema("DivergentStackedBarChart", "Divergent Stacked Bar", "bar", [barX, barY, { ...barSeries, semanticLabel: "Segment item" }, barSize]),
+  DivergentStackedBarChart: defineSchema("DivergentStackedBarChart", "Divergent Stacked Bar", "bar", [categoricalBarX, barY, { ...barSeries, semanticLabel: "Segment item" }, barSize]),
   PieChart: defineSchema("PieChart", "Pie Chart", "pie", [
     { channel: "theta", label: "Theta", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
-    { channel: "segment", label: "Segment", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound", multiple: true },
+    { channel: "segment", label: "Segment", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound", multiple: true, categoricalExclusive: true },
     { channel: "radius", label: "R", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Not bound" },
   ]),
   DonutChart: defineSchema("DonutChart", "Donut", "donut", [
     { channel: "theta", label: "Theta", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
-    { channel: "segment", label: "Segment", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound", multiple: true },
+    { channel: "segment", label: "Segment", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound", multiple: true, categoricalExclusive: true },
     { channel: "radius", label: "R", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Not bound" },
   ]),
   MatrixDiagram: defineSchema("MatrixDiagram", "Matrix", "matrix", [

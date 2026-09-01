@@ -1,7 +1,5 @@
 import type { SvgCandidate } from "../types";
 
-/** The style used by geographic templates before the appearance selector. */
-export const deckglOriginalMapStyleUrl = "mapbox://styles/shifuchen/cm0yq9yda01fh01q03vmn75i5";
 export const deckglLightMapStyleUrl = "https://basemaps.cartocdn.com/gl/positron-nolabels-gl-style/style.json";
 export const deckglDarkMapStyleUrl = "https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json";
 const mapboxAccessToken = import.meta.env.VITE_MAPBOX_TOKEN ?? "";

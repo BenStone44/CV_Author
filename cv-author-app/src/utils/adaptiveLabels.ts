@@ -158,19 +158,3 @@ export function adaptiveAxisFontSize(
   const widthBound = Number.isFinite(available) && longest > 0 ? baseFontSize * available / longest : baseFontSize;
   return clamp(Math.min(baseFontSize, widthBound), minFontSize, maxFontSize);
 }
-
-/** Extract the user-visible text elements that belong to a rendered chart. */
-export function summarizeChartLabels(markup: string) {
-  const labels: Array<{ role: string; surface: "chart" | "axis"; text: string }> = [];
-  const textPattern = /<text\b([^>]*)>([\s\S]*?)<\/text>/gi;
-  let match: RegExpExecArray | null;
-  while ((match = textPattern.exec(markup))) {
-    const attributes = match[1] ?? "";
-    const text = (match[2] ?? "").replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
-    if (!text) continue;
-    const role = attributes.match(/data-mark-role="([^"]+)"/)?.[1]
-      ?? (attributes.includes("tick") ? "axis-tick" : "chart-label");
-    labels.push({ role, surface: /axis|tick|title|facet-coordinate/.test(role) ? "axis" : "chart", text });
-  }
-  return labels;
-}

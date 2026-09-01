@@ -3140,9 +3140,12 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       .find((config) => config.role === "series");
     const selected = Array.from(new Set(fieldNames)).flatMap((field) => {
       const column = dataset.columns.find((item) => item.name === field
-        && (item.type === "nominal" || item.type === "ordinal" || item.type === "temporal"));
+        && (seriesConfig
+          ? seriesConfig.accepts.includes(item.type)
+          : item.type === "nominal" || item.type === "ordinal" || item.type === "temporal"));
       return column ? [{ field: column.name, type: column.type }] : [];
-    }).filter((_encoding, index) => seriesConfig?.multiple === true || index === 0);
+    }).filter((_encoding, index) => index === 0
+      || (seriesConfig?.multiple === true && seriesConfig.categoricalExclusive !== true));
     const inputSpec = replaceDefaultDataBinding(node.chartSpec, dataset.id);
     const occupied = new Set(Object.values(inputSpec.encodings)
       .filter((encoding): encoding is NonNullable<typeof encoding> => !!encoding)
@@ -3404,8 +3407,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const radialBar = node.chartSpec?.chartType.replace(/[\s_-]/g, "").toLowerCase() === "radialbarchart";
     if (!node.chartSpec || (template !== "pie" && template !== "donut" && !radialBar)) return 0;
     const selected = Array.from(new Set(fieldNames)).flatMap((field) => {
-      const column = dataset.columns.find((item) => item.name === field
-        && (item.type === "quantitative" || item.type === "nominal" || item.type === "ordinal" || item.type === "temporal"));
+      const column = dataset.columns.find((item) => item.name === field && item.type === "quantitative");
       return column ? [{ field: column.name, type: column.type }] : [];
     }).slice(0, 1);
     updateEncodingTargets(node, (_target, spec) => {
@@ -3441,6 +3443,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       const column = dataset.columns.find((item) => item.name === field);
       return column ? [column] : [];
     });
+    const segmentConfig = getEncodingChannelConfigsForSpec(node.chartSpec)
+      .find((config) => config.channel === "segment");
     if (columns.length === 0) {
       updateEncodingTargets(node, (_target, spec) => {
         spec = replaceDefaultDataBinding(spec, dataset.id);
@@ -3460,6 +3464,10 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       return;
     }
     const quantitative = columns.every((column) => column.type === "quantitative");
+    const categorical = columns.length === 1
+      && (segmentConfig?.accepts.includes(columns[0]!.type) ?? false)
+      && columns[0]!.type !== "quantitative";
+    if (!quantitative && !categorical) return;
     if (!quantitative && columns.length > 1) return;
     updateEncodingTargets(node, (_target, spec) => {
       spec = replaceDefaultDataBinding(spec, dataset.id);
@@ -3480,6 +3488,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           dimensionRecommendations: undefined,
         };
       }
+      if (!categorical) return spec;
       encodings.segment = { field: columns[0]!.name, type: columns[0]!.type };
       return {
         ...spec,
@@ -3530,6 +3539,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (isPolarSegmentChart(node.chartSpec.chartType)) {
       const radialBar = node.chartSpec.chartType.replace(/[\s_-]/g, "").toLowerCase() === "radialbarchart";
       if (radialBar && column.type !== "nominal" && column.type !== "ordinal" && column.type !== "temporal") return false;
+      if (!radialBar && column.type !== "nominal" && column.type !== "ordinal" && column.type !== "quantitative") return false;
       const current = node.chartSpec.encodings.segment?.field
         ? [node.chartSpec.encodings.segment.field]
         : node.chartSpec.angleFields?.map((encoding) => encoding.field) ?? [];

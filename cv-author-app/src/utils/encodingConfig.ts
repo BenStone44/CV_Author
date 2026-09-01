@@ -10,6 +10,7 @@ export type EncodingChannelConfig = {
   accepts: DataColumnType[];
   emptyLabel: "Not bound" | "Static";
   multiple?: boolean;
+  categoricalExclusive?: boolean;
 };
 
 export type ChartTemplateVariant =

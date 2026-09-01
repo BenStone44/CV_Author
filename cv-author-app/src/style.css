@@ -7,25 +7,25 @@ body,
 
 :root {
   --frontend-light-rgb: 254 250 224;
-  --frontend-surface-canvas: #fefae0;
-  --frontend-surface-panel: #fefae0;
-  --frontend-surface-raised: #fefae0;
+  --frontend-surface-canvas: #ffe6a7;
+  --frontend-surface-panel: #ffe6a7;
+  --frontend-surface-raised: #ffe6a7;
   --frontend-surface-soft: #fff3d0;
   --frontend-text-primary: #432818;
   --frontend-text-secondary: #99582a;
   --frontend-text-muted: #728196;
-  --frontend-control-accent: #bb9457;
+  --frontend-control-accent: #ffe6a7;
   --frontend-control-accent-strong: #99582a;
   --frontend-slider-track: #fffaee;
   --frontend-slider-thumb: #432818;
   --frontend-control-border: #d9c7a3;
-  --frontend-component-data: #e5f1fb;
-  --frontend-component-chart: #fefae0;
+  --frontend-component-data: #ffe6a7;
+  --frontend-component-chart: #ffe6a7;
   --frontend-component-composition: #f3faf7;
   --frontend-component-inspector: #fff3d0;
   --frontend-status-info: #2563eb;
   --frontend-status-success: #15803d;
-  --frontend-status-warning: #d97706;
+  --frontend-status-warning: hsl(32, 95%, 44%);
   --frontend-status-danger: #b42318;
   --frontend-font-family: Arial, sans-serif;
   --frontend-font-style: italic;
