@@ -104,7 +104,8 @@ import {
 } from "../utils/canvasUtils";
 import { chartScalePosition, renderDeterministicChart, renderLayerChart, renderNestedPie } from "../utils/semanticRenderer";
 import {
-  cartesianAxisEncoding,
+  physicalCartesianAxisEncoding,
+  physicalCartesianAxisChannel,
   getDimensionChartUpgradeOptions,
   getChartTemplateContract,
   hasRequiredChartEncodings,
@@ -607,7 +608,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         if (channel !== leafAxis) return undefined;
         return spec.encodings.category ?? spec.encodings.key;
       }
-      const axisEncoding = cartesianAxisEncoding(spec, channel);
+      const axisEncoding = physicalCartesianAxisEncoding(spec, channel);
       if (axisEncoding) return axisEncoding;
       // Matrix/heatmap charts may still use persisted row/column encodings.
       if (normalizeChartTemplate(spec.chartType) === "matrix") {
@@ -1024,8 +1025,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         ? "category"
         : channel;
     }
-    if (node.chartSpec?.axisSwapped !== true || (channel !== "x" && channel !== "y")) return channel;
-    return channel === "x" ? "y" : "x";
+    if (channel !== "x" && channel !== "y") return channel;
+    return node.chartSpec ? physicalCartesianAxisChannel(node.chartSpec, channel) : channel;
   }
   function isPolarSegmentChart(chartType: string) {
     const template = normalizeChartTemplate(chartType);
@@ -1139,11 +1140,49 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const nestedRenderedChildIds = computed<ReadonlySet<string>>(() =>
     new Set(nestedRenderPlacements.value.map((placement) => placement.child.id)),
   );
+  /**
+   * Nested children are rendered inside their parent's mark layer but remain
+   * separate canvas nodes. Include their resolved footprints in the parent
+   * selection bounds so resize, alignment, and the visible selection frame
+   * describe the complete nested object.
+   */
+  function collectSelectionBoundsWithNestedChildren(node: CanvasNode, visited = new Set<string>()): Bounds {
+    if (visited.has(node.id)) return collectNodeSelectionBounds(node);
+    visited.add(node.id);
+    let bounds = collectNodeSelectionBounds(node);
+    Object.values(chartRelationships.value.nestedRelationships).forEach((relationship) => {
+      if (relationship.status !== "active" || relationship.parentChartId !== node.id) return;
+      const child = findCanvasNode(relationship.childChartId);
+      if (!child) return;
+      bounds = mergeBounds(bounds, collectSelectionBoundsWithNestedChildren(child, visited));
+    });
+    return bounds;
+  }
+  function nestedBoundsForSemanticMark(nodeId: string, rowKey?: string, markGroupId?: string): Bounds | null {
+    let bounds: Bounds | null = null;
+    Object.values(chartRelationships.value.nestedRelationships).forEach((relationship) => {
+      if (relationship.status !== "active" || relationship.parentChartId !== nodeId) return;
+      if (markGroupId && relationship.parentMarkGroupId && relationship.parentMarkGroupId !== markGroupId) return;
+      if (relationship.parentDataKey && rowKey && relationship.parentDataKey !== rowKey) {
+        try {
+          const identity = JSON.parse(relationship.parentDataKey) as { rowKey?: string };
+          if (identity.rowKey !== rowKey) return;
+        } catch {
+          return;
+        }
+      } else if (relationship.parentDataKey && !rowKey) {
+        return;
+      }
+      const child = findCanvasNode(relationship.childChartId);
+      if (child) bounds = mergeBounds(bounds, collectSelectionBoundsWithNestedChildren(child));
+    });
+    return bounds;
+  }
   const selectionScopeBounds = computed<Bounds | null>(() => {
     let bounds: Bounds | null = null;
     selectedIds.value.forEach((id) => {
       const node = getSelectionNode(id);
-      if (node) bounds = mergeBounds(bounds, collectNodeSelectionBounds(node));
+      if (node) bounds = mergeBounds(bounds, collectSelectionBoundsWithNestedChildren(node));
     });
     return bounds;
   });
@@ -1184,6 +1223,10 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     });
     if (nodes.length !== selectedIds.value.length) return [];
     const outlines = nodes.flatMap((node) => {
+      // A nested child may extend beyond a polar sector. In that case the
+      // rectangular selection frame (which includes the child bounds) is the
+      // complete footprint; an annular outline would hide the extension.
+      if (nestedSelectionRelationships(node.id).length > 0) return [];
       const geometry = getPolarSelectionGeometry(node);
       if (!geometry) return [];
       return [{
@@ -1215,7 +1258,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     selectedIds.value.map((id) => {
       const node = getSelectionNode(id);
       if (!node) return null;
-      return { key: `node:${id}`, itemIds: [id], bounds: collectNodeSelectionBounds(node) } satisfies SelectionUnit;
+      return { key: `node:${id}`, itemIds: [id], bounds: collectSelectionBoundsWithNestedChildren(node) } satisfies SelectionUnit;
     }).filter((u): u is SelectionUnit => !!u),
   );
   const concatSplitControls = computed<ConcatSplitControl[]>(() => {
@@ -1752,6 +1795,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       rowKey,
     });
     const elements = semanticMarkElements(target, match.mode, categoryKey);
+    const markBounds = semanticSelectionBounds(elements);
+    const nestedBounds = nestedBoundsForSemanticMark(node.id, rowKey, markGroupId);
     semanticSelection.value = {
       nodeId: node.id,
       role,
@@ -1761,7 +1806,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       rowKey,
       level: drilldown.level,
       partCount: elements.length,
-      bounds: semanticSelectionBounds(elements) ?? undefined,
+      bounds: markBounds && nestedBounds
+        ? mergeBounds(markBounds, nestedBounds)
+        : markBounds ?? nestedBounds ?? undefined,
     };
     dispatchRelationship({
       type: "select-entity",

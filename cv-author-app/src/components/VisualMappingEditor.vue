@@ -136,6 +136,7 @@ function toggleSizeStop(index: number) {
         <input
           class="color-input"
           type="color"
+          list="frontend-color-palette"
           :value="stop.color"
           :aria-label="`Color stop ${index + 1}`"
           @input="updateColorStop(index, { color: ($event.target as HTMLInputElement).value })"
@@ -252,7 +253,7 @@ button {
 
 button:hover:not(:disabled) {
   border-color: #9ab4ca;
-  color: #176ea6;
+  color: #99582a;
 }
 
 button:disabled {
@@ -278,7 +279,7 @@ button:disabled {
   align-items: center;
   gap: 3px;
   font-size: var(--encoding-config-font-size, 11px);
-  color: #687585;
+  color: #99582a;
 }
 
 .color-input {
@@ -316,7 +317,7 @@ button:disabled {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 72px 26px;
   gap: 7px;
-  color: #687585;
+  color: #99582a;
   font-size: var(--encoding-config-font-size, 11px);
 }
 
@@ -329,15 +330,15 @@ button:disabled {
 }
 
 .slider-dot { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; place-items: center; }
-.slider-dot span { width: 10px; height: 10px; border: 2px solid #1554b2; border-radius: 50%; background: #fff; }
-.slider-dot:hover span, .slider-dot[aria-expanded="true"] span { background: #1554b2; }
-.size-slider-popover { position: absolute; right: 26px; bottom: calc(100% + 5px); z-index: 3; display: flex; width: 150px; height: 34px; align-items: center; padding: 6px 9px; border: 1px solid rgba(24, 33, 47, 0.16); border-radius: 6px; background: #fff; box-shadow: 0 8px 20px rgba(24, 33, 47, 0.16); }
-.size-slider-popover input { width: 100%; accent-color: #1980bd; }
+.slider-dot span { width: 10px; height: 10px; border: 2px solid #432818; border-radius: 50%; background: #fff; }
+.slider-dot:hover span, .slider-dot[aria-expanded="true"] span { background: #432818; }
+.size-slider-popover { position: absolute; right: 26px; bottom: calc(100% + 5px); z-index: 3; display: flex; width: 150px; height: 34px; align-items: center; padding: 6px 9px; border: 1px solid rgba(67, 40, 24, 0.16); border-radius: 6px; background: #fff; box-shadow: 0 8px 20px rgba(67, 40, 24, 0.16); }
+.size-slider-popover input { width: 100%; accent-color: #bb9457; }
 
 .size-position,
 .size-stop-row output {
   font-size: var(--encoding-config-font-size, 11px);
-  color: #687585;
+  color: #99582a;
 }
 
 .size-position {

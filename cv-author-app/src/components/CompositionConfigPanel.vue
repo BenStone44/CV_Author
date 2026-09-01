@@ -177,26 +177,26 @@ function numericValue(event: Event) {
 </template>
 
 <style scoped>
-.composition-config { width: min(330px, calc(100vw - 32px)); background: #fff; color: #223041; }
-.composition-config__header { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 12px; border-bottom: 1px solid rgba(24, 33, 47, 0.12); }
+.composition-config { width: min(330px, calc(100vw - 32px)); background: #fff; color: #432818; }
+.composition-config__header { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 12px; border-bottom: 1px solid rgba(67, 40, 24, 0.12); }
 .composition-config__header > div { display: flex; min-width: 0; align-items: baseline; gap: 7px; }
 .composition-config__header strong { font-size: 12px; text-transform: capitalize; }
 .composition-config__header span { color: #718096; font-size: 10px; }
-.composition-config__header button { display: inline-grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #5b6a80; cursor: pointer; }
-.composition-config__header button:hover { background: #edf1f5; color: #223041; }
+.composition-config__header button { display: inline-grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #99582a; cursor: pointer; }
+.composition-config__header button:hover { background: #edf1f5; color: #432818; }
 .composition-config__body { display: grid; gap: 12px; max-height: min(620px, calc(100vh - 180px)); padding: 12px; overflow: auto; }
-.composition-config__section { display: grid; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid rgba(24, 33, 47, 0.1); }
+.composition-config__section { display: grid; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid rgba(67, 40, 24, 0.1); }
 .composition-config__section:last-child { padding-bottom: 0; border-bottom: 0; }
 .composition-config__section > header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .composition-config__section > header strong { font-size: 11px; }
 .composition-config__section > header span { color: #718096; font-size: 9px; }
 .composition-config__segments { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; padding: 3px; border-radius: 6px; background: #edf1f5; }
 .composition-config__segments button { min-height: 30px; border: 0; border-radius: 4px; background: transparent; color: #5b6878; font: inherit; font-size: 10px; cursor: pointer; }
-.composition-config__segments button.is-active { background: #fff; color: #1554b2; box-shadow: 0 1px 2px rgba(24, 33, 47, 0.14); font-weight: 700; }
-.composition-config__field { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 8px; color: #526174; font-size: 10px; }
-.composition-config__field select { width: 100%; min-width: 0; height: 30px; padding: 0 7px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 5px; background: #fff; color: #223041; font: inherit; font-size: 10px; }
-.composition-config__slider { display: grid; grid-template-columns: 72px minmax(0, 1fr) 48px; align-items: center; gap: 7px; color: #526174; font-size: 10px; }
-.composition-config__slider input { width: 100%; min-width: 0; accent-color: #1554b2; }
+.composition-config__segments button.is-active { background: #fff; color: #432818; box-shadow: 0 1px 2px rgba(67, 40, 24, 0.14); font-weight: 700; }
+.composition-config__field { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 8px; color: #99582a; font-size: 10px; }
+.composition-config__field select { width: 100%; min-width: 0; height: 30px; padding: 0 7px; border: 1px solid rgba(67, 40, 24, 0.14); border-radius: 5px; background: #fff; color: #432818; font: inherit; font-size: 10px; }
+.composition-config__slider { display: grid; grid-template-columns: 72px minmax(0, 1fr) 48px; align-items: center; gap: 7px; color: #99582a; font-size: 10px; }
+.composition-config__slider input { width: 100%; min-width: 0; accent-color: #432818; }
 .composition-config__slider output { color: #294a6d; font-variant-numeric: tabular-nums; text-align: right; }
 .composition-config__summary { display: grid; gap: 7px; margin: 0; }
 .composition-config__summary div { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 8px; font-size: 10px; }

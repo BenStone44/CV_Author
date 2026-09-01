@@ -1254,10 +1254,10 @@ watch(activeDataset, (dataset) => {
   min-width: 340px;
   margin: 10px 0 10px 10px;
   overflow: hidden;
-  border: 1px solid rgba(24, 33, 47, 0.1);
+  border: 1px solid rgba(67, 40, 24, 0.1);
   border-radius: 8px;
-  background: #f8fafc;
-  box-shadow: 0 8px 22px rgba(45, 89, 126, 0.08);
+  background: #fffaf0;
+  box-shadow: 0 8px 22px rgba(67, 40, 24, 0.08);
   transition:
     width 180ms ease,
     flex-basis 180ms ease,
@@ -1271,8 +1271,8 @@ watch(activeDataset, (dataset) => {
 }
 
 .data-panel--dragging {
-  border-color: #1c7ed6;
-  box-shadow: 0 0 0 3px rgba(28, 126, 214, 0.14);
+  border-color: #99582a;
+  box-shadow: 0 0 0 3px rgba(153, 88, 42, 0.14);
 }
 
 .data-panel__header {
@@ -1281,7 +1281,7 @@ watch(activeDataset, (dataset) => {
   justify-content: space-between;
   min-height: 48px;
   padding: 10px 12px;
-  border-bottom: 1px solid rgba(24, 33, 47, 0.08);
+  border-bottom: 1px solid rgba(67, 40, 24, 0.08);
   background: #fff;
 }
 
@@ -1290,12 +1290,12 @@ watch(activeDataset, (dataset) => {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  color: #18212f;
+  color: #432818;
 }
 
 .data-panel__title h2 {
   margin: 0;
-  color: #516176;
+  color: #99582a;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -1317,8 +1317,8 @@ watch(activeDataset, (dataset) => {
   display: grid;
   gap: 5px;
   padding: 8px 10px;
-  border-bottom: 1px solid rgba(24, 33, 47, 0.1);
-  background: #f4f8fc;
+  border-bottom: 1px solid rgba(67, 40, 24, 0.1);
+  background: #fff3d0;
 }
 
 .import-menu > button {
@@ -1327,7 +1327,7 @@ watch(activeDataset, (dataset) => {
   align-items: center;
   gap: 8px;
   padding: 5px 8px;
-  border: 1px solid rgba(24, 33, 47, 0.12);
+  border: 1px solid rgba(67, 40, 24, 0.12);
   border-radius: 5px;
   background: #fff;
   color: #33465b;
@@ -1338,9 +1338,9 @@ watch(activeDataset, (dataset) => {
 }
 
 .import-menu > button:hover {
-  border-color: rgba(28, 126, 214, 0.3);
-  background: #edf5fc;
-  color: #1554b2;
+  border-color: rgba(153, 88, 42, 0.3);
+  background: #fff3d0;
+  color: #432818;
 }
 
 .import-menu > button:disabled {
@@ -1364,9 +1364,9 @@ watch(activeDataset, (dataset) => {
 }
 
 .data-panel__icon-button:hover:not(:disabled) {
-  border-color: rgba(28, 126, 214, 0.24);
-  background: #edf5fc;
-  color: #1554b2;
+  border-color: rgba(153, 88, 42, 0.24);
+  background: #fff3d0;
+  color: #432818;
 }
 
 .data-panel__icon-button--danger:hover:not(:disabled) {
@@ -1376,9 +1376,9 @@ watch(activeDataset, (dataset) => {
 }
 
 .data-panel__icon-button--active {
-  border-color: rgba(28, 126, 214, 0.28);
-  background: #dcecfb;
-  color: #1554b2;
+  border-color: rgba(153, 88, 42, 0.28);
+  background: #ffe6a7;
+  color: #432818;
 }
 
 .data-panel__icon-button:disabled {
@@ -1399,9 +1399,9 @@ watch(activeDataset, (dataset) => {
   width: 100%;
   min-width: 0;
   padding: 3px 24px 3px 5px;
-  border: 1px solid rgba(28, 126, 214, 0.24);
+  border: 1px solid rgba(153, 88, 42, 0.24);
   border-radius: 5px;
-  background: #f7fbff;
+  background: #fff3d0;
   color: #27384b;
   font: inherit;
   overflow: hidden;
@@ -1413,7 +1413,7 @@ watch(activeDataset, (dataset) => {
 }
 
 .data-panel__dataset-select:focus-visible {
-  outline: 2px solid rgba(28, 126, 214, 0.35);
+  outline: 2px solid rgba(153, 88, 42, 0.35);
   outline-offset: 1px;
 }
 
@@ -1447,8 +1447,8 @@ watch(activeDataset, (dataset) => {
   scrollbar-color: transparent transparent;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-  border-top: 1px solid rgba(24, 33, 47, 0.08);
-  background: #fff;
+  border-top: 1px solid rgba(67, 40, 24, 0.08);
+  background: #fff8e7;
 }
 
 .data-table-wrap:hover,
@@ -1475,7 +1475,7 @@ watch(activeDataset, (dataset) => {
 }
 
 .graph-table-section {
-  border-bottom: 1px solid rgba(24, 33, 47, 0.1);
+  border-bottom: 1px solid rgba(67, 40, 24, 0.1);
 }
 
 .graph-table-section:last-child {
@@ -1488,7 +1488,7 @@ watch(activeDataset, (dataset) => {
   justify-content: space-between;
   gap: 10px;
   padding: 9px 12px 7px;
-  background: #fff;
+  background: #ffe6a7;
 }
 
 .graph-table-section__header h3 {
@@ -1505,19 +1505,19 @@ watch(activeDataset, (dataset) => {
   color: #7a8797;
   font-size: 10px;
 }
-.graph-import { display: grid; gap: 8px; padding: 10px 12px; border-top: 1px solid rgba(24, 33, 47, 0.1); border-bottom: 1px solid rgba(24, 33, 47, 0.1); background: #f8fafc; }
+.graph-import { display: grid; gap: 8px; padding: 10px 12px; border-top: 1px solid rgba(67, 40, 24, 0.1); border-bottom: 1px solid rgba(67, 40, 24, 0.1); background: #fffaf0; }
 .graph-import__header { display: grid; gap: 2px; }
 .graph-import__header strong { color: #263548; font-size: 11px; }
 .graph-import__header small { color: #718096; font-size: 10px; }
 .graph-import__controls { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
-.graph-import__controls button { min-width: 0; overflow: hidden; padding: 6px 8px; border: 1px solid rgba(24, 33, 47, 0.14); border-radius: 5px; background: #fff; color: #42546c; font: inherit; font-size: 10px; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.graph-import__controls button { min-width: 0; overflow: hidden; padding: 6px 8px; border: 1px solid rgba(67, 40, 24, 0.14); border-radius: 5px; background: #fff; color: #42546c; font: inherit; font-size: 10px; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .graph-import__controls button:disabled { cursor: not-allowed; opacity: 0.55; }
-.graph-import__controls .graph-import__submit { background: #1554b2; color: #fff; font-weight: 700; text-align: center; }
+.graph-import__controls .graph-import__submit { background: #432818; color: #fff; font-weight: 700; text-align: center; }
 
 .graph-table-section__empty {
   margin: 0;
   padding: 18px 12px;
-  background: #fff;
+  background: #fff3d0;
 }
 
 .data-table {
@@ -1525,7 +1525,8 @@ watch(activeDataset, (dataset) => {
   min-width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  color: #263548;
+  background: #fffaf0;
+  color: #432818;
   font-size: 11px;
   line-height: 1.35;
 }
@@ -1537,8 +1538,8 @@ watch(activeDataset, (dataset) => {
   height: 32px;
   overflow: hidden;
   padding: 6px 9px;
-  border-right: 1px solid #e5eaf0;
-  border-bottom: 1px solid #e5eaf0;
+  border-right: 1px solid rgba(67, 40, 24, 0.12);
+  border-bottom: 1px solid rgba(67, 40, 24, 0.12);
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1548,8 +1549,8 @@ watch(activeDataset, (dataset) => {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: #edf3f8;
-  color: #33465b;
+  background: #bb9457;
+  color: #432818;
   font-weight: 700;
 }
 
@@ -1611,7 +1612,7 @@ watch(activeDataset, (dataset) => {
 
 .data-table tbody tr:nth-child(even) td,
 .data-table tbody tr:nth-child(even) th {
-  background: #f8fafc;
+  background: #fff3d0;
 }
 
 .data-table__row-number {
@@ -1621,15 +1622,15 @@ watch(activeDataset, (dataset) => {
   width: 42px;
   min-width: 42px !important;
   max-width: 42px !important;
-  background: #f1f5f8;
-  color: #7a8797;
+  background: #ffe6a7;
+  color: #99582a;
   font-weight: 500;
   text-align: right !important;
 }
 
 .data-table thead .data-table__row-number {
   z-index: 3;
-  background: #e5edf4;
+  background: #bb9457;
 }
 
 .data-table__field-name {
@@ -1639,8 +1640,8 @@ watch(activeDataset, (dataset) => {
   width: var(--data-table-field-width);
   min-width: var(--data-table-field-width) !important;
   max-width: var(--data-table-field-width) !important;
-  background: #f1f5f8;
-  color: #33465b;
+  background: #ffe6a7;
+  color: #432818;
   font-weight: 700;
 }
 
@@ -1666,19 +1667,19 @@ watch(activeDataset, (dataset) => {
   position: sticky;
   left: 0;
   z-index: 4;
-  background: #f1f5f8;
+  background: #ffe6a7;
   background-clip: padding-box;
 }
 
 .graph-table-section .data-table thead .data-table__row-number,
 .graph-table-section .data-table thead .data-table__field-name {
   z-index: 5;
-  background: #e5edf4;
+  background: #bb9457;
 }
 
 .data-table thead .data-table__field-name {
   z-index: 3;
-  background: #e5edf4;
+  background: #bb9457;
 }
 
 .data-table--transposed .data-table__field-name span,
@@ -1719,7 +1720,7 @@ watch(activeDataset, (dataset) => {
   justify-content: center;
   gap: 10px;
   min-height: 180px;
-  border-top: 1px solid rgba(24, 33, 47, 0.06);
+  border-top: 1px solid rgba(67, 40, 24, 0.06);
   color: #93a0af;
   font-size: 12px;
 }
@@ -1728,7 +1729,7 @@ watch(activeDataset, (dataset) => {
   flex: 0 0 auto;
   min-height: 30px;
   padding: 8px 12px;
-  border-top: 1px solid rgba(24, 33, 47, 0.08);
+  border-top: 1px solid rgba(67, 40, 24, 0.08);
   background: #fff;
   color: #6b7788;
   font-size: 10px;
@@ -1736,8 +1737,8 @@ watch(activeDataset, (dataset) => {
 
 .transform-panel {
   flex: 0 0 auto;
-  border-top: 1px solid rgba(24, 33, 47, 0.1);
-  background: #f8fafc;
+  border-top: 1px solid rgba(67, 40, 24, 0.1);
+  background: #fffaf0;
 }
 
 .transform-panel__header {
@@ -1750,7 +1751,7 @@ watch(activeDataset, (dataset) => {
 
 .transform-panel__header h3 {
   margin: 0;
-  color: #516176;
+  color: #99582a;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -1860,9 +1861,9 @@ watch(activeDataset, (dataset) => {
 }
 
 .transform-panel__actions button:hover:not(:disabled) {
-  border-color: rgba(28, 126, 214, 0.42);
-  background: #edf5fc;
-  color: #1554b2;
+  border-color: rgba(153, 88, 42, 0.42);
+  background: #fff3d0;
+  color: #432818;
 }
 
 .transform-panel__actions button:disabled {
@@ -1886,7 +1887,7 @@ watch(activeDataset, (dataset) => {
   width: min(440px, calc(100vw - 32px));
   max-height: min(680px, calc(100vh - 40px));
   overflow: hidden;
-  border: 1px solid rgba(24, 33, 47, 0.14);
+  border: 1px solid rgba(67, 40, 24, 0.14);
   border-radius: 8px;
   background: #fff;
   box-shadow: 0 22px 55px rgba(21, 32, 46, 0.24);
@@ -1932,7 +1933,7 @@ watch(activeDataset, (dataset) => {
 
 .transform-control > span,
 .transform-segmented legend {
-  color: #526174;
+  color: #99582a;
   font-size: 11px;
   font-weight: 700;
 }
@@ -1954,7 +1955,7 @@ watch(activeDataset, (dataset) => {
 .transform-control select:focus,
 .transform-control input:focus {
   border-color: #438dcc;
-  outline: 2px solid rgba(28, 126, 214, 0.16);
+  outline: 2px solid rgba(153, 88, 42, 0.16);
   outline-offset: 0;
 }
 
@@ -1985,7 +1986,7 @@ watch(activeDataset, (dataset) => {
   width: 14px;
   height: 14px;
   margin: 0;
-  accent-color: #1c7ed6;
+  accent-color: #99582a;
 }
 
 .transform-dialog__text-actions {
@@ -2025,7 +2026,7 @@ watch(activeDataset, (dataset) => {
 }
 
 .transform-value-list label:hover {
-  background: #edf3f8;
+  background: #ffe6a7;
 }
 
 .transform-value-list label span {
@@ -2071,7 +2072,7 @@ watch(activeDataset, (dataset) => {
   min-height: 34px;
   border: 1px solid #cfd7e0;
   background: #fff;
-  color: #526174;
+  color: #99582a;
   font-size: 11px;
   cursor: pointer;
 }
@@ -2091,7 +2092,7 @@ watch(activeDataset, (dataset) => {
 .transform-segmented__options label.transform-segmented__active {
   border-color: #438dcc;
   background: #e5f1fb;
-  color: #1554b2;
+  color: #432818;
   font-weight: 700;
 }
 
@@ -2110,7 +2111,7 @@ watch(activeDataset, (dataset) => {
   min-height: 58px;
   padding: 10px 16px;
   border-top: 1px solid #e4e8ed;
-  background: #f8fafc;
+  background: #fffaf0;
 }
 
 .transform-dialog__footer button {
@@ -2126,12 +2127,12 @@ watch(activeDataset, (dataset) => {
 .transform-dialog__cancel {
   border: 1px solid #cfd7e0;
   background: #fff;
-  color: #526174;
+  color: #99582a;
 }
 
 .transform-dialog__apply {
   border: 1px solid #176eb8;
-  background: #1c7ed6;
+  background: #99582a;
   color: #fff;
 }
 

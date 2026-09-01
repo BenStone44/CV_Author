@@ -101,6 +101,46 @@ describe("semantic Case 1 renderers", () => {
     expect(grouped.scales?.y.domain).toEqual(expect.arrayContaining([expect.any(Number)]));
   });
 
+  it("places a swapped single bar's quantitative field on X and category field on Y", () => {
+    const swappedDataset: Dataset = {
+      id: "swapped-single-bar",
+      name: "swapped-single-bar.csv",
+      columns: [
+        { name: "category", type: "nominal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { category: "A", value: "8" },
+        { category: "B", value: "12" },
+      ],
+      primaryKey: ["category"],
+    };
+    const result = renderDeterministicChart({
+      chartId: "swapped-single-bar",
+      width: 500,
+      height: 300,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Cartesian", origin: { x: 0, y: 300 }, xDirection: 1, yDirection: -1 },
+      chartSpec: {
+        chartType: "SingleBarChart",
+        datasetId: swappedDataset.id,
+        axisSwapped: true,
+        encodings: {
+          x: { field: "category", type: "nominal" },
+          y: { field: "value", type: "quantitative" },
+        },
+      },
+      dataset: swappedDataset,
+    });
+
+    expect(result.scales?.x.type).toBe("linear");
+    expect(result.scales?.y.type).toBe("point");
+    const firstBar = result.content.match(/<rect[^>]*data-category-key="A"[^>]*width="([^"]+)" height="([^"]+)"/);
+    expect(firstBar).not.toBeNull();
+    expect(Number(firstBar?.[1])).toBeGreaterThan(Number(firstBar?.[2]));
+  });
+
   it("uses every selected group item field for grouped and stacked identities", () => {
     const multiGroupDataset: Dataset = {
       id: "multi-group-bars",

@@ -585,6 +585,30 @@ describe("implemented chart template cards", () => {
     expect(chart.chartSpec?.scales?.y?.type).toBe("utc");
   });
 
+  it("resolves the field occupying each physical axis after a swap", () => {
+    const chart = lineChart("swapped-axis-binding", 120, false);
+    chart.chartSpec = {
+      ...chart.chartSpec!,
+      chartType: "SingleBarChart",
+      encodings: {
+        x: { field: "series", type: "nominal" },
+        y: { field: "value", type: "quantitative" },
+      },
+    };
+    const store = useCanvasStore(ref(null));
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    store.canvasNodes.value = [chart];
+    store.selectedIds.value = [chart.id];
+    store.axisBindingTarget.value = { nodeId: chart.id, channel: "x" };
+
+    expect(store.axisBindingValue.value).toBe("series");
+    store.setAxisSwap(true);
+    expect(store.axisBindingValue.value).toBe("value");
+    store.axisBindingTarget.value = { nodeId: chart.id, channel: "y" };
+    expect(store.axisBindingValue.value).toBe("series");
+  });
+
   it("keeps native encodings and Series synchronized after panel edits", () => {
     const dataset: Dataset = {
       id: "channel-resolution-line",

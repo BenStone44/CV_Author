@@ -13,6 +13,7 @@ import type {
   RelativeNestedParameters,
   SvgCandidate,
 } from "../../types";
+import { isCartesianTreeChart } from "../../utils/treeLayout";
 
 // Nested children use an independent visual size scale. The parent mark only
 // supplies the anchor location; it must not determine the child's base size.
@@ -1735,6 +1736,12 @@ export function useCanvasCompositionOperations(context: any) {
         width: target.width,
         height: target.height,
       };
+      // Dendrograms render labels and node radii outside their plot area.
+      // Composition portals must sit outside that complete visual footprint;
+      // other Cartesian charts continue to use their plot rectangle.
+      const interactionArea = isCartesianTreeChart(target.chartSpec.chartType)
+        ? getNodeSelectionBounds(target)
+        : plotArea;
       const inside = localPoint.x >= plotArea.x
         && localPoint.x <= plotArea.x + plotArea.width
         && localPoint.y >= plotArea.y
@@ -1755,21 +1762,21 @@ export function useCanvasCompositionOperations(context: any) {
       }
       if (nestedLevelEntered) continue;
 
-      const edgeSizeX = Math.min(plotArea.width * 0.22, Math.max(18 / Math.max(viewZoom.value * Math.abs(target.scaleX), 0.25), 12));
-      const edgeSizeY = Math.min(plotArea.height * 0.22, Math.max(18 / Math.max(viewZoom.value * Math.abs(target.scaleY), 0.25), 12));
-      const plotRight = plotArea.x + plotArea.width;
-      const plotBottom = plotArea.y + plotArea.height;
-      const inVerticalSpan = localPoint.y >= plotArea.y && localPoint.y <= plotBottom;
-      const inHorizontalSpan = localPoint.x >= plotArea.x && localPoint.x <= plotRight;
+      const edgeSizeX = Math.min(interactionArea.width * 0.22, Math.max(18 / Math.max(viewZoom.value * Math.abs(target.scaleX), 0.25), 12));
+      const edgeSizeY = Math.min(interactionArea.height * 0.22, Math.max(18 / Math.max(viewZoom.value * Math.abs(target.scaleY), 0.25), 12));
+      const plotRight = interactionArea.x + interactionArea.width;
+      const plotBottom = interactionArea.y + interactionArea.height;
+      const inVerticalSpan = localPoint.y >= interactionArea.y && localPoint.y <= plotBottom;
+      const inHorizontalSpan = localPoint.x >= interactionArea.x && localPoint.x <= plotRight;
       const onLeft = inVerticalSpan
-        && localPoint.x >= plotArea.x - edgeSizeX
-        && localPoint.x <= plotArea.x;
+        && localPoint.x >= interactionArea.x - edgeSizeX
+        && localPoint.x <= interactionArea.x;
       const onRight = inVerticalSpan
         && localPoint.x >= plotRight
         && localPoint.x <= plotRight + edgeSizeX;
       const onTop = inHorizontalSpan
-        && localPoint.y >= plotArea.y - edgeSizeY
-        && localPoint.y <= plotArea.y;
+        && localPoint.y >= interactionArea.y - edgeSizeY
+        && localPoint.y <= interactionArea.y;
       const onBottom = inHorizontalSpan
         && localPoint.y >= plotBottom
         && localPoint.y <= plotBottom + edgeSizeY;
@@ -1787,9 +1794,9 @@ export function useCanvasCompositionOperations(context: any) {
           const other = findCanvasNode(otherId);
           return other ? [{ link, node: other }] : [];
         });
-        const cornerLeft = localPoint.x >= plotArea.x - edgeSizeX && localPoint.x <= plotArea.x;
+        const cornerLeft = localPoint.x >= interactionArea.x - edgeSizeX && localPoint.x <= interactionArea.x;
         const cornerRight = localPoint.x >= plotRight && localPoint.x <= plotRight + edgeSizeX;
-        const cornerTop = localPoint.y >= plotArea.y - edgeSizeY && localPoint.y <= plotArea.y;
+        const cornerTop = localPoint.y >= interactionArea.y - edgeSizeY && localPoint.y <= interactionArea.y;
         const cornerBottom = localPoint.y >= plotBottom && localPoint.y <= plotBottom + edgeSizeY;
         const horizontalNeighbor = cornerLeft
           ? horizontalNeighbors.find(({ node }) => collectNodeSelectionBounds(node).maxX <= collectNodeSelectionBounds(target).minX + 1)
@@ -1807,8 +1814,8 @@ export function useCanvasCompositionOperations(context: any) {
           && concatEdgeNodesAreCompatible(verticalNeighbor.node, source, "horizontal", "y")
           && concatEdgeNodesAreCompatible(horizontalNeighbor.node, source, "vertical", "x")) {
           const cornerRect = {
-            x: cornerLeft ? plotArea.x - edgeSizeX : plotRight,
-            y: cornerTop ? plotArea.y - edgeSizeY : plotBottom,
+            x: cornerLeft ? interactionArea.x - edgeSizeX : plotRight,
+            y: cornerTop ? interactionArea.y - edgeSizeY : plotBottom,
             width: edgeSizeX,
             height: edgeSizeY,
           };
@@ -1852,15 +1859,15 @@ export function useCanvasCompositionOperations(context: any) {
             && concatNodesAreCompatible(compositionNodes, direction, sharedChannel);
         const localZone: ChartPlotArea = horizontal
           ? {
-            x: onLeft ? plotArea.x - edgeSizeX : plotRight,
-            y: plotArea.y,
+            x: onLeft ? interactionArea.x - edgeSizeX : plotRight,
+            y: interactionArea.y,
             width: edgeSizeX,
-            height: plotArea.height,
+            height: interactionArea.height,
           }
           : {
-            x: plotArea.x,
-            y: onTop ? plotArea.y - edgeSizeY : plotBottom,
-            width: plotArea.width,
+            x: interactionArea.x,
+            y: onTop ? interactionArea.y - edgeSizeY : plotBottom,
+            width: interactionArea.width,
             height: edgeSizeY,
           };
         const geometry = localRectDropGeometry(target, localZone);

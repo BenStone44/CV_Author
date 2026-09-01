@@ -3,7 +3,7 @@ import { scaleLinear, scaleLog, scalePoint, scaleUtc } from "d3-scale";
 import { arc, pie } from "d3-shape";
 import type { CartesianCoordinateGuide, ChartEncoding, ChartSpec, Dataset, LayerSpec, NestedChildFrame, NestedSpec, ChartPlotArea, ChartPolarArea, ChartScaleSpec, CoordinateGuide, MarkGroupSharedConfig } from "../types";
 import { renderLineChart, type LineRenderInput } from "./lineRenderer";
-import { cartesianAxisEncoding, normalizeBarChartVariant, normalizeChartTemplate } from "./chartTemplates";
+import { cartesianAxisEncoding, normalizeBarChartVariant, normalizeChartTemplate, physicalCartesianAxisEncoding } from "./chartTemplates";
 import { getChartEncodingSchema, type ChartRendererKey } from "./chartEncodingSchemas";
 import { resolvedPolarRadiusMode } from "./encodingConfig";
 import {
@@ -19,7 +19,7 @@ import {
 } from "./visualMapping";
 import { renderAdvancedChart } from "./advancedRenderer";
 import { csvRowKey } from "./csvDataEngine";
-import { chartAxisLabelsVisible, chartAxisVisible } from "./chartAxes";
+import { chartAxisVisible } from "./chartAxes";
 import { materializeGraphDataset } from "./chartDataPipeline";
 import { adaptiveLabel } from "./adaptiveLabels";
 import { globalPalette } from "../config/global";
@@ -155,8 +155,9 @@ function renderScatterChart(input: LineRenderInput) {
   const marks = input.dataset.rows.map((row, index) => {
     const xv = row[xEncoding.field] ?? "";
     const yv = row[yEncoding.field] ?? "";
-    const cx = xPosition(xv);
-    const cy = yPosition(yv);
+    const swapped = input.chartSpec.axisSwapped === true;
+    const cx = xPosition(swapped ? yv : xv);
+    const cy = yPosition(swapped ? xv : yv);
     if (!Number.isFinite(cx) || !Number.isFinite(cy)) return "";
     const rowKey = key(input.dataset, row) || String(index);
     const seriesKey = colorField ? row[colorField] ?? "" : input.chartSpec.series ? row[input.chartSpec.series.field] ?? "" : "";
@@ -482,8 +483,10 @@ function renderRadialBarChart(input: GenericRenderInput) {
     return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="bar" data-mark-group-id="mark-group:${esc(input.chartId)}:bar" data-row-key="${esc(key(input.dataset, datum.row, datum.rowIndex))}" data-category-key="${esc(datum.category)}" data-segment-value="${esc(datum.category)}" data-angle="${angle}" data-theta-value="${theta ? datum.thetaValue : 1}" data-value="${datum.value}" d="${path}" transform="translate(${cx} ${cy})" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 0.9)}"><title>${esc(datum.category)}\n${datum.value}</title></path>`;
   }).join("");
 
+  // Mark labels are opt-in. Axis label visibility belongs to the coordinate
+  // layer and must not implicitly add text on top of radial marks.
   const labels = data.length <= 24
-    && chartAxisLabelsVisible(input.chartSpec, input.coordinateGuide, "theta")
+    && config.labelsVisible === true
     ? data.map((datum, index) => {
       const angleDatum = angleLayout[index];
       if (!angleDatum) return "";
@@ -694,9 +697,11 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
         ?? palette[(segmentPaletteIndexes.get(field) ?? index) % palette.length]!;
       return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="arc" data-mark-group-id="mark-group:${esc(input.chartId)}:arc" data-category-key="${esc(categoryKey)}" data-segment-value="${esc(field)}" data-theta-field="${esc(component?.thetaField ?? "")}" data-theta-value="${componentValues[index] ?? 0}" data-angle-field="${esc(component?.thetaField ?? "")}" data-angle-value="${componentValues[index] ?? 0}" data-flatten-fields="${esc(flattenFields.join("|"))}" data-flatten-values="${esc((component?.flattenValues ?? []).join("|"))}" data-radius-mode="${radiusMode}" data-radius-field="${esc(radius?.field ?? "")}" data-radius-value="${Number.isFinite(radiusValue) ? radiusValue : ""}" d="${path(datum) ?? ""}" transform="translate(${cx} ${cy})" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 1)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
     }).join("");
+    // Segment labels are mark text, not theta-axis labels. Keep them hidden by
+    // default and require an explicit mark-group opt-in.
     const showSegmentLabels = !!segment
-      && input.coordinateGuide?.type === "Polar"
-      && chartAxisLabelsVisible(input.chartSpec, input.coordinateGuide, "theta");
+      && config.labelsVisible === true
+      && input.coordinateGuide?.type === "Polar";
     const segmentLabels = showSegmentLabels
       ? layout.map((datum, index) => {
         const component = components[index];
@@ -784,8 +789,8 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
 }
 
 function renderMatrixChart(input: GenericRenderInput) {
-  const rowEncoding = cartesianAxisEncoding(input.chartSpec, "y") ?? input.chartSpec.encodings.row;
-  const columnEncoding = cartesianAxisEncoding(input.chartSpec, "x") ?? input.chartSpec.encodings.column;
+  const rowEncoding = physicalCartesianAxisEncoding(input.chartSpec, "y") ?? input.chartSpec.encodings.row;
+  const columnEncoding = physicalCartesianAxisEncoding(input.chartSpec, "x") ?? input.chartSpec.encodings.column;
   const legacyValueEncoding = input.chartSpec.encodings.value;
   const colorEncoding = input.chartSpec.encodings.color;
   const valueEncoding = colorEncoding?.type === "quantitative" ? colorEncoding : legacyValueEncoding;
@@ -974,6 +979,8 @@ export type GenericRenderInput = {
 export type DeterministicChartResult = {
   content: string;
   plotArea: ChartPlotArea;
+  /** Optional rendered footprint used by the canvas selection frame. */
+  selectionBounds?: ChartPlotArea;
   polarArea?: ChartPolarArea;
   scales?: { x: ChartScaleSpec; y: ChartScaleSpec };
 };

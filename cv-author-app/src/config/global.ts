@@ -9,7 +9,7 @@ export const globalPalette = {
   categorical: [
     "#606c38",
     "#283618",
-    "#fefae0",
+    "#ffe6a7",
     "#dda15e",
     "#bc6c25",
     "#780000",
@@ -18,7 +18,24 @@ export const globalPalette = {
     "#669bbc",
   ],
   gradient: [
-    "#ffffff",
-    "#bc6c25",
+    "#ffedd8",
+    "#f3d5b5",
+    "#e7bc91",
+    "#d4a276",
+    "#bc8a5f",
+    "#a47148",
+    "#8b5e34",
+    "#6f4518",
+    "#603808",
+    "#583101",
+
   ],
 };
+
+/** Colors exposed by frontend appearance controls. */
+export const frontendPalette = [
+  "#432818",
+  "#99582a",
+  "#ffe6a7",
+  "#bb9457",
+] as const;

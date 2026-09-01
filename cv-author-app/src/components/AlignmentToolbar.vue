@@ -104,10 +104,10 @@ const emit = defineEmits<{
   height: 30px;
   flex: 0 0 30px;
   padding: 0;
-  border: 1px solid rgba(24, 33, 47, 0.1);
+  border: 1px solid rgba(67, 40, 24, 0.1);
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.8);
-  color: #223041;
+  color: #432818;
   cursor: pointer;
 }
 .icon-button svg {
@@ -120,9 +120,9 @@ const emit = defineEmits<{
   stroke-linejoin: round;
 }
 .icon-button:hover:not(:disabled) {
-  border-color: rgba(28, 126, 214, 0.35);
-  background: #edf5fc;
-  color: #1554b2;
+  border-color: rgba(153, 88, 42, 0.35);
+  background: #fff3d0;
+  color: #432818;
 }
 .icon-button:disabled {
   opacity: 0.45;

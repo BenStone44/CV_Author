@@ -431,14 +431,23 @@ export function renderDefaultChartSvg(
     chartSpec: prepared.chartSpec,
     dataset: prepared.dataset,
   });
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" data-default-dataset-id="${defaultDataset.id}">${result.content}</svg>`;
+  const markup = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" data-default-dataset-id="${defaultDataset.id}">${result.content}</svg>`;
+  return stripSvgTextElements(markup);
+}
+
+/** Remove visible text from catalog previews while preserving chart geometry. */
+export function stripSvgTextElements(markup: string) {
+  return markup
+    .replace(/<text\b[^>]*>[\s\S]*?<\/text\s*>/gi, "")
+    .replace(/<text\b[^>]*\/\s*>/gi, "");
 }
 
 export function createDefaultDataCandidate(
   candidate: Omit<SvgCandidate, "src" | "svgMarkup">,
 ): SvgCandidate {
-  const svgMarkup = renderDefaultChartSvg(candidate.chartType);
-  if (!svgMarkup) throw new Error(`No default data renderer for ${candidate.chartType}.`);
+  const renderedMarkup = renderDefaultChartSvg(candidate.chartType);
+  if (!renderedMarkup) throw new Error(`No default data renderer for ${candidate.chartType}.`);
+  const svgMarkup = stripSvgTextElements(renderedMarkup);
   return {
     ...candidate,
     svgMarkup,

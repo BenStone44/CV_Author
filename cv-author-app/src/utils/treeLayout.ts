@@ -1,4 +1,4 @@
-import type { ChartSpec, EncodingChannel } from "../types";
+import type { ChartSpec, Dataset, EncodingChannel } from "../types";
 
 export type CartesianTreeDirection = "right" | "left" | "down" | "up";
 
@@ -24,4 +24,27 @@ export function cartesianTreeDirection(spec: ChartSpec | null | undefined) {
 
 export function cartesianTreeLeafAxis(direction: CartesianTreeDirection): EncodingChannel {
   return direction === "left" || direction === "right" ? "y" : "x";
+}
+
+/**
+ * Values represented by terminal nodes on a Cartesian dendrogram's leaf axis.
+ * The axis uses the same ordering encoding as the renderer (category, then
+ * key), while hierarchy membership is determined from key/parent links.
+ */
+export function cartesianTreeLeafValues(spec: ChartSpec | null | undefined, rows: Dataset["rows"] = []) {
+  if (!isCartesianTreeChart(spec?.chartType)) return [];
+  const keyField = spec?.encodings.key?.field;
+  const parentField = spec?.encodings.parent?.field;
+  if (!keyField || !parentField) return [];
+  const childKeys = new Set(rows
+    .map((row) => row[parentField])
+    .filter((value): value is string => value !== undefined && value !== "")
+    .map(String));
+  const orderField = spec?.encodings.category?.field ?? keyField;
+  const values = rows
+    .filter((row) => !childKeys.has(String(row[keyField] ?? "")))
+    .map((row) => row[orderField] ?? row[keyField])
+    .filter((value): value is string => value !== undefined && value !== "")
+    .map(String);
+  return Array.from(new Set(values));
 }

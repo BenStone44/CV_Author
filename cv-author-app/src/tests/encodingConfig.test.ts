@@ -9,6 +9,7 @@ import {
   resolveChartEncodingIssues,
   resolveChartTemplateVariant,
 } from "../utils/encodingConfig";
+import { physicalCartesianAxisChannel } from "../utils/chartTemplates";
 import {
   chartTemplateContracts,
   getTemplateBindingContract,
@@ -22,6 +23,18 @@ import { chartEncodingSchemas, getChartEncodingSchema } from "../utils/chartEnco
 const channels = (chartType: string) => getEncodingChannelConfigs(chartType).map((config) => config.channel);
 
 describe("card encoding configuration", () => {
+  it("maps physical Cartesian axes to the swapped semantic channels", () => {
+    const spec = {
+      chartType: "SingleBarChart",
+      datasetId: "data",
+      axisSwapped: true,
+      encodings: {},
+    };
+    expect(physicalCartesianAxisChannel(spec, "x")).toBe("y");
+    expect(physicalCartesianAxisChannel(spec, "y")).toBe("x");
+    expect(physicalCartesianAxisChannel({ ...spec, axisSwapped: false }, "x")).toBe("x");
+  });
+
   it("keeps every built-in chart in the unified encoding schema", () => {
     const chartTypes = [
       "LineGraph", "MultiLineChart", "Scatterplot", "SingleBarChart", "GroupedBarChart",

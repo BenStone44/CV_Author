@@ -446,6 +446,35 @@ describe("advanced chart cards", () => {
     expect(result.content).toMatch(/d="[^"]*C/);
   });
 
+  it("anchors zero-valued streamgraph endpoints on the centered baseline", () => {
+    const result = render("Streamgraph", {
+      id: "zero-endpoint-stream",
+      name: "zero-endpoint-stream.csv",
+      columns: [
+        { name: "date", type: "temporal" },
+        { name: "series", type: "nominal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { date: "2026-01-01", series: "A", value: "0" },
+        { date: "2026-01-02", series: "A", value: "8" },
+        { date: "2026-01-03", series: "A", value: "0" },
+      ],
+    }, {
+      encodings: {
+        x: { field: "date", type: "temporal" },
+        y: { field: "value", type: "quantitative" },
+        color: { field: "series", type: "nominal" },
+      },
+    });
+
+    const yRange = result.scales?.y.range as [number, number];
+    const center = (yRange[0] + yRange[1]) / 2;
+    const path = result.content.match(/data-mark-role="area"[^>]*d="([^"]+)"/)?.[1] ?? "";
+    const start = path.match(/^M[^,]+,([0-9.-]+)/)?.[1];
+    expect(Number(start)).toBeCloseTo(center, 3);
+  });
+
   it.each(["StackedAreaChart", "Streamgraph"])("swaps %s like MultiLine while preserving every series", (chartType) => {
     const result = render(chartType, seriesDataset, {
       axisSwapped: true,
@@ -517,6 +546,65 @@ describe("advanced chart cards", () => {
     const radii = Array.from(result.content.matchAll(/<circle r="([^"]+)"/g), (match) => Number(match[1]));
     expect(radii.length).toBeGreaterThan(0);
     expect(new Set(radii)).toEqual(new Set([18]));
+  });
+
+  it("reports dendrogram selection bounds from rendered node and label extents", () => {
+    const result = render("Dendrogram", hierarchyDataset, {
+      encodings: {
+        key: { field: "id", type: "nominal" },
+        parent: { field: "parent", type: "nominal" },
+        value: { field: "value", type: "quantitative" },
+      },
+      markGroups: [{
+        id: "dendrogram-selection-bounds",
+        chartId: "Dendrogram",
+        role: "node",
+        memberKeys: [],
+        sharedConfig: { size: 18 },
+      }],
+    });
+    const selectionBounds = (result as { selectionBounds?: { x: number; y: number; width: number; height: number } }).selectionBounds;
+    expect(selectionBounds).toBeDefined();
+    expect(selectionBounds!.width).toBeGreaterThan(0);
+    expect(selectionBounds!.height).toBeGreaterThan(0);
+    expect(selectionBounds!.x).not.toBe(result.plotArea!.x);
+    expect(selectionBounds!.y).not.toBe(result.plotArea!.y);
+  });
+
+  it("reports force-directed selection bounds from rendered nodes and labels", () => {
+    const graphDataset: Dataset = {
+      id: "network-selection",
+      name: "network-selection.csv",
+      columns: [],
+      rows: [],
+      graph: {
+        nodes: {
+          columns: [{ name: "id", type: "nominal" }, { name: "label", type: "nominal" }],
+          rows: [{ id: "A", label: "A very long network label" }, { id: "B", label: "B" }],
+        },
+        edges: {
+          columns: [{ name: "source", type: "nominal" }, { name: "target", type: "nominal" }],
+          rows: [{ source: "A", target: "B" }],
+        },
+      },
+    };
+    const result = render("ForceDirectedGraph", graphDataset, {
+      encodings: {
+        key: { field: "id", type: "nominal" },
+        source: { field: "source", type: "nominal" },
+        target: { field: "target", type: "nominal" },
+      },
+    });
+    const selectionBounds = (result as { selectionBounds?: { x: number; y: number; width: number; height: number } }).selectionBounds;
+    expect(selectionBounds).toBeDefined();
+    expect(selectionBounds!.width).toBeGreaterThan(0);
+    expect(selectionBounds!.height).toBeGreaterThan(0);
+    expect(selectionBounds).not.toEqual({
+      x: result.plotArea!.x,
+      y: result.plotArea!.y,
+      width: result.plotArea!.width,
+      height: result.plotArea!.height,
+    });
   });
 
   it("centers treemap labels and clips them to their tiles", () => {

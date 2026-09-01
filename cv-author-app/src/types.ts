@@ -401,6 +401,8 @@ export type ChartSpec = {
   seriesFields?: ChartEncoding[];
   scales?: Partial<Record<EncodingChannel, ChartScaleSpec>>;
   plotArea?: ChartPlotArea;
+  /** Visual footprint used by selection, including marks and labels. */
+  selectionBounds?: ChartPlotArea;
   polarArea?: ChartPolarArea;
   axes?: Partial<Record<ChartAxisChannel, ChartAxisConfig>>;
   styleTokens?: ChartStyleTokens;
@@ -437,6 +439,12 @@ export type CoordinateSystemSpec = {
   sharedChannels: CoordinateChannel[];
   /** Maximum rendered outer radius across a Polar composition's members. */
   polarOuterRadius?: number;
+  /**
+   * Labels retained on a shared Cartesian axis.  Dendrogram concat uses the
+   * leaf domain here so the companion chart can keep its full mark domain
+   * while its axis labels stay aligned with the tree leaves.
+   */
+  axisLabelDomains?: Partial<Record<"x" | "y", string[]>>;
 };
 
 export type DimensionRecommendation = {

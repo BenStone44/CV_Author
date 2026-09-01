@@ -60,7 +60,7 @@ const localColumns = computed(() => props.columns.filter((column) => !fatherColu
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  color: #516176;
+  color: #99582a;
   font-size: 11px;
   font-weight: 700;
 }
@@ -74,18 +74,18 @@ select {
   width: 100%;
   height: 30px;
   padding: 0 8px;
-  border: 1px solid rgba(24, 33, 47, 0.14);
+  border: 1px solid rgba(67, 40, 24, 0.14);
   border-radius: 6px;
   background: #fff;
-  color: #223041;
+  color: #432818;
   font: inherit;
   font-size: 11px;
   cursor: pointer;
 }
 
 select:focus {
-  border-color: rgba(28, 126, 214, 0.7);
-  outline: 2px solid rgba(28, 126, 214, 0.12);
+  border-color: rgba(153, 88, 42, 0.7);
+  outline: 2px solid rgba(153, 88, 42, 0.12);
 }
 
 option:disabled {

@@ -288,7 +288,27 @@ export function getNodeSelectionBounds(node: CanvasNode): Bounds {
   const baseMinX = node.kind === "leaf" ? node.contentMinX : 0;
   const baseMinY = node.kind === "leaf" ? node.contentMinY : 0;
   const plotArea = node.chartSpec?.plotArea;
-  if (node.renderedContent && plotArea) {
+  const selectionBounds = node.chartSpec?.selectionBounds;
+  if (node.renderedContent && (plotArea || selectionBounds)) {
+    const chartType = normalizeChartType(node.chartSpec?.chartType ?? "");
+    if (selectionBounds && (chartType === "dendrogram" || chartType === "forcedirectedgraph")) {
+      return {
+        minX: selectionBounds.x,
+        minY: selectionBounds.y,
+        maxX: selectionBounds.x + selectionBounds.width,
+        maxY: selectionBounds.y + selectionBounds.height,
+        width: selectionBounds.width,
+        height: selectionBounds.height,
+      };
+    }
+    if (!plotArea) return {
+      minX: baseMinX,
+      minY: baseMinY,
+      maxX: baseMinX + node.width,
+      maxY: baseMinY + node.height,
+      width: node.width,
+      height: node.height,
+    };
     return {
       minX: plotArea.x,
       minY: plotArea.y,
@@ -306,6 +326,10 @@ export function getNodeSelectionBounds(node: CanvasNode): Bounds {
     width: node.width,
     height: node.height,
   };
+}
+
+function normalizeChartType(chartType: string) {
+  return chartType.replace(/[\s_-]/g, "").toLowerCase();
 }
 
 /**
@@ -419,6 +443,7 @@ export function cloneChartSpec(chartSpec: ChartSpec | null | undefined) {
       }
       : undefined,
     plotArea: chartSpec.plotArea ? { ...chartSpec.plotArea } : undefined,
+    selectionBounds: chartSpec.selectionBounds ? { ...chartSpec.selectionBounds } : undefined,
     polarArea: chartSpec.polarArea ? { ...chartSpec.polarArea } : undefined,
     axes: chartSpec.axes
       ? Object.fromEntries(Object.entries(chartSpec.axes).map(([channel, config]) => [
@@ -467,6 +492,12 @@ export function cloneCanvasNode(node: CanvasNode): CanvasNode {
       ...node.coordinateSystem,
       members: node.coordinateSystem.members.map((member) => ({ ...member, channels: [...member.channels] })),
       sharedChannels: [...node.coordinateSystem.sharedChannels],
+      axisLabelDomains: node.coordinateSystem.axisLabelDomains
+        ? {
+          ...(node.coordinateSystem.axisLabelDomains.x ? { x: [...node.coordinateSystem.axisLabelDomains.x] } : {}),
+          ...(node.coordinateSystem.axisLabelDomains.y ? { y: [...node.coordinateSystem.axisLabelDomains.y] } : {}),
+        }
+        : undefined,
     }
     : node.coordinateSystem;
   const llmRenderer = node.llmRenderer

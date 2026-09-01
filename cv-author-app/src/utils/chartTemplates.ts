@@ -218,8 +218,21 @@ export function normalizeChartTemplate(chartType: string): ChartTemplateKind | n
 }
 
 export function cartesianAxisEncoding(spec: ChartSpec, axis: "x" | "y") {
-  const source = spec.axisSwapped ? (axis === "x" ? "y" : "x") : axis;
-  return spec.encodings[source];
+  // Encoding channels are semantic and remain stable when the visual axes are
+  // swapped. Renderers map these channels to physical axes explicitly.
+  return spec.encodings[axis];
+}
+
+/** Resolve the semantic channel represented by a physical Cartesian axis. */
+export function physicalCartesianAxisChannel(spec: ChartSpec, axis: "x" | "y") {
+  return spec.axisSwapped === true
+    ? axis === "x" ? "y" : "x"
+    : axis;
+}
+
+/** Resolve the encoding currently occupying a physical Cartesian axis. */
+export function physicalCartesianAxisEncoding(spec: ChartSpec, axis: "x" | "y") {
+  return spec.encodings[physicalCartesianAxisChannel(spec, axis)];
 }
 
 export type BarChartVariant = "single" | "grouped" | "stacked" | "divergent" | "divergent-stacked";

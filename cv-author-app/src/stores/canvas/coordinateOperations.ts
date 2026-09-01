@@ -2,6 +2,7 @@ import { computed, nextTick } from "vue";
 import type { Bounds, CanvasGroupNode, CanvasNode, ChartEncodingChannel, CoordinateChannel, CoordinateSystemSpec, DataBindingDropZone, Point } from "../../types";
 import type { CsvColumnDragPayload } from "../../utils/csvColumnDrag";
 import { materializeGraphDataset } from "../../utils/chartDataPipeline";
+import { cartesianTreeDirection, cartesianTreeLeafAxis, isCartesianTreeChart } from "../../utils/treeLayout";
 import type { Matrix } from "./coordinates";
 
 export function useCanvasCoordinateOperations(context: any) {
@@ -880,7 +881,9 @@ export function useCanvasCoordinateOperations(context: any) {
         ([
           { channel: "x" as const, start: origin, end: xEnd },
           { channel: "y" as const, start: origin, end: yEnd },
-        ]).forEach(({ channel, start, end }) => {
+        ]).filter(({ channel }) => !isCartesianTreeChart(node.chartSpec?.chartType)
+          || cartesianTreeLeafAxis(cartesianTreeDirection(node.chartSpec)) === channel)
+          .forEach(({ channel, start, end }) => {
           const worldStart = nodeLocalToSelectionScopePoint(node, start);
           const worldEnd = nodeLocalToSelectionScopePoint(node, end);
           const distance = pointToSegmentDistance(point, worldStart, worldEnd);

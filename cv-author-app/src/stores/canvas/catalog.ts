@@ -11,6 +11,7 @@ import { advancedTemplateDefinitions } from "../../utils/advancedChartCards";
 import {
   createDefaultDataCandidate,
   supportsDefaultChartData,
+  stripSvgTextElements,
 } from "../../utils/defaultChartData";
 import { withD3GalleryThumbnail } from "../../utils/d3GalleryThumbnails";
 import {
@@ -51,7 +52,21 @@ export const implementedTemplateDefinitions: SvgCandidate[] = ([
   ...defaultDataTemplateDefinitions.map(createDefaultDataCandidate),
   ...advancedTemplateDefinitions.filter((candidate) => !supportsDefaultChartData(candidate.chartType)),
   ...geographicLayerDefinitions,
-] as SvgCandidate[]).map(withD3GalleryThumbnail);
+] as SvgCandidate[])
+  // Catalog previews are geometry-only. Keep axis/mark labels out of the SVG
+  // shown before a template is placed on the canvas.
+  .map((candidate) => {
+    if (!candidate.svgMarkup) return candidate;
+    const svgMarkup = stripSvgTextElements(candidate.svgMarkup);
+    return svgMarkup === candidate.svgMarkup
+      ? candidate
+      : {
+        ...candidate,
+        svgMarkup,
+        src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgMarkup)}`,
+      };
+  })
+  .map(withD3GalleryThumbnail);
 
 export function createUnboundChartSpec(chartType: string, datasetId: string): ChartSpec {
   return { chartType, templateId: normalizeChartTemplate(chartType) ?? undefined, datasetId, encodings: {} };

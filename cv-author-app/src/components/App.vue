@@ -55,7 +55,7 @@ import {
   isCartesianTreeChart,
 } from "../utils/treeLayout";
 import { markMatchesNestedDataKey } from "../stores/canvas/nestedMarkIdentity";
-import { globalPalette } from "../config/global";
+import { frontendPalette, globalPalette } from "../config/global";
 
 const EMPTY_SELECTION_IDS: string[] = [];
 const NESTED_MAX_DIAMETER = 360;
@@ -291,9 +291,9 @@ function deckglLayerFamily(node: CanvasNode) {
 function deckglLayerConfig(node: CanvasNode) {
   const family = deckglLayerFamily(node);
   return node.deckglConfig ?? (family === "point"
-    ? { size: 8, color: "#2563eb" }
+    ? { size: 8, color: frontendPalette[1] }
     : family === "area"
-      ? { color: "#2563eb" }
+      ? { color: frontendPalette[1] }
       : {});
 }
 

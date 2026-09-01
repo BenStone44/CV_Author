@@ -147,7 +147,7 @@ describe("independent Cartesian axis component", () => {
     ["left", "y", { x: 192, y: 389 }],
     ["down", "x", { x: 192, y: 389 }],
     ["up", "x", { x: 192, y: 73 }],
-  ] as const)("keeps the %s tree's %s leaf scale without displaying an axis", (direction, _leafAxis, origin) => {
+  ] as const)("keeps the %s tree's %s leaf scale without showing an axis", (direction, _leafAxis, origin) => {
     const node = chartNode({
       chartSpec: {
         ...chartNode().chartSpec!,
@@ -171,6 +171,61 @@ describe("independent Cartesian axis component", () => {
     expect(getCartesianAxisChannels(node, "interactive")).toEqual([]);
     expect(createCartesianAxisModel(node)?.origin).toEqual(origin);
     expect((CanvasCoordinateSystemLayer as any).setup({ node })()).toBeNull();
+  });
+
+  it("filters shared concat axis labels to dendrogram leaves", () => {
+    const node = chartNode({
+      chartSpec: {
+        ...chartNode().chartSpec!,
+        chartType: "SingleBarChart",
+        encodings: {
+          x: { field: "axis_label", type: "nominal" },
+          y: { field: "value", type: "quantitative" },
+        },
+        plotArea: { x: 192, y: 73, width: 700, height: 316 },
+        scales: {
+          x: { type: "point", domain: ["Root", "Leaf A", "Branch", "Leaf B"], range: [192, 892] },
+          y: { type: "linear", domain: [0, 10], range: [389, 73] },
+        },
+      },
+      coordinateSystem: {
+        id: "coordinate:concat",
+        type: "Cartesian",
+        ownerNodeId: "tree",
+        members: [],
+        sharedChannels: ["x"],
+        axisLabelDomains: { x: ["Leaf A", "Leaf B"] },
+      },
+    });
+    const model = createCartesianAxisModel(node)!;
+    expect(model.xTicks.map((tick) => tick.label)).toEqual(["Leaf A", "Leaf B"]);
+  });
+
+  it("exposes only the leaf axis when a dendrogram participates in concat", () => {
+    const node = chartNode({
+      chartSpec: {
+        ...chartNode().chartSpec!,
+        chartType: "Dendrogram",
+        encodings: {
+          key: { field: "id", type: "nominal" },
+          parent: { field: "parent", type: "nominal" },
+        },
+        markGroups: [{
+          id: "tree-nodes",
+          chartId: "chart",
+          role: "node",
+          memberKeys: [],
+          sharedConfig: { treeDirection: "down" },
+        }],
+      },
+      compositionSpec: {
+        id: "composition:tree-concat",
+        type: "concat",
+        sharedChannels: ["x"],
+        members: [],
+      },
+    });
+    expect(getCartesianAxisChannels(node, "static")).toEqual(["x"]);
   });
 
   it("renders directly from ChartSpec axis checkbox values", () => {

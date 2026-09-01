@@ -210,8 +210,10 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
       datum.x !== null && datum.y !== null && datum.series !== "",
     );
   if (sourceRows.length === 0) throw new Error("No valid rows remain after applying the line encodings.");
-  const progressionEncoding = chartSpec.axisSwapped ? yEncoding : xEncoding;
-  const progressionValue = (datum: LineDatum) => chartSpec.axisSwapped ? datum.y : datum.x;
+  // Progression follows the semantic X channel. Swapping only changes which
+  // physical axis receives that progression, not the grouping key.
+  const progressionEncoding = xEncoding;
+  const progressionValue = (datum: LineDatum) => datum.x;
   const normalizedChartType = chartSpec.chartType.replace(/[\s_-]/g, "").toLowerCase();
   const hasExplicitAggregation = chartSpec.aggregations?.y !== undefined
     || Object.keys(chartSpec.dimensionAggregations ?? {}).length > 0;
@@ -395,16 +397,26 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
   const xValues = rows.map((datum) => datum.x);
   const yValues = rows.map((datum) => datum.y);
   if (input.includeZeroValueDomain) {
-    if (chartSpec.axisSwapped && xEncoding.type === "quantitative") xValues.push(0);
-    if (!chartSpec.axisSwapped && yEncoding.type === "quantitative") yValues.push(0);
+    if (yEncoding.type === "quantitative") yValues.push(0);
   }
-  const xAxisScale = makeScale(xEncoding, xValues, xRange, input.sharedScales?.x);
-  const yAxisScale = makeScale(yEncoding, yValues, yRange, input.sharedScales?.y);
+  const swapped = chartSpec.axisSwapped === true;
+  const xAxisScale = makeScale(
+    swapped ? yEncoding : xEncoding,
+    swapped ? yValues : xValues,
+    xRange,
+    input.sharedScales?.x,
+  );
+  const yAxisScale = makeScale(
+    swapped ? xEncoding : yEncoding,
+    swapped ? xValues : yValues,
+    yRange,
+    input.sharedScales?.y,
+  );
   const clipId = `line-plot-${chartId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 
   const pathGenerator = line<LineDatum>()
-    .x((datum) => xAxisScale.position(datum.x))
-    .y((datum) => yAxisScale.position(datum.y));
+    .x((datum) => xAxisScale.position(swapped ? datum.y : datum.x))
+    .y((datum) => yAxisScale.position(swapped ? datum.x : datum.y));
   const colorEncoding = isMultiLine ? undefined : chartSpec.encodings.color;
   const sizeEncoding = isMultiLine ? undefined : chartSpec.encodings.size;
   const mappedAggregate = (
@@ -471,8 +483,8 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
     series.push({
       key: seriesKey,
       points: ordered.map((datum) => ({
-        x: xAxisScale.position(datum.x),
-        y: yAxisScale.position(datum.y),
+        x: xAxisScale.position(swapped ? datum.y : datum.x),
+        y: yAxisScale.position(swapped ? datum.x : datum.y),
         rowKeys: datum.sourceRows.map((row) => rowKey(dataset, row)).filter(Boolean),
       })),
       color,

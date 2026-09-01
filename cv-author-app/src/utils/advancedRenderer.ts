@@ -59,7 +59,7 @@ import type { ChartEncoding, ChartPlotArea, ChartScaleSpec, Dataset } from "../t
 import type { GenericRenderInput } from "./semanticRenderer";
 import { renderLineChart } from "./lineRenderer";
 import { csvRowKey } from "./csvDataEngine";
-import { cartesianAxisEncoding } from "./chartTemplates";
+import { cartesianAxisEncoding, physicalCartesianAxisEncoding } from "./chartTemplates";
 import {
   isCategoricalColorMapping,
   isLinearColorMapping,
@@ -519,10 +519,10 @@ function renderArea(input: GenericRenderInput) {
   area.curve(curveBasis);
   const marks = layers.map((layer, index) => {
     const color = !isStacked && seriesValues.length === 1 ? "steelblue" : tableau[index % tableau.length]!;
-    // Silhouette streams use a centered value domain, so its visual zero
-    // baseline is the lower domain edge rather than numeric zero. Stacked
-    // areas retain the ordinary numeric-zero baseline.
-    const endpointValue = isStream ? yDomain[0] : 0;
+    // Silhouette streams are centered around the numeric zero baseline. Keep
+    // the synthetic entry/exit points on that baseline even when the first
+    // or last source column has a zero value.
+    const endpointValue = 0;
     const extendedLayer: Array<[number, number]> = [[endpointValue, endpointValue], ...(layer as Array<[number, number]>), [endpointValue, endpointValue]];
     return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(seriesValues[index] ?? "")}" data-point-count="${layer.length}" data-zero-endpoints="true" d="${area(extendedLayer) ?? ""}" fill="${color}"><title>${esc(seriesValues[index] === "__single__" ? yEncoding.field : seriesValues[index] ?? "")}</title></path>`;
   }).join("");
@@ -1156,6 +1156,69 @@ function renderHierarchy(input: GenericRenderInput) {
         : labelStyle.text ? `<text y="${(direction === "down") === isLeaf ? 8 : -8}" text-anchor="middle" dominant-baseline="${(direction === "down") === isLeaf ? "hanging" : "auto"}" font-size="${labelStyle.fontSize}" font-family="sans-serif" fill="#000000" stroke="white" paint-order="stroke">${esc(labelStyle.text)}</text>` : "";
     return `<g transform="translate(${x} ${y})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-row-key="${esc(rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)))}"><circle r="${nodeRadius(node)}" fill="${fill}"/>${label}</g>`;
   }).join("");
+  // Selection must describe the rendered footprint, not only the layout
+  // rectangle. In particular, node circles extend past the tree axes and
+  // Cartesian labels are positioned outside the node centers.
+  let selectionMinX = Number.POSITIVE_INFINITY;
+  let selectionMinY = Number.POSITIVE_INFINITY;
+  let selectionMaxX = Number.NEGATIVE_INFINITY;
+  let selectionMaxY = Number.NEGATIVE_INFINITY;
+  const includeSelectionPoint = (x: number, y: number) => {
+    selectionMinX = Math.min(selectionMinX, x);
+    selectionMinY = Math.min(selectionMinY, y);
+    selectionMaxX = Math.max(selectionMaxX, x);
+    selectionMaxY = Math.max(selectionMaxY, y);
+  };
+  nodes.forEach((node) => {
+    const { x, y } = point(node);
+    const radius = nodeRadius(node);
+    includeSelectionPoint(x - radius, y - radius);
+    includeSelectionPoint(x + radius, y + radius);
+    if (!nodeLabelsVisible) return;
+    const isLeaf = !node.children?.length;
+    const labelText = node.id ?? "";
+    const labelStyle = adaptiveLabel({
+      text: labelText,
+      width: Math.max(12, horizontal ? treeArea.width / Math.max(2, nodes.length) : treeArea.width * 0.22),
+      height: 18,
+      background: nodeColor(node, isLeaf ? "#999" : "#555"),
+      fontSize: 10,
+      minFontSize: 6,
+      maxFontSize: 10,
+      padding: 1,
+    });
+    if (!labelStyle.text) return;
+    const labelWidth = measureLabelWidth(labelStyle.text, labelStyle.fontSize) + 2;
+    const labelHeight = Math.max(10, labelStyle.fontSize * 1.2) + 2;
+    if (horizontal) {
+      const labelOnRight = (direction === "right") === isLeaf;
+      const labelX = x + (labelOnRight ? 6 : -6);
+      includeSelectionPoint(labelOnRight ? labelX + labelWidth : labelX - labelWidth, y - labelHeight / 2);
+      includeSelectionPoint(labelOnRight ? labelX : labelX, y + labelHeight / 2);
+    } else {
+      const labelBelow = (direction === "down") === isLeaf;
+      const labelY = y + (labelBelow ? 8 : -8);
+      // Match the SVG dominant-baseline used by the renderer. Hanging labels
+      // start at the baseline; the other orientation ends near it.
+      const labelTop = labelBelow ? labelY - 2 : labelY - labelHeight;
+      const labelBottom = labelBelow ? labelY + labelHeight : labelY + 2;
+      includeSelectionPoint(x - labelWidth / 2, labelTop);
+      includeSelectionPoint(x + labelWidth / 2, labelBottom);
+    }
+  });
+  const selectionBounds = Number.isFinite(selectionMinX)
+    ? {
+      x: selectionMinX,
+      y: selectionMinY,
+      width: Math.max(1, selectionMaxX - selectionMinX),
+      height: Math.max(1, selectionMaxY - selectionMinY),
+    }
+    : {
+      x: treeArea.x,
+      y: treeArea.y,
+      width: Math.max(1, treeArea.width),
+      height: Math.max(1, treeArea.height),
+    };
   const scales = leafAxis === "x"
     ? { x: leafScale, y: depthScale }
     : { x: depthScale, y: leafScale };
@@ -1179,6 +1242,7 @@ function renderHierarchy(input: GenericRenderInput) {
       width: Math.max(1, layoutMaxX - layoutMinX),
       height: Math.max(1, layoutMaxY - layoutMinY),
     },
+    selectionBounds,
     scales,
   };
 }
@@ -1232,8 +1296,8 @@ function renderCalendar(input: GenericRenderInput) {
 }
 
 function renderBoxplot(input: GenericRenderInput) {
-  const xEncoding = cartesianAxisEncoding(input.chartSpec, "x");
-  const yEncoding = cartesianAxisEncoding(input.chartSpec, "y");
+  const xEncoding = physicalCartesianAxisEncoding(input.chartSpec, "x");
+  const yEncoding = physicalCartesianAxisEncoding(input.chartSpec, "y");
   if (!xEncoding || !yEncoding) throw new Error("Box Plot renderer requires X and Y encodings.");
   const area = input.sharedPlotArea ?? plotArea(input, 30);
   type Observation = { row: Dataset["rows"][number]; rowIndex: number; x: number; y: number };
@@ -1278,8 +1342,8 @@ function isRegularGridAxis(values: number[]) {
 }
 
 function renderContour(input: GenericRenderInput) {
-  const xEncoding = cartesianAxisEncoding(input.chartSpec, "x");
-  const yEncoding = cartesianAxisEncoding(input.chartSpec, "y");
+  const xEncoding = physicalCartesianAxisEncoding(input.chartSpec, "x");
+  const yEncoding = physicalCartesianAxisEncoding(input.chartSpec, "y");
   const valueEncoding = input.chartSpec.encodings.color ?? input.chartSpec.encodings.value;
   if (!xEncoding || !yEncoding || !valueEncoding) throw new Error("Contour renderer requires X, Y and Grid value encodings.");
   const area = input.sharedPlotArea ?? plotArea(input, 28);
@@ -1337,8 +1401,8 @@ function renderContour(input: GenericRenderInput) {
 }
 
 function renderHexbin(input: GenericRenderInput) {
-  const xEncoding = cartesianAxisEncoding(input.chartSpec, "x");
-  const yEncoding = cartesianAxisEncoding(input.chartSpec, "y");
+  const xEncoding = physicalCartesianAxisEncoding(input.chartSpec, "x");
+  const yEncoding = physicalCartesianAxisEncoding(input.chartSpec, "y");
   if (!xEncoding || !yEncoding) throw new Error("Hexbin renderer requires X and Y encodings.");
   const area = input.sharedPlotArea ?? plotArea(input, 30);
   const points = input.dataset.rows.flatMap((row, rowIndex) => {
@@ -1527,9 +1591,56 @@ function renderForceDirected(input: GenericRenderInput) {
     const labelMarkup = labelStyle.text ? `<text data-mark-role="node-label" pointer-events="none" x="${node.x + radius + 3}" y="${node.y}" dy="0.35em" font-size="${labelStyle.fontSize}" fill="${labelStyle.color}">${esc(labelStyle.text)}</text>` : "";
     return `<g data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id)}" data-row-key="${esc(rowKey(graphNodeDataset, node.row, node.index))}"><circle cx="${node.x}" cy="${node.y}" r="${radius}" fill="${color}" stroke="#fff" stroke-width="1.5"><title>${esc(String(label))}</title></circle>${labelMarkup}</g>`;
   }).join("");
+  // Selection follows the rendered network footprint. Labels are positioned
+  // beside their node circles and can extend beyond the plot area.
+  let selectionMinX = Number.POSITIVE_INFINITY;
+  let selectionMinY = Number.POSITIVE_INFINITY;
+  let selectionMaxX = Number.NEGATIVE_INFINITY;
+  let selectionMaxY = Number.NEGATIVE_INFINITY;
+  const includeSelectionPoint = (x: number, y: number) => {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    selectionMinX = Math.min(selectionMinX, x);
+    selectionMinY = Math.min(selectionMinY, y);
+    selectionMaxX = Math.max(selectionMaxX, x);
+    selectionMaxY = Math.max(selectionMaxY, y);
+  };
+  seededNodes.forEach((node) => {
+    const radius = radiusFor(node) + 0.75; // include the node stroke
+    includeSelectionPoint(node.x - radius, node.y - radius);
+    includeSelectionPoint(node.x + radius, node.y + radius);
+
+    const label = node.row.label ?? node.id;
+    const labelStyle = adaptiveLabel({
+      text: String(label),
+      width: Math.max(18, area.width * 0.22),
+      height: 18,
+      background: "#ffffff",
+      fontSize: 10,
+      minFontSize: 6,
+      maxFontSize: 10,
+      padding: 1,
+    });
+    if (!labelStyle.text) return;
+    const labelWidth = measureLabelWidth(labelStyle.text, labelStyle.fontSize) + 2;
+    const labelHeight = Math.max(10, labelStyle.fontSize * 1.2) + 2;
+    const labelX = node.x + radiusFor(node) + 3;
+    // The SVG text uses dy="0.35em", so its visual bounds straddle the
+    // node's y position rather than starting at the baseline.
+    includeSelectionPoint(labelX, node.y - labelHeight * 0.55);
+    includeSelectionPoint(labelX + labelWidth, node.y + labelHeight * 0.65);
+  });
+  const selectionBounds = Number.isFinite(selectionMinX)
+    ? {
+      x: selectionMinX,
+      y: selectionMinY,
+      width: Math.max(1, selectionMaxX - selectionMinX),
+      height: Math.max(1, selectionMaxY - selectionMinY),
+    }
+    : area;
   return {
     content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="force-directed-graph" data-renderer="observable-force-directed@1">${linkMarks}${nodeMarks}</g>`,
     plotArea: area,
+    selectionBounds,
   };
 }
 

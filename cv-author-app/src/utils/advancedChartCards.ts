@@ -13,7 +13,7 @@ import { hexbin } from "d3-hexbin";
 import Papa from "papaparse";
 import type { Dataset, SvgCandidate } from "../types";
 import diamondsCsv from "../../../data/d3_hexbin_diamonds.csv?raw";
-import { renderDefaultChartSvg } from "./defaultChartData";
+import { renderDefaultChartSvg, stripSvgTextElements } from "./defaultChartData";
 import { globalGradientColor } from "./visualMapping";
 import {
   createRadialClusterLayout,
@@ -218,8 +218,9 @@ const definitions: Array<[keyof typeof advancedTemplateSvgs, string, string, Svg
 
 export const advancedTemplateDefinitions: SvgCandidate[] = definitions.map(([key, name, chartType, coordinateSystem]) => {
   const fallback = advancedTemplateSvgs[key];
-  const svgMarkup = renderDefaultChartSvg(chartType)
+  const renderedMarkup = renderDefaultChartSvg(chartType)
     ?? (typeof fallback === "function" ? fallback() : fallback);
+  const svgMarkup = stripSvgTextElements(renderedMarkup);
   return {
     id: `builtin-template:${chartType.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase()}`,
     name,

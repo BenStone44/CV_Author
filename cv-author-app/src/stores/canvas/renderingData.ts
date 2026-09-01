@@ -39,6 +39,7 @@ export function chartDataPreparationKey(spec: ChartSpec) {
   const {
     scales: _scales,
     plotArea: _plotArea,
+    selectionBounds: _selectionBounds,
     polarArea: _polarArea,
     styleTokens: _styleTokens,
     renderer: _renderer,

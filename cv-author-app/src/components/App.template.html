@@ -1025,12 +1025,13 @@
             </button>
           </div>
 
-          <div
-            v-if="canvasNodes.length === 0 && !loadingDrop"
-            class="empty-state"
-          >
-            Drag an SVG, PNG, JPEG, WebP, GIF, or AVIF here.
-          </div>
+          <datalist id="frontend-color-palette">
+            <option value="#ffe6a7">#ffe6a7</option>
+            <option value="#99582a">#99582a</option>
+            <option value="#432818">#432818</option>
+            <option value="#bb9457">#bb9457</option>
+          </datalist>
+
           <div v-if="loadingDrop" class="loading-state">Loading SVG...</div>
           <div v-if="importNotice" class="import-notice">
             {{ importNotice }}
@@ -1273,6 +1274,7 @@
                         >
                           <input
                             type="color"
+                            list="frontend-color-palette"
                             :value="member.color"
                             :aria-label="`${member.label} color`"
                             @input="onSeriesItemStyleChange(member.memberId, { color: $event.target.value })"

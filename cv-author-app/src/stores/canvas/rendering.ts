@@ -1,5 +1,10 @@
 import type { CanvasNode, ChartScaleSpec, ChartSpec, Dataset, NestedChildFrame, NestedRelationship, Point, RelativeNestedParameters } from "../../types";
-import { isCartesianTreeChart } from "../../utils/treeLayout";
+import {
+  cartesianTreeDirection,
+  cartesianTreeLeafAxis,
+  cartesianTreeLeafValues,
+  isCartesianTreeChart,
+} from "../../utils/treeLayout";
 import { getCanvasObjectHitTargetBounds } from "../../utils/canvasUtils";
 import { chartDataPreparationKey, mergeSharedScale } from "./renderingData";
 
@@ -64,6 +69,20 @@ export function useCanvasRendering(context: any) {
       if (availableScales.length > 0) {
         result[channel] = mergeSharedScale(availableScales, ownerScale, encodingType);
       }
+    });
+    // A dendrogram participating in the concat defines the structural domain
+    // for the shared Cartesian leaf axis. Keep companion point scales from
+    // reintroducing internal hierarchy categories when the bar/line member is
+    // the coordinate owner.
+    (['x', 'y'] as const).forEach((channel) => {
+      const allowed = owner.coordinateSystem?.axisLabelDomains?.[channel];
+      const scale = result[channel];
+      if (!allowed?.length || scale?.type !== "point") return;
+      result[channel] = {
+        ...scale,
+        domain: allowed.filter((value) => (scale.domain as Array<string | number>)
+          .some((candidate) => String(candidate) === String(value))),
+      };
     });
     return Object.keys(result).length > 0 ? result : undefined;
   }
@@ -227,6 +246,58 @@ export function useCanvasRendering(context: any) {
     });
   }
 
+  function syncConcatLeafAxisDomains(owner: CanvasNode, members: CanvasNode[]) {
+    const composition = owner.compositionSpec;
+    if (composition?.type !== "concat") return;
+    const links = concatLinksFor(composition);
+    const domains = new Map<"x" | "y", Set<string>>();
+    members.filter((member) => isCartesianTreeChart(member.chartSpec?.chartType)).forEach((tree) => {
+      const direction = cartesianTreeDirection(tree.chartSpec);
+      const axis = cartesianTreeLeafAxis(direction);
+      const shared = links.some((link) => link.sharedChannels.includes(axis)
+        && (link.targetNodeId === tree.id || link.sourceNodeId === tree.id));
+      if (!shared) return;
+      const dataset = tree.chartSpec?.datasetId ? getDataset(tree.chartSpec.datasetId) : undefined;
+      const renderedDomain = tree.chartSpec?.scales?.[axis]?.domain;
+      const values = renderedDomain
+        ? renderedDomain.map(String)
+        : cartesianTreeLeafValues(tree.chartSpec, dataset?.rows ?? []);
+      if (values.length === 0) return;
+      const domain = domains.get(axis) ?? new Set<string>();
+      values.forEach((value) => domain.add(value));
+      domains.set(axis, domain);
+    });
+    members.forEach((member) => {
+      const system = member.coordinateSystem;
+      if (!system) return;
+      const next = { ...(system.axisLabelDomains ?? {}) };
+      (['x', 'y'] as const).forEach((axis) => {
+        const domain = domains.get(axis);
+        if (domain && domain.size > 0) next[axis] = Array.from(domain);
+        else delete next[axis];
+      });
+      system.axisLabelDomains = Object.keys(next).length > 0 ? next : undefined;
+    });
+  }
+
+  function leafDomainsForNode(node: CanvasNode, owner?: CanvasNode | null) {
+    const current = node.coordinateSystem?.axisLabelDomains;
+    if (current && Object.keys(current).length > 0) return current;
+    const composition = owner?.compositionSpec;
+    if (composition?.type !== "concat") return undefined;
+    const members = composition.members
+      .map((member) => findCanvasNode(member.nodeId))
+      .filter((member): member is CanvasNode => !!member);
+    const domains: Partial<Record<"x" | "y", string[]>> = {};
+    members.filter((member) => isCartesianTreeChart(member.chartSpec?.chartType)).forEach((tree) => {
+      const axis = cartesianTreeLeafAxis(cartesianTreeDirection(tree.chartSpec));
+      if (!composition.sharedChannels.includes(axis)) return;
+      const renderedDomain = tree.chartSpec?.scales?.[axis]?.domain;
+      if (renderedDomain) domains[axis] = renderedDomain.map(String);
+    });
+    return Object.keys(domains).length > 0 ? domains : undefined;
+  }
+
   function setCartesianAxisVisibility(node: CanvasNode, channel: "x" | "y", visible: boolean) {
     if (!node.chartSpec) return;
     node.chartSpec = {
@@ -297,8 +368,16 @@ export function useCanvasRendering(context: any) {
           const member = byId.get(id);
           return member ? [member] : [];
         });
-        const visibleAxisCandidates = component.filter((member) =>
-          !isCartesianTreeChart(member.chartSpec?.chartType));
+        const treeAxisCandidates = component.filter((member) => {
+          if (!isCartesianTreeChart(member.chartSpec?.chartType)) return false;
+          return cartesianTreeLeafAxis(cartesianTreeDirection(member.chartSpec)) === channel;
+        });
+        // A non-tree Cartesian member owns the visible shared axis. Its domain
+        // is already constrained to the dendrogram leaves.
+        const cartesianNonTreeCandidates = component.filter((member) => !isCartesianTreeChart(member.chartSpec?.chartType));
+        const visibleAxisCandidates = cartesianNonTreeCandidates.length > 0
+          ? cartesianNonTreeCandidates
+          : treeAxisCandidates;
         const axisOwner = (visibleAxisCandidates.length > 0 ? visibleAxisCandidates : component).sort((left, right) => {
           const leftBounds = collectNodeSelectionBounds(left);
           const rightBounds = collectNodeSelectionBounds(right);
@@ -312,6 +391,10 @@ export function useCanvasRendering(context: any) {
     });
 
     const syncChannel = (member: CanvasNode, channel: "x" | "y") => {
+      if (isCartesianTreeChart(member.chartSpec?.chartType)) {
+        setCartesianAxisVisibility(member, channel, false);
+        return;
+      }
       const visible = !sharedMembers.get(channel)!.has(member.id)
         || visibleOwners.get(channel)!.has(member.id);
       setCartesianAxisVisibility(member, channel, visible);
@@ -335,6 +418,7 @@ export function useCanvasRendering(context: any) {
     // declared shared channels and preserves independent concat dimensions.
     members.forEach((member) => renderChartNode(member, false));
     if (type === "concat") {
+      syncConcatLeafAxisDomains(owner, members);
       if (owner.coordinateGuide?.type === "Polar") alignPolarConcatFrame(owner, members);
       else {
         alignCartesianConcatFrames(owner, members);
@@ -388,6 +472,7 @@ export function useCanvasRendering(context: any) {
           markGroups: spec.markGroups,
           scales: spec.scales,
           plotArea: spec.plotArea,
+          selectionBounds: spec.selectionBounds,
           polarArea: spec.polarArea,
           renderer: spec.renderer,
         },
@@ -576,11 +661,41 @@ export function useCanvasRendering(context: any) {
     const materializationSpec = effectiveDataTransforms === renderingInputSpec.dataTransforms
       ? renderingInputSpec
       : { ...renderingInputSpec, dataTransforms: effectiveDataTransforms };
-    const { dataset, chartSpec: syncedChartSpec } = prepareChartDataForNode(
+    const prepared = prepareChartDataForNode(
       node,
       renderDataset,
       materializationSpec,
     );
+    let dataset = prepared.dataset;
+    let syncedChartSpec = prepared.chartSpec;
+    // When a Cartesian concat contains a dendrogram, its leaf domain is the
+    // shared structural key. Restrict every non-tree Cartesian member to the
+    // rows represented by those leaves so bars/marks stay aligned with the
+    // tree instead of rendering internal hierarchy nodes.
+    if (!isCartesianTreeChart(syncedChartSpec.chartType)
+      && node.coordinateGuide?.type === "Cartesian"
+      && leafDomainsForNode(node, coordinateOwner ?? findCanvasNode(node.coordinateSystem?.ownerNodeId ?? ""))) {
+      const axisLabelDomains = leafDomainsForNode(node, coordinateOwner ?? findCanvasNode(node.coordinateSystem?.ownerNodeId ?? ""));
+      const allowedDomains = (Object.entries(axisLabelDomains ?? {}) as Array<["x" | "y", string[] | undefined]>)
+        .flatMap(([channel, values]) => {
+          // axisSwapped keeps bar/line category/value encodings semantic while
+          // exchanging their physical Cartesian axes. Leaf domains are
+          // physical, so resolve the corresponding semantic encoding first.
+          const semanticChannel = syncedChartSpec.axisSwapped
+            ? channel === "x" ? "y" : "x"
+            : channel;
+          const encoding = syncedChartSpec.encodings[semanticChannel];
+          if (!values?.length || !encoding) return [];
+          return [{ field: encoding.field, values: new Set(values.map(String)) }];
+        });
+      if (allowedDomains.length > 0) {
+        const matches = dataset.rows.filter((row: Dataset["rows"][number]) => allowedDomains.every(({ field, values }) =>
+          values.has(String(row[field] ?? ""))));
+        if (matches.length > 0 && matches.length < dataset.rows.length) {
+          dataset = { ...dataset, rows: matches };
+        }
+      }
+    }
     const usesDerivedValueSeries = (renderingInputSpec.valueFields?.length ?? 0) > 1;
     const persistedSyncedChartSpec = usesDerivedValueSeries
       ? {
@@ -659,10 +774,12 @@ export function useCanvasRendering(context: any) {
         sharedScales,
         nestedChildFrames: nestedChildFramesForNode(node),
       });
+      const selectionBounds = (result as { selectionBounds?: ChartSpec["selectionBounds"] }).selectionBounds;
       const renderingChartSpec: ChartSpec = {
         ...syncedChartSpec,
         scales: result.scales,
         plotArea: result.plotArea,
+        selectionBounds,
         polarArea: result.polarArea,
         renderer: {
           kind: "deterministic-chart",
@@ -674,12 +791,14 @@ export function useCanvasRendering(context: any) {
         ...chartSpec,
         scales: result.scales,
         plotArea: result.plotArea,
+        selectionBounds,
         polarArea: result.polarArea,
         renderer: undefined,
       } : {
         ...persistedSyncedChartSpec,
         scales: result.scales,
         plotArea: result.plotArea,
+        selectionBounds,
         polarArea: result.polarArea,
         renderer: renderingChartSpec.renderer,
       };

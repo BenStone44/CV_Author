@@ -43,14 +43,25 @@ export type CartesianAxisModel = {
 
 const cartesianChannels: EncodingChannel[] = ["x", "y"];
 
+function containsCartesianTree(node: CanvasNode): boolean {
+  if (isCartesianTreeChart(node.chartSpec?.chartType)) return true;
+  return node.kind === "group" && node.children.some(containsCartesianTree);
+}
+
 export function getCartesianAxisChannels(
   node: CanvasNode,
   mode: "static" | "interactive",
 ): EncodingChannel[] {
-  if (isCartesianTreeChart(node.chartSpec?.chartType)) return [];
   const system = node.coordinateSystem;
   const isLayer = node.compositionSpec?.type === "layer";
   const isOwner = !system || system.ownerNodeId === node.id;
+  if (isCartesianTreeChart(node.chartSpec?.chartType)) {
+    const leafAxis = cartesianTreeLeafAxis(cartesianTreeDirection(node.chartSpec));
+    // Keep the leaf channel available to coordinate composition controls; the
+    // visual axis itself is suppressed in the render path below.
+    if (isLayer || node.compositionSpec?.type !== "concat") return [];
+    return node.compositionSpec.sharedChannels.includes(leafAxis) ? [leafAxis] : [];
+  }
   if (isLayer) {
     return mode === "static" && isOwner
       ? [...cartesianChannels]
@@ -78,11 +89,11 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
 }
 
-function axisTicks(spec: ChartScaleSpec, maximum: number): AxisTick[] {
+function axisTicks(spec: ChartScaleSpec, maximum: number, allowedLabels?: ReadonlySet<string>): AxisTick[] {
   if (spec.type === "point") {
     const domain = spec.domain as string[];
     const scale = scalePoint<string>().domain(domain).range(spec.range).padding(0.5);
-    return domain.map((value) => ({
+    return domain.filter((value) => !allowedLabels || allowedLabels.has(String(value))).map((value) => ({
       position: scale(value) ?? 0,
       label: value,
     }));
@@ -116,6 +127,8 @@ export function createCartesianAxisModel(node: CanvasNode): CartesianAxisModel |
   const treeDirection = isCartesianTreeChart(node.chartSpec?.chartType)
     ? cartesianTreeDirection(node.chartSpec)
     : null;
+  const treeLeafAxis = treeDirection ? cartesianTreeLeafAxis(treeDirection) : null;
+  const axisLabelDomains = node.coordinateSystem?.axisLabelDomains;
   const xDirection = treeDirection === "right" ? -1 : treeDirection === "left" ? 1 : guide.xDirection;
   const yDirection = treeDirection === "up" ? 1 : treeDirection === "down" ? -1 : guide.yDirection;
   const origin = {
@@ -124,8 +137,16 @@ export function createCartesianAxisModel(node: CanvasNode): CartesianAxisModel |
   };
   const tokens = node.chartSpec?.styleTokens;
   const renderedScale = Math.max(Math.abs(node.scaleX), Math.abs(node.scaleY), 0.0001);
-  const xTicks = axisTicks(xScale, Math.max(2, Math.min(8, Math.floor(plot.width / 64))));
-  const yTicks = axisTicks(yScale, Math.max(2, Math.min(8, Math.floor(plot.height / 36))));
+  const xTicks = axisTicks(
+    xScale,
+    Math.max(2, Math.min(8, Math.floor(plot.width / 64))),
+    axisLabelDomains?.x && (!treeLeafAxis || treeLeafAxis === "x") ? new Set(axisLabelDomains.x) : undefined,
+  );
+  const yTicks = axisTicks(
+    yScale,
+    Math.max(2, Math.min(8, Math.floor(plot.height / 36))),
+    axisLabelDomains?.y && (!treeLeafAxis || treeLeafAxis === "y") ? new Set(axisLabelDomains.y) : undefined,
+  );
   const requestedFontSize = tokens?.fontSize ?? 9;
   const screenFontSize = Math.max(7, Math.min(
     requestedFontSize,
@@ -219,7 +240,7 @@ export const CartesianCoordinateSystem = defineComponent({
       const showYLine = chartAxisVisible(props.node.chartSpec, guide, "y");
       const showDiscreteLabels = guide.showDiscreteLabels !== false;
       const showAllAxes = guide.showAllAxes !== false;
-      const renderAxes = props.showAxis && showAllAxes;
+      const renderAxes = props.showAxis && showAllAxes && !isCartesianTreeChart(props.node.chartSpec?.chartType);
       const axisNodes = [] as ReturnType<typeof h>[];
 
       if (renderAxes && model) {
@@ -474,7 +495,12 @@ export const CanvasCoordinateSystemLayer: any = defineComponent({
       if (props.hiddenNodeIds?.has(node.id) && props.allowHiddenNodeId !== node.id) return null;
       const editingLayer = node.compositionSpec?.type === "layer"
         && props.editingCompositionId === node.compositionSpec.id;
-      const channels = editingLayer && !isCartesianTreeChart(node.chartSpec?.chartType)
+      const treeConcatContainer = node.kind === "group"
+        && node.compositionSpec?.type === "concat"
+        && containsCartesianTree(node);
+      const channels = treeConcatContainer
+        ? []
+        : editingLayer && !isCartesianTreeChart(node.chartSpec?.chartType)
         ? [...cartesianChannels]
         : getCartesianAxisChannels(node, "static");
       if (node.coordinateGuide?.type === "Cartesian"
