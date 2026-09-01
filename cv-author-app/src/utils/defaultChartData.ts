@@ -10,6 +10,8 @@ import defaultChartDataCsv from "../../../data/default_chart_data.csv?raw";
 import defaultTreeDataCsv from "../../../data/tree_nodes.csv?raw";
 import defaultGraphNodesCsv from "../../../data/nodes.csv?raw";
 import defaultGraphEdgesCsv from "../../../data/edges.csv?raw";
+import defaultChordNodesCsv from "../../../data/chord_nodes.csv?raw";
+import defaultChordEdgesCsv from "../../../data/chord_edges.csv?raw";
 import d3HexbinDiamondsCsv from "../../../data/d3_hexbin_diamonds.csv?raw";
 import { getChartTemplateContract, normalizeChartTemplate } from "./chartTemplates";
 import { prepareChartData } from "./chartDataPipeline";
@@ -18,6 +20,7 @@ import { renderDeterministicChart } from "./semanticRenderer";
 export const DEFAULT_CHART_DATASET_ID = "builtin:default-cartesian-data";
 export const DEFAULT_TREE_DATASET_ID = "builtin:default-tree-data";
 export const DEFAULT_GRAPH_DATASET_ID = "builtin:default-force-graph-data";
+export const DEFAULT_CHORD_DATASET_ID = "builtin:default-chord-data";
 export const DEFAULT_HEXBIN_DATASET_ID = "builtin:d3-hexbin-diamonds";
 
 const defaultRows = Papa.parse<Record<string, string>>(defaultChartDataCsv, {
@@ -36,6 +39,16 @@ const defaultGraphNodeRows = Papa.parse<Record<string, string>>(defaultGraphNode
 }).data;
 
 const defaultGraphEdgeRows = Papa.parse<Record<string, string>>(defaultGraphEdgesCsv, {
+  header: true,
+  skipEmptyLines: "greedy",
+}).data;
+
+const defaultChordNodeRows = Papa.parse<Record<string, string>>(defaultChordNodesCsv, {
+  header: true,
+  skipEmptyLines: "greedy",
+}).data;
+
+const defaultChordEdgeRows = Papa.parse<Record<string, string>>(defaultChordEdgesCsv, {
   header: true,
   skipEmptyLines: "greedy",
 }).data;
@@ -123,6 +136,31 @@ export const defaultGraphDataset: Dataset = {
   },
 };
 
+/** The four-way directed relationship matrix from Observable's Chord diagram II. */
+export const defaultChordDataset: Dataset = {
+  id: DEFAULT_CHORD_DATASET_ID,
+  name: "Observable Chord diagram II data",
+  columns: [],
+  rows: [],
+  graph: {
+    nodes: {
+      columns: [
+        { name: "id", type: "nominal" },
+        { name: "label", type: "nominal" },
+      ],
+      rows: defaultChordNodeRows,
+    },
+    edges: {
+      columns: [
+        { name: "source", type: "nominal" },
+        { name: "target", type: "nominal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: defaultChordEdgeRows,
+    },
+  },
+};
+
 function groupFilter(): ChartDataTransform[] {
   return [{
     id: "builtin-default:group-alpha",
@@ -147,6 +185,7 @@ export function supportsDefaultChartData(chartType: string) {
     || family === "hexbin"
     || family === "pie"
     || family === "donut"
+    || (family === "flow" && normalized.includes("chord"))
     || family === "hierarchy"
     || normalized === "forcedirectedgraph";
 }
@@ -156,6 +195,7 @@ export function defaultDatasetForChartType(chartType: string): Dataset {
   if (normalizeChartTemplate(chartType) === "hexbin") return defaultHexbinDataset;
   if (normalizeChartTemplate(chartType) === "hierarchy") return defaultTreeDataset;
   if (normalized === "forcedirectedgraph") return defaultGraphDataset;
+  if (normalized === "chord") return defaultChordDataset;
   return defaultChartDataset;
 }
 
@@ -163,6 +203,7 @@ export function isDefaultChartDataSpec(spec: ChartSpec | null | undefined) {
   return spec?.datasetId === DEFAULT_CHART_DATASET_ID
     || spec?.datasetId === DEFAULT_TREE_DATASET_ID
     || spec?.datasetId === DEFAULT_GRAPH_DATASET_ID
+    || spec?.datasetId === DEFAULT_CHORD_DATASET_ID
     || spec?.datasetId === DEFAULT_HEXBIN_DATASET_ID;
 }
 
@@ -223,6 +264,18 @@ export function createDefaultChartSpec(chartType: string): ChartSpec | null {
         value: { field: "value", type: "quantitative" },
         color: { field: "group", type: "nominal" },
         size: { field: "size", type: "quantitative" },
+      },
+    };
+  }
+
+  if (normalized === "chord") {
+    return {
+      ...base,
+      datasetId: DEFAULT_CHORD_DATASET_ID,
+      encodings: {
+        source: { field: "source", type: "nominal" },
+        target: { field: "target", type: "nominal" },
+        value: { field: "value", type: "quantitative" },
       },
     };
   }

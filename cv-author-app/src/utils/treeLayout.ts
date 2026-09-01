@@ -6,6 +6,12 @@ export function isCartesianTreeChart(chartType: string | null | undefined) {
   return chartType?.replace(/[\s_-]/g, "").toLowerCase() === "dendrogram";
 }
 
+/** Hierarchy renderers that expose the same four-way growth direction control. */
+export function isDirectionalHierarchyChart(chartType: string | null | undefined) {
+  const normalized = chartType?.replace(/[\s_-]/g, "").toLowerCase();
+  return normalized === "dendrogram" || normalized === "icicle" || normalized === "treemap";
+}
+
 export function normalizeCartesianTreeDirection(value: unknown): CartesianTreeDirection {
   return value === "left" || value === "down" || value === "up" ? value : "right";
 }

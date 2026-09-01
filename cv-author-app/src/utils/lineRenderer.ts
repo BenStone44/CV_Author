@@ -25,15 +25,9 @@ import {
   parseVisualValue,
   visualDomain,
 } from "./visualMapping";
+import { globalPalette } from "../config/global";
 
-const fallbackPalette = [
-  "#2563eb",
-  "#e11d48",
-  "#059669",
-  "#d97706",
-  "#7c3aed",
-  "#0891b2",
-];
+const fallbackPalette = globalPalette.categorical;
 const defaultCartesianAspectRatio = 4 / 3;
 const linechartTemplateStyle: ChartStyleTokens = {
   palette: fallbackPalette,

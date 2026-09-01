@@ -44,6 +44,7 @@ const defaultDataTemplateDefinitions = [
   { id: "builtin-template:dendrogram", name: "Dendrogram", chartType: "Dendrogram", coordinateSystem: "Cartesian" },
   { id: "builtin-template:radial-dendrogram", name: "Radial Dendrogram", chartType: "RadialDendrogram", coordinateSystem: "Polar" },
   { id: "builtin-template:force-directed-graph", name: "Force-Directed Graph", chartType: "ForceDirectedGraph", coordinateSystem: "CoordinateFree" },
+  { id: "builtin-template:chord", name: "Chord", chartType: "Chord", coordinateSystem: "CoordinateFree" },
 ] satisfies Array<Omit<SvgCandidate, "src" | "svgMarkup">>;
 
 export const implementedTemplateDefinitions: SvgCandidate[] = ([

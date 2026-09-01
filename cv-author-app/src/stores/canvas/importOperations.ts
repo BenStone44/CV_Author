@@ -13,6 +13,7 @@ import type {
   Point,
   SvgCandidate,
 } from "../../types";
+import { defaultDatasetForChartType } from "../../utils/defaultChartData";
 
 export function useCanvasImportOperations(context: any) {
   const {
@@ -95,6 +96,24 @@ export function useCanvasImportOperations(context: any) {
           ...(value?.type === "quantitative" ? { value } : {}),
           ...(color ? { color } : {}),
           ...(size?.type === "quantitative" ? { size } : {}),
+        },
+      };
+    }
+    if (normalizedChartType === "chord" && dataset?.graph) {
+      const edgeColumns = dataset.graph.edges.columns;
+      const findColumn = (names: string[]) => {
+        const column = edgeColumns.find((candidate) => names.includes(candidate.name.toLowerCase()));
+        return column ? { field: column.name, type: column.type } : undefined;
+      };
+      const source = findColumn(["source", "from", "source_id"]);
+      const target = findColumn(["target", "to", "target_id"]);
+      const value = findColumn(["value", "weight", "link_value"]);
+      return {
+        ...unbound,
+        encodings: {
+          ...(source ? { source } : {}),
+          ...(target ? { target } : {}),
+          ...(value?.type === "quantitative" ? { value } : {}),
         },
       };
     }
@@ -402,7 +421,10 @@ export function useCanvasImportOperations(context: any) {
         !!candidate.compositionType,
         candidate.coordinateSystem,
         candidate.renderMode === "static-layer" ? undefined : candidate.chartType,
-        activeDataset.value?.id,
+        activeDataset.value?.id
+          ?? (templateFamily === "flow" && candidate.chartType.replace(/[\s_-]/g, "").toLowerCase() === "chord"
+            ? defaultDatasetForChartType(candidate.chartType).id
+            : undefined),
         candidate.renderMode === "static-layer" ? "deckgl" : undefined,
         candidate.renderMode === "static-layer" ? candidate.layerType : undefined,
         candidate.renderMode === "static-layer" ? candidate.mapStyleUrl : undefined,

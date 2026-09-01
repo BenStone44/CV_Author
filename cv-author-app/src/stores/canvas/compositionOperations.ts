@@ -1091,7 +1091,11 @@ export function useCanvasCompositionOperations(context: any) {
   function semanticItemDropZone(node: CanvasNode, point: Point, sourceNodeId: string): ChartDropZone | null {
     if (!node.chartSpec || node.id === sourceNodeId) return null;
     const contract = getChartTemplateContract(node.chartSpec.chartType);
-    const directMarkNesting = contract?.family === "hierarchy";
+    const normalizedChartType = node.chartSpec.chartType.replace(/[\s_-]/g, "").toLowerCase();
+    // Network labels are siblings of the node mark in the SVG group. Treat
+    // the node geometry as the nesting target so the label never expands the
+    // drop zone or gets hidden when the parent mark is replaced.
+    const directMarkNesting = contract?.family === "hierarchy" || normalizedChartType.includes("forcedirected");
     const nodeElement = Array.from(canvasRef.value?.querySelectorAll<SVGGraphicsElement>("[data-node-id]") ?? [])
       .find((element) => element.dataset.nodeId === node.id);
     if (!nodeElement) return null;
@@ -1105,7 +1109,9 @@ export function useCanvasCompositionOperations(context: any) {
       ? activePath.childMarkIndexes.flatMap((index) => allMarks[index] ?? [])
       : allMarks;
     const markGeometryElement = (element: SVGGraphicsElement) => directMarkNesting
-      ? element.querySelector<SVGGraphicsElement>("circle, rect, path") ?? element
+      ? element.getAttribute("data-mark-role") === "node"
+        ? element.querySelector<SVGGraphicsElement>("circle, rect, path") ?? element
+        : element
       : element;
     const markFrames = marks
       .map((element) => ({ element, bounds: semanticSelectionBounds([markGeometryElement(element)]) }))
@@ -1163,7 +1169,9 @@ export function useCanvasCompositionOperations(context: any) {
       seriesKey,
       rowKey,
     });
-    const itemElements = compositeHit?.elements ?? semanticMarkElements(hit.element, match.mode, categoryKey);
+    const itemElements = directMarkNesting
+      ? [hit.element.querySelector<SVGGraphicsElement>("circle, rect, path") ?? hit.element]
+      : compositeHit?.elements ?? semanticMarkElements(hit.element, match.mode, categoryKey);
     const itemBounds = directMarkNesting
       ? hit.bounds
       : semanticSelectionBounds(itemElements) ?? hit.bounds;

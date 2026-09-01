@@ -8,13 +8,14 @@ import type {
   LinearSizeStop,
   SeriesStyleMapping,
 } from "../types";
+import { globalPalette } from "../config/global";
 
 export const defaultColorMapping: LinearColorMapping = {
   type: "linear",
-  stops: [
-    { offset: 0, color: "#2563eb" },
-    { offset: 1, color: "#dc2626" },
-  ],
+  stops: globalPalette.gradient.map((color, index) => ({
+    offset: index / Math.max(1, globalPalette.gradient.length - 1),
+    color,
+  })),
 };
 
 export const defaultSizeMapping: LinearSizeMapping = {
@@ -131,7 +132,7 @@ function hex(values: number[]) {
 
 export function interpolateLinearColor(mapping: LinearColorMapping, offset: number) {
   const stops = normalizedColorStops(mapping.stops);
-  if (stops.length === 0) return "#2563eb";
+  if (stops.length === 0) return globalPalette.categorical[0] ?? "#000000";
   const [left, right, ratio] = segmentAt(stops, clamp01(offset));
   if (left === right) return left.color;
   const from = rgb(left.color);
@@ -148,6 +149,10 @@ export function interpolateLinearSize(mapping: LinearSizeMapping, offset: number
 
 export function mapColorValue(value: number, domain: [number, number], mapping: LinearColorMapping) {
   return interpolateLinearColor(mapping, normalizeVisualValue(value, mapping.domain ?? domain));
+}
+
+export function globalGradientColor(value: number, domain: [number, number]) {
+  return mapColorValue(value, domain, defaultColorMapping);
 }
 
 export function mapSizeValue(value: number, domain: [number, number], mapping: LinearSizeMapping) {

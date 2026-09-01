@@ -1,7 +1,7 @@
 import { extent } from "d3-array";
 import { scaleLinear, scaleLog, scalePoint, scaleUtc } from "d3-scale";
 import { arc, pie } from "d3-shape";
-import type { CartesianCoordinateGuide, ChartEncoding, ChartSpec, Dataset, LayerSpec, NestedSpec, ChartPlotArea, ChartPolarArea, ChartScaleSpec, CoordinateGuide, MarkGroupSharedConfig } from "../types";
+import type { CartesianCoordinateGuide, ChartEncoding, ChartSpec, Dataset, LayerSpec, NestedChildFrame, NestedSpec, ChartPlotArea, ChartPolarArea, ChartScaleSpec, CoordinateGuide, MarkGroupSharedConfig } from "../types";
 import { renderLineChart, type LineRenderInput } from "./lineRenderer";
 import { cartesianAxisEncoding, normalizeBarChartVariant, normalizeChartTemplate } from "./chartTemplates";
 import { getChartEncodingSchema, type ChartRendererKey } from "./chartEncodingSchemas";
@@ -22,6 +22,7 @@ import { csvRowKey } from "./csvDataEngine";
 import { chartAxisLabelsVisible, chartAxisVisible } from "./chartAxes";
 import { materializeGraphDataset } from "./chartDataPipeline";
 import { adaptiveLabel } from "./adaptiveLabels";
+import { globalPalette } from "../config/global";
 
 const POLAR_CONCAT_SEAM_RATIO = 0.06;
 
@@ -51,7 +52,7 @@ function scalesFromSpec(spec: ChartSpec) {
   return { xScale, yScale, plotArea: spec.plotArea as ChartPlotArea };
 }
 
-const palette = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#4d7c0f"];
+const palette = globalPalette.categorical;
 
 function groupConfig(spec: ChartSpec, role: string) {
   return spec.markGroups?.find((group) => group.role === role)?.sharedConfig ?? {};
@@ -932,7 +933,7 @@ function renderMatrixChart(input: GenericRenderInput) {
     const colorIndex = colorEncoding
       ? Math.max(0, colorIndexByValue.get(representative[colorEncoding.field] ?? "") ?? 0)
       : 0;
-    const color = visualColor(representative, colorEncoding, colorDomain, config, palette[colorIndex % palette.length] ?? "#2563eb");
+    const color = visualColor(representative, colorEncoding, colorDomain, config, palette[colorIndex % palette.length] ?? globalPalette.categorical[0] ?? "#000000");
     const centerX = xPositionByValue.get(columnKey);
     const centerY = yPositionByValue.get(rowKey);
     if (centerX === undefined || centerY === undefined || !Number.isFinite(centerX) || !Number.isFinite(centerY)) return "";
@@ -966,6 +967,8 @@ export type GenericRenderInput = {
   polarConcatDirection?: "radial" | "angular";
   sharedPlotArea?: ChartPlotArea;
   sharedScales?: Partial<{ x: ChartScaleSpec; y: ChartScaleSpec }>;
+  /** Child selection-box sizes keyed by the parent mark identity. */
+  nestedChildFrames?: readonly NestedChildFrame[];
 };
 
 export type DeterministicChartResult = {
@@ -1096,7 +1099,7 @@ export function renderNestedPie(input: {
   if (!xEncoding || !yEncoding) throw new Error("Nested Pie requires explicit X and Y encodings.");
   const fields = input.nestedSpec.valueFields;
   const groupId = input.nestedSpec.groupId ?? `nested-pie-group:${input.nestedSpec.parentChartNodeId}`;
-  const colors = ["#2563eb", "#dc2626", "#16a34a", "#d97706"];
+  const colors = globalPalette.categorical;
   const baseRadius = Math.max(5, Math.min(input.width, input.height) * 0.018);
   const radiusField = input.nestedSpec.radiusField;
   const radiusValues = radiusField

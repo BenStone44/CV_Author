@@ -1,0 +1,141 @@
+:root {
+  color: #17202b;
+  background: #edf2f6;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.playground {
+  width: 100vw;
+  height: 100dvh;
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 18px;
+  padding: 20px clamp(16px, 3vw, 40px) 24px;
+}
+
+.playground__header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin: 0 auto 18px;
+  width: 100%;
+  margin-bottom: 0;
+}
+
+.playground__eyebrow {
+  margin: 0 0 4px;
+  color: #687787;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  font-size: 32px;
+  line-height: 1.1;
+  font-weight: 700;
+}
+
+.playground__meta {
+  margin: 8px 0 0;
+  color: #687787;
+  font-size: 13px;
+}
+
+.playground__controls {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: min(100%, 320px);
+  padding: 14px 16px;
+  border: 1px solid #ccd6df;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.playground__controls label {
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.playground__controls output {
+  color: #526273;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.playground__controls input {
+  width: 100%;
+  accent-color: #2563eb;
+}
+
+.playground__canvas {
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  overflow: auto;
+  border: 1px solid #ccd6df;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.playground__svg {
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  padding: 12px;
+}
+
+.playground__svg svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+@media (max-width: 700px) {
+  h1 {
+    font-size: 28px;
+  }
+
+  .playground__header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .playground {
+    height: auto;
+    min-height: 100dvh;
+  }
+
+  .playground__canvas {
+    min-height: 520px;
+  }
+
+  .playground__controls {
+    width: 100%;
+  }
+}

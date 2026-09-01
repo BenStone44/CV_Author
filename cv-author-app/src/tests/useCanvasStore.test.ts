@@ -2984,6 +2984,102 @@ describe("composition coordinate editing", () => {
     });
   });
 
+  it("reflows nested children when a Dendrogram node size changes", async () => {
+    const dataset: Dataset = {
+      id: "dendrogram-node-size-layout",
+      name: "dendrogram-node-size-layout.csv",
+      columns: [
+        { name: "node_id", type: "nominal" },
+        { name: "parent_id", type: "nominal" },
+      ],
+      rows: [{ node_id: "root", parent_id: "" }],
+      primaryKey: ["node_id"],
+    };
+    const parent = lineChart("dendrogram-size-parent", 100, false);
+    parent.chartSpec = {
+      chartType: "Dendrogram",
+      datasetId: dataset.id,
+      encodings: {
+        key: { field: "node_id", type: "nominal" },
+        parent: { field: "parent_id", type: "nominal" },
+      },
+      markGroups: [{
+        id: `mark-group:${parent.id}:node`,
+        chartId: parent.id,
+        role: "node",
+        memberKeys: [],
+        sharedConfig: { size: 2.5 },
+      }],
+    };
+    const child = lineChart("dendrogram-size-child", 900, false);
+    child.width = 100;
+    child.height = 100;
+    let markBounds = { left: 200, top: 200, right: 210, bottom: 210 };
+    const canvasRef = ref({
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 800 }),
+      querySelectorAll: () => [new SvgMarkStub(
+        { "data-node-id": parent.id },
+        { left: 100, top: 100, right: 500, bottom: 500 },
+        [new SvgMarkStub(
+          {
+            "data-mark-role": "node",
+            "data-mark-group-id": `mark-group:${parent.id}:node`,
+          },
+          markBounds,
+          [],
+          new SvgMarkStub({}, markBounds),
+        )],
+      )],
+    } as unknown as HTMLElement);
+    const store = useCanvasStore(canvasRef);
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [parent, child];
+    [parent, child].forEach((node, index) => {
+      store.relationshipStore.dispatch({
+        type: "register-chart",
+        chart: {
+          id: node.id,
+          nodeId: node.id,
+          chartType: node.chartSpec!.chartType,
+          datasetId: node.chartSpec!.datasetId,
+          instanceKind: index === 0 ? "canvas" : "nested-child",
+        },
+      });
+    });
+    store.relationshipStore.dispatch({
+      type: "begin-nested",
+      relationship: {
+        id: "nested:dendrogram-size",
+        parentChartId: parent.id,
+        parentElementId: "mark:dendrogram-size:node:root",
+        parentMarkGroupId: `mark-group:${parent.id}:node`,
+        childChartId: child.id,
+        relationType: "relative-position",
+        parameters: {
+          ...store.relationshipStore.defaultRelativeParameters(),
+          scale: { x: 0.1, y: 0.1 },
+        },
+        resolverVersion: 1,
+      },
+    });
+    store.relationshipStore.dispatch({ type: "commit-nested", relationshipId: "nested:dendrogram-size" });
+    store.axisBindingTarget.value = { nodeId: parent.id, channel: "x" };
+    markBounds = { left: 200, top: 200, right: 250, bottom: 250 };
+
+    child.scaleX = 0.1;
+    child.scaleY = 0.1;
+    const previousScale = child.scaleX;
+    store.updateAxisBindingMarkGroupConfig({ size: 20 });
+    await nextTick();
+
+    const relationship = store.relationshipStore.state.value.nestedRelationships["nested:dendrogram-size"];
+    expect(child.scaleX).toBeGreaterThan(previousScale);
+    expect(child.scaleY).toBeCloseTo(child.scaleX);
+    expect((relationship?.parameters as { scale: { x: number; y: number } }).scale.x).toBeCloseTo(child.scaleX);
+    expect((relationship?.parameters as { scale: { x: number; y: number } }).scale.y).toBeCloseTo(child.scaleY);
+  });
+
   it("extends Polar layer and concat compositions without replacing their members", () => {
     const layerFirst = polarChart("repeat-polar-layer-first", 100);
     const layerSecond = polarChart("repeat-polar-layer-second", 800);

@@ -3,10 +3,12 @@ import { hasRequiredChartEncodings } from "../utils/chartTemplates";
 import {
   DEFAULT_CHART_DATASET_ID,
   DEFAULT_HEXBIN_DATASET_ID,
+  DEFAULT_CHORD_DATASET_ID,
   createDefaultChartSpec,
   defaultChartDataset,
   defaultDatasetForChartType,
   defaultHexbinDataset,
+  defaultChordDataset,
   renderDefaultChartSvg,
 } from "../utils/defaultChartData";
 
@@ -29,9 +31,29 @@ const chartTypes = [
   "PieChart",
   "DonutChart",
   "RadialBarChart",
+  "Chord",
 ] as const;
 
 describe("built-in default chart data", () => {
+  it("uses the Observable Chord diagram matrix as a standard graph dataset", () => {
+    expect(defaultChordDataset.id).toBe(DEFAULT_CHORD_DATASET_ID);
+    expect(defaultChordDataset.graph?.nodes.rows).toHaveLength(4);
+    expect(defaultChordDataset.graph?.edges.rows).toHaveLength(16);
+    expect(createDefaultChartSpec("Chord")).toMatchObject({
+      datasetId: DEFAULT_CHORD_DATASET_ID,
+      encodings: {
+        source: { field: "source", type: "nominal" },
+        target: { field: "target", type: "nominal" },
+        value: { field: "value", type: "quantitative" },
+      },
+    });
+    const svg = renderDefaultChartSvg("Chord") ?? "";
+    expect(svg).toContain(`data-default-dataset-id="${DEFAULT_CHORD_DATASET_ID}"`);
+    expect(svg).toContain('data-renderer="observable-chord@2"');
+    expect(svg).toContain("black");
+    expect(svg).not.toContain("<image");
+  });
+
   it("provides 10 horizontal values and 5 series with stable row identities", () => {
     expect(defaultChartDataset.id).toBe(DEFAULT_CHART_DATASET_ID);
     expect(defaultChartDataset.rows).toHaveLength(50);

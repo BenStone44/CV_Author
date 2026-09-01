@@ -55,6 +55,7 @@ import {
   isCartesianTreeChart,
 } from "../utils/treeLayout";
 import { markMatchesNestedDataKey } from "../stores/canvas/nestedMarkIdentity";
+import { globalPalette } from "../config/global";
 
 const EMPTY_SELECTION_IDS: string[] = [];
 const NESTED_MAX_DIAMETER = 360;
@@ -506,7 +507,7 @@ function createSeriesItemPresentation(node: CanvasNode) {
     : isCategoricalColorMapping(markConfig.seriesColorMapping)
       ? Object.fromEntries(Object.entries(markConfig.seriesColorMapping.values).map(([member, color]) => [member, { color }]))
       : {};
-  const fallbackColors = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#4d7c0f"];
+  const fallbackColors = globalPalette.categorical;
   const members = seriesItemMemberIds(node).map((member, index) => {
     const style = (mappedStyles[member] ?? {}) as { color?: string; strokeWidth?: number; shape?: "solid" | "dashed" | "dotted" };
     return {

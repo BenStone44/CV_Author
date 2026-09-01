@@ -43,9 +43,11 @@ import {
 } from "../utils/csvColumnDrag";
 import { RADIAL_DENDROGRAM_DEFAULT_LEAF_RADIUS } from "../utils/radialClusterLayout";
 import {
+  isDirectionalHierarchyChart,
   normalizeCartesianTreeDirection,
   type CartesianTreeDirection,
 } from "../utils/treeLayout";
+import { globalPalette } from "../config/global";
 
 const props = defineProps<{
   chartName: string;
@@ -144,7 +146,7 @@ const seriesItemsRequired = computed(() => supportsSeriesItems.value
 const seriesItemLabel = computed(() => seriesRole.value?.semanticLabel ?? "Series");
 const isParallel = computed(() => template.value === "parallel");
 const isHierarchy = computed(() => template.value === "hierarchy");
-const isCartesianTree = computed(() => normalizedChartType.value === "dendrogram");
+const isDirectionalHierarchy = computed(() => isDirectionalHierarchyChart(props.chartSpec.chartType));
 const treeDirection = computed(() => normalizeCartesianTreeDirection(props.markConfig.treeDirection));
 const treeDirections: Array<{
   value: CartesianTreeDirection;
@@ -177,7 +179,9 @@ const standardConfigs = computed(() => configs.value.filter((config) => {
   if (supportsSeriesItems.value && seriesItemMode.value === "quantitative" && config.channel === "y") return false;
   return true;
 }));
-const compactConfigs = computed(() => standardConfigs.value.filter((config) => config.channel === "color" || config.channel === "size"));
+const compactConfigs = computed(() => standardConfigs.value.filter((config) =>
+  (config.channel === "color" || config.channel === "size")
+  && !(config.channel === "size" && normalizedChartType.value === "dendrogram" && !sizeField.value)));
 const otherStandardConfigs = computed(() => standardConfigs.value.filter((config) => config.channel !== "color" && config.channel !== "size"));
 const seriesMembers = computed(() => {
   const field = props.chartSpec.defaultDataBinding
@@ -337,6 +341,7 @@ const colorDomain = computed(() => {
 const showSizeMapping = computed(() => !!sizeField.value);
 const staticColor = computed(() => typeof props.markConfig.color === "string" ? props.markConfig.color : "#2563eb");
 const staticSize = computed(() => typeof props.markConfig.size === "number" ? props.markConfig.size : 4);
+const dendrogramNodeSize = computed(() => typeof props.markConfig.size === "number" ? props.markConfig.size : 2.5);
 const horizonBands = computed(() => typeof props.markConfig.bands === "number" ? props.markConfig.bands : 7);
 const treemapTile = computed(() => typeof props.markConfig.tile === "string" ? props.markConfig.tile : "binary");
 const radialDendrogramLeafRadius = computed(() => typeof props.markConfig.leafRadius === "number"
@@ -397,7 +402,7 @@ function updateFacetPolarField(channel: "theta" | "radius", field: string) {
 function numericValue(event: Event) {
   return Number((event.target as HTMLInputElement).value);
 }
-const fallbackSeriesColors = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#4d7c0f"];
+const fallbackSeriesColors = globalPalette.categorical;
 function seriesMemberColor(memberId: string, index: number) {
   return seriesStyleMapping.value.values[memberId]?.color
     ?? fallbackSeriesColors[index % fallbackSeriesColors.length]!;
@@ -1208,7 +1213,7 @@ function updateSingleBarTopN(rawValue: string) {
     </section>
 
     <section v-if="isHierarchy" class="encoding-config__appearance">
-      <div v-if="isCartesianTree" class="encoding-config__tree-direction" aria-label="Tree direction">
+      <div v-if="isDirectionalHierarchy" class="encoding-config__tree-direction" aria-label="Tree direction">
         <span>Direction</span>
         <div role="group" aria-label="Tree direction">
           <button
@@ -1231,6 +1236,25 @@ function updateSingleBarTopN(rawValue: string) {
           type="checkbox"
           :checked="nodeLabelsVisible"
           @change="emit('markConfigChange', { nodeLabelsVisible: ($event.target as HTMLInputElement).checked })"
+        />
+      </label>
+      <label v-if="normalizedChartType === 'dendrogram' && !sizeField" class="encoding-config__static">
+        <span>Node size</span>
+        <output>{{ dendrogramNodeSize }} px</output>
+        <input
+          type="range"
+          min="1"
+          max="48"
+          step="0.5"
+          :value="dendrogramNodeSize"
+          aria-label="Dendrogram node size"
+          @pointerdown="emit('markConfigEditStart', 'size')"
+          @focus="emit('markConfigEditStart', 'size')"
+          @pointerup="emit('markConfigEditEnd')"
+          @pointercancel="emit('markConfigEditEnd')"
+          @blur="emit('markConfigEditEnd')"
+          @change="emit('markConfigEditEnd')"
+          @input="emit('markConfigChange', { size: Number(($event.target as HTMLInputElement).value) })"
         />
       </label>
     </section>

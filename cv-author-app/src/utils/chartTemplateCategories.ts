@@ -31,13 +31,13 @@ const familyDefinitions: Array<{
   { id: "point", label: "Point", chartTypes: new Set(["scatterplot"]) },
   { id: "heatmap", label: "Heatmap", chartTypes: new Set(["matrixdiagram", "contour", "hexbin"]) },
   { id: "arc", label: "Arc", chartTypes: new Set(["piechart", "donutchart"]) },
-  { id: "tree", label: "Tree", chartTypes: new Set(["sunburst", "icicle", "treemap", "dendrogram", "radialdendrogram"]) },
   { id: "network", label: "Network", chartTypes: new Set(["forcedirectedgraph"]) },
 
+  { id: "chord", label: "Chord", chartTypes: new Set(["chord"]) },
   { id: "sankey", label: "Sankey", chartTypes: new Set(["sankey"]) },
+  { id: "tree", label: "Tree", chartTypes: new Set(["sunburst", "icicle", "treemap", "dendrogram", "radialdendrogram"]) },
   { id: "calendar", label: "Calendar", chartTypes: new Set(["calendar"]) },
   { id: "boxplot", label: "Boxplot", chartTypes: new Set(["boxplot", "boxandwhisker"]) },
-  { id: "chord", label: "Chord", chartTypes: new Set(["chord"]) },
   {
     id: "geographic-point",
     label: "Geographic point",

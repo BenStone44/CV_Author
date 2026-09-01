@@ -7,11 +7,6 @@ import {
   contours as d3Contours,
   curveBasis,
   descending,
-  interpolateBrBG,
-  interpolateBuPu,
-  interpolateMagma,
-  interpolatePiYG,
-  interpolateRainbow,
   line as d3Line,
   forceCenter,
   forceCollide,
@@ -24,7 +19,6 @@ import {
   linkRadial,
   partition,
   quantileSorted,
-  quantize,
   range as d3Range,
   ribbon as d3Ribbon,
   scaleLinear,
@@ -34,9 +28,6 @@ import {
   scaleSequential,
   scaleSequentialLog,
   scaleUtc,
-  schemeBlues,
-  schemeCategory10,
-  schemeTableau10,
   stack,
   stackOffsetSilhouette,
   stackOrderInsideOut,
@@ -73,6 +64,7 @@ import {
   isCategoricalColorMapping,
   isLinearColorMapping,
   isLinearSizeMapping,
+  globalGradientColor,
   mapColorValue,
   mapSizeValue,
   parseVisualValue,
@@ -88,9 +80,10 @@ import {
   cartesianTreeDirection,
   cartesianTreeLeafAxis,
 } from "./treeLayout";
-import { adaptiveAxisFontSize, adaptiveLabel } from "./adaptiveLabels";
+import { adaptiveAxisFontSize, adaptiveLabel, measureLabelWidth, readableTextColor } from "./adaptiveLabels";
+import { globalPalette } from "../config/global";
 
-const tableau = schemeTableau10;
+const tableau = globalPalette.categorical;
 
 function esc(value: string) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
@@ -118,6 +111,97 @@ function plotArea(input: GenericRenderInput, inset = 10): ChartPlotArea {
 
 function rowKey(dataset: Dataset, row: Dataset["rows"][number], index: number) {
   return csvRowKey(dataset, row, index);
+}
+
+type NestedMarkIdentity = {
+  rowKey?: string;
+  categoryKey?: string;
+  seriesKey?: string;
+  rowValue?: string;
+  columnValue?: string;
+  role?: string;
+  fallbackIndex?: number;
+};
+
+function nestedMarkIdentity(dataKey: string | undefined): NestedMarkIdentity {
+  if (!dataKey) return {};
+  try {
+    return JSON.parse(dataKey) as NestedMarkIdentity;
+  } catch {
+    return { rowKey: dataKey };
+  }
+}
+
+function nestedChildFrame(
+  input: GenericRenderInput,
+  values: {
+    rowKey?: string;
+    nodeKey?: string;
+    role?: string;
+    categoryKey?: string;
+    seriesKey?: string;
+    rowValue?: string;
+    columnValue?: string;
+    index?: number;
+    markGroupId?: string;
+  },
+) {
+  return input.nestedChildFrames?.find((frame) => {
+    if (frame.parentMarkGroupId && values.markGroupId && frame.parentMarkGroupId !== values.markGroupId) return false;
+    const identity = nestedMarkIdentity(frame.parentDataKey);
+    const legacyDirectKey = !!frame.parentDataKey && !frame.parentDataKey.trim().startsWith("{");
+    return (identity.rowKey === undefined
+      || identity.rowKey === values.rowKey
+      || (legacyDirectKey && identity.rowKey === values.nodeKey))
+      && (identity.categoryKey === undefined || identity.categoryKey === values.categoryKey || identity.categoryKey === values.nodeKey)
+      && (identity.seriesKey === undefined || identity.seriesKey === values.seriesKey)
+      && (identity.rowValue === undefined || identity.rowValue === values.rowValue)
+      && (identity.columnValue === undefined || identity.columnValue === values.columnValue)
+      && (identity.role === undefined || identity.role === values.role)
+      && (identity.fallbackIndex === undefined || identity.fallbackIndex === values.index);
+  });
+}
+
+/** Return the point where a link exits/enters an embedded rectangular child. */
+function rectangleLinkEndpoint(
+  point: { x: number; y: number },
+  toward: { x: number; y: number },
+  width: number,
+  height: number,
+) {
+  const dx = toward.x - point.x;
+  const dy = toward.y - point.y;
+  const length = Math.hypot(dx, dy);
+  if (!Number.isFinite(length) || length < 1e-6) return point;
+  const ux = dx / length;
+  const uy = dy / length;
+  const halfWidth = Math.max(0, width) / 2;
+  const halfHeight = Math.max(0, height) / 2;
+  const extent = Math.min(
+    Math.abs(ux) > 1e-6 ? halfWidth / Math.abs(ux) : Number.POSITIVE_INFINITY,
+    Math.abs(uy) > 1e-6 ? halfHeight / Math.abs(uy) : Number.POSITIVE_INFINITY,
+  );
+  if (!Number.isFinite(extent)) return point;
+  return { x: point.x + ux * extent, y: point.y + uy * extent };
+}
+
+function nestedFrameLinkEndpoint(
+  point: { x: number; y: number },
+  toward: { x: number; y: number },
+  frame: { shape?: "circle" | "rect"; radius?: number; width: number; height: number },
+) {
+  if (frame.shape === "circle" && Number.isFinite(frame.radius) && (frame.radius ?? 0) > 0) {
+    const dx = toward.x - point.x;
+    const dy = toward.y - point.y;
+    const length = Math.hypot(dx, dy);
+    if (length > 1e-6) return { x: point.x + dx / length * frame.radius!, y: point.y + dy / length * frame.radius! };
+  }
+  return rectangleLinkEndpoint(point, toward, frame.width, frame.height);
+}
+
+function nestedFrameExtent(frame: { shape?: "circle" | "rect"; radius?: number; width: number; height: number }) {
+  if (frame.shape === "circle" && Number.isFinite(frame.radius) && (frame.radius ?? 0) > 0) return frame.radius!;
+  return Math.hypot(Math.max(0, frame.width) / 2, Math.max(0, frame.height) / 2);
 }
 
 function numeric(row: Dataset["rows"][number], encoding: ChartEncoding | undefined, fallback = Number.NaN) {
@@ -313,14 +397,13 @@ function renderArea(input: GenericRenderInput) {
       .y0(size)
       .y1((datum) => y(Number(datum.value)))
       .curve(curveBasis);
-    const palette = (schemeBlues[Math.max(3, bands)] ?? schemeBlues[9]!).slice(Math.max(0, 3 - bands));
     const uid = `horizon-${input.chartId.replace(/[^a-z0-9_-]/gi, "-")}`;
     const seriesGroups = seriesValues.map((series, seriesIndex) => {
       const top = input.minY + marginTop + seriesIndex * size;
       const pathId = `${uid}-path-${seriesIndex}`;
       const clipId = `${uid}-clip-${seriesIndex}`;
       const data = table.map((datum) => ({ x: datum.x ?? "", value: Number(datum[series] ?? 0) }));
-      const uses = d3Range(bands).map((band) => `<use href="#${pathId}" fill="${palette[band] ?? palette.at(-1) ?? "#08306b"}" transform="translate(0 ${band * size})"/>`).join("");
+      const uses = d3Range(bands).map((band) => `<use href="#${pathId}" fill="${globalGradientColor((band + 1) / bands, [0, 1])}" transform="translate(0 ${band * size})"/>`).join("");
       const seriesLabel = series === "__single__" ? yEncoding.field : series;
       const label = adaptiveText(seriesLabel, `x="${input.minX + 4}" y="${(size + padding) / 2}" dy="0.35em"`, width * 0.32, Math.max(8, size), "#ffffff");
       return `<g transform="translate(0 ${top})"><defs><clipPath id="${clipId}"><rect x="${input.minX}" y="${padding}" width="${width}" height="${Math.max(0, size - padding)}"/></clipPath><path id="${pathId}" d="${area(data) ?? ""}"/></defs><g clip-path="url(#${clipId})" data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series)}">${uses}</g>${label}</g>`;
@@ -493,7 +576,7 @@ function renderParallel(input: GenericRenderInput) {
   const colorEncoding = input.chartSpec.encodings.color;
   const colorField = colorEncoding?.field ?? fields[0]!.field;
   const colorValues = input.dataset.rows.map((row) => Number(row[colorField] ?? "")).filter(Number.isFinite);
-  const sequential = scaleSequential((value) => interpolateBrBG(1 - value)).domain(finiteDomain(colorValues));
+  const sequential = scaleSequential((value) => globalGradientColor(1 - value, [0, 1])).domain(finiteDomain(colorValues));
   const categories = colorEncoding?.type === "nominal" || colorEncoding?.type === "ordinal"
     ? Array.from(new Set(input.dataset.rows.map((row) => row[colorField] ?? "")))
     : [];
@@ -569,7 +652,7 @@ function renderHierarchy(input: GenericRenderInput) {
     ? scaleOrdinal<string, string>().domain(colorDomain as string[]).range(tableau)
     : null;
   const sequentialNodeColor = colorEncoding?.type === "quantitative"
-    ? scaleSequential(interpolateBuPu).domain(colorDomain as [number, number])
+    ? scaleSequential((value) => globalGradientColor(value, [0, 1])).domain(colorDomain as [number, number])
     : null;
   const sizeDomain = sizeEncoding
     ? finiteDomain(root.descendants().map((node) => Number(node.data[sizeEncoding.field] ?? "")))
@@ -577,7 +660,7 @@ function renderHierarchy(input: GenericRenderInput) {
   const nodeRadius = (node: { data: Dataset["rows"][number] }) => {
     if (!sizeEncoding) {
       const configured = Number(nodeConfig.size);
-      return Number.isFinite(configured) ? Math.max(2, Math.min(12, configured)) : 2.5;
+      return Number.isFinite(configured) ? Math.max(1, Math.min(48, configured)) : 2.5;
     }
     const value = Number(node.data[sizeEncoding.field] ?? "");
     return Number.isFinite(value) && sizeDomain[1] > sizeDomain[0]
@@ -595,8 +678,9 @@ function renderHierarchy(input: GenericRenderInput) {
   };
   const nodeLabelsVisible = nodeConfig.nodeLabelsVisible !== false;
   const topNames = root.children?.map((node) => node.id ?? "") ?? [];
-  const rainbow = scaleOrdinal<string, string>().domain(topNames).range(quantize(interpolateRainbow, topNames.length + 1));
+  const rainbow = scaleOrdinal<string, string>().domain(topNames).range(tableau);
   const visible = <T extends { id?: string }>(node: T) => !(synthetic && node.id === "__root__");
+  const direction = cartesianTreeDirection(input.chartSpec);
 
   if (type.includes("radialdendrogram")) {
     const keyEncoding = input.chartSpec.encodings.key;
@@ -622,6 +706,7 @@ function renderHierarchy(input: GenericRenderInput) {
     const leafRadius = baseLeafRadius * outerRatio;
     const selectionRadius = leafRadius + RADIAL_DENDROGRAM_SELECTION_PADDING;
     const angleSpan = Math.max(1, Math.min(guide?.angleSpan ?? 360, 360));
+    let renderedAngleSpan = angleSpan;
     const angleOffset = guide?.angleOffset ?? 0;
     const startAngle = (-270 + angleOffset) * Math.PI / 180;
     const spanRadians = angleSpan * Math.PI / 180;
@@ -635,13 +720,90 @@ function renderHierarchy(input: GenericRenderInput) {
       outerRadius: leafRadius,
     });
     const radialRoot = radial.root;
+    const radialLeaves = radialRoot.leaves().filter(radial.visible) as RadialClusterNode[];
+    const radialFrameFor = (node: RadialClusterNode) => nestedChildFrame(input, {
+      rowKey: rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)),
+      nodeKey: node.id,
+      role: "node",
+      index: node.data ? input.dataset.rows.indexOf(node.data) : undefined,
+      markGroupId: `mark-group:${input.chartId}:node`,
+    });
+    const radialFrames = radialLeaves.map(radialFrameFor);
+    const allRadialFrameRequirements = (radialRoot.descendants() as RadialClusterNode[]).flatMap((node) => {
+      const frame = radialFrameFor(node);
+      return frame ? [{ frame, radius: Math.max(1, node.y) }] : [];
+    });
+    if (allRadialFrameRequirements.length > 0 && radialLeaves.length > 1) {
+      const baseStep = spanRadians / (radialLeaves.length - 1);
+      const requiredStep = Math.max(
+        baseStep,
+        ...allRadialFrameRequirements.map(({ frame, radius }) =>
+          2 * Math.asin(Math.min(0.98, nestedFrameExtent(frame) / radius)) + 0.08),
+      );
+      const expandedSpan = Math.max(spanRadians, requiredStep * (radialLeaves.length - 1));
+      renderedAngleSpan = expandedSpan * 180 / Math.PI;
+      const first = startAngle - (expandedSpan - spanRadians) / 2;
+      radialLeaves.forEach((node, index) => {
+        node.x = first + expandedSpan * index / Math.max(1, radialLeaves.length - 1);
+      });
+      radialRoot.eachAfter((node) => {
+        if (!node.children?.length) return;
+        const children = node.children as RadialClusterNode[];
+        node.x = children.reduce((sum, child) => sum + child.x, 0) / children.length;
+      });
+    }
     const nodes = radialRoot.descendants().filter(radial.visible) as RadialClusterNode[];
     const radialLink = linkRadial<any, RadialClusterNode>()
       .angle((node) => node.x)
       .radius((node) => node.y);
     const links = radialRoot.links()
       .filter((link) => radial.visible(link.source) && radial.visible(link.target))
-      .map((link) => `<path data-mark-role="link" d="${radialLink(link as any) ?? ""}" fill="none" stroke="#555" stroke-opacity="0.4" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`)
+      .map((link) => {
+        const sourceFrame = nestedChildFrame(input, {
+          rowKey: rowKey(input.dataset, link.source.data, input.dataset.rows.indexOf(link.source.data)),
+          nodeKey: link.source.id,
+          role: "node",
+          index: link.source.data ? input.dataset.rows.indexOf(link.source.data) : undefined,
+          markGroupId: `mark-group:${input.chartId}:node`,
+        });
+        const targetFrame = nestedChildFrame(input, {
+          rowKey: rowKey(input.dataset, link.target.data, input.dataset.rows.indexOf(link.target.data)),
+          nodeKey: link.target.id,
+          role: "node",
+          index: link.target.data ? input.dataset.rows.indexOf(link.target.data) : undefined,
+          markGroupId: `mark-group:${input.chartId}:node`,
+        });
+        if (!sourceFrame && !targetFrame) {
+          return `<path data-mark-role="link" d="${radialLink(link as any) ?? ""}" fill="none" stroke="#555" stroke-opacity="0.4" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
+        }
+        const radialPoint = (node: { x: number; y: number }) => ({
+          x: Math.sin(node.x) * node.y,
+          y: -Math.cos(node.x) * node.y,
+        });
+        const boundary = (node: { x: number; y: number }, frame: NonNullable<typeof sourceFrame>, toward: { x: number; y: number }) => {
+          const center = radialPoint(node);
+          return nestedFrameLinkEndpoint(center, toward, frame);
+        };
+        const sourceNode = link.source as RadialClusterNode;
+        const targetNode = link.target as RadialClusterNode;
+        const sourceCenter = radialPoint(sourceNode);
+        const targetCenter = radialPoint(targetNode);
+        const source = sourceFrame ? boundary(sourceNode, sourceFrame, targetCenter) : sourceCenter;
+        const target = targetFrame ? boundary(targetNode, targetFrame, sourceCenter) : targetCenter;
+        // Keep controls at or beyond both endpoints so a large embedded child
+        // can only push the curve outward, never make it turn back inward.
+        const endpointRadius = Math.max(
+          sourceNode.y,
+          targetNode.y,
+          Math.hypot(source.x, source.y),
+          Math.hypot(target.x, target.y),
+        );
+        const midpointRadius = endpointRadius;
+        const controlSource = radialPoint({ x: sourceNode.x, y: midpointRadius });
+        const controlTarget = radialPoint({ x: targetNode.x, y: midpointRadius });
+        const path = `M${source.x},${source.y}C${controlSource.x},${controlSource.y} ${controlTarget.x},${controlTarget.y} ${target.x},${target.y}`;
+        return `<path data-mark-role="link" d="${path}" fill="none" stroke="#555" stroke-opacity="0.4" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
+      })
       .join("");
     const marks = nodes.map((node) => {
       const color = nodeColor(node, typeof nodeConfig.color === "string"
@@ -661,9 +823,9 @@ function renderHierarchy(input: GenericRenderInput) {
         : "";
     }).join("") : "";
     return {
-      content: `<g transform="translate(${cx} ${cy})" data-chart-id="${esc(input.chartId)}" data-chart-type="radial-dendrogram" data-renderer="observable-radial-cluster@3" data-angle-span="${angleSpan}" data-leaf-radius="${leafRadius}" data-selection-radius="${selectionRadius}">${links}${marks}${labels}</g>`,
+      content: `<g transform="translate(${cx} ${cy})" data-chart-id="${esc(input.chartId)}" data-chart-type="radial-dendrogram" data-renderer="observable-radial-cluster@3" data-angle-span="${renderedAngleSpan}" data-leaf-radius="${leafRadius}" data-selection-radius="${selectionRadius}">${links}${marks}${labels}</g>`,
       plotArea: { x: cx - leafRadius, y: cy - leafRadius, width: leafRadius * 2, height: leafRadius * 2 },
-      polarArea: { startAngle: angleOffset, angleSpan, innerRadius, outerRadius: leafRadius },
+      polarArea: { startAngle: angleOffset, angleSpan: renderedAngleSpan, innerRadius, outerRadius: leafRadius },
     };
   }
 
@@ -671,28 +833,45 @@ function renderHierarchy(input: GenericRenderInput) {
     const tilers = { binary: treemapBinary, squarify: treemapSquarify, "slice-dice": treemapSliceDice, slice: treemapSlice, dice: treemapDice } as const;
     const tileName = String(sharedConfig(input, "node").tile ?? "binary") as keyof typeof tilers;
     const color = scaleOrdinal<string, string>().domain(topNames).range(tableau);
+    const vertical = direction === "down" || direction === "up";
     const layoutRoot = treemap<Dataset["rows"][number]>()
       .tile(tilers[tileName] ?? treemapBinary)
-      .size([area.width, area.height])
+      .size(vertical ? [area.height, area.width] : [area.width, area.height])
       .padding(1)
       .round(true)(root.sort((a, b) => (b.value ?? 0) - (a.value ?? 0)));
     const leaves = layoutRoot.leaves().filter(visible).map((node, index) => {
-      const x = area.x + node.x0;
-      const y = area.y + node.y0;
-      const width = Math.max(0, node.x1 - node.x0);
-      const height = Math.max(0, node.y1 - node.y0);
+      const rawWidth = Math.max(0, node.x1 - node.x0);
+      const rawHeight = Math.max(0, node.y1 - node.y0);
+      const x = vertical ? area.x + node.y0 : direction === "left" ? area.x + area.width - node.x1 : area.x + node.x0;
+      const y = vertical ? direction === "up" ? area.y + area.height - node.x1 : area.y + node.x0 : area.y + node.y0;
+      const width = vertical ? rawHeight : rawWidth;
+      const height = vertical ? rawWidth : rawHeight;
       const clipId = `treemap-${input.chartId.replace(/[^a-z0-9_-]/gi, "-")}-${index}`;
       const labelLines = (node.id ?? "").split(/(?=[A-Z][a-z])|\s+/g).filter(Boolean).concat(formatTick(node.value ?? 0));
       const fill = nodeColor(node, topAncestorColor(node, color));
-      const labels = labelLines.map((line, lineIndex) => {
-        const style = adaptiveLabel({ text: line, width: width - 6, height: Math.max(8, height / labelLines.length), background: fill, fontSize: 10, minFontSize: 5, maxFontSize: 10, padding: 1 });
-        return style.text
-          ? `<tspan x="3" y="${(lineIndex === labelLines.length - 1 ? 1.4 : 1.1) + lineIndex * 0.9}em" fill="${style.color}" fill-opacity="${lineIndex === labelLines.length - 1 ? 0.7 : 1}">${esc(style.text)}</tspan>`
-          : "";
-      }).join("");
-      return `<g transform="translate(${x} ${y})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-row-key="${esc(rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)))}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("."))}\n${formatTick(node.value ?? 0)}</title><rect width="${width}" height="${height}" fill="${fill}" fill-opacity="0.6"/><clipPath id="${clipId}"><rect width="${width}" height="${height}"/></clipPath>${nodeLabelsVisible ? `<text clip-path="url(#${clipId})" font-family="sans-serif">${labels}</text>` : ""}</g>`;
+      const labelPadding = 4;
+      const lineHeight = 1.2;
+      const availableWidth = Math.max(0, width - labelPadding * 2);
+      const availableHeight = Math.max(0, height - labelPadding * 2);
+      const preferredFontSize = 10;
+      const widestLine = Math.max(...labelLines.map((line) => measureLabelWidth(line, preferredFontSize)), 0);
+      const widthBound = widestLine > 0 ? preferredFontSize * availableWidth / widestLine : preferredFontSize;
+      const heightBound = labelLines.length > 0 ? availableHeight / (labelLines.length * lineHeight) : preferredFontSize;
+      // Labels that cannot remain legible inside their own tile are omitted;
+      // the clip path remains a final guard against font-rendering differences.
+      const fontSize = Math.floor(Math.min(preferredFontSize, widthBound, heightBound) * 10) / 10;
+      const labels = fontSize >= 5
+        ? labelLines.map((line, lineIndex) => {
+          const lineCenter = height / 2 + (lineIndex - (labelLines.length - 1) / 2) * fontSize * lineHeight;
+          return `<tspan x="${width / 2}" y="${lineCenter}" fill-opacity="${lineIndex === labelLines.length - 1 ? 0.7 : 1}">${esc(line)}</tspan>`;
+        }).join("")
+        : "";
+      const label = labels
+        ? `<text data-mark-role="node-label" clip-path="url(#${clipId})" x="${width / 2}" y="${height / 2}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="${fontSize}" fill="${readableTextColor(fill)}">${labels}</text>`
+        : "";
+      return `<g transform="translate(${x} ${y})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-row-key="${esc(rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)))}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("."))}\n${formatTick(node.value ?? 0)}</title><rect width="${width}" height="${height}" fill="${fill}" fill-opacity="0.6"/><clipPath id="${clipId}"><rect width="${width}" height="${height}"/></clipPath>${nodeLabelsVisible ? label : ""}</g>`;
     }).join("");
-    return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="treemap" data-tile="${esc(tileName)}" data-renderer="observable-treemap@2">${leaves}</g>`, plotArea: area };
+    return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="treemap" data-tile="${esc(tileName)}" data-tree-direction="${direction}" data-renderer="observable-treemap@2">${leaves}</g>`, plotArea: area };
   }
 
   if (type.includes("sunburst")) {
@@ -728,20 +907,28 @@ function renderHierarchy(input: GenericRenderInput) {
   }
 
   if (type.includes("icicle")) {
-    const layoutRoot = partition<Dataset["rows"][number]>().size([area.height, area.width]).padding(1)(root.sort((a, b) => b.height - a.height || (b.value ?? 0) - (a.value ?? 0)));
+    const vertical = direction === "down" || direction === "up";
+    const layoutRoot = partition<Dataset["rows"][number]>()
+      .size(vertical ? [area.width, area.height] : [area.height, area.width])
+      .padding(1)(root.sort((a, b) => b.height - a.height || (b.value ?? 0) - (a.value ?? 0)));
     const cells = layoutRoot.descendants().filter(visible).map((node) => {
-      const width = Math.max(0, node.y1 - node.y0);
-      const height = Math.max(0, node.x1 - node.x0);
+      const rawWidth = Math.max(0, node.y1 - node.y0);
+      const rawHeight = Math.max(0, node.x1 - node.x0);
+      const x = vertical ? node.x0 : direction === "left" ? area.width - node.y1 : node.y0;
+      // In a vertical partition, y is the depth axis (node.y), while x is
+      // the leaf span. Mirror the depth interval for an upward-growing tree.
+      const y = vertical ? direction === "up" ? area.height - node.y1 : node.y0 : node.x0;
+      const width = vertical ? rawHeight : rawWidth;
+      const height = vertical ? rawWidth : rawHeight;
       const fill = nodeColor(node, topAncestorColor(node, rainbow));
       const label = nodeLabelsVisible && height > 16
         ? adaptiveText(`${node.id ?? ""} ${formatTick(node.value ?? 0)}`, `x="4" y="13" font-family="sans-serif"`, width - 8, height - 4, fill, 10)
         : "";
-      return `<g transform="translate(${area.x + node.y0} ${area.y + node.x0})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-row-key="${esc(rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)))}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}\n${formatTick(node.value ?? 0)}</title><rect width="${width}" height="${height}" fill="${fill}" fill-opacity="0.6"/>${label}</g>`;
+      return `<g transform="translate(${area.x + x} ${area.y + y})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-row-key="${esc(rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)))}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}\n${formatTick(node.value ?? 0)}</title><rect width="${width}" height="${height}" fill="${fill}" fill-opacity="0.6"/>${label}</g>`;
     }).join("");
-    return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="icicle" data-renderer="observable-icicle@2">${cells}</g>`, plotArea: area };
+    return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="icicle" data-tree-direction="${direction}" data-renderer="observable-icicle@2">${cells}</g>`, plotArea: area };
   }
 
-  const direction = cartesianTreeDirection(input.chartSpec);
   const leafAxis = cartesianTreeLeafAxis(direction);
   const horizontal = leafAxis === "y";
   const guide = input.coordinateGuide?.type === "Cartesian" ? input.coordinateGuide : null;
@@ -787,13 +974,34 @@ function renderHierarchy(input: GenericRenderInput) {
     : guide?.xDirection === -1
       ? [treeArea.x + treeArea.width, treeArea.x]
       : [treeArea.x, treeArea.x + treeArea.width];
-  const depthRange: [number, number] = direction === "right"
+  let depthRange: [number, number] = direction === "right"
     ? [treeArea.x, treeArea.x + treeArea.width - labelRoom]
     : direction === "left"
       ? [treeArea.x + treeArea.width, treeArea.x + labelRoom]
       : direction === "down"
         ? [treeArea.y, treeArea.y + treeArea.height - labelRoom]
         : [treeArea.y + treeArea.height, treeArea.y + labelRoom];
+  const depthLevels = Math.max(1, layoutRoot.height);
+  const maxNodeRadius = Math.max(2.5, ...layoutRoot.descendants().map((node) => nodeRadius(node)));
+  const depthFrames = layoutRoot.descendants().map((node) => nestedChildFrame(input, {
+    rowKey: rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)),
+    nodeKey: node.id,
+    role: "node",
+    index: node.data ? input.dataset.rows.indexOf(node.data) : undefined,
+    markGroupId: `mark-group:${input.chartId}:node`,
+  }));
+  const depthSize = (frame: NonNullable<ReturnType<typeof nestedChildFrame>>) => horizontal ? frame.width : frame.height;
+  const requiredDepthSpacing = Math.max(
+    Math.abs((depthRange[1] - depthRange[0]) / depthLevels),
+    ...depthFrames.map((frame) => frame ? depthSize(frame) + 12 : 0),
+    maxNodeRadius * 2 + 12,
+    24,
+  );
+  const depthSpan = requiredDepthSpacing * depthLevels;
+  const depthDirection = depthRange[1] >= depthRange[0] ? 1 : -1;
+  if (depthSpan > Math.abs(depthRange[1] - depthRange[0])) {
+    depthRange = [depthRange[0], depthRange[0] + depthDirection * depthSpan];
+  }
   const nativeLeafScale = scaleForEncoding(
     layoutRoot.leaves().map((node) => node.data),
     orderEncoding,
@@ -806,9 +1014,44 @@ function renderHierarchy(input: GenericRenderInput) {
     range: depthRange,
   };
   const leafPositions = new Map<object, number>();
+  const orderedLeaves = layoutRoot.leaves();
+  const leafFrame = (node: typeof layoutRoot) => nestedChildFrame(input, {
+    rowKey: rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)),
+    nodeKey: node.id,
+    role: "node",
+    index: node.data ? input.dataset.rows.indexOf(node.data) : undefined,
+    markGroupId: `mark-group:${input.chartId}:node`,
+  });
+  const nestedLeafFrames = orderedLeaves.map(leafFrame);
+  const leafAxisSize = (frame: NonNullable<ReturnType<typeof leafFrame>>) => horizontal ? frame.height : frame.width;
+  const baseLeafSpacing = orderedLeaves.length > 1
+    ? Math.abs((leafRange[1] - leafRange[0]) / (orderedLeaves.length - 1))
+    : 0;
+  const requiredLeafSpacing = Math.max(
+    baseLeafSpacing,
+    ...nestedLeafFrames.map((frame) => frame ? leafAxisSize(frame) + 12 : 0),
+    maxNodeRadius * 2 + 12,
+    18,
+  );
+  const expandedLeafRange: [number, number] = orderedLeaves.length > 1
+    ? (() => {
+      const span = requiredLeafSpacing * (orderedLeaves.length - 1);
+      const center = (leafRange[0] + leafRange[1]) / 2;
+      const directionSign = leafRange[1] >= leafRange[0] ? 1 : -1;
+      return [center - directionSign * span / 2, center + directionSign * span / 2];
+    })()
+    : leafRange;
+  // Expand the leaf axis for large nodes even without nested children. The
+  // previous condition only used the expanded range for nested frames, so a
+  // static node-size change could leave adjacent circles overlapping.
+  const leafSpacingNeedsExpansion = nestedLeafFrames.some(Boolean)
+    || requiredLeafSpacing > baseLeafSpacing + 1e-6;
   layoutRoot.eachAfter((node) => {
     if (!node.children?.length) {
-      leafPositions.set(node, areaAxisPosition(leafScale, orderValue(node)));
+      const leafIndex = orderedLeaves.indexOf(node);
+      leafPositions.set(node, leafSpacingNeedsExpansion && leafIndex >= 0
+        ? expandedLeafRange[0] + (expandedLeafRange[1] - expandedLeafRange[0]) * leafIndex / Math.max(1, orderedLeaves.length - 1)
+        : areaAxisPosition(leafScale, orderValue(node)));
       return;
     }
     const positions = node.children
@@ -824,12 +1067,47 @@ function renderHierarchy(input: GenericRenderInput) {
       ? { x: depthPosition, y: leafPosition }
       : { x: leafPosition, y: depthPosition };
   };
+  const linkDirection = direction === "right" || direction === "down" ? 1 : -1;
+  const axisLinkEndpoint = (
+    center: { x: number; y: number },
+    sign: number,
+    frame: ReturnType<typeof nestedChildFrame>,
+    node: typeof layoutRoot,
+  ) => {
+    const toward = horizontal
+      ? { x: center.x + sign, y: center.y }
+      : { x: center.x, y: center.y + sign };
+    if (frame) return nestedFrameLinkEndpoint(center, toward, frame);
+    const radius = nodeRadius(node);
+    return horizontal
+      ? { x: center.x + sign * radius, y: center.y }
+      : { x: center.x, y: center.y + sign * radius };
+  };
   const links = layoutRoot.links().filter((link) => visible(link.source) && visible(link.target)).map((link) => {
     const source = point(link.source);
     const target = point(link.target);
+    const sourceFrame = nestedChildFrame(input, {
+      rowKey: rowKey(input.dataset, link.source.data, input.dataset.rows.indexOf(link.source.data)),
+      nodeKey: link.source.id,
+      role: "node",
+      index: link.source.data ? input.dataset.rows.indexOf(link.source.data) : undefined,
+      markGroupId: `mark-group:${input.chartId}:node`,
+    });
+    const targetFrame = nestedChildFrame(input, {
+      rowKey: rowKey(input.dataset, link.target.data, input.dataset.rows.indexOf(link.target.data)),
+      nodeKey: link.target.id,
+      role: "node",
+      index: link.target.data ? input.dataset.rows.indexOf(link.target.data) : undefined,
+      markGroupId: `mark-group:${input.chartId}:node`,
+    });
+    // Tree links leave and enter on the growth axis. Using the raw center-to-
+    // center vector puts the endpoint on a diagonal point of the circle,
+    // which becomes visibly detached when node size changes.
+    const linkedSource = axisLinkEndpoint(source, linkDirection, sourceFrame, link.source);
+    const linkedTarget = axisLinkEndpoint(target, -linkDirection, targetFrame, link.target);
     const path = horizontal
-      ? `M${source.x},${source.y}C${(source.x + target.x) / 2},${source.y} ${(source.x + target.x) / 2},${target.y} ${target.x},${target.y}`
-      : `M${source.x},${source.y}C${source.x},${(source.y + target.y) / 2} ${target.x},${(source.y + target.y) / 2} ${target.x},${target.y}`;
+      ? `M${linkedSource.x},${linkedSource.y}C${(linkedSource.x + linkedTarget.x) / 2},${linkedSource.y} ${(linkedSource.x + linkedTarget.x) / 2},${linkedTarget.y} ${linkedTarget.x},${linkedTarget.y}`
+      : `M${linkedSource.x},${linkedSource.y}C${linkedSource.x},${(linkedSource.y + linkedTarget.y) / 2} ${linkedTarget.x},${(linkedSource.y + linkedTarget.y) / 2} ${linkedTarget.x},${linkedTarget.y}`;
     return `<path data-mark-role="link" d="${path}" fill="none" stroke="#555" stroke-opacity="0.4" stroke-width="1.5"/>`;
   }).join("");
     const marks = nodes.map((node) => {
@@ -848,9 +1126,26 @@ function renderHierarchy(input: GenericRenderInput) {
   const scales = leafAxis === "x"
     ? { x: leafScale, y: depthScale }
     : { x: depthScale, y: leafScale };
+  const layoutMinX = horizontal
+    ? Math.min(depthRange[0], depthRange[1])
+    : Math.min(expandedLeafRange[0], expandedLeafRange[1]);
+  const layoutMaxX = horizontal
+    ? Math.max(depthRange[0], depthRange[1])
+    : Math.max(expandedLeafRange[0], expandedLeafRange[1]);
+  const layoutMinY = horizontal
+    ? Math.min(expandedLeafRange[0], expandedLeafRange[1])
+    : Math.min(depthRange[0], depthRange[1]);
+  const layoutMaxY = horizontal
+    ? Math.max(expandedLeafRange[0], expandedLeafRange[1])
+    : Math.max(depthRange[0], depthRange[1]);
   return {
     content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="dendrogram" data-tree-direction="${direction}" data-leaf-axis="${leafAxis}" data-renderer="observable-cluster@3">${links}${marks}</g>`,
-    plotArea: treeArea,
+    plotArea: {
+      x: layoutMinX,
+      y: layoutMinY,
+      width: Math.max(1, layoutMaxX - layoutMinX),
+      height: Math.max(1, layoutMaxY - layoutMinY),
+    },
     scales,
   };
 }
@@ -882,7 +1177,7 @@ function renderCalendar(input: GenericRenderInput) {
   const yearHeight = cellSize * 7;
   const absChanges = changes.map((item) => Math.abs(item.change)).sort((a, b) => a - b);
   const maximum = quantileSorted(absChanges, 0.9975) ?? Math.max(1, ...absChanges);
-  const color = scaleSequential(interpolatePiYG).domain([-maximum || -1, maximum || 1]);
+  const color = scaleSequential((value) => globalGradientColor(value, [0, 1])).domain([-maximum || -1, maximum || 1]);
   const countDay = (day: number) => (day + 6) % 7;
   const pathMonth = (date: Date) => {
     const day = Math.max(0, Math.min(5, countDay(date.getUTCDay())));
@@ -991,7 +1286,7 @@ function renderContour(input: GenericRenderInput) {
   }
   const thresholds = d3Range(1, 20).map((index) => 2 ** index);
   const contours = d3Contours().size([xValues.length, yValues.length]).thresholds(thresholds)(values);
-  const color = scaleSequentialLog(interpolateMagma).domain([thresholds[0]!, thresholds.at(-1)!]);
+  const color = scaleSequentialLog((value) => globalGradientColor(value, [0, 1])).domain([thresholds[0]!, thresholds.at(-1)!]);
   const gx = scaleLinear().domain([0.5, xValues.length - 0.5]).range([area.x, area.x + area.width]);
   const gy = scaleLinear().domain([0.5, yValues.length - 0.5]).range([area.y, area.y + area.height]);
   const path = geoPath();
@@ -1032,7 +1327,7 @@ function renderHexbin(input: GenericRenderInput) {
     .extent([[area.x, area.y], [area.x + area.width, area.y + area.height]]);
   const bins = layout(points);
   const maximum = Math.max(1, ...bins.map((bin) => bin.length));
-  const color = scaleSequential(interpolateBuPu).domain([0, maximum / 2]);
+  const color = scaleSequential((value) => globalGradientColor(value, [0, 1])).domain([0, maximum / 2]);
   const marks = bins.map((bin) => {
     const indices = bin.map((point) => point.rowIndex);
     return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="hexagon" data-mark-group-id="mark-group:${esc(input.chartId)}:hexagon" data-count="${bin.length}" data-row-indices="${indices.join(",")}" transform="translate(${bin.x} ${bin.y})" d="${layout.hexagon()}" fill="${color(bin.length)}" stroke="black"><title>${bin.length}</title></path>`;
@@ -1067,6 +1362,12 @@ function renderForceDirected(input: GenericRenderInput) {
   const sourceField = input.chartSpec.encodings.source?.field ?? "source";
   const targetField = input.chartSpec.encodings.target?.field ?? "target";
   if (!nodeIdField) throw new Error("Force-Directed Graph requires a node ID column.");
+  const graphNodeDataset = {
+    id: `${input.dataset.id}:nodes`,
+    name: graph.nodes === input.dataset.graph?.nodes ? input.dataset.name : `${input.dataset.name}:nodes`,
+    columns: graph.nodes.columns,
+    rows: graph.nodes.rows,
+  } as Dataset;
 
   const area = plotArea(input, 0);
   const centerX = area.x + area.width / 2;
@@ -1093,6 +1394,28 @@ function renderForceDirected(input: GenericRenderInput) {
       ? [{ source, target, value: numeric(row, input.chartSpec.encodings.value, 1), index }]
       : [];
   });
+  const sizeEncoding = input.chartSpec.encodings.size;
+  const sizeDomain = finiteDomain(sizeEncoding
+    ? nodeRows.map((node) => Number(node.row[sizeEncoding.field] ?? ""))
+    : [], [1, 1]);
+  const sizeMapping = isLinearSizeMapping(forceConfig.sizeMapping) ? forceConfig.sizeMapping : null;
+  const radiusFor = (node: typeof nodeRows[number]) => {
+    if (!sizeEncoding) return typeof forceConfig.size === "number" ? Math.max(1, forceConfig.size) : 6;
+    const value = Number(node.row[sizeEncoding.field] ?? "");
+    if (sizeMapping && Number.isFinite(value)) return mapSizeValue(value, sizeDomain, sizeMapping);
+    if (sizeDomain[1] <= sizeDomain[0]) return 6;
+    return scaleLinear().domain(sizeDomain).range([4, 11]).clamp(true)(value);
+  };
+  const nestedExtentFor = (node: typeof nodeRows[number]) => {
+    const frame = nestedChildFrame(input, {
+      rowKey: rowKey(graphNodeDataset, node.row, node.index),
+      nodeKey: node.id,
+      role: "node",
+      index: node.index,
+      markGroupId: `mark-group:${input.chartId}:node`,
+    });
+    return frame ? nestedFrameExtent(frame) : 0;
+  };
   const seededNodes = nodeRows.map((node, index) => {
     const angle = index * Math.PI * (3 - Math.sqrt(5));
     const distance = Math.min(area.width, area.height) * 0.28 * Math.sqrt((index + 1) / Math.max(nodeRows.length, 1));
@@ -1111,9 +1434,10 @@ function renderForceDirected(input: GenericRenderInput) {
     .force("center", forceCenter(centerX, centerY))
     .force("x", forceX(centerX).strength(centerStrength))
     .force("y", forceY(centerY).strength(centerStrength))
-    .force("collide", forceCollide(collisionRadius))
+    .force("collide", forceCollide((node: any) => Math.max(collisionRadius, radiusFor(node) + nestedExtentFor(node) + 6)))
     .stop();
-  for (let tick = 0; tick < 180; tick += 1) simulation.tick();
+  const simulationTicks = input.nestedChildFrames?.length ? 300 : 180;
+  for (let tick = 0; tick < simulationTicks; tick += 1) simulation.tick();
 
   const colorEncoding = input.chartSpec.encodings.color;
   const colorDomain = colorEncoding
@@ -1122,24 +1446,34 @@ function renderForceDirected(input: GenericRenderInput) {
   const colors = scaleOrdinal<string, string>().domain(colorDomain).range(tableau);
   const numericColorDomain = visualDomain(nodeRows.map((node) => node.row), colorEncoding);
   const colorMapping = forceConfig.colorMapping;
-  const sizeEncoding = input.chartSpec.encodings.size;
-  const sizeDomain = finiteDomain(sizeEncoding
-    ? nodeRows.map((node) => Number(node.row[sizeEncoding.field] ?? ""))
-    : [], [1, 1]);
-  const sizeMapping = isLinearSizeMapping(forceConfig.sizeMapping) ? forceConfig.sizeMapping : null;
-  const radiusFor = (node: typeof nodeRows[number]) => {
-    if (!sizeEncoding) return typeof forceConfig.size === "number" ? Math.max(1, forceConfig.size) : 6;
-    const value = Number(node.row[sizeEncoding.field] ?? "");
-    if (sizeMapping && Number.isFinite(value)) return mapSizeValue(value, sizeDomain, sizeMapping);
-    if (sizeDomain[1] <= sizeDomain[0]) return 6;
-    return scaleLinear().domain(sizeDomain).range([4, 11]).clamp(true)(value);
-  };
   const nodeById = new Map(seededNodes.map((node) => [node.id, node]));
   const linkMarks = links.map((link) => {
     const source = nodeById.get(link.source);
     const target = nodeById.get(link.target);
     if (!source || !target) return "";
-    return `<line data-chart-id="${esc(input.chartId)}" data-mark-role="link" data-mark-group-id="mark-group:${esc(input.chartId)}:link" data-source="${esc(link.source)}" data-target="${esc(link.target)}" x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}" stroke="#94a3b8" stroke-opacity="0.55" stroke-width="${Math.max(1, Math.min(4, link.value || 1))}"/>`;
+    const sourceRowKey = rowKey(graphNodeDataset, source.row, source.index);
+    const targetRowKey = rowKey(graphNodeDataset, target.row, target.index);
+    const sourceFrame = nestedChildFrame(input, {
+      rowKey: sourceRowKey,
+      nodeKey: source.id,
+      role: "node",
+      index: source.index,
+      markGroupId: `mark-group:${input.chartId}:node`,
+    });
+    const targetFrame = nestedChildFrame(input, {
+      rowKey: targetRowKey,
+      nodeKey: target.id,
+      role: "node",
+      index: target.index,
+      markGroupId: `mark-group:${input.chartId}:node`,
+    });
+    const sourcePoint = sourceFrame
+      ? nestedFrameLinkEndpoint(source, target, sourceFrame)
+      : source;
+    const targetPoint = targetFrame
+      ? nestedFrameLinkEndpoint(target, source, targetFrame)
+      : target;
+    return `<line data-chart-id="${esc(input.chartId)}" data-mark-role="link" data-mark-group-id="mark-group:${esc(input.chartId)}:link" data-source="${esc(link.source)}" data-target="${esc(link.target)}" x1="${sourcePoint.x}" y1="${sourcePoint.y}" x2="${targetPoint.x}" y2="${targetPoint.y}" stroke="#94a3b8" stroke-opacity="0.55" stroke-width="${Math.max(1, Math.min(4, link.value || 1))}"/>`;
   }).join("");
   const nodeMarks = seededNodes.map((node) => {
     const rawColor = colorEncoding ? node.row[colorEncoding.field] ?? "" : "";
@@ -1157,8 +1491,8 @@ function renderForceDirected(input: GenericRenderInput) {
     const radius = radiusFor(node);
     const label = node.row.label ?? node.id;
     const labelStyle = adaptiveLabel({ text: String(label), width: Math.max(18, area.width * 0.22), height: 18, background: "#ffffff", fontSize: 10, minFontSize: 6, maxFontSize: 10, padding: 1 });
-    const labelMarkup = labelStyle.text ? `<text x="${node.x + radius + 3}" y="${node.y}" dy="0.35em" font-size="${labelStyle.fontSize}" fill="${labelStyle.color}">${esc(labelStyle.text)}</text>` : "";
-    return `<g data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id)}" data-row-key="${esc(rowKey(graph.nodes, node.row, node.index))}"><circle cx="${node.x}" cy="${node.y}" r="${radius}" fill="${color}" stroke="#fff" stroke-width="1.5"><title>${esc(String(label))}</title></circle>${labelMarkup}</g>`;
+    const labelMarkup = labelStyle.text ? `<text data-mark-role="node-label" pointer-events="none" x="${node.x + radius + 3}" y="${node.y}" dy="0.35em" font-size="${labelStyle.fontSize}" fill="${labelStyle.color}">${esc(labelStyle.text)}</text>` : "";
+    return `<g data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id)}" data-row-key="${esc(rowKey(graphNodeDataset, node.row, node.index))}"><circle cx="${node.x}" cy="${node.y}" r="${radius}" fill="${color}" stroke="#fff" stroke-width="1.5"><title>${esc(String(label))}</title></circle>${labelMarkup}</g>`;
   }).join("");
   return {
     content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="force-directed-graph" data-renderer="observable-force-directed@1">${linkMarks}${nodeMarks}</g>`,
@@ -1222,7 +1556,7 @@ function renderSankey(input: GenericRenderInput) {
     .nodePadding(10)
     .extent([[area.x + 1, area.y + 5], [area.x + area.width - 1, area.y + area.height - 5]]);
   const result = layout(graph);
-  const color = scaleOrdinal<string, string>().range(schemeCategory10);
+  const color = scaleOrdinal<string, string>().range(globalPalette.categorical);
   const linkColor = String(config.linkColor ?? "source-target");
   const uid = `sankey-${input.chartId.replace(/[^a-z0-9_-]/gi, "-")}`;
   const path = sankeyLinkHorizontal<NodeData, LinkData>();

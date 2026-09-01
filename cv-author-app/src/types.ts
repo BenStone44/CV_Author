@@ -921,6 +921,19 @@ export type NestedRenderPlacement = {
   child: CanvasNode;
 };
 
+/**
+ * Geometry exposed to a parent renderer for an embedded child chart. The
+ * dimensions are already expressed in the parent's local coordinate space.
+ */
+export type NestedChildFrame = {
+  parentDataKey?: string;
+  parentMarkGroupId?: string;
+  shape?: "circle" | "rect";
+  radius?: number;
+  width: number;
+  height: number;
+};
+
 export type Point = {
   x: number;
   y: number;

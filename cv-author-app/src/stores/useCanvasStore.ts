@@ -1808,6 +1808,17 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       renderChartNode(node, !(node.compositionSpec
         && editingCompositionId.value === node.compositionSpec.id));
       registerChartRelationship(node);
+      if (patch.size !== undefined || patch.leafRadius !== undefined) {
+        const affectedNested = Object.values(chartRelationships.value.nestedRelationships)
+          .filter((relationship) => relationship.status === "active"
+            && (relationship.parentChartId === node.id || relationship.childChartId === node.id))
+          .map((relationship) => relationship.id);
+        if (affectedNested.length > 0) {
+          scheduleNestedChildLayout(affectedNested, {
+            fitToParentMark: patch.size !== undefined && isCartesianTreeChart(node.chartSpec?.chartType),
+          });
+        }
+      }
       return true;
     }
     if (updates.length === 0) return false;
@@ -1827,6 +1838,20 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     else renderChartNode(node, !(node.compositionSpec
       && editingCompositionId.value === node.compositionSpec.id));
     registerChartRelationship(node);
+    // Size changes alter the geometry consumed by tree/force layouts and by
+    // every parent link that embeds this chart. Re-run the affected nested
+    // relationships after the renderer has produced the new marks.
+    if (patch.size !== undefined || patch.leafRadius !== undefined) {
+      const affectedNested = Object.values(chartRelationships.value.nestedRelationships)
+        .filter((relationship) => relationship.status === "active"
+          && (relationship.parentChartId === node.id || relationship.childChartId === node.id))
+        .map((relationship) => relationship.id);
+      if (affectedNested.length > 0) {
+        scheduleNestedChildLayout(affectedNested, {
+          fitToParentMark: patch.size !== undefined && isCartesianTreeChart(node.chartSpec?.chartType),
+        });
+      }
+    }
     return true;
   }
 
@@ -4124,18 +4149,43 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   });
   let nestedLayoutScheduled = false;
   let pendingNestedLayoutIds: Set<string> | null = new Set();
-  function scheduleNestedChildLayout(relationshipIds?: Iterable<string>) {
+  let pendingNestedLayoutFitToParentMark = false;
+  function scheduleNestedChildLayout(
+    relationshipIds?: Iterable<string>,
+    options: { fitToParentMark?: boolean } = {},
+  ) {
     const relationships = chartRelationships.value.nestedRelationships;
     if (Object.keys(relationships).length === 0) return;
-    if (relationshipIds) {
+    const requestedRelationshipIds = relationshipIds ? Array.from(relationshipIds) : undefined;
+    // Parent templates consume the child's current selection-box dimensions
+    // when routing links. Re-render affected parents before Vue patches the
+    // DOM used below to resolve the parent mark bounds.
+    const parentIds = new Set<string>();
+    if (requestedRelationshipIds) {
+      for (const relationshipId of requestedRelationshipIds) {
+        const relationship = relationships[relationshipId];
+        if (relationship?.status === "active") parentIds.add(relationship.parentChartId);
+      }
+    } else {
+      Object.values(relationships).forEach((relationship) => {
+        if (relationship.status === "active") parentIds.add(relationship.parentChartId);
+      });
+    }
+    parentIds.forEach((parentId) => {
+      const parent = findCanvasNode(parentId);
+      if (parent) renderChartNode(parent);
+    });
+    if (requestedRelationshipIds) {
       if (pendingNestedLayoutIds) {
-        for (const relationshipId of relationshipIds) {
+        for (const relationshipId of requestedRelationshipIds) {
           if (relationships[relationshipId]) pendingNestedLayoutIds.add(relationshipId);
         }
       }
       if (pendingNestedLayoutIds?.size === 0) return;
+      if (options.fitToParentMark) pendingNestedLayoutFitToParentMark = true;
     } else {
       pendingNestedLayoutIds = null;
+      pendingNestedLayoutFitToParentMark = pendingNestedLayoutFitToParentMark || !!options.fitToParentMark;
     }
     if (nestedLayoutScheduled) return;
     nestedLayoutScheduled = true;
@@ -4143,6 +4193,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       nestedLayoutScheduled = false;
       const scheduledRelationshipIds = pendingNestedLayoutIds;
       pendingNestedLayoutIds = new Set();
+      const fitToParentMark = pendingNestedLayoutFitToParentMark;
+      pendingNestedLayoutFitToParentMark = false;
       const parentDomCache = new Map<string, {
         element: SVGGraphicsElement;
         marks: SVGGraphicsElement[];
@@ -4153,6 +4205,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       const nodeElementsById = new Map(nodeElements.map((element) => [element.dataset.nodeId ?? "", element]));
       const nodesById = new Map(walkCanvasNodes().map((node) => [node.id, node]));
       const parentGroupIds = new Map<string, string | undefined>();
+      const parentsNeedingRerender = new Set<string>();
       const indexParentGroups = (nodes: CanvasNode[], parentGroupId?: string) => {
         nodes.forEach((node) => {
           parentGroupIds.set(node.id, parentGroupId);
@@ -4210,7 +4263,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           targetBoundsCache.set(boundsCacheKey, bounds);
         }
         if (!bounds || bounds.width <= 0 || bounds.height <= 0) return;
-        const next = resolveNestedRelationship(relationship.id, {
+        const parentFrame = {
           x: bounds.minX,
           y: bounds.minY,
           width: bounds.width,
@@ -4218,7 +4271,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           scaleX: 1,
           scaleY: 1,
           rotation: parent.rotation,
-        }, {
+        };
+        const childFrame = {
           x: child.x,
           y: child.y,
           width: child.width,
@@ -4226,7 +4280,32 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           scaleX: 1,
           scaleY: 1,
           rotation: child.rotation,
-        });
+        };
+        let next = resolveNestedRelationship(relationship.id, parentFrame, childFrame);
+        if (fitToParentMark && isCartesianTreeChart(parent.chartSpec?.chartType)) {
+          const fitScale = Math.max(0.01, Math.min(
+            bounds.width * 0.78 / Math.max(child.width, 1),
+            bounds.height * 0.78 / Math.max(child.height, 1),
+          ));
+          const parameters = relationship.parameters as Partial<RelativeNestedParameters>;
+          // Keep the resolved scale as the relationship baseline so a later
+          // layout pass does not restore the stale scale captured at drop time.
+          if (parameters.parentAnchor && parameters.childAnchor && parameters.offset
+            && (parameters.scale?.x !== fitScale || parameters.scale?.y !== fitScale)) {
+            dispatchRelationship({
+              type: "update-nested",
+              relationshipId: relationship.id,
+              changes: {
+                parameters: {
+                  ...parameters,
+                  scale: { x: fitScale, y: fitScale },
+                } as RelativeNestedParameters,
+              },
+            });
+            parentsNeedingRerender.add(parent.id);
+          }
+          next = resolveNestedRelationship(relationship.id, parentFrame, childFrame);
+        }
         if (
           Math.abs(child.x - next.x) < 0.01
           && Math.abs(child.y - next.y) < 0.01
@@ -4236,6 +4315,18 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         ) return;
         Object.assign(child, next);
       });
+      if (parentsNeedingRerender.size > 0) {
+        parentsNeedingRerender.forEach((parentId) => {
+          const parent = findCanvasNode(parentId);
+          if (parent) renderChartNode(parent);
+        });
+        const rerenderRelationships = Object.values(relationships)
+          .filter((relationship) => parentsNeedingRerender.has(relationship.parentChartId))
+          .map((relationship) => relationship.id);
+        if (rerenderRelationships.length > 0) {
+          scheduleNestedChildLayout(rerenderRelationships, { fitToParentMark: true });
+        }
+      }
     });
   }
   onBeforeUnmount(() => {

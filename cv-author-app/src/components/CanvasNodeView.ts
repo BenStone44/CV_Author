@@ -491,12 +491,19 @@ export const CanvasNodeView: any = defineComponent({
           nestedMarkupCache = { anchors, suppressedParentMarks, unmatched };
         }
 
-        const renderElement = (element: Element, path: string, ancestorMatrix: Matrix): any => {
+        const renderElement = (element: Element, path: string, ancestorMatrix: Matrix, hideGeometry = false): any => {
           const attributes: Record<string, string> = {};
           Array.from(element.attributes).forEach((attribute) => { attributes[attribute.name] = attribute.value; });
           attributes.key = path;
           const elementMarkIndex = markIndex.get(element);
-          if (elementMarkIndex !== undefined && suppressedParentMarks.has(elementMarkIndex)) {
+          const suppressed = elementMarkIndex !== undefined && suppressedParentMarks.has(elementMarkIndex);
+          const preservesAttachedLabel = suppressed
+            && element.getAttribute("data-mark-role") === "node"
+            && !!element.querySelector('[data-mark-role="node-label"]');
+          const isAttachedGeometry = hideGeometry
+            && element.getAttribute("data-mark-role") !== "node-label"
+            && (element.tagName === "circle" || element.tagName === "rect" || element.tagName === "path");
+          if ((suppressed && !preservesAttachedLabel) || isAttachedGeometry) {
             attributes.style = `${attributes.style ?? ""};visibility:hidden !important;pointer-events:none !important;`;
             attributes["aria-hidden"] = "true";
           }
@@ -505,7 +512,16 @@ export const CanvasNodeView: any = defineComponent({
           Array.from(element.childNodes).forEach((childNode, index) => {
             if (childNode.nodeType === 1) {
               const childElement = childNode as Element;
-              children.push(renderElement(childElement, `${path}.${index}`, elementMatrix));
+              const childRole = childElement.getAttribute("data-mark-role");
+              const childIsGeometry = childElement.tagName === "circle"
+                || childElement.tagName === "rect"
+                || childElement.tagName === "path";
+              children.push(renderElement(
+                childElement,
+                `${path}.${index}`,
+                elementMatrix,
+                hideGeometry || preservesAttachedLabel || (suppressed && childIsGeometry && childRole !== "node-label"),
+              ));
               (anchors.get(markIndex.get(childElement) ?? -1) ?? []).forEach((relationshipId) => {
                 const placement = placementsById.get(relationshipId);
                 if (!placement) return;

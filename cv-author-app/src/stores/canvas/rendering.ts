@@ -1,5 +1,6 @@
-import type { CanvasNode, ChartScaleSpec, ChartSpec, Dataset, Point } from "../../types";
+import type { CanvasNode, ChartScaleSpec, ChartSpec, Dataset, NestedChildFrame, NestedRelationship, Point, RelativeNestedParameters } from "../../types";
 import { isCartesianTreeChart } from "../../utils/treeLayout";
+import { getCanvasObjectHitTargetBounds } from "../../utils/canvasUtils";
 import { chartDataPreparationKey, mergeSharedScale } from "./renderingData";
 
 export function useCanvasRendering(context: any) {
@@ -398,6 +399,50 @@ export function useCanvasRendering(context: any) {
     return result;
   }
 
+  function nestedChildFramesForNode(parent: CanvasNode): NestedChildFrame[] {
+    return (Object.values(chartRelationships.value.nestedRelationships) as NestedRelationship[])
+      .filter((relationship) => relationship.status === "active"
+        && relationship.relationType === "relative-position"
+        && relationship.parentChartId === parent.id)
+      .flatMap((relationship) => {
+        const child = findCanvasNode(relationship.childChartId);
+        if (!child) return [];
+        const parameters = relationship.parameters as Partial<RelativeNestedParameters>;
+        const scaleXValue = parameters.scale?.x;
+        const scaleYValue = parameters.scale?.y;
+        const scaleX = typeof scaleXValue === "number" && Number.isFinite(scaleXValue) ? scaleXValue : child.scaleX;
+        const scaleY = typeof scaleYValue === "number" && Number.isFinite(scaleYValue) ? scaleYValue : child.scaleY;
+        // The rendered hit target is the source of truth for the child's
+        // selectable footprint. It already accounts for plot-area padding,
+        // polar occupied sectors, and Cartesian content offsets.
+        const hitBounds = getCanvasObjectHitTargetBounds(child);
+        const scaledWidth = Math.abs(hitBounds.width * scaleX);
+        const scaledHeight = Math.abs(hitBounds.height * scaleY);
+        const polarBounds = getPolarOccupiedGeometry(child);
+        const rotation = typeof parameters.rotation === "number" && Number.isFinite(parameters.rotation)
+          ? parameters.rotation * Math.PI / 180
+          : 0;
+        const width = Math.abs(scaledWidth * Math.cos(rotation)) + Math.abs(scaledHeight * Math.sin(rotation));
+        const height = Math.abs(scaledWidth * Math.sin(rotation)) + Math.abs(scaledHeight * Math.cos(rotation));
+        if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return [];
+        const childType = child.chartSpec?.chartType?.replace(/[\s_-]/g, "").toLowerCase() ?? "";
+        const circular = !!polarBounds
+          || childType.includes("radial")
+          || childType.includes("pie")
+          || childType.includes("donut");
+        return [{
+          parentDataKey: relationship.parentDataKey,
+          parentMarkGroupId: relationship.parentMarkGroupId,
+          shape: circular ? "circle" : "rect",
+          ...(circular
+            ? { radius: Math.abs((polarBounds?.outerRadius ?? Math.max(hitBounds.width, hitBounds.height) / 2) * Math.max(Math.abs(scaleX), Math.abs(scaleY))) }
+            : {}),
+          width,
+          height,
+        }];
+      });
+  }
+
   function chartEncodingFieldAvailable(dataset: Dataset, chartType: string, channel: string, field: string) {
     if (!dataset.graph) return dataset.columns.some((column) => column.name === field);
     const normalized = chartType.replace(/[\s_-]/g, "").toLowerCase();
@@ -606,6 +651,7 @@ export function useCanvasRendering(context: any) {
           : undefined,
         sharedPlotArea,
         sharedScales,
+        nestedChildFrames: nestedChildFramesForNode(node),
       });
       const renderingChartSpec: ChartSpec = {
         ...syncedChartSpec,

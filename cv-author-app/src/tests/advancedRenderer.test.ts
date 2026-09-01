@@ -4,7 +4,7 @@ import { getChartTemplateContract, normalizeChartTemplate } from "../utils/chart
 import { getEncodingChannelConfigs } from "../utils/encodingConfig";
 import { renderDeterministicChart } from "../utils/semanticRenderer";
 import { prepareChartData } from "../utils/chartDataPipeline";
-import type { ChartSpec, CoordinateGuide, Dataset } from "../types";
+import type { ChartSpec, CoordinateGuide, Dataset, NestedChildFrame } from "../types";
 
 const cartesian: CoordinateGuide = {
   type: "Cartesian",
@@ -23,6 +23,7 @@ function render(
   dataset: Dataset,
   chartSpec: Omit<ChartSpec, "chartType" | "datasetId">,
   coordinateGuide?: CoordinateGuide,
+  nestedChildFrames?: readonly NestedChildFrame[],
 ) {
   return renderDeterministicChart({
     chartId: chartType,
@@ -35,6 +36,7 @@ function render(
       : getChartTemplateContract(chartType)?.coordinateSystem === "Polar" ? polar : null),
     chartSpec: { chartType, datasetId: dataset.id, ...chartSpec },
     dataset,
+    nestedChildFrames,
   });
 }
 
@@ -497,6 +499,46 @@ describe("advanced chart cards", () => {
     expect(result.content).toContain('data-row-key=');
   });
 
+  it("applies a static dendrogram node size to every node", () => {
+    const result = render("Dendrogram", hierarchyDataset, {
+      encodings: {
+        key: { field: "id", type: "nominal" },
+        parent: { field: "parent", type: "nominal" },
+        value: { field: "value", type: "quantitative" },
+      },
+      markGroups: [{
+        id: "dendrogram-nodes",
+        chartId: "Dendrogram",
+        role: "node",
+        memberKeys: [],
+        sharedConfig: { size: 18 },
+      }],
+    });
+    const radii = Array.from(result.content.matchAll(/<circle r="([^"]+)"/g), (match) => Number(match[1]));
+    expect(radii.length).toBeGreaterThan(0);
+    expect(new Set(radii)).toEqual(new Set([18]));
+  });
+
+  it("centers treemap labels and clips them to their tiles", () => {
+    const result = render("Treemap", hierarchyDataset, {
+      encodings: {
+        key: { field: "id", type: "nominal" },
+        parent: { field: "parent", type: "nominal" },
+        value: { field: "value", type: "quantitative" },
+      },
+    });
+
+    const labels = Array.from(result.content.matchAll(/<text data-mark-role="node-label"([^>]*)>/g), (match) => match[1] ?? "");
+    expect(labels.length).toBeGreaterThan(0);
+    labels.forEach((attributes) => {
+      expect(attributes).toContain('text-anchor="middle"');
+      expect(attributes).toContain('dominant-baseline="middle"');
+      expect(attributes).toMatch(/font-size="(?:[5-9](?:\.\d+)?|10)"/);
+      expect(attributes).toMatch(/clip-path="url\(#treemap-/);
+    });
+    expect(result.content).toMatch(/<tspan x="[^"]+" y="[^"]+"[^>]*>/);
+  });
+
   it.each([
     ["right", "y", "x", 1],
     ["left", "y", "x", -1],
@@ -529,6 +571,53 @@ describe("advanced chart cards", () => {
     expect(result.content).toContain(`data-leaf-axis="${leafAxis}"`);
     expect(result.scales?.[leafAxis].type).toBe("point");
     expect(Math.sign(leaf[depthCoordinate] - root[depthCoordinate])).toBe(sign);
+  });
+
+  it.each(["Icicle", "Treemap"])("applies the four-way tree direction to %s", (chartType) => {
+    const directions = ["right", "left", "down", "up"] as const;
+    const outputs = directions.map((treeDirection) => render(chartType, hierarchyDataset, {
+      encodings: {
+        key: { field: "id", type: "nominal" },
+        parent: { field: "parent", type: "nominal" },
+        value: { field: "value", type: "quantitative" },
+      },
+      markGroups: [{
+        id: "hierarchy-nodes",
+        chartId: chartType,
+        role: "node",
+        memberKeys: [],
+        sharedConfig: { treeDirection },
+      }],
+    }).content);
+
+    directions.forEach((treeDirection, index) => {
+      expect(outputs[index]).toContain(`data-tree-direction="${treeDirection}"`);
+    });
+    expect(new Set(outputs).size).toBe(directions.length);
+  });
+
+  it("keeps Icicle nodes inside the plot when growing upward", () => {
+    const result = render("Icicle", hierarchyDataset, {
+      encodings: {
+        key: { field: "id", type: "nominal" },
+        parent: { field: "parent", type: "nominal" },
+        value: { field: "value", type: "quantitative" },
+      },
+      markGroups: [{
+        id: "hierarchy-nodes",
+        chartId: "Icicle",
+        role: "node",
+        memberKeys: [],
+        sharedConfig: { treeDirection: "up" },
+      }],
+    });
+    const position = (key: string) => {
+      const match = result.content.match(new RegExp(`transform="translate\\(([-0-9.]+) ([-0-9.]+)\\)"[^>]+data-node-key="${key}"`));
+      expect(match).not.toBeNull();
+      return { x: Number(match?.[1]), y: Number(match?.[2]) };
+    };
+    expect(position("root").y).toBeGreaterThan(position("a1").y);
+    expect(result.content).toContain('data-tree-direction="up"');
   });
 
   it("renders equal-width radial bars from Segment and R with a default inner radius", () => {
@@ -598,6 +687,78 @@ describe("advanced chart cards", () => {
     expect(dendrogram.content).toContain('data-leaf-radius="54"');
     expect(dendrogram.content).toContain('data-selection-radius="62"');
     expect(dendrogram.polarArea).toMatchObject({ angleSpan: 120, outerRadius: 54 });
+  });
+
+  it("routes tree and network links around embedded child selection boxes", () => {
+    const frame: NestedChildFrame = {
+      parentDataKey: JSON.stringify({ rowKey: "3", role: "node" }),
+      parentMarkGroupId: "mark-group:Dendrogram:node",
+      width: 80,
+      height: 40,
+    };
+    const plainTree = render("Dendrogram", hierarchyDataset, {
+      encodings: {
+        key: { field: "id", type: "nominal" },
+        parent: { field: "parent", type: "nominal" },
+        value: { field: "value", type: "quantitative" },
+      },
+    });
+    const nestedTree = render("Dendrogram", hierarchyDataset, {
+      encodings: {
+        key: { field: "id", type: "nominal" },
+        parent: { field: "parent", type: "nominal" },
+        value: { field: "value", type: "quantitative" },
+      },
+    }, undefined, [frame]);
+    expect(nestedTree.content).not.toBe(plainTree.content);
+    const plainRadial = render("RadialDendrogram", radialHierarchyDataset, {
+      encodings: {
+        key: { field: "id", type: "nominal" },
+        parent: { field: "parent", type: "nominal" },
+        theta: { field: "leaf", type: "nominal" },
+      },
+    });
+    const nestedRadial = render("RadialDendrogram", radialHierarchyDataset, {
+      encodings: {
+        key: { field: "id", type: "nominal" },
+        parent: { field: "parent", type: "nominal" },
+        theta: { field: "leaf", type: "nominal" },
+      },
+    }, polar, [{
+      parentDataKey: JSON.stringify({ rowKey: "2", role: "node" }),
+      parentMarkGroupId: "mark-group:RadialDendrogram:node",
+      width: 64,
+      height: 44,
+    }]);
+    expect(nestedRadial.content).not.toBe(plainRadial.content);
+
+    const graphDataset: Dataset = {
+      id: "network-nested",
+      name: "network-nested.csv",
+      columns: [],
+      rows: [],
+      graph: {
+        nodes: { columns: [{ name: "id", type: "nominal" }], rows: [{ id: "A" }, { id: "B" }] },
+        edges: { columns: [{ name: "source", type: "nominal" }, { name: "target", type: "nominal" }], rows: [{ source: "A", target: "B" }] },
+      },
+    };
+    const plainNetwork = render("ForceDirectedGraph", graphDataset, {
+      encodings: {
+        key: { field: "id", type: "nominal" },
+        source: { field: "source", type: "nominal" },
+        target: { field: "target", type: "nominal" },
+      },
+    });
+    const nestedNetwork = render("ForceDirectedGraph", graphDataset, {
+      encodings: {
+        key: { field: "id", type: "nominal" },
+        source: { field: "source", type: "nominal" },
+        target: { field: "target", type: "nominal" },
+      },
+    }, undefined, [
+      { parentDataKey: JSON.stringify({ rowKey: "0", role: "node" }), parentMarkGroupId: "mark-group:ForceDirectedGraph:node", width: 50, height: 30 },
+    ]);
+    expect(nestedNetwork.content).not.toBe(plainNetwork.content);
   });
 
   it("renders calendar and box plot marks", () => {
