@@ -426,10 +426,16 @@ export function useCanvasRendering(context: any) {
         const height = Math.abs(scaledWidth * Math.sin(rotation)) + Math.abs(scaledHeight * Math.cos(rotation));
         if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return [];
         const childType = child.chartSpec?.chartType?.replace(/[\s_-]/g, "").toLowerCase() ?? "";
-        const circular = !!polarBounds
-          || childType.includes("radial")
-          || childType.includes("pie")
-          || childType.includes("donut");
+        // Cartesian tree links use the child's actual bounding box so their
+        // endpoints are the left/right (or top/bottom) center of that box.
+        // Polar parents retain circular routing around their occupied radius.
+        const circular = !isCartesianTreeChart(parent.chartSpec?.chartType)
+          && (
+            !!polarBounds
+            || childType.includes("radial")
+            || childType.includes("pie")
+            || childType.includes("donut")
+          );
         return [{
           parentDataKey: relationship.parentDataKey,
           parentMarkGroupId: relationship.parentMarkGroupId,

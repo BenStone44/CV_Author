@@ -81,12 +81,4 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
-  build: {
-    rollupOptions: {
-      input: {
-        main: fileURLToPath(new URL('./index.html', import.meta.url)),
-        dendrogramPlayground: fileURLToPath(new URL('./dendrogram-playground.html', import.meta.url)),
-      },
-    },
-  },
 })

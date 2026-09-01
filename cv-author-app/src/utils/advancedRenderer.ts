@@ -1029,6 +1029,7 @@ function renderHierarchy(input: GenericRenderInput) {
     : 0;
   const requiredLeafSpacing = Math.max(
     baseLeafSpacing,
+    ...depthFrames.map((frame) => frame ? leafAxisSize(frame) + 12 : 0),
     ...nestedLeafFrames.map((frame) => frame ? leafAxisSize(frame) + 12 : 0),
     maxNodeRadius * 2 + 12,
     18,
