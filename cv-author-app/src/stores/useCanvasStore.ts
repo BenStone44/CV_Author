@@ -584,6 +584,23 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function encodingForSharedChannel(node: CanvasNode, channel: CoordinateChannel) {
     const spec = node.chartSpec;
     if (!spec) return undefined;
+    const facet = node.compositionSpec?.type === "facet" ? node.compositionSpec : null;
+    if (facet) {
+      const facetChannel: CoordinateChannel = (facet.facetCoordinateSystem ?? node.coordinateGuide?.type) === "Polar"
+        ? (facet.facetDirection === "row" ? "radius" : "angle")
+        : (facet.facetDirection === "row" ? "y" : "x");
+      if (channel === facetChannel) {
+        const facetField = (facet.facetCoordinateSystem ?? node.coordinateGuide?.type) === "Polar"
+          ? (facet.facetDirection === "row" ? facet.facetRadiusField : facet.facetThetaField)
+          : (facet.facetGrid
+            ? facet.facetDirection === "row" ? facet.facetGrid.rowField : facet.facetGrid.columnField
+            : facet.facetField);
+        if (facetField) {
+          const fieldType = getDataset(spec.datasetId)?.columns.find((column) => column.name === facetField)?.type;
+          if (fieldType) return { field: facetField, type: fieldType };
+        }
+      }
+    }
     if (channel === "x" || channel === "y") {
       if (isCartesianTreeChart(spec.chartType)) {
         const leafAxis = cartesianTreeLeafAxis(cartesianTreeDirection(spec));
@@ -664,9 +681,13 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (composition) {
       if (composition.type === "facet") {
         const coordinateType = composition.facetCoordinateSystem ?? node.coordinateGuide?.type ?? "Cartesian";
-        const sharedChannels = coordinateType === "Polar"
-          ? [composition.facetDirection === "row" ? "radius" : "angle"]
-          : [composition.facetDirection === "row" ? "y" : "x"];
+        const sharedChannels: CoordinateChannel[] = coordinateType === "Polar"
+          // A facet contributes its own nominal/ordinal coordinate while its
+          // member charts retain the other shared coordinate. Expose both
+          // channels to outer compositions so a facet behaves like the
+          // two-axis chart it renders as.
+          ? ["angle", "radius"]
+          : ["x", "y"];
         return { type: coordinateType, sharedChannels };
       }
       if (composition.type === "nested") {

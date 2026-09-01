@@ -280,19 +280,36 @@ function areaPath(
   points: Array<{ x: number; y: number }>,
   axisSwapped: boolean,
   baseline: number,
+  progressionRange?: [number, number],
 ) {
   if (points.length === 0) return "";
+  // Area marks are visually cleaner when they enter and leave through the
+  // zero baseline. These synthetic points belong to the rendered geometry
+  // only; source rows and row-key metadata remain unchanged.
+  const extendedPoints = progressionRange
+    ? axisSwapped
+      ? [
+        { x: baseline, y: progressionRange[0] },
+        ...points,
+        { x: baseline, y: progressionRange[1] },
+      ]
+      : [
+        { x: progressionRange[0], y: baseline },
+        ...points,
+        { x: progressionRange[1], y: baseline },
+      ]
+    : points;
   return axisSwapped
     ? d3Area<{ x: number; y: number }>()
       .y((point) => point.y)
       .x0(baseline)
       .x1((point) => point.x)
-      .curve(curveBasis)(points) ?? ""
+      .curve(curveBasis)(extendedPoints) ?? ""
     : d3Area<{ x: number; y: number }>()
       .x((point) => point.x)
       .y0(baseline)
       .y1((point) => point.y)
-      .curve(curveBasis)(points) ?? "";
+      .curve(curveBasis)(extendedPoints) ?? "";
 }
 
 function formatTick(value: number) {
@@ -314,14 +331,15 @@ function renderArea(input: GenericRenderInput) {
     });
     const axisSwapped = input.chartSpec.axisSwapped === true;
     const valueScale = axisSwapped ? lineResult.scales.x : lineResult.scales.y;
+    const progressionScale = axisSwapped ? lineResult.scales.y : lineResult.scales.x;
     const baseline = areaValuePosition(valueScale, 0);
     const opacity = Number(sharedConfig(input, "area").opacity ?? 0.42);
     const marks = lineResult.series.map((series) => {
       const points = series.points.map(({ x, y }) => ({ x, y }));
-      const path = areaPath(points, axisSwapped, baseline);
+      const path = areaPath(points, axisSwapped, baseline, progressionScale.range);
       if (!path) return "";
       const rowKeys = series.points.flatMap((point) => point.rowKeys);
-      return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series.key)}" data-point-count="${points.length}" data-row-keys="${esc(rowKeys.join(","))}" d="${path}" fill="${esc(series.color)}" fill-opacity="${opacity}" stroke="${esc(series.color)}" stroke-width="${series.lineWidth}" stroke-linejoin="round" vector-effect="non-scaling-stroke"><title>${esc(series.key === "__single__" ? (cartesianAxisEncoding(input.chartSpec, "y")?.field ?? "") : series.key)}</title></path>`;
+      return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series.key)}" data-point-count="${points.length}" data-zero-endpoints="true" data-row-keys="${esc(rowKeys.join(","))}" d="${path}" fill="${esc(series.color)}" fill-opacity="${opacity}" stroke="${esc(series.color)}" stroke-width="${series.lineWidth}" stroke-linejoin="round" vector-effect="non-scaling-stroke"><title>${esc(series.key === "__single__" ? (cartesianAxisEncoding(input.chartSpec, "y")?.field ?? "") : series.key)}</title></path>`;
     }).join("");
     return {
       content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="area" data-axis-swapped="${axisSwapped}" data-area-curve="basis" data-renderer="deterministic-area@1">${marks}</g>`,
@@ -444,13 +462,14 @@ function renderArea(input: GenericRenderInput) {
   if (seriesValues.length === 1 && !isStream) {
     const axisSwapped = input.chartSpec.axisSwapped === true;
     const valueScale = axisSwapped ? lineResult.scales.x : lineResult.scales.y;
+    const progressionScale = axisSwapped ? lineResult.scales.y : lineResult.scales.x;
     const baseline = areaValuePosition(valueScale, 0);
     const series = lineResult.series[0];
     if (series) {
-      const path = areaPath(series.points.map(({ x, y }) => ({ x, y })), axisSwapped, baseline);
+      const path = areaPath(series.points.map(({ x, y }) => ({ x, y })), axisSwapped, baseline, progressionScale.range);
       const rowKeys = series.points.flatMap((point) => point.rowKeys);
       const opacity = Number(sharedConfig(input, "area").opacity ?? 0.42);
-      const mark = `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series.key)}" data-point-count="${series.points.length}" data-row-keys="${esc(rowKeys.join(","))}" d="${path}" fill="${esc(series.color)}" fill-opacity="${opacity}" stroke="${esc(series.color)}" stroke-width="${series.lineWidth}" stroke-linejoin="round" vector-effect="non-scaling-stroke"><title>${esc(series.key === "__single__" ? yEncoding.field : series.key)}</title></path>`;
+      const mark = `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series.key)}" data-point-count="${series.points.length}" data-zero-endpoints="true" data-row-keys="${esc(rowKeys.join(","))}" d="${path}" fill="${esc(series.color)}" fill-opacity="${opacity}" stroke="${esc(series.color)}" stroke-width="${series.lineWidth}" stroke-linejoin="round" vector-effect="non-scaling-stroke"><title>${esc(series.key === "__single__" ? yEncoding.field : series.key)}</title></path>`;
       return {
         content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="${isStream ? "streamgraph" : isStacked ? "stacked" : "area"}" data-axis-swapped="${axisSwapped}" data-stack-offset="${isStream ? "silhouette" : "zero"}" data-stack-order="${isStream ? "inside-out" : "none"}" data-area-curve="basis" data-renderer="observable-area@3">${mark}</g>`,
         plotArea: lineResult.plotArea,
@@ -482,17 +501,30 @@ function renderArea(input: GenericRenderInput) {
   const valuePosition = (value: number) => areaValuePosition(valueScale, value);
   const area = axisSwapped
     ? d3Area<[number, number]>()
-      .y((_, index) => progressionPosition(String(table[index]?.x ?? "")))
+      .y((_, index) => index === 0
+        ? progressionScale.range[0]
+        : index === table.length + 1
+          ? progressionScale.range[1]
+          : progressionPosition(String(table[index - 1]?.x ?? "")))
       .x0((point) => valuePosition(point[0]))
       .x1((point) => valuePosition(point[1]))
     : d3Area<[number, number]>()
-      .x((_, index) => progressionPosition(String(table[index]?.x ?? "")))
+      .x((_, index) => index === 0
+        ? progressionScale.range[0]
+        : index === table.length + 1
+          ? progressionScale.range[1]
+          : progressionPosition(String(table[index - 1]?.x ?? "")))
       .y0((point) => valuePosition(point[0]))
       .y1((point) => valuePosition(point[1]));
   area.curve(curveBasis);
   const marks = layers.map((layer, index) => {
     const color = !isStacked && seriesValues.length === 1 ? "steelblue" : tableau[index % tableau.length]!;
-    return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(seriesValues[index] ?? "")}" data-point-count="${layer.length}" d="${area(layer as Array<[number, number]>) ?? ""}" fill="${color}"><title>${esc(seriesValues[index] === "__single__" ? yEncoding.field : seriesValues[index] ?? "")}</title></path>`;
+    // Silhouette streams use a centered value domain, so its visual zero
+    // baseline is the lower domain edge rather than numeric zero. Stacked
+    // areas retain the ordinary numeric-zero baseline.
+    const endpointValue = isStream ? yDomain[0] : 0;
+    const extendedLayer: Array<[number, number]> = [[endpointValue, endpointValue], ...(layer as Array<[number, number]>), [endpointValue, endpointValue]];
+    return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(seriesValues[index] ?? "")}" data-point-count="${layer.length}" data-zero-endpoints="true" d="${area(extendedLayer) ?? ""}" fill="${color}"><title>${esc(seriesValues[index] === "__single__" ? yEncoding.field : seriesValues[index] ?? "")}</title></path>`;
   }).join("");
   return {
     content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="${isStream ? "streamgraph" : isStacked ? "stacked" : "area"}" data-axis-swapped="${axisSwapped}" data-stack-offset="${isStream ? "silhouette" : "zero"}" data-stack-order="${isStream ? "inside-out" : "none"}" data-area-curve="basis" data-renderer="observable-area@3">${marks}</g>`,

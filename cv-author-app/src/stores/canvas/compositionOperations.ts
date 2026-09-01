@@ -1481,6 +1481,87 @@ export function useCanvasCompositionOperations(context: any) {
         ?? firstChartNode(outerCompositionTarget);
       if (!targetChart?.chartSpec) return null;
       const bounds = getCanvasNodeListBounds(members.length > 0 ? members : [outerCompositionTarget]);
+      if (bounds && composition.type === "facet"
+        && (composition.facetCoordinateSystem ?? targetChart.coordinateGuide?.type ?? "Cartesian") === "Cartesian") {
+        // A facet is an external two-axis chart: the facet field supplies one
+        // nominal/ordinal axis and every cell shares the other axis. Expose
+        // concat portals around the complete facet frame instead of treating
+        // the whole composition as an interior layer target only.
+        const renderedScale = Math.max(
+          Math.abs(targetChart.scaleX),
+          Math.abs(targetChart.scaleY),
+          0.0001,
+        ) * Math.max(viewZoom.value, 0.0001);
+        const edgeSizeX = Math.min(
+          bounds.width * 0.22,
+          Math.max(18 / renderedScale, 12),
+        );
+        const edgeSizeY = Math.min(
+          bounds.height * 0.22,
+          Math.max(18 / renderedScale, 12),
+        );
+        const onLeft = point.x >= bounds.minX - edgeSizeX
+          && point.x <= bounds.minX
+          && point.y >= bounds.minY
+          && point.y <= bounds.maxY;
+        const onRight = point.x >= bounds.maxX
+          && point.x <= bounds.maxX + edgeSizeX
+          && point.y >= bounds.minY
+          && point.y <= bounds.maxY;
+        const onTop = point.y >= bounds.minY - edgeSizeY
+          && point.y <= bounds.minY
+          && point.x >= bounds.minX
+          && point.x <= bounds.maxX;
+        const onBottom = point.y >= bounds.maxY
+          && point.y <= bounds.maxY + edgeSizeY
+          && point.x >= bounds.minX
+          && point.x <= bounds.maxX;
+        if (onLeft || onRight || onTop || onBottom) {
+          const horizontal = onLeft || onRight;
+          const direction: "horizontal" | "vertical" = horizontal ? "horizontal" : "vertical";
+          const sharedChannel: CoordinateChannel = horizontal ? "y" : "x";
+          const compatible = concatEdgeNodesAreCompatible(
+            targetChart,
+            source,
+            direction,
+            sharedChannel,
+          );
+          const zoneBounds = horizontal
+            ? {
+              minX: onLeft ? bounds.minX - edgeSizeX : bounds.maxX,
+              minY: bounds.minY,
+              maxX: onLeft ? bounds.minX : bounds.maxX + edgeSizeX,
+              maxY: bounds.maxY,
+              width: edgeSizeX,
+              height: bounds.height,
+            }
+            : {
+              minX: bounds.minX,
+              minY: onTop ? bounds.minY - edgeSizeY : bounds.maxY,
+              maxX: bounds.maxX,
+              maxY: onTop ? bounds.minY : bounds.maxY + edgeSizeY,
+              width: bounds.width,
+              height: edgeSizeY,
+            };
+          return {
+            targetNodeId: targetChart.id,
+            type: "concat",
+            sharedChannels: [sharedChannel],
+            bounds: zoneBounds,
+            outline: [
+              { x: zoneBounds.minX, y: zoneBounds.minY },
+              { x: zoneBounds.maxX, y: zoneBounds.minY },
+              { x: zoneBounds.maxX, y: zoneBounds.maxY },
+              { x: zoneBounds.minX, y: zoneBounds.maxY },
+            ],
+            compatible,
+            direction,
+            concatPosition: horizontal
+              ? onLeft ? "before" : "after"
+              : onTop ? "before" : "after",
+          };
+        }
+      }
       if (bounds && pointInBounds(point, bounds)) {
         const outerType: "layer" | "concat" = composition.type === "concat" ? "concat" : "layer";
         const pair = repeatableCompositionPairNodes(source, targetChart, outerType);
