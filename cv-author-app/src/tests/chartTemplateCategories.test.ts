@@ -18,24 +18,24 @@ const existing: SvgCandidate[] = ([
 ] as Array<[string, string, string, SvgCandidate["coordinateSystem"]]>).map(([id, name, chartType, coordinateSystem]) => ({ id, name, chartType, coordinateSystem, src: "preview" }));
 
 describe("chart template categories", () => {
-  it("groups every implemented template by family exactly once", () => {
+  it("groups every implemented template into each matching family", () => {
     const candidates = [...existing, ...advancedTemplateDefinitions];
     const categories = groupChartTemplateCandidates(candidates);
     const grouped = categories.flatMap((category) => category.candidates);
     expect(categories.map((category) => category.label)).toEqual([
       "Bar chart",
-      "Line chart",
       "Area chart",
       "Point",
+      "Line chart",
       "Heatmap",
       "Arc",
+      "Tree",
       "Chord",
       "Sankey",
-      "Tree",
       "Calendar",
       "Boxplot",
     ]);
-    expect(grouped).toHaveLength(candidates.length);
+    expect(grouped).toHaveLength(candidates.length + 2);
     expect(new Set(grouped.map((candidate) => candidate.id)).size).toBe(candidates.length);
     expect(categories.find((category) => category.id === "barchart")?.candidates).toHaveLength(6);
     expect(categories.find((category) => category.id === "linechart")?.candidates).toHaveLength(3);
@@ -45,7 +45,15 @@ describe("chart template categories", () => {
       "Contour",
       "Hexbin",
     ]);
-    expect(categories.find((category) => category.id === "arc")?.candidates).toHaveLength(2);
+    expect(categories.find((category) => category.id === "point")?.candidates.map((candidate) => candidate.chartType)).toEqual([
+      "Scatterplot",
+      "Hexbin",
+    ]);
+    expect(categories.find((category) => category.id === "arc")?.candidates.map((candidate) => candidate.chartType)).toEqual([
+      "PieChart",
+      "DonutChart",
+      "RadialBarChart",
+    ]);
     expect(categories.find((category) => category.id === "tree")?.candidates.map((candidate) => candidate.chartType)).toEqual([
       "Sunburst",
       "Icicle",

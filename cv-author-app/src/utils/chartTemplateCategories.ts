@@ -23,7 +23,7 @@ const familyDefinitions: Array<{
     label: "Area chart",
     chartTypes: new Set(["areachart", "stackedareachart", "streamgraph", "horizonchart"]),
   },
-  { id: "point", label: "Point", chartTypes: new Set(["scatterplot"]) },
+  { id: "point", label: "Point", chartTypes: new Set(["scatterplot", "hexbin"]) },
   {
     id: "linechart",
     label: "Line chart",
@@ -31,7 +31,7 @@ const familyDefinitions: Array<{
   },
 
   { id: "heatmap", label: "Heatmap", chartTypes: new Set(["matrixdiagram", "contour", "hexbin"]) },
-  { id: "arc", label: "Arc", chartTypes: new Set(["piechart", "donutchart"]) },
+  { id: "arc", label: "Arc", chartTypes: new Set(["piechart", "donutchart", "radialbarchart"]) },
   { id: "tree", label: "Tree", chartTypes: new Set(["sunburst", "icicle", "treemap", "dendrogram", "radialdendrogram"]) },
   { id: "network", label: "Network", chartTypes: new Set(["forcedirectedgraph"]) },
 
@@ -78,8 +78,9 @@ export function groupChartTemplateCandidates(candidates: SvgCandidate[]): ChartT
         return order.indexOf(normalizedChartType(left.chartType)) - order.indexOf(normalizedChartType(right.chartType));
       }),
   })).filter((category) => category.candidates.length);
-  const assigned = new Set(grouped.flatMap((category) => category.candidates.map((candidate) => candidate.id)));
-  const remaining = candidates.filter((candidate) => !assigned.has(candidate.id));
+  // A candidate can belong to several families; only unmatched candidates go to Other.
+  const matched = new Set(grouped.flatMap((category) => category.candidates.map((candidate) => candidate.id)));
+  const remaining = candidates.filter((candidate) => !matched.has(candidate.id));
   return remaining.length
     ? [...grouped, { id: "other", label: "Other", candidates: remaining }]
     : grouped;

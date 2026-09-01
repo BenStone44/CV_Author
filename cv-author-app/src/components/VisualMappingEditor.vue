@@ -246,7 +246,7 @@ button {
   place-items: center;
   border: 1px solid #dce3ea;
   border-radius: 5px;
-  background: #fff;
+  background: var(--frontend-surface-raised);
   color: #536273;
   cursor: pointer;
 }
@@ -289,7 +289,7 @@ button:disabled {
   padding: 2px;
   border: 1px solid #dce3ea;
   border-radius: 4px;
-  background: #fff;
+  background: var(--frontend-surface-raised);
 }
 
 .offset-input {
@@ -330,10 +330,10 @@ button:disabled {
 }
 
 .slider-dot { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; place-items: center; }
-.slider-dot span { width: 10px; height: 10px; border: 2px solid #432818; border-radius: 50%; background: #fff; }
+.slider-dot span { width: 10px; height: 10px; border: 2px solid #432818; border-radius: 50%; background: var(--frontend-surface-raised); }
 .slider-dot:hover span, .slider-dot[aria-expanded="true"] span { background: #432818; }
-.size-slider-popover { position: absolute; right: 26px; bottom: calc(100% + 5px); z-index: 3; display: flex; width: 150px; height: 34px; align-items: center; padding: 6px 9px; border: 1px solid rgba(67, 40, 24, 0.16); border-radius: 6px; background: #fff; box-shadow: 0 8px 20px rgba(67, 40, 24, 0.16); }
-.size-slider-popover input { width: 100%; accent-color: #bb9457; }
+.size-slider-popover { position: absolute; right: 26px; bottom: calc(100% + 5px); z-index: 3; display: flex; width: 150px; height: 34px; align-items: center; padding: 6px 9px; border: 1px solid rgba(67, 40, 24, 0.16); border-radius: 6px; background: var(--frontend-surface-raised); box-shadow: 0 8px 20px rgba(67, 40, 24, 0.16); }
+.size-slider-popover input { width: 100%; accent-color: var(--frontend-control-accent); }
 
 .size-position,
 .size-stop-row output {

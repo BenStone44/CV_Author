@@ -5,12 +5,80 @@ body,
   min-height: 100%;
 }
 
+:root {
+  --frontend-light-rgb: 254 250 224;
+  --frontend-surface-canvas: #fefae0;
+  --frontend-surface-panel: #fefae0;
+  --frontend-surface-raised: #fefae0;
+  --frontend-surface-soft: #fff3d0;
+  --frontend-text-primary: #432818;
+  --frontend-text-secondary: #99582a;
+  --frontend-text-muted: #728196;
+  --frontend-control-accent: #bb9457;
+  --frontend-control-accent-strong: #99582a;
+  --frontend-slider-track: #fffaee;
+  --frontend-slider-thumb: #432818;
+  --frontend-control-border: #d9c7a3;
+  --frontend-component-data: #e5f1fb;
+  --frontend-component-chart: #fefae0;
+  --frontend-component-composition: #f3faf7;
+  --frontend-component-inspector: #fff3d0;
+  --frontend-status-info: #2563eb;
+  --frontend-status-success: #15803d;
+  --frontend-status-warning: #d97706;
+  --frontend-status-danger: #b42318;
+  --frontend-font-family: Arial, sans-serif;
+  --frontend-font-style: italic;
+  --frontend-font-weight: 700;
+  --frontend-font-scale: 1.5;
+}
+
 body {
-  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  background: #fff8e7;
-  color: #432818;
+  font-family: var(--frontend-font-family);
+  font-style: var(--frontend-font-style);
+  font-weight: var(--frontend-font-weight);
+  font-size: calc(16px * var(--frontend-font-scale));
+  background: var(--frontend-surface-panel);
+  color: var(--frontend-text-primary);
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* Keep every range input on the same light track across browsers. */
+input[type="range"] {
+  accent-color: var(--frontend-slider-thumb);
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--frontend-slider-track);
+}
+
+input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--frontend-slider-track);
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: 2px solid var(--frontend-slider-thumb);
+  border-radius: 50%;
+  background: var(--frontend-surface-raised);
+  box-shadow: 0 1px 3px rgb(67 40 24 / 22%);
+  appearance: none;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--frontend-slider-thumb);
+  border-radius: 50%;
+  background: var(--frontend-surface-raised);
+  box-shadow: 0 1px 3px rgb(67 40 24 / 22%);
 }

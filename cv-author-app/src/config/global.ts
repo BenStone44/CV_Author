@@ -3,7 +3,8 @@
  *
  * `categorical` is for distinguishing discrete series or groups.
  * `gradient` is ordered from the low end to the high end of a continuous scale.
- * Edit these two arrays to customize all chart colors.
+ * Edit these arrays to customize chart colors; edit `frontendPalette` below
+ * for the editor UI.
  */
 export const globalPalette = {
   categorical: [
@@ -32,10 +33,96 @@ export const globalPalette = {
   ],
 };
 
-/** Colors exposed by frontend appearance controls. */
-export const frontendPalette = [
-  "#432818",
-  "#99582a",
-  "#ffe6a7",
-  "#bb9457",
-] as const;
+/**
+ * Colors exposed by frontend appearance controls.
+ *
+ * Keep UI colors here so changing the visual language does not require
+ * hunting through individual components. `components` identifies the
+ * surfaces used by the major editor component types; `series` is the
+ * categorical fallback used by chart controls.
+ */
+export const frontendPalette = {
+  lightest: "#fefae0",
+  surface: {
+    canvas: "#fefae0",
+    panel: "#fefae0",
+    raised: "#fefae0",
+    soft: "#fff3d0",
+  },
+  text: {
+    primary: "#432818",
+    secondary: "#99582a",
+    muted: "#728196",
+    inverse: "#fefae0",
+  },
+  control: {
+    accent: "#bb9457",
+    accentStrong: "#99582a",
+    sliderTrack: "#fffaee",
+    sliderThumb: "#432818",
+    border: "#d9c7a3",
+  },
+  status: {
+    info: "#2563eb",
+    success: "#15803d",
+    warning: "#d97706",
+    danger: "#b42318",
+  },
+  components: {
+    data: "#e5f1fb",
+    chart: "#fefae0",
+    composition: "#f3faf7",
+    inspector: "#fff3d0",
+  },
+  series: [
+    "#432818",
+    "#99582a",
+    "#bb9457",
+    "#606c38",
+    "#669bbc",
+  ],
+} as const;
+
+const frontendLightRgb = [0, 2, 4]
+  .map((offset) => Number.parseInt(frontendPalette.lightest.slice(offset + 1, offset + 3), 16))
+  .join(" ");
+
+/** CSS custom properties consumed by the component stylesheets. */
+export const frontendPaletteCssVariables = {
+  "--frontend-light-rgb": frontendLightRgb,
+  "--frontend-surface-canvas": frontendPalette.surface.canvas,
+  "--frontend-surface-panel": frontendPalette.surface.panel,
+  "--frontend-surface-raised": frontendPalette.surface.raised,
+  "--frontend-surface-soft": frontendPalette.surface.soft,
+  "--frontend-text-primary": frontendPalette.text.primary,
+  "--frontend-text-secondary": frontendPalette.text.secondary,
+  "--frontend-text-muted": frontendPalette.text.muted,
+  "--frontend-control-accent": frontendPalette.control.accent,
+  "--frontend-control-accent-strong": frontendPalette.control.accentStrong,
+  "--frontend-slider-track": frontendPalette.control.sliderTrack,
+  "--frontend-slider-thumb": frontendPalette.control.sliderThumb,
+  "--frontend-control-border": frontendPalette.control.border,
+  "--frontend-component-data": frontendPalette.components.data,
+  "--frontend-component-chart": frontendPalette.components.chart,
+  "--frontend-component-composition": frontendPalette.components.composition,
+  "--frontend-component-inspector": frontendPalette.components.inspector,
+  "--frontend-status-info": frontendPalette.status.info,
+  "--frontend-status-success": frontendPalette.status.success,
+  "--frontend-status-warning": frontendPalette.status.warning,
+  "--frontend-status-danger": frontendPalette.status.danger,
+} as const;
+
+/** Typography shared by all editor UI components. */
+export const frontendTypography = {
+  family: "Arial, sans-serif",
+  // style: "italic",
+  weight: 700,
+  scale: 1.25,
+} as const;
+
+export const frontendTypographyCssVariables = {
+  "--frontend-font-family": frontendTypography.family,
+  "--frontend-font-style": frontendTypography.style,
+  "--frontend-font-weight": String(frontendTypography.weight),
+  "--frontend-font-scale": String(frontendTypography.scale),
+} as const;

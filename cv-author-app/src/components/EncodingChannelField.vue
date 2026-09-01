@@ -61,7 +61,7 @@ const localColumns = computed(() => props.columns.filter((column) => !fatherColu
   justify-content: space-between;
   gap: 8px;
   color: #99582a;
-  font-size: 11px;
+  font-size: calc(11px * var(--frontend-font-scale));
   font-weight: 700;
 }
 
@@ -76,10 +76,10 @@ select {
   padding: 0 8px;
   border: 1px solid rgba(67, 40, 24, 0.14);
   border-radius: 6px;
-  background: #fff;
+  background: var(--frontend-surface-raised);
   color: #432818;
   font: inherit;
-  font-size: 11px;
+  font-size: calc(11px * var(--frontend-font-scale));
   cursor: pointer;
 }
 

@@ -298,7 +298,7 @@ function fitMapToLayerData(options: { force?: boolean; persist?: boolean } = {})
 }
 
 function colorToRgba(color: string | undefined, alpha = 255): [number, number, number, number] {
-  const value = (color ?? frontendPalette[1]).trim().replace(/^#/, "");
+  const value = (color ?? frontendPalette.control.accentStrong).trim().replace(/^#/, "");
   const normalized = value.length === 3
     ? value.split("").map((part) => `${part}${part}`).join("")
     : value;

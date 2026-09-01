@@ -106,7 +106,7 @@ const emit = defineEmits<{
   padding: 0;
   border: 1px solid rgba(67, 40, 24, 0.1);
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.8);
+  background: rgb(var(--frontend-light-rgb) / 0.8);
   color: #432818;
   cursor: pointer;
 }
@@ -121,7 +121,7 @@ const emit = defineEmits<{
 }
 .icon-button:hover:not(:disabled) {
   border-color: rgba(153, 88, 42, 0.35);
-  background: #fff3d0;
+  background: var(--frontend-surface-soft);
   color: #432818;
 }
 .icon-button:disabled {

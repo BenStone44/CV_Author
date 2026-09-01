@@ -208,7 +208,6 @@ const {
   pasteClipboardNodes,
   groupSelectedItems,
   ungroupSelectedItems,
-  dissolveSelectedGroups,
   createCompositionCandidate,
   createFacetFromFields,
   applyDimensionFacet,
@@ -291,9 +290,9 @@ function deckglLayerFamily(node: CanvasNode) {
 function deckglLayerConfig(node: CanvasNode) {
   const family = deckglLayerFamily(node);
   return node.deckglConfig ?? (family === "point"
-    ? { size: 8, color: frontendPalette[1] }
+    ? { size: 8, color: frontendPalette.control.accentStrong }
     : family === "area"
-      ? { color: frontendPalette[1] }
+      ? { color: frontendPalette.control.accentStrong }
       : {});
 }
 
