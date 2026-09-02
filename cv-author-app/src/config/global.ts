@@ -58,8 +58,8 @@ export const frontendPalette = {
   control: {
     accent: "#ffe6a7",
     accentStrong: "#99582a",
-    sliderTrack: "#fffaee",
-    sliderThumb: "#432818",
+    sliderTrack: "#bc6c25",
+    sliderThumb: "#606c38",
     border: "#d9c7a3",
   },
   status: {
@@ -117,7 +117,7 @@ export const frontendTypography = {
   family: "Arial, sans-serif",
   // style: "italic",
   weight: 700,
-  scale: 1,
+  scale: 1.3,
 } as const;
 
 export const frontendTypographyCssVariables = {

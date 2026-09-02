@@ -223,7 +223,6 @@ export function resolvedEncodingField(spec: ChartSpec, channel: ChartEncodingCha
 
 export function isEncodingColumnCompatible(config: EncodingChannelConfig, type: DataColumnType) {
   if (config.accepts.includes(type)) return true;
-  // Ordinal values are ordered categorical data and can occupy legacy
-  // nominal/temporal dimension and series roles.
-  return type === "ordinal" && (config.accepts.includes("nominal") || config.accepts.includes("temporal"));
+  // Ordinal values are ordered categorical data and can occupy nominal roles.
+  return type === "ordinal" && config.accepts.includes("nominal");
 }

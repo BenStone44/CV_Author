@@ -23,7 +23,7 @@ export function decodeCsvColumnDragPayload(value: string | null | undefined): Cs
     if (
       typeof parsed.datasetId !== "string" || !parsed.datasetId
       || typeof parsed.field !== "string" || !parsed.field
-      || (parsed.type !== "nominal" && parsed.type !== "ordinal" && parsed.type !== "temporal" && parsed.type !== "quantitative")
+      || (parsed.type !== "nominal" && parsed.type !== "ordinal" && parsed.type !== "quantitative")
     ) return null;
     const table = parsed.table === "nodes" || parsed.table === "edges" ? parsed.table : undefined;
     return { datasetId: parsed.datasetId, field: parsed.field, type: parsed.type, ...(table ? { table } : {}) };

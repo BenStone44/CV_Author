@@ -3,6 +3,7 @@ import { computed } from "vue";
 import type { DataColumn } from "../types";
 import type { EncodingChannelConfig } from "../utils/encodingConfig";
 import { isEncodingColumnCompatible } from "../utils/encodingConfig";
+import CustomSelect from "./CustomSelect.vue";
 
 const props = defineProps<{
   config: EncodingChannelConfig;
@@ -26,7 +27,7 @@ const localColumns = computed(() => props.columns.filter((column) => !fatherColu
       <span>{{ config.label }}</span>
       <abbr v-if="config.required" title="Required" aria-label="Required">*</abbr>
     </span>
-    <select :value="value" :disabled="disabled" @change="emit('change', ($event.target as HTMLSelectElement).value)">
+    <CustomSelect :value="value" :disabled="disabled" @change="emit('change', $event)">
       <option value="">{{ config.emptyLabel }}</option>
       <option
         v-for="column in fatherColumns ?? []"
@@ -44,7 +45,7 @@ const localColumns = computed(() => props.columns.filter((column) => !fatherColu
       >
         {{ column.name }} ({{ column.type }})
       </option>
-    </select>
+    </CustomSelect>
   </label>
 </template>
 
@@ -90,12 +91,12 @@ select:focus {
 }
 
 select:disabled {
-  background: #f1f3f5;
-  color: #97a1ae;
+  background: var(--frontend-surface-canvas);
+  color: #718096;
   cursor: not-allowed;
 }
 
 option:disabled {
-  color: #a0a9b5;
+  color: #718096;
 }
 </style>

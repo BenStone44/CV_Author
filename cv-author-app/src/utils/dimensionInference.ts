@@ -32,7 +32,7 @@ export type ColumnDimensionProfile = {
   coverage: number;
   isComparable: boolean;
   canBeCategory: boolean;
-  categoryKind: "declared" | "low-cardinality-number" | "low-cardinality-time" | null;
+  categoryKind: "declared" | "low-cardinality-number" | "low-cardinality-ordinal" | null;
   categoryConfidence: number;
   minimum?: number;
   maximum?: number;
@@ -91,10 +91,6 @@ function normalizedValue(value: string, type: DataColumnType) {
     const number = Number(trimmed);
     return Number.isFinite(number) ? number : null;
   }
-  if (type === "temporal") {
-    const timestamp = Date.parse(trimmed);
-    return Number.isFinite(timestamp) ? timestamp : null;
-  }
   return trimmed;
 }
 
@@ -137,7 +133,7 @@ export function profileDatasetDimensions(dataset: Dataset): ColumnDimensionProfi
       distinctCount,
       cardinalityRatio,
       coverage: source.length === 0 ? 0 : validCount / source.length,
-      isComparable: (column.type === "quantitative" || column.type === "ordinal" || column.type === "temporal")
+      isComparable: (column.type === "quantitative" || column.type === "ordinal")
         && distinctCount >= 2
         && validCount >= 2,
       canBeCategory: declaredCategory || promotedCategory,
@@ -146,7 +142,7 @@ export function profileDatasetDimensions(dataset: Dataset): ColumnDimensionProfi
         : promotedCategory && column.type === "quantitative"
           ? "low-cardinality-number"
           : promotedCategory
-            ? "low-cardinality-time"
+            ? "low-cardinality-ordinal"
             : null,
       categoryConfidence,
       minimum: numeric.length ? Math.min(...numeric) : undefined,
@@ -161,12 +157,7 @@ function columnByField(dataset: Dataset) {
 
 function linePairScore(x: ColumnDimensionProfile, y: ColumnDimensionProfile) {
   const coverage = (x.coverage + y.coverage) / 2;
-  const conventionalOrder = x.declaredType === "temporal" && y.declaredType === "quantitative"
-    ? 0.14
-    : x.declaredType === "quantitative" && y.declaredType === "temporal"
-      ? -0.04
-      : 0.04;
-  return Math.max(0, Math.min(1, 0.54 + coverage * 0.3 + conventionalOrder));
+  return Math.max(0, Math.min(1, 0.58 + coverage * 0.3));
 }
 
 export function scoreSeriesFields(
@@ -695,7 +686,7 @@ export function inferChartStructure(chartId: string, dataset: Dataset, input: Ch
   if (series) used.add(series.field);
   const profiles = statistics?.columns ?? profileDatasetDimensions(dataset);
   const outerDimensions = profiles.filter((profile) =>
-    (profile.canBeCategory || profile.declaredType === "temporal")
+    profile.canBeCategory
     && !used.has(profile.field),
   );
   const sharedChannels = contract.shareableChannels as CoordinateChannel[];
@@ -710,9 +701,9 @@ export function inferChartStructure(chartId: string, dataset: Dataset, input: Ch
     ]
     : [];
   const gridDimensions = templateId === "pie"
-    ? outerDimensions.filter((profile) => profile.declaredType === "nominal" || profile.declaredType === "temporal")
+    ? outerDimensions.filter((profile) => profile.declaredType === "nominal" || profile.declaredType === "ordinal")
     : [];
-  const gridColumn = gridDimensions.find((profile) => profile.declaredType === "temporal") ?? gridDimensions[1];
+  const gridColumn = gridDimensions[1];
   const gridRow = gridDimensions.find((profile) => profile.field !== gridColumn?.field && profile.declaredType === "nominal")
     ?? gridDimensions.find((profile) => profile.field !== gridColumn?.field);
   const rowValues = gridRow ? uniqueValues(dataset, gridRow.field) : [];

@@ -85,7 +85,7 @@ export function isSeriesStyleMapping(value: unknown): value is SeriesStyleMappin
 export function parseVisualValue(value: string, encoding: ChartEncoding) {
   const trimmed = value.trim();
   if (!trimmed || encoding.type === "nominal" || encoding.type === "ordinal") return null;
-  const parsed = encoding.type === "temporal" ? Date.parse(trimmed) : Number(trimmed);
+  const parsed = Number(trimmed);
   return Number.isFinite(parsed) ? parsed : null;
 }
 

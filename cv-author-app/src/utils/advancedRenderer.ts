@@ -237,18 +237,8 @@ function scaleForEncoding(rows: Dataset["rows"], encoding: ChartEncoding, range:
       spec: { type: "point" as const, domain, range },
     };
   }
-  const values = rows.map((row) => encoding.type === "temporal"
-    ? Date.parse(row[encoding.field] ?? "")
-    : Number(row[encoding.field] ?? ""));
+  const values = rows.map((row) => Number(row[encoding.field] ?? ""));
   const domain = finiteDomain(values);
-  if (encoding.type === "temporal") {
-    const dateDomain = domain.map((value) => new Date(value)) as [Date, Date];
-    const scale = scaleUtc().domain(dateDomain).range(range);
-    return {
-      scale: (value: string) => scale(new Date(value)),
-      spec: { type: "utc" as const, domain: dateDomain.map((value) => value.toISOString()) as [string, string], range },
-    };
-  }
   const scale = scaleLinear().domain(domain).range(range);
   return {
     scale: (value: string) => scale(Number(value)),
@@ -361,14 +351,12 @@ function renderArea(input: GenericRenderInput) {
     ? Array.from(new Set(rows.map((row) => row[seriesEncoding.field] ?? "")))
     : ["__single__"];
   const xValues = Array.from(new Set(rows.map((row) => row[xEncoding.field] ?? ""))).sort((left, right) => {
-    if (xEncoding.type === "temporal") return Date.parse(left) - Date.parse(right);
     if (xEncoding.type === "quantitative") return Number(left) - Number(right);
     return left.localeCompare(right, "en", { numeric: true });
   });
   const orderedRows = [...rows].sort((left, right) => {
     const leftValue = left[xEncoding.field] ?? "";
     const rightValue = right[xEncoding.field] ?? "";
-    if (xEncoding.type === "temporal") return Date.parse(leftValue) - Date.parse(rightValue);
     if (xEncoding.type === "quantitative") return Number(leftValue) - Number(rightValue);
     return leftValue.localeCompare(rightValue, "en", { numeric: true });
   });
@@ -426,16 +414,11 @@ function renderArea(input: GenericRenderInput) {
       const label = adaptiveText(seriesLabel, `x="${input.minX + 4}" y="${(size + padding) / 2}" dy="0.35em"`, width * 0.32, Math.max(8, size), "#ffffff");
       return `<g transform="translate(0 ${top})"><defs><clipPath id="${clipId}"><rect x="${input.minX}" y="${padding}" width="${width}" height="${Math.max(0, size - padding)}"/></clipPath><path id="${pathId}" d="${area(data) ?? ""}"/></defs><g clip-path="url(#${clipId})" data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series)}">${uses}</g>${label}</g>`;
     }).join("");
-    const temporalDomain = x.spec.domain as [string, string] | [number, number];
-    const start = new Date(temporalDomain[0]);
-    const end = new Date(temporalDomain[1]);
     const tickCount = Math.max(2, Math.floor(width / 80));
-    const axisTicks = xEncoding.type === "temporal"
-      ? scaleUtc().domain([start, end]).range([input.minX, input.minX + width]).ticks(tickCount).map((value) => ({
-        position: x.scale(value.toISOString()),
-        label: value.toLocaleString("en-US", { month: "short", year: start.getUTCFullYear() === end.getUTCFullYear() ? undefined : "numeric", timeZone: "UTC" }),
-      }))
-      : ticks(Number(temporalDomain[0]), Number(temporalDomain[1]), tickCount).map((value) => ({ position: x.scale(String(value)), label: formatTick(value) }));
+    const axisTicks = x.spec.type === "point"
+      ? (x.spec.domain as string[]).map((value) => ({ position: x.scale(value), label: value }))
+      : ticks(Number((x.spec.domain as [number, number])[0]), Number((x.spec.domain as [number, number])[1]), tickCount)
+        .map((value) => ({ position: x.scale(String(value)), label: formatTick(value) }));
     const visibleTicks = axisTicks.filter((tick) => tick.position >= input.minX + marginLeft && tick.position < input.minX + width - marginRight);
     const axisFontSize = adaptiveAxisFontSize(visibleTicks.map((tick) => tick.label), visibleTicks.map((tick) => tick.position), 10, 6, 10);
     const axis = visibleTicks.map((tick) => `<g class="tick" transform="translate(${tick.position} ${input.minY + marginTop})"><line y2="-6" stroke="currentColor"/>${adaptiveText(tick.label, `y="-9" text-anchor="middle"`, Math.max(12, width / Math.max(visibleTicks.length, 1)), 16, "#ffffff", axisFontSize)}</g>`).join("");
@@ -570,26 +553,6 @@ function renderParallel(input: GenericRenderInput) {
           const position = scale(value);
           return position === undefined ? [] : [{ label: value, position }];
         }),
-      });
-      return;
-    }
-    if (field.type === "temporal") {
-      const dataDomain = finiteDomain(input.dataset.rows.map((row) => Date.parse(row[field.field] ?? "")));
-      const span = dataDomain[1] - dataDomain[0];
-      const padding = span > 0 ? span * 0.06 : 86_400_000;
-      const domain: [Date, Date] = [new Date(dataDomain[0] - padding), new Date(dataDomain[1] + padding)];
-      const scale = scaleUtc().domain(domain).range([area.y + area.height, area.y]);
-      axesByField.set(field.field, {
-        scale: "utc",
-        domain: domain.map((value) => value.toISOString().slice(0, 10)),
-        position: (row) => {
-          const value = Date.parse(row[field.field] ?? "");
-          return Number.isFinite(value) ? scale(new Date(value)) : Number.NaN;
-        },
-        ticks: scale.ticks(tickCount).map((value) => ({
-          label: value.toISOString().slice(0, 10),
-          position: scale(value),
-        })),
       });
       return;
     }
@@ -978,10 +941,6 @@ function renderHierarchy(input: GenericRenderInput) {
   const compareOrder = (left: string, right: string) => {
     if (orderEncoding.type === "quantitative") {
       const difference = Number(left) - Number(right);
-      if (Number.isFinite(difference) && difference !== 0) return difference;
-    }
-    if (orderEncoding.type === "temporal") {
-      const difference = Date.parse(left) - Date.parse(right);
       if (Number.isFinite(difference) && difference !== 0) return difference;
     }
     return left.localeCompare(right, undefined, { numeric: true });

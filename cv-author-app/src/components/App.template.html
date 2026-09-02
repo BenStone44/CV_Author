@@ -1237,7 +1237,6 @@
                         v-for="member in seriesItemOverlay.members"
                         :key="`${seriesItemOverlay.node.id}-series-member-${member.memberId}`"
                         class="series-item-panel__member"
-                        :class="{ 'series-item-panel__member--color-only': seriesItemOverlay.colorOnly }"
                       >
                         <span :title="member.label">{{ member.label }}</span>
                         <label
@@ -1253,26 +1252,6 @@
                             @input="onSeriesItemStyleChange(member.memberId, { color: $event.target.value })"
                           />
                         </label>
-                        <input
-                          v-if="!seriesItemOverlay.colorOnly"
-                          type="number"
-                          min="0.5"
-                          max="16"
-                          step="0.5"
-                          :value="member.width"
-                          :aria-label="`${member.label} stroke width`"
-                          @change="onSeriesItemStyleChange(member.memberId, { strokeWidth: Number($event.target.value) })"
-                        />
-                        <select
-                          v-if="!seriesItemOverlay.colorOnly"
-                          :value="member.shape"
-                          :aria-label="`${member.label} line style`"
-                          @change="onSeriesItemStyleChange(member.memberId, { shape: $event.target.value })"
-                        >
-                          <option value="solid">Solid</option>
-                          <option value="dashed">Dashed</option>
-                          <option value="dotted">Dotted</option>
-                        </select>
                       </div>
                     </div>
                   </foreignObject>
@@ -1322,7 +1301,7 @@
                       :y="activeDataBindingDropZone.frame.y + activeDataBindingDropZone.frame.height / 2"
                       text-anchor="middle"
                       dominant-baseline="middle"
-                    >{{ activeDataBindingDropZone.label }}</text>
+                    >{{ displaySeriesItemLabel(activeDataBindingDropZone.label) }}</text>
                   </g>
                 </template>
                 <rect

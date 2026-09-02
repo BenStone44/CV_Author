@@ -154,7 +154,7 @@ function rowKey(dataset: Dataset, row: Record<string, string>) {
   return csvRowKey(dataset, row);
 }
 
-type ParsedAxisValue = string | number | Date;
+type ParsedAxisValue = string | number;
 
 type LineDatum = {
   row: Record<string, string>;
@@ -172,8 +172,7 @@ function parseAxisValue(value: string, type: ChartEncoding["type"]): ParsedAxisV
     const number = Number(trimmed);
     return Number.isFinite(number) ? number : null;
   }
-  const timestamp = Date.parse(trimmed);
-  return Number.isFinite(timestamp) ? new Date(timestamp) : null;
+  return null;
 }
 
 function uniqueDomain(values: ParsedAxisValue[]) {
@@ -192,7 +191,7 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
         ? [chartSpec.encodings.color]
         : [];
   if (!xEncoding || !yEncoding) throw new Error("Line renderer requires both X and Y encodings.");
-  if (seriesEncodings.some((encoding) => encoding.type !== "nominal" && encoding.type !== "ordinal" && encoding.type !== "temporal")) {
+  if (seriesEncodings.some((encoding) => encoding.type !== "nominal" && encoding.type !== "ordinal")) {
     throw new Error("Line renderer series encoding must be nominal or ordinal.");
   }
 
@@ -330,14 +329,9 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
     if (sharedScale?.type === "point") {
       const domain = sharedScale.domain as string[];
       const scale = scalePoint<string>().domain(domain).range(sharedScale.range).padding(0.5);
-      const temporalDomain = encoding.type === "temporal"
-        ? new Map(domain.map((item) => [Date.parse(item), item]))
-        : null;
       return {
         position: (value: ParsedAxisValue) => {
-          const key = temporalDomain && value instanceof Date
-            ? temporalDomain.get(value.getTime())
-            : String(value);
+          const key = String(value);
           return key === undefined ? 0 : scale(key) ?? 0;
         },
         domain,
@@ -350,7 +344,7 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
         .domain(domain.map((value) => new Date(value)) as [Date, Date])
         .range(sharedScale.range);
       return {
-        position: (value: ParsedAxisValue) => scale(value as Date),
+        position: (value: ParsedAxisValue) => scale(new Date(String(value))),
         domain: domain.map((value) => Date.parse(value)) as [number, number],
         type: "utc" as const,
       };
@@ -371,16 +365,6 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
         position: (value: ParsedAxisValue) => scale(value as string) ?? 0,
         domain,
         type: "point" as const,
-      };
-    }
-    if (encoding.type === "temporal") {
-      const domain = finiteExtent(values.map((value) => (value as Date).getTime()));
-      if (!domain) throw new Error("Unable to calculate a temporal scale domain.");
-      const scale = scaleUtc().domain(domain.map((value) => new Date(value)) as [Date, Date]).range(range);
-      return {
-        position: (value: ParsedAxisValue) => scale(value as Date),
-        domain,
-        type: "utc" as const,
       };
     }
     const domain = finiteExtent(values as number[]);

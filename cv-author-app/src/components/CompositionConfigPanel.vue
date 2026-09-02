@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { X } from "@lucide/vue";
 import type { CompositionSpec, DataColumn } from "../types";
+import CustomSelect from "./CustomSelect.vue";
 
 const props = defineProps<{
   compositionSpec: CompositionSpec;
@@ -23,7 +24,7 @@ const emit = defineEmits<{
 }>();
 
 const facetColumns = computed(() => props.columns.filter((column) =>
-  column.type === "nominal" || column.type === "ordinal" || column.type === "temporal",
+  column.type === "nominal" || column.type === "ordinal",
 ));
 const facetCoordinateSystem = computed(() => props.compositionSpec.facetCoordinateSystem ?? "Cartesian");
 const facetColumnField = computed(() => props.compositionSpec.facetGrid?.columnField
@@ -109,17 +110,17 @@ function numericValue(event: Event) {
           <header><strong>Facet fields</strong></header>
           <label class="composition-config__field">
             <span>Column</span>
-            <select :value="facetColumnField" @change="updateFacetField('column', ($event.target as HTMLSelectElement).value)">
+            <CustomSelect :value="facetColumnField" @change="updateFacetField('column', $event)">
               <option value="">Not bound</option>
               <option v-for="column in facetColumns" :key="`column-${column.name}`" :value="column.name">{{ column.name }}</option>
-            </select>
+            </CustomSelect>
           </label>
           <label class="composition-config__field">
             <span>Row</span>
-            <select :value="facetRowField" @change="updateFacetField('row', ($event.target as HTMLSelectElement).value)">
+            <CustomSelect :value="facetRowField" @change="updateFacetField('row', $event)">
               <option value="">Not bound</option>
               <option v-for="column in facetColumns" :key="`row-${column.name}`" :value="column.name">{{ column.name }}</option>
-            </select>
+            </CustomSelect>
           </label>
         </section>
 
@@ -127,17 +128,17 @@ function numericValue(event: Event) {
           <header><strong>Facet fields</strong></header>
           <label class="composition-config__field">
             <span>Theta</span>
-            <select :value="facetThetaField" @change="updatePolarField('theta', ($event.target as HTMLSelectElement).value)">
+            <CustomSelect :value="facetThetaField" @change="updatePolarField('theta', $event)">
               <option value="">Not bound</option>
               <option v-for="column in facetColumns" :key="`theta-${column.name}`" :value="column.name">{{ column.name }}</option>
-            </select>
+            </CustomSelect>
           </label>
           <label class="composition-config__field">
             <span>Radius</span>
-            <select :value="facetRadiusField" @change="updatePolarField('radius', ($event.target as HTMLSelectElement).value)">
+            <CustomSelect :value="facetRadiusField" @change="updatePolarField('radius', $event)">
               <option value="">Not bound</option>
               <option v-for="column in facetColumns" :key="`radius-${column.name}`" :value="column.name">{{ column.name }}</option>
-            </select>
+            </CustomSelect>
           </label>
         </section>
 
@@ -183,21 +184,21 @@ function numericValue(event: Event) {
 .composition-config__header strong { font-size: calc(12px * var(--frontend-font-scale)); text-transform: capitalize; }
 .composition-config__header span { color: #718096; font-size: calc(10px * var(--frontend-font-scale)); }
 .composition-config__header button { display: inline-grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #99582a; cursor: pointer; }
-.composition-config__header button:hover { background: #edf1f5; color: #432818; }
+.composition-config__header button:hover { background: var(--frontend-control-hover); color: #432818; }
 .composition-config__body { display: grid; gap: 12px; max-height: min(620px, calc(100vh - 180px)); padding: 12px; overflow: auto; }
 .composition-config__section { display: grid; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid rgba(67, 40, 24, 0.1); }
 .composition-config__section:last-child { padding-bottom: 0; border-bottom: 0; }
 .composition-config__section > header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .composition-config__section > header strong { font-size: calc(11px * var(--frontend-font-scale)); }
 .composition-config__section > header span { color: #718096; font-size: calc(9px * var(--frontend-font-scale)); }
-.composition-config__segments { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; padding: 3px; border-radius: 6px; background: #edf1f5; }
+.composition-config__segments { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; padding: 3px; border-radius: 6px; background: color-mix(in srgb, var(--frontend-surface-soft) 70%, var(--frontend-surface-raised)); }
 .composition-config__segments button { min-height: 30px; border: 0; border-radius: 4px; background: transparent; color: #5b6878; font: inherit; font-size: calc(10px * var(--frontend-font-scale)); cursor: pointer; }
 .composition-config__segments button.is-active { background: var(--frontend-surface-raised); color: #432818; box-shadow: 0 1px 2px rgba(67, 40, 24, 0.14); font-weight: 700; }
 .composition-config__field { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 8px; color: #99582a; font-size: calc(10px * var(--frontend-font-scale)); }
 .composition-config__field select { width: 100%; min-width: 0; height: 30px; padding: 0 7px; border: 1px solid rgba(67, 40, 24, 0.14); border-radius: 5px; background: var(--frontend-surface-raised); color: #432818; font: inherit; font-size: calc(10px * var(--frontend-font-scale)); }
 .composition-config__slider { display: grid; grid-template-columns: 72px minmax(0, 1fr) 48px; align-items: center; gap: 7px; color: #99582a; font-size: calc(10px * var(--frontend-font-scale)); }
 .composition-config__slider input { width: 100%; min-width: 0; accent-color: var(--frontend-slider-thumb); }
-.composition-config__slider output { color: #294a6d; font-variant-numeric: tabular-nums; text-align: right; }
+.composition-config__slider output { color: var(--frontend-text-secondary); font-variant-numeric: tabular-nums; text-align: right; }
 .composition-config__summary { display: grid; gap: 7px; margin: 0; }
 .composition-config__summary div { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 8px; font-size: calc(10px * var(--frontend-font-scale)); }
 .composition-config__summary dt { color: #718096; }

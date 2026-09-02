@@ -171,7 +171,7 @@ function renderScatterChart(input: LineRenderInput) {
     );
     const color = seriesStyles[seriesKey]?.color
       ?? legacySeriesColors[seriesKey]
-      ?? (colorEncoding?.type === "nominal" || colorEncoding?.type === "ordinal" || colorEncoding?.type === "temporal"
+      ?? (colorEncoding?.type === "nominal" || colorEncoding?.type === "ordinal"
         ? palette[colorIndex % palette.length]!
         : visualColor(row, colorEncoding, colorDomain, config, palette[colorIndex % palette.length]!));
     return `<circle data-chart-id="${esc(input.chartId)}" data-mark-role="point" data-mark-group-id="mark-group:${esc(input.chartId)}:point" data-row-key="${esc(rowKey)}" data-series-key="${esc(seriesKey)}" cx="${cx}" cy="${cy}" r="${radius}" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 0.88)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
@@ -232,7 +232,6 @@ function renderBarChart(input: GenericRenderInput) {
       ? [input.chartSpec.series]
       : input.chartSpec.encodings.color?.type === "nominal"
         || input.chartSpec.encodings.color?.type === "ordinal"
-        || input.chartSpec.encodings.color?.type === "temporal"
         ? [input.chartSpec.encodings.color]
         : [];
   const categoryValues = Array.from(new Set(input.dataset.rows.map((row) => row[xEncoding.field] ?? "").filter(Boolean)));
@@ -922,7 +921,7 @@ function renderMatrixChart(input: GenericRenderInput) {
   const colorDomain = input.chartSpec.aggregations?.color
     ? visualDomain(visualRows, colorEncoding)
     : visualDomain(input.dataset.rows, colorEncoding);
-  const colorValues = colorEncoding?.type === "nominal" || colorEncoding?.type === "ordinal" || colorEncoding?.type === "temporal"
+  const colorValues = colorEncoding?.type === "nominal" || colorEncoding?.type === "ordinal"
     ? Array.from(new Set(input.dataset.rows.map((row) => row[colorEncoding.field] ?? "")))
     : [];
   const colorIndexByValue = new Map(colorValues.map((value, index) => [value, index]));

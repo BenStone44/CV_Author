@@ -18,18 +18,6 @@ export function mergeSharedScale(
       ))),
     };
   }
-  if (encodingType === "temporal") {
-    const values = scales
-      .flatMap((scale) => scale.domain as Array<string | number>)
-      .map((value) => Date.parse(String(value)))
-      .filter(Number.isFinite);
-    if (values.length === 0) return { ...ownerScale, type: "utc" };
-    return {
-      ...ownerScale,
-      type: "utc",
-      domain: [new Date(Math.min(...values)).toISOString(), new Date(Math.max(...values)).toISOString()],
-    };
-  }
   const values = scales.flatMap((scale) => scale.domain as number[]).filter(Number.isFinite);
   if (values.length === 0) return ownerScale;
   return { ...ownerScale, type: "linear", domain: [Math.min(...values), Math.max(...values)], nice: true };

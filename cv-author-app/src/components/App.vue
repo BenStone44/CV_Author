@@ -493,7 +493,7 @@ function createSeriesItemPresentation(node: CanvasNode) {
   const spec = node?.chartSpec;
   const itemBinding = node ? barItemAxisBinding(node) : null;
   const scatterColor = spec && isScatterChartType(spec.chartType)
-    && (spec.encodings.color?.type === "nominal" || spec.encodings.color?.type === "ordinal" || spec.encodings.color?.type === "temporal")
+    && (spec.encodings.color?.type === "nominal" || spec.encodings.color?.type === "ordinal")
     ? spec.encodings.color
     : null;
   const binding = itemBinding ?? (scatterColor
@@ -508,25 +508,25 @@ function createSeriesItemPresentation(node: CanvasNode) {
       : {};
   const fallbackColors = globalPalette.categorical;
   const members = seriesItemMemberIds(node).map((member, index) => {
-    const style = (mappedStyles[member] ?? {}) as { color?: string; strokeWidth?: number; shape?: "solid" | "dashed" | "dotted" };
+    const style = (mappedStyles[member] ?? {}) as { color?: string };
     return {
       memberId: member,
       label: member,
       color: style.color ?? fallbackColors[index % fallbackColors.length]!,
-      width: style.strokeWidth ?? Number(markConfig.strokeWidth ?? 2.5),
-      shape: style.shape ?? "solid",
     };
   });
   return {
     node,
-    label: binding.label,
+    label: displaySeriesItemLabel(binding.label),
     fields: binding.fields,
     members,
     legendVisible: markConfig.legendVisible === true,
     itemEditable: itemBinding !== null,
-    colorOnly: isPolarChartType(spec.chartType),
     frame: seriesItemDropFrame(node),
   };
+}
+function displaySeriesItemLabel(label: string) {
+  return label.replace(/\s+item$/i, "");
 }
 const seriesItemPresentations = computed(() => selectionScopeNodes.value.flatMap((node) => {
   const presentation = createSeriesItemPresentation(node);
@@ -546,7 +546,7 @@ const seriesItemLegends = computed(() => seriesItemPresentations.value.flatMap((
     legendFrame: {
       ...item.frame,
       y: item.frame.y + item.frame.height - height,
-      width: Math.min(190, Math.max(90, 42 + longestLabel * 7)),
+      width: Math.min(130, Math.max(64, 24 + longestLabel * 7)),
       height,
     },
   }];
@@ -1187,7 +1187,7 @@ function openCompositionCandidates(type: CompositionType) {
     const remainingClueFields = clueFields.filter((field) => !existingFacetFields.has(field));
     const dataset = node?.chartSpec ? getDataset(node.chartSpec.datasetId) : null;
     const eligibleFields = dataset?.columns
-      .filter((column) => column.type === "nominal" || column.type === "ordinal" || column.type === "temporal")
+      .filter((column) => column.type === "nominal" || column.type === "ordinal")
       .map((column) => column.name)
       .filter((field) => !existingFacetFields.has(field)) ?? [];
     if (node) {
@@ -1329,7 +1329,7 @@ function onMarkConfigEditStart(field: string) {
   beginMarkConfigEdit(node.id, role, field);
 }
 
-function onSeriesItemStyleChange(memberId: string, patch: { color?: string; strokeWidth?: number; shape?: "solid" | "dashed" | "dotted" }) {
+function onSeriesItemStyleChange(memberId: string, patch: { color?: string }) {
   const node = selectedIds.value.length === 1 ? selectedNodes.value[0] : null;
   if (!node?.chartSpec) return;
   const current = node.chartSpec.markGroups?.[0]?.sharedConfig.seriesStyleMapping;

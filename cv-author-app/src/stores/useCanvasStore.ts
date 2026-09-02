@@ -1044,7 +1044,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       return [spec.encodings.segment.field];
     }
     return template === "scatter"
-      && (spec.encodings.color?.type === "nominal" || spec.encodings.color?.type === "ordinal" || spec.encodings.color?.type === "temporal")
+      && (spec.encodings.color?.type === "nominal" || spec.encodings.color?.type === "ordinal")
       ? [spec.encodings.color.field]
       : [];
   }
@@ -2557,7 +2557,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const facetFields = [rowField, columnField].filter((field): field is string => !!field);
     if (facetFields.some((field) => {
       const type = available.get(field)?.type;
-      return type !== "nominal" && type !== "ordinal" && type !== "temporal";
+      return type !== "nominal" && type !== "ordinal";
     })) return false;
     const valuesFor = (field: string) => Array.from(new Set(dataset.rows
       .map((row) => row[field] ?? "")
@@ -3142,7 +3142,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       const column = dataset.columns.find((item) => item.name === field
         && (seriesConfig
           ? seriesConfig.accepts.includes(item.type)
-          : item.type === "nominal" || item.type === "ordinal" || item.type === "temporal"));
+          : item.type === "nominal" || item.type === "ordinal"));
       return column ? [{ field: column.name, type: column.type }] : [];
     }).filter((_encoding, index) => index === 0
       || (seriesConfig?.multiple === true && seriesConfig.categoricalExclusive !== true));
@@ -3163,7 +3163,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       if (template === "bar" || template === "line") delete encodings.color;
       else if (template === "area" || template === "scatter") {
         if (selected[0]) encodings.color = { ...selected[0] };
-        else if ((template === "scatter" && (encodings.color?.type === "nominal" || encodings.color?.type === "ordinal" || encodings.color?.type === "temporal"))
+        else if ((template === "scatter" && (encodings.color?.type === "nominal" || encodings.color?.type === "ordinal"))
           || encodings.color?.field === spec.series?.field
           || spec.seriesFields?.some((encoding) => encoding.field === encodings.color?.field)) {
           delete encodings.color;
@@ -3538,7 +3538,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (!column) return false;
     if (isPolarSegmentChart(node.chartSpec.chartType)) {
       const radialBar = node.chartSpec.chartType.replace(/[\s_-]/g, "").toLowerCase() === "radialbarchart";
-      if (radialBar && column.type !== "nominal" && column.type !== "ordinal" && column.type !== "temporal") return false;
+      if (radialBar && column.type !== "nominal" && column.type !== "ordinal") return false;
       if (!radialBar && column.type !== "nominal" && column.type !== "ordinal" && column.type !== "quantitative") return false;
       const current = node.chartSpec.encodings.segment?.field
         ? [node.chartSpec.encodings.segment.field]

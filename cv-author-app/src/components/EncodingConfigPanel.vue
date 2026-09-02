@@ -2,6 +2,7 @@
 import { computed, ref } from "vue";
 import { ArrowDown, ArrowLeft, ArrowLeftRight, ArrowRight, ArrowUp, X } from "@lucide/vue";
 import EncodingChannelField from "./EncodingChannelField.vue";
+import CustomSelect from "./CustomSelect.vue";
 import VisualMappingEditor from "./VisualMappingEditor.vue";
 import {
   getEncodingChannelConfigsForSpec,
@@ -25,7 +26,6 @@ import type {
   CoordinateGuide,
   DataColumn,
   DataRow,
-  LineSeriesShape,
   LinearColorMapping,
   LinearSizeMapping,
   MarkGroupSharedConfig,
@@ -148,7 +148,10 @@ const seriesRole = computed(() => getChartTemplateContract(props.chartSpec.chart
   .find((config) => config.role === "series"));
 const seriesItemsRequired = computed(() => supportsSeriesItems.value
   && (seriesRole.value?.required === true || isExplicitMultiLine.value));
-const seriesItemLabel = computed(() => seriesRole.value?.semanticLabel ?? "Series");
+const seriesItemLabel = computed(() => {
+  const label = seriesRole.value?.semanticLabel ?? "Series";
+  return label.replace(/\s+item$/i, "");
+});
 const isParallel = computed(() => template.value === "parallel");
 const isHierarchy = computed(() => template.value === "hierarchy");
 const isDirectionalHierarchy = computed(() => isDirectionalHierarchyChart(props.chartSpec.chartType));
@@ -204,7 +207,7 @@ const selectedSeriesFields = computed(() => props.chartSpec.defaultDataBinding
   ?? (props.chartSpec.series
     ? [props.chartSpec.series.field]
     : template.value === "scatter"
-      && (props.chartSpec.encodings.color?.type === "nominal" || props.chartSpec.encodings.color?.type === "temporal")
+      && (props.chartSpec.encodings.color?.type === "nominal" || props.chartSpec.encodings.color?.type === "ordinal")
       ? [props.chartSpec.encodings.color.field]
       : []));
 const seriesItemMode = computed<"categorical" | "quantitative" | null>(() => {
@@ -213,8 +216,8 @@ const seriesItemMode = computed<"categorical" | "quantitative" | null>(() => {
   return null;
 });
 const seriesItemColumns = computed(() => props.columns.filter((column) => template.value === "scatter"
-  ? column.type === "nominal" || column.type === "temporal" || column.type === "ordinal"
-  : column.type === "nominal" || column.type === "temporal" || column.type === "ordinal" || column.type === "quantitative"));
+  ? column.type === "nominal" || column.type === "ordinal"
+  : column.type === "nominal" || column.type === "ordinal" || column.type === "quantitative"));
 const seriesItemDropState = ref<"idle" | "valid" | "invalid">("idle");
 const segmentDropState = ref<"idle" | "valid" | "invalid">("idle");
 const detailPanel = ref<"color" | "size" | null>(null);
@@ -222,9 +225,6 @@ const openSlider = ref<string | null>(null);
 function toggleSlider(id: string) {
   openSlider.value = openSlider.value === id ? null : id;
 }
-const editableSeriesMembers = computed(() => seriesItemMode.value === "quantitative"
-  ? selectedValueSeriesFields.value.map((field) => ({ id: field, label: field }))
-  : seriesMembers.value);
 const seriesStyleMapping = computed<SeriesStyleMapping>(() => {
   if (isSeriesStyleMapping(props.markConfig.seriesStyleMapping)) return props.markConfig.seriesStyleMapping;
   const legacy = isCategoricalColorMapping(props.markConfig.seriesColorMapping)
@@ -238,7 +238,7 @@ const seriesStyleMapping = computed<SeriesStyleMapping>(() => {
 const legendVisible = computed(() => props.markConfig.legendVisible === true);
 const quantitativeColumns = computed(() => props.columns.filter((column) => column.type === "quantitative"));
 const parallelColumns = computed(() => props.columns.filter((column) =>
-  column.type === "quantitative" || column.type === "nominal" || column.type === "ordinal" || column.type === "temporal"));
+  column.type === "quantitative" || column.type === "nominal" || column.type === "ordinal"));
 const aggregationEntries = computed(() => {
   const configured = Object.entries(props.chartSpec.aggregations ?? {})
     .flatMap(([channel, aggregation]) => {
@@ -294,6 +294,11 @@ const polarSegmentMembers = computed(() => {
     label: encoding.field,
   }));
 });
+const editableSeriesMembers = computed(() => seriesItemMode.value === "quantitative"
+  ? selectedValueSeriesFields.value.map((field) => ({ id: field, label: field }))
+  : isPolar.value
+    ? polarSegmentMembers.value
+    : seriesMembers.value);
 const polarSegmentColumns = computed(() => {
   const config = configs.value.find((item) => item.channel === "segment");
   if (!config) return [];
@@ -411,14 +416,7 @@ function seriesMemberColor(memberId: string, index: number) {
   return seriesStyleMapping.value.values[memberId]?.color
     ?? fallbackSeriesColors[index % fallbackSeriesColors.length]!;
 }
-function seriesMemberStrokeWidth(memberId: string) {
-  return seriesStyleMapping.value.values[memberId]?.strokeWidth
-    ?? Number(props.markConfig.strokeWidth ?? 2.5);
-}
-function seriesMemberShape(memberId: string): LineSeriesShape {
-  return seriesStyleMapping.value.values[memberId]?.shape ?? "solid";
-}
-function updateSeriesMemberStyle(memberId: string, patch: { color?: string; strokeWidth?: number; shape?: LineSeriesShape }) {
+function updateSeriesMemberStyle(memberId: string, patch: { color?: string }) {
   emit("markConfigChange", {
     seriesStyleMapping: {
       type: "series-style",
@@ -499,10 +497,7 @@ function isSeriesItemDisabled(field: string) {
   if (seriesItemMode.value === "categorical") {
     // A categorical series/group/segment binding is exclusive; measure sets
     // use the separate quantitative mode below and may contain multiple fields.
-    const categorical = column.type === "nominal"
-      || column.type === "ordinal"
-      || ((template.value === "line" || template.value === "area" || template.value === "scatter")
-        && column.type === "temporal");
+    const categorical = column.type === "nominal" || column.type === "ordinal";
     return (!categorical && !selectedSeriesFields.value.includes(field))
       || (seriesRole.value?.categoricalExclusive === true && !selectedSeriesFields.value.includes(field))
       || (seriesRole.value?.multiple !== true && !selectedSeriesFields.value.includes(field));
@@ -929,6 +924,11 @@ function updateSingleBarTopN(rawValue: string) {
         </div>
       </div>
 
+      <div
+        v-if="supportsSeriesItems"
+        class="encoding-config__segment-style-layout"
+        :class="{ 'encoding-config__segment-style-layout--split': editableSeriesMembers.length }"
+      >
       <section
         v-if="supportsSeriesItems"
         class="encoding-config__angle encoding-config__series-drop"
@@ -946,14 +946,6 @@ function updateSingleBarTopN(rawValue: string) {
             {{ seriesItemLabel }}
             <abbr v-if="seriesItemsRequired" title="At least one required" aria-label="At least one required">*</abbr>
           </span>
-          <label v-if="supportsLegend" class="encoding-config__legend-toggle">
-            <span>Show legend</span>
-            <input
-              type="checkbox"
-              :checked="legendVisible"
-              @change="emit('markConfigChange', { legendVisible: ($event.target as HTMLInputElement).checked })"
-            />
-          </label>
         </header>
         <label
           v-for="column in seriesItemColumns"
@@ -970,39 +962,98 @@ function updateSingleBarTopN(rawValue: string) {
         </label>
       </section>
 
+      <div
+        v-if="supportsSeriesItems && (editableSeriesMembers.length || supportsLegend)"
+        class="encoding-config__member-styles"
+      >
+        <header v-if="supportsLegend">
+          <label v-if="supportsLegend" class="encoding-config__legend-toggle">
+            <span>Show legend</span>
+            <input
+              type="checkbox"
+              :checked="legendVisible"
+              @change="emit('markConfigChange', { legendVisible: ($event.target as HTMLInputElement).checked })"
+            />
+          </label>
+        </header>
+        <div class="encoding-config__member-styles-grid">
+          <label v-for="(member, index) in editableSeriesMembers" :key="member.id">
+            <span :title="member.label">{{ member.label }}</span>
+            <input
+              type="color"
+              list="frontend-color-palette"
+              :value="seriesMemberColor(member.id, index)"
+              :aria-label="`${member.label} series color`"
+              @input="updateSeriesMemberStyle(member.id, { color: ($event.target as HTMLInputElement).value })"
+            />
+          </label>
+        </div>
+      </div>
+      </div>
+
       <p v-if="seriesItemMode === 'quantitative'" class="encoding-config__derived-series">
         Series: selected measure names
       </p>
 
-      <section
-        v-if="isPolar"
-        class="encoding-config__angle encoding-config__segment-drop"
-        :class="{
-          'is-drop-active': segmentDropState === 'valid',
-          'is-drop-invalid': segmentDropState === 'invalid',
-        }"
-        aria-label="Segment fields"
-        @dragover.stop.prevent="onSegmentDragOver"
-        @dragleave.stop="onSegmentDragLeave"
-        @drop.stop.prevent="onSegmentDrop"
+      <div
+        v-if="isPolar || (!supportsSeriesItems && editableSeriesMembers.length)"
+        class="encoding-config__segment-style-layout"
+        :class="{ 'encoding-config__segment-style-layout--split': isPolar && editableSeriesMembers.length }"
       >
-        <header class="encoding-config__series-header">
-          <span>Segment <abbr title="Required" aria-label="Required">*</abbr></span>
-        </header>
-        <label
-          v-for="column in polarSegmentColumns"
-          :key="column.name"
-          :class="{ 'is-disabled': isSegmentFieldDisabled(column.name) }"
+        <section
+          v-if="isPolar"
+          class="encoding-config__angle encoding-config__segment-drop"
+          :class="{
+            'is-drop-active': segmentDropState === 'valid',
+            'is-drop-invalid': segmentDropState === 'invalid',
+          }"
+          aria-label="Segment fields"
+          @dragover.stop.prevent="onSegmentDragOver"
+          @dragleave.stop="onSegmentDragLeave"
+          @drop.stop.prevent="onSegmentDrop"
         >
-          <input
-            type="checkbox"
-            :checked="selectedSegmentFields.includes(column.name)"
-            :disabled="isSegmentFieldDisabled(column.name)"
-            @change="toggleSegmentField(column.name)"
-          />
-          <span :title="columnDisplayLabel(column.name)">{{ columnDisplayLabel(column.name) }}</span>
-        </label>
-      </section>
+          <header class="encoding-config__series-header">
+            <span>Segment <abbr title="Required" aria-label="Required">*</abbr></span>
+          </header>
+          <label
+            v-for="column in polarSegmentColumns"
+            :key="column.name"
+            :class="{ 'is-disabled': isSegmentFieldDisabled(column.name) }"
+          >
+            <input
+              type="checkbox"
+              :checked="selectedSegmentFields.includes(column.name)"
+              :disabled="isSegmentFieldDisabled(column.name)"
+              @change="toggleSegmentField(column.name)"
+            />
+            <span :title="columnDisplayLabel(column.name)">{{ columnDisplayLabel(column.name) }}</span>
+          </label>
+        </section>
+        <div v-if="editableSeriesMembers.length || supportsLegend" class="encoding-config__member-styles">
+          <header v-if="supportsLegend">
+            <label v-if="supportsLegend" class="encoding-config__legend-toggle">
+              <span>Show legend</span>
+              <input
+                type="checkbox"
+                :checked="legendVisible"
+                @change="emit('markConfigChange', { legendVisible: ($event.target as HTMLInputElement).checked })"
+              />
+            </label>
+          </header>
+          <div class="encoding-config__member-styles-grid">
+            <label v-for="(member, index) in editableSeriesMembers" :key="member.id">
+              <span :title="member.label">{{ member.label }}</span>
+              <input
+                type="color"
+                list="frontend-color-palette"
+                :value="seriesMemberColor(member.id, index)"
+                :aria-label="`${member.label} series color`"
+                @input="updateSeriesMemberStyle(member.id, { color: ($event.target as HTMLInputElement).value })"
+              />
+            </label>
+          </div>
+        </div>
+      </div>
 
       <section v-if="isParallel" class="encoding-config__angle" aria-label="Parallel dimensions">
         <span>Dimensions <abbr title="At least two required" aria-label="At least two required">*</abbr></span>
@@ -1024,7 +1075,7 @@ function updateSingleBarTopN(rawValue: string) {
         </header>
         <label v-for="entry in aggregationEntries" :key="entry.channel">
           <span>{{ entry.channel.toUpperCase() }}<em v-if="entry.automatic">Auto</em></span>
-          <select
+          <CustomSelect
             :value="entry.aggregation ?? 'none'"
             :aria-label="`${entry.channel} aggregation`"
             @change="emit(
@@ -1038,7 +1089,7 @@ function updateSingleBarTopN(rawValue: string) {
             <option value="none">None</option>
             <option value="sum">Sum</option>
             <option value="avg">Average</option>
-          </select>
+          </CustomSelect>
         </label>
       </section>
       </template>
@@ -1052,14 +1103,14 @@ function updateSingleBarTopN(rawValue: string) {
         </header>
         <label>
           <span>Sort</span>
-          <select
+          <CustomSelect
             :value="singleBarSortDirection"
             @change="emit('singleBarValueOrderChange', ($event.target as HTMLSelectElement).value as 'source' | 'ascending' | 'descending', singleBarTopN)"
           >
             <option value="source">Source order</option>
             <option value="descending">Highest first</option>
             <option value="ascending">Lowest first</option>
-          </select>
+          </CustomSelect>
         </label>
         <label>
           <span>Top N</span>
@@ -1076,64 +1127,7 @@ function updateSingleBarTopN(rawValue: string) {
         </label>
       </section>
 
-      <section v-if="polarSegmentMembers.length || editableSeriesMembers.length || colorConfig || sizeConfig" class="encoding-config__appearance encoding-config__appearance--chart">
-        <label v-if="supportsLegend && !supportsSeriesItems" class="encoding-config__option">
-          <span>Show legend</span>
-          <input
-            type="checkbox"
-            :checked="legendVisible"
-            @change="emit('markConfigChange', { legendVisible: ($event.target as HTMLInputElement).checked })"
-          />
-        </label>
-        <div v-if="isPolar && polarSegmentMembers.length" class="encoding-config__member-colors">
-          <span>Segment colors</span>
-          <label v-for="(member, index) in polarSegmentMembers" :key="member.id">
-            <span :title="member.label">{{ member.label }}</span>
-            <input
-              type="color"
-              list="frontend-color-palette"
-              :value="seriesMemberColor(member.id, index)"
-              :aria-label="`${member.label} segment color`"
-              @input="updateSeriesMemberStyle(member.id, { color: ($event.target as HTMLInputElement).value })"
-            />
-          </label>
-        </div>
-        <div v-if="editableSeriesMembers.length" class="encoding-config__member-styles">
-          <header>
-            <span>Series styles</span>
-            <span>Color</span>
-            <span>Width</span>
-            <span>Line style</span>
-          </header>
-          <label v-for="(member, index) in editableSeriesMembers" :key="member.id">
-            <span :title="member.label">{{ member.label }}</span>
-            <input
-              type="color"
-              list="frontend-color-palette"
-              :value="seriesMemberColor(member.id, index)"
-              :aria-label="`${member.label} series color`"
-              @input="updateSeriesMemberStyle(member.id, { color: ($event.target as HTMLInputElement).value })"
-            />
-            <input
-              type="number"
-              min="0.5"
-              max="16"
-              step="0.5"
-              :value="seriesMemberStrokeWidth(member.id)"
-              :aria-label="`${member.label} stroke width`"
-              @change="updateSeriesMemberStyle(member.id, { strokeWidth: Number(($event.target as HTMLInputElement).value) })"
-            />
-            <select
-              :value="seriesMemberShape(member.id)"
-              :aria-label="`${member.label} line style`"
-              @change="updateSeriesMemberStyle(member.id, { shape: ($event.target as HTMLSelectElement).value as LineSeriesShape })"
-            >
-              <option value="solid">Solid</option>
-              <option value="dashed">Dashed</option>
-              <option value="dotted">Dotted</option>
-            </select>
-          </label>
-        </div>
+      <section v-if="colorConfig || sizeConfig" class="encoding-config__appearance encoding-config__appearance--chart">
       </section>
       </section>
 
@@ -1145,17 +1139,17 @@ function updateSingleBarTopN(rawValue: string) {
         </div>
         <label class="encoding-config__option">
           <span>Facet coordinates</span>
-          <select
+          <CustomSelect
             :value="facetCoordinateSystem"
             @change="emit('compositionChange', { facetCoordinateSystem: ($event.target as HTMLSelectElement).value as 'Cartesian' | 'Polar', facetThetaField: facetColumnField, facetRadiusField: facetRowField })"
           >
             <option value="Cartesian">Cartesian</option>
             <option value="Polar">Polar</option>
-          </select>
+          </CustomSelect>
         </label>
         <EncodingChannelField
           v-if="facetCoordinateSystem === 'Cartesian'"
-          :config="{ channel: 'column', label: 'Facet column', role: 'dimension', required: false, accepts: ['nominal', 'ordinal', 'temporal'], emptyLabel: 'Not bound' }"
+          :config="{ channel: 'column', label: 'Facet column', role: 'dimension', required: false, accepts: ['nominal', 'ordinal'], emptyLabel: 'Not bound' }"
           :columns="facetFieldOptions"
           :father-columns="fatherColumns"
           :value="facetColumnField"
@@ -1163,7 +1157,7 @@ function updateSingleBarTopN(rawValue: string) {
         />
         <EncodingChannelField
           v-if="facetCoordinateSystem === 'Cartesian'"
-          :config="{ channel: 'row', label: 'Facet row', role: 'dimension', required: false, accepts: ['nominal', 'ordinal', 'temporal'], emptyLabel: 'Not bound' }"
+          :config="{ channel: 'row', label: 'Facet row', role: 'dimension', required: false, accepts: ['nominal', 'ordinal'], emptyLabel: 'Not bound' }"
           :columns="facetFieldOptions"
           :father-columns="fatherColumns"
           :value="facetRowField"
@@ -1171,7 +1165,7 @@ function updateSingleBarTopN(rawValue: string) {
         />
         <EncodingChannelField
           v-if="facetCoordinateSystem === 'Polar'"
-          :config="{ channel: 'theta', label: 'Facet theta', role: 'dimension', required: false, accepts: ['nominal', 'ordinal', 'temporal'], emptyLabel: 'Not bound' }"
+          :config="{ channel: 'theta', label: 'Facet theta', role: 'dimension', required: false, accepts: ['nominal', 'ordinal'], emptyLabel: 'Not bound' }"
           :columns="facetFieldOptions"
           :father-columns="fatherColumns"
           :value="facetThetaField"
@@ -1179,7 +1173,7 @@ function updateSingleBarTopN(rawValue: string) {
         />
         <EncodingChannelField
           v-if="facetCoordinateSystem === 'Polar'"
-          :config="{ channel: 'radius', label: 'Facet R', role: 'dimension', required: false, accepts: ['nominal', 'ordinal', 'temporal'], emptyLabel: 'Not bound' }"
+          :config="{ channel: 'radius', label: 'Facet R', role: 'dimension', required: false, accepts: ['nominal', 'ordinal'], emptyLabel: 'Not bound' }"
           :columns="facetFieldOptions"
           :father-columns="fatherColumns"
           :value="facetRadiusField"
@@ -1187,13 +1181,13 @@ function updateSingleBarTopN(rawValue: string) {
         />
         <label class="encoding-config__option">
           <span>{{ facetCoordinateSystem === 'Polar' ? 'Primary facet axis' : 'Layout direction' }}</span>
-          <select
+          <CustomSelect
             :value="composition?.facetDirection ?? 'column'"
             @change="emit('compositionChange', { facetDirection: ($event.target as HTMLSelectElement).value as 'row' | 'column' })"
           >
             <option value="column">{{ facetCoordinateSystem === 'Polar' ? 'Theta' : 'Columns' }}</option>
             <option value="row">{{ facetCoordinateSystem === 'Polar' ? 'R' : 'Rows' }}</option>
-          </select>
+          </CustomSelect>
         </label>
         <section v-if="facetCoordinateSystem === 'Cartesian'" class="encoding-config__composition-spacing" aria-label="Facet spacing">
           <strong>Spacing</strong>
@@ -1225,13 +1219,13 @@ function updateSingleBarTopN(rawValue: string) {
     <section v-if="normalizedChartType.includes('treemap')" class="encoding-config__appearance">
       <label class="encoding-config__option">
         <span>Tiling method</span>
-        <select :value="treemapTile" @change="emit('markConfigChange', { tile: ($event.target as HTMLSelectElement).value })">
+        <CustomSelect :value="treemapTile" @change="emit('markConfigChange', { tile: $event })">
           <option value="binary">Binary</option>
           <option value="squarify">Squarify</option>
           <option value="slice-dice">Slice-dice</option>
           <option value="slice">Slice</option>
           <option value="dice">Dice</option>
-        </select>
+        </CustomSelect>
       </label>
     </section>
 
@@ -1358,21 +1352,21 @@ function updateSingleBarTopN(rawValue: string) {
     <section v-if="normalizedChartType.includes('sankey')" class="encoding-config__appearance">
       <label class="encoding-config__option">
         <span>Node alignment</span>
-        <select :value="sankeyAlignment" @change="emit('markConfigChange', { nodeAlign: ($event.target as HTMLSelectElement).value })">
+        <CustomSelect :value="sankeyAlignment" @change="emit('markConfigChange', { nodeAlign: $event })">
           <option value="left">Left</option>
           <option value="right">Right</option>
           <option value="center">Center</option>
           <option value="justify">Justify</option>
-        </select>
+        </CustomSelect>
       </label>
       <label class="encoding-config__option">
         <span>Link color</span>
-        <select :value="sankeyLinkColor" @change="emit('markConfigChange', { linkColor: ($event.target as HTMLSelectElement).value })">
+        <CustomSelect :value="sankeyLinkColor" @change="emit('markConfigChange', { linkColor: $event })">
           <option value="source-target">Source-target</option>
           <option value="source">Source</option>
           <option value="target">Target</option>
           <option value="static">Static</option>
-        </select>
+        </CustomSelect>
       </label>
     </section>
 
@@ -1389,6 +1383,34 @@ function updateSingleBarTopN(rawValue: string) {
 .encoding-config__header button { display: inline-grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 6px; background: transparent; color: #99582a; cursor: pointer; }
 .encoding-config__header button:hover { background: var(--frontend-surface-soft); color: #432818; }
 .encoding-config__channels { display: grid; gap: 5px; }
+.encoding-config input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-grid;
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  margin: 0;
+  place-content: center;
+  border: 1px solid var(--frontend-control-border);
+  border-radius: 3px;
+  background: var(--frontend-surface-canvas);
+}
+.encoding-config input[type="checkbox"]::before {
+  content: "";
+  width: 7px;
+  height: 4px;
+  border-bottom: 2px solid var(--frontend-surface-canvas);
+  border-left: 2px solid var(--frontend-surface-canvas);
+  transform: translateY(-1px) rotate(-45deg) scale(0);
+  transition: transform 100ms ease;
+}
+.encoding-config input[type="checkbox"]:checked {
+  border-color: var(--frontend-slider-thumb);
+  background: var(--frontend-slider-thumb);
+}
+.encoding-config input[type="checkbox"]:checked::before { transform: translateY(-1px) rotate(-45deg) scale(1); }
+.encoding-config input[type="checkbox"]:disabled { border-color: var(--frontend-control-border); background: var(--frontend-surface-canvas); opacity: 0.7; }
 .encoding-config__axis-rows { display: grid; gap: 4px; }
 .encoding-config__axis-rows-toolbar { display: grid; grid-template-columns: minmax(52px, 0.2fr) minmax(164px, 0.76fr) minmax(96px, 0.42fr); align-items: center; gap: 2px; color: #99582a; font-size: var(--encoding-config-font-size); }
 .encoding-config__axis-toolbar-options { display: contents; }
@@ -1402,7 +1424,7 @@ function updateSingleBarTopN(rawValue: string) {
 .encoding-config__axis-toggle,
 .encoding-config__axis-label-toggle { display: inline-flex; justify-content: center; }
 .encoding-config__axis-toggle input,
-.encoding-config__axis-label-toggle input { width: 12px; height: 12px; margin: 0; accent-color: var(--frontend-slider-thumb); }
+.encoding-config__axis-label-toggle input { width: 12px; height: 12px; margin: 0; accent-color: var(--frontend-slider-thumb); background-color: var(--frontend-surface-canvas); }
 .encoding-config__axis-row :deep(.encoding-channel-field) { display: contents; min-width: 0; }
 .encoding-config__axis-row :deep(.encoding-channel-field__label) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 .encoding-config__axis-row :deep(.encoding-channel-field select) { grid-column: 2; min-width: 0; }
@@ -1432,8 +1454,8 @@ function updateSingleBarTopN(rawValue: string) {
   width: min(100%, 220px);
 }
 .encoding-config__column { display: grid; min-width: 0; align-content: start; gap: 7px; padding: 8px; border: 1px solid rgba(67, 40, 24, 0.1); border-radius: 6px; background: #fefae0; }
-.encoding-config__column--composition { background: #f8fbff; }
-.encoding-config__column--composition-summary { background: #f4f8fc; }
+.encoding-config__column--composition { background: var(--frontend-surface-soft); }
+.encoding-config__column--composition-summary { background: color-mix(in srgb, var(--frontend-surface-soft) 72%, var(--frontend-surface-raised)); }
 .encoding-config__composition-summary { margin: 0; color: #99582a; font-size: var(--encoding-config-font-size); line-height: 1.35; }
 .encoding-config__column-heading { display: grid; gap: 2px; padding-bottom: 2px; border-bottom: 1px solid rgba(67, 40, 24, 0.09); }
 .encoding-config__column-heading strong { color: #263548; font-size: var(--encoding-config-font-size); letter-spacing: 0.08em; text-transform: uppercase; }
@@ -1470,10 +1492,10 @@ function updateSingleBarTopN(rawValue: string) {
 .encoding-config__details-button { min-width: 64px; max-width: 120px; height: 30px; overflow: hidden; padding: 0 8px; border: 1px solid rgba(67, 40, 24, 0.14); border-radius: 5px; background: #fefae0; color: #99582a; font: inherit; font-size: var(--encoding-config-font-size); text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .encoding-config__details-button:hover, .encoding-config__details-button[aria-expanded="true"] { border-color: rgba(67, 40, 24, 0.4); background: var(--frontend-surface-soft); color: #432818; }
 .encoding-config__color-scale-preview { display: block; width: 100%; height: 12px; border: 1px solid rgba(67, 40, 24, 0.16); border-radius: 3px; }
-.encoding-config__static-color-picker { width: 38px; height: 28px; padding: 2px; border: 1px solid rgba(67, 40, 24, 0.14); border-radius: 5px; background: var(--frontend-surface-raised); cursor: pointer; }
+.encoding-config__static-color-picker { width: 38px; height: 28px; padding: 2px; border: 1px solid rgba(67, 40, 24, 0.14); border-radius: 5px; background: var(--frontend-surface-canvas); cursor: pointer; }
 .encoding-config__node-label-toggle { grid-template-columns: minmax(0, 1fr) auto; }
 .encoding-config__static-value { color: #99582a; font-size: var(--encoding-config-font-size); white-space: nowrap; }
-.encoding-config__inline-slider { width: 55px; min-width: 0; accent-color: var(--frontend-control-accent); }
+.encoding-config__inline-slider { width: 55px; min-width: 0; accent-color: var(--frontend-slider-track); }
 .encoding-config__details-popover { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 20; display: grid; width: min(320px, calc(100vw - 32px)); max-height: min(440px, 70vh); overflow: auto; gap: 8px; padding: 10px; border: 1px solid rgba(67, 40, 24, 0.16); border-radius: 6px; background: var(--frontend-surface-raised); box-shadow: 0 10px 28px rgba(67, 40, 24, 0.18); }
 .encoding-config__details-popover .visual-mapping-editor { margin: 0; }
 .encoding-config__slider-dot { display: inline-grid; width: 22px; height: 22px; padding: 0; place-items: center; border: 0; border-radius: 50%; background: transparent; cursor: pointer; }
@@ -1496,16 +1518,16 @@ function updateSingleBarTopN(rawValue: string) {
 .encoding-config__axis-directions-y-icon { transform: rotate(90deg); }
 .encoding-config__axis-spacing { display: grid; grid-template-columns: minmax(0, 1fr) 88px 28px; align-items: center; gap: 6px; color: #99582a; font-size: var(--encoding-config-font-size); }
 .encoding-config__axis-spacing input { width: 100%; min-width: 0; }
-.encoding-config__axis-spacing output { color: #294a6d; text-align: right; }
-.encoding-config__summary { margin: 0; padding: 8px 9px; border-left: 3px solid #fefae0; background: #f3f7fa; color: #432818; font-size: var(--encoding-config-font-size); line-height: 1.45; }
+.encoding-config__axis-spacing output { color: var(--frontend-text-secondary); text-align: right; }
+.encoding-config__summary { margin: 0; padding: 8px 9px; border-left: 3px solid var(--frontend-control-accent-strong); background: var(--frontend-surface-soft); color: #432818; font-size: var(--encoding-config-font-size); line-height: 1.45; }
 .encoding-config__derived-series { margin: -4px 0 0; color: #432818; font-size: var(--encoding-config-font-size); }
-.encoding-config__aggregation { display: grid; gap: 7px; padding: 8px; border: 1px solid rgba(67, 40, 24, 0.2); border-radius: 6px; background: #f8fbff; color: #432818; }
+.encoding-config__aggregation { display: grid; gap: 7px; padding: 8px; border: 1px solid rgba(67, 40, 24, 0.2); border-radius: 6px; background: var(--frontend-surface-soft); color: #432818; }
 .encoding-config__aggregation header { display: grid; gap: 2px; }
 .encoding-config__aggregation header span { font-size: var(--encoding-config-font-size); font-weight: 700; }
 .encoding-config__aggregation header small { color: #718096; font-size: var(--encoding-config-font-size); line-height: 1.35; }
 .encoding-config__aggregation label { display: grid; grid-template-columns: minmax(0, 1fr) 108px; align-items: center; gap: 8px; font-size: var(--encoding-config-font-size); }
 .encoding-config__aggregation label > span { display: inline-flex; align-items: center; gap: 6px; }
-.encoding-config__aggregation em { padding: 2px 4px; border-radius: 3px; background: #e0efff; color: #432818; font-size: var(--encoding-config-font-size); font-style: normal; font-weight: 700; text-transform: uppercase; }
+.encoding-config__aggregation em { padding: 2px 4px; border-radius: 3px; background: var(--frontend-control-hover); color: #432818; font-size: var(--encoding-config-font-size); font-style: normal; font-weight: 700; text-transform: uppercase; }
 .encoding-config__aggregation select { width: 100%; height: 28px; padding: 0 6px; border: 1px solid rgba(67, 40, 24, 0.14); border-radius: 5px; background: var(--frontend-surface-raised); color: #432818; font: inherit; font-size: var(--encoding-config-font-size); }
 .encoding-config__value-order { display: grid; gap: 7px; padding: 8px; border: 1px solid rgba(67, 40, 24, 0.12); border-radius: 6px; background: #fefae0; color: #432818; }
 .encoding-config__value-order header { display: grid; gap: 2px; }
@@ -1519,21 +1541,21 @@ function updateSingleBarTopN(rawValue: string) {
 .encoding-config__legend-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: transparent; color: #99582a; font-size: var(--encoding-config-font-size); white-space: nowrap; }
 .encoding-config__legend-toggle input { width: 12px; height: 12px; margin: 0; accent-color: var(--frontend-slider-thumb); }
 .encoding-config__angle abbr { color: #b42318; text-decoration: none; }
-.encoding-config__angle label { display: flex; align-items: center; min-width: 0; gap: 6px; padding: 4px 6px; border: 1px solid rgba(67, 40, 24, 0.1); border-radius: 5px; background: #fefae0; color: #432818; cursor: pointer; }
-.encoding-config__angle label.is-disabled { background: #f1f3f5; color: #97a1ae; cursor: not-allowed; opacity: 0.68; }
-.encoding-config__angle input { width: 14px; height: 14px; flex: 0 0 14px; margin: 0; accent-color: var(--frontend-slider-thumb); }
+.encoding-config__angle label { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: start; min-width: 0; gap: 6px; padding: 4px 6px; border: 1px solid rgba(67, 40, 24, 0.1); border-radius: 5px; background: #fefae0; color: #432818; cursor: pointer; }
+.encoding-config__angle label.is-disabled { background: var(--frontend-surface-canvas); color: #718096; cursor: not-allowed; opacity: 0.78; }
+.encoding-config__angle input { width: 14px; height: 14px; justify-self: center; align-self: start; margin: 0; accent-color: var(--frontend-slider-thumb); background-color: var(--frontend-surface-canvas); }
 .encoding-config__angle label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .encoding-config__series-drop { padding: 8px; border: 1px dashed rgba(67, 40, 24, 0.28); border-radius: 6px; transition: border-color 120ms ease, background 120ms ease; }
-.encoding-config__series-drop.is-drop-active { border-color: #432818; background: #edf6ff; }
+.encoding-config__series-drop.is-drop-active { border-color: #432818; background: var(--frontend-control-hover); }
 .encoding-config__series-drop.is-drop-invalid { border-color: #b42318; background: #fff1ef; }
 .encoding-config__segment-drop { display: grid; gap: 6px; min-height: 52px; padding: 7px; border: 1px dashed rgba(67, 40, 24, 0.28); border-radius: 6px; background: var(--frontend-surface-raised); color: #99582a; font-size: var(--encoding-config-font-size); transition: border-color 120ms ease, background 120ms ease; }
-.encoding-config__segment-drop.is-drop-active { border-color: #432818; background: #edf6ff; }
+.encoding-config__segment-drop.is-drop-active { border-color: #432818; background: var(--frontend-control-hover); }
 .encoding-config__segment-drop.is-drop-invalid { border-color: #b42318; background: #fff1ef; }
 .encoding-config__segment-drop header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .encoding-config__segment-drop header > span { color: #432818; font-weight: 650; }
 .encoding-config__segment-drop p { margin: 0; color: #718096; font-size: var(--encoding-config-font-size); }
 .encoding-config__segment-fields { display: flex; min-width: 0; flex-wrap: wrap; gap: 5px; }
-.encoding-config__segment-fields > span { display: inline-flex; min-width: 0; max-width: 100%; align-items: center; padding-left: 7px; border: 1px solid rgba(67, 40, 24, 0.2); border-radius: 4px; background: #f8fbff; }
+.encoding-config__segment-fields > span { display: inline-flex; min-width: 0; max-width: 100%; align-items: center; padding-left: 7px; border: 1px solid rgba(67, 40, 24, 0.2); border-radius: 4px; background: var(--frontend-surface-soft); }
 .encoding-config__segment-fields > span > span { min-width: 0; overflow: hidden; color: #432818; font-size: var(--encoding-config-font-size); text-overflow: ellipsis; white-space: nowrap; }
 .encoding-config__segment-fields button { display: inline-grid; width: 24px; height: 24px; flex: 0 0 24px; padding: 0; place-items: center; border: 0; border-left: 1px solid rgba(67, 40, 24, 0.12); background: transparent; color: #99582a; cursor: pointer; }
 .encoding-config__segment-fields button:hover { background: #fff1ef; color: #b42318; }
@@ -1542,28 +1564,26 @@ function updateSingleBarTopN(rawValue: string) {
 .encoding-config__radius-heading strong { color: #432818; font-size: var(--encoding-config-font-size); font-weight: 700; }
 .encoding-config__composition-spacing { display: grid; gap: 7px; padding-top: 8px; border-top: 1px solid rgba(67, 40, 24, 0.1); }
 .encoding-config__composition-spacing > strong { color: #432818; font-size: var(--encoding-config-font-size); }
-.encoding-config__segments { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 3px; border-radius: 6px; background: #edf1f5; }
+.encoding-config__segments { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 3px; border-radius: 6px; background: color-mix(in srgb, var(--frontend-surface-soft) 70%, var(--frontend-surface-raised)); }
 .encoding-config__segments button { min-height: 28px; border: 0; border-radius: 4px; background: transparent; color: #5b6878; font: inherit; cursor: pointer; }
 .encoding-config__segments button.is-active { background: var(--frontend-surface-raised); color: #432818; box-shadow: 0 1px 2px rgba(67, 40, 24, 0.14); font-weight: 700; }
 .encoding-config__static { position: relative; display: grid; grid-template-columns: minmax(72px, 1fr) auto minmax(80px, 1fr); align-items: center; gap: 8px; }
 .encoding-config__static input[type="range"] { width: 100%; accent-color: var(--frontend-control-accent); }
 .encoding-config__option { display: grid; grid-template-columns: minmax(92px, 1fr) minmax(0, 1.25fr); align-items: center; gap: 8px; }
 .encoding-config__option select { width: 100%; height: 34px; padding: 0 8px; border: 1px solid rgba(67, 40, 24, 0.14); border-radius: 6px; background: var(--frontend-surface-raised); color: #432818; font: inherit; }
-.encoding-config__member-colors { display: grid; gap: 7px; }
-.encoding-config__member-colors > span { color: #432818; font-weight: 650; }
-.encoding-config__member-colors label { display: grid; grid-template-columns: minmax(0, 1fr) 38px; align-items: center; gap: 8px; }
-.encoding-config__member-colors label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.encoding-config__member-colors input { width: 38px; height: 28px; padding: 2px; border: 1px solid rgba(67, 40, 24, 0.14); border-radius: 5px; background: var(--frontend-surface-raised); }
-.encoding-config__member-styles { display: grid; gap: 7px; }
-.encoding-config__member-styles header,
-.encoding-config__member-styles label { display: grid; grid-template-columns: minmax(48px, 1fr) 30px 40px 62px; align-items: center; gap: 5px; }
+.encoding-config__segment-style-layout { display: grid; gap: 8px; }
+.encoding-config__segment-style-layout--split { grid-template-columns: minmax(0, 1.25fr) minmax(150px, 0.75fr); align-items: center; padding: 6px; border: 1px dashed rgba(67, 40, 24, 0.32); border-radius: 6px; }
+.encoding-config__segment-style-layout--split > .encoding-config__series-drop,
+.encoding-config__segment-style-layout--split > .encoding-config__segment-drop { padding: 2px; border: 0; background: transparent; }
+.encoding-config__member-styles { display: grid; width: 100%; min-width: 0; gap: 5px; justify-items: stretch; }
+.encoding-config__member-styles header { display: flex; width: 100%; min-height: 24px; align-items: center; }
+.encoding-config__member-styles-grid { display: grid; width: 100%; max-width: 100%; gap: 4px; }
+.encoding-config__member-styles label { display: grid; grid-template-columns: minmax(0, 1fr) 38px; justify-content: stretch; align-items: center; gap: 10px; }
 .encoding-config__member-styles header { color: #99582a; font-size: var(--encoding-config-font-size); }
 .encoding-config__member-styles header span:first-child { color: #432818; font-size: var(--encoding-config-font-size); font-weight: 650; }
 .encoding-config__member-styles label > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.encoding-config__member-styles input[type="color"] { width: 30px; height: 28px; padding: 2px; border: 1px solid rgba(67, 40, 24, 0.14); border-radius: 5px; background: var(--frontend-surface-raised); }
-.encoding-config__member-styles input[type="number"],
-.encoding-config__member-styles select { width: 100%; min-width: 0; height: 28px; padding: 0 4px; border: 1px solid rgba(67, 40, 24, 0.14); border-radius: 5px; background: var(--frontend-surface-raised); color: #432818; font: inherit; font-size: var(--encoding-config-font-size); }
-.encoding-config__static input[type="color"] { width: 38px; height: 28px; padding: 2px; border: 1px solid rgba(67, 40, 24, 0.14); border-radius: 5px; background: var(--frontend-surface-raised); }
+.encoding-config__member-styles input[type="color"] { width: 38px; height: 28px; padding: 2px; border: 1px solid rgba(67, 40, 24, 0.14); border-radius: 5px; background: var(--frontend-surface-canvas); }
+.encoding-config__static input[type="color"] { width: 38px; height: 28px; padding: 2px; border: 1px solid rgba(67, 40, 24, 0.14); border-radius: 5px; background: var(--frontend-surface-canvas); }
 .encoding-config__static input[type="range"] { width: 100%; accent-color: var(--frontend-control-accent); }
 .encoding-config__static output { min-width: 40px; color: #99582a; font-variant-numeric: tabular-nums; text-align: right; }
 .encoding-config__empty, .encoding-config__error { margin: 0; font-size: var(--encoding-config-font-size); line-height: 1.4; }

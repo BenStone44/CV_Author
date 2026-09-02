@@ -88,17 +88,17 @@ function defineSchema(
   return { chartType, label, channels, ...familyDefaults[family], ...overrides };
 }
 
-const xAny = { channel: "x", label: "X", role: "dimension", required: true, accepts: ["temporal", "ordinal", "quantitative", "nominal"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
-const yMeasure = { channel: "y", label: "Y", role: "measure", required: true, accepts: ["temporal", "ordinal", "quantitative"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
+const xAny = { channel: "x", label: "X", role: "dimension", required: true, accepts: ["ordinal", "quantitative", "nominal"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
+const yMeasure = { channel: "y", label: "Y", role: "measure", required: true, accepts: ["ordinal", "quantitative"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
 const multiLineYMeasure = { ...yMeasure, multiple: true } satisfies ChartEncodingChannelSchema;
 const lineSize = { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
 const lineShape = { channel: "shape", label: "Shape", role: "style", required: false, accepts: ["nominal"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
-const lineSeries = { channel: "color", label: "Color", semanticLabel: "Series", role: "series", required: false, accepts: ["nominal", "temporal", "ordinal"], emptyLabel: "Static", categoricalExclusive: true } satisfies ChartEncodingChannelSchema;
-const scatterColor = { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
-const barX = { channel: "x", label: "X", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
+const lineSeries = { channel: "color", label: "Color", semanticLabel: "Series", role: "series", required: false, accepts: ["nominal", "ordinal"], emptyLabel: "Static", categoricalExclusive: true } satisfies ChartEncodingChannelSchema;
+const scatterColor = { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
+const barX = { channel: "x", label: "X", role: "dimension", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
 const categoricalBarX = { ...barX, accepts: ["nominal", "ordinal"] } satisfies ChartEncodingChannelSchema;
 const barY = { channel: "y", label: "Y", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
-const barStyle = { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
+const barStyle = { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
 const barSeries = { channel: "color", label: "Color", semanticLabel: "Series", role: "series", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Static", multiple: true, categoricalExclusive: true } satisfies ChartEncodingChannelSchema;
 const barSize = { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
 const areaChannels = (requiresSeries: boolean): ChartEncodingChannelSchema[] => [
@@ -107,15 +107,15 @@ const areaChannels = (requiresSeries: boolean): ChartEncodingChannelSchema[] => 
   { ...lineSeries, required: requiresSeries },
 ];
 const hierarchyChannels: ChartEncodingChannelSchema[] = [
-  { channel: "key", label: "Node ID", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
-  { channel: "parent", label: "Parent ID", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+  { channel: "key", label: "Node ID", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+  { channel: "parent", label: "Parent ID", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
   { channel: "value", label: "Node value", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Not bound" },
   { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "quantitative"], emptyLabel: "Static" },
   { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
 ];
 const flowChannels: ChartEncodingChannelSchema[] = [
-  { channel: "source", label: "Source", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
-  { channel: "target", label: "Target", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+  { channel: "source", label: "Source", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+  { channel: "target", label: "Target", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
   { channel: "value", label: "Flow value", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Not bound" },
   { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "quantitative"], emptyLabel: "Static" },
 ];
@@ -134,7 +134,7 @@ export const chartEncodingSchemas = {
   MultiLineChart: defineSchema("MultiLineChart", "Multi-Line Chart", "line", [xAny, multiLineYMeasure, lineSeries, lineSize, lineShape]),
   Scatterplot: defineSchema("Scatterplot", "Scatterplot", "scatter", [
     xAny,
-    { ...yMeasure, accepts: ["quantitative", "temporal", "ordinal", "nominal"] },
+    { ...yMeasure, accepts: ["quantitative", "ordinal", "nominal"] },
     scatterColor,
     lineSize,
   ]),
@@ -161,8 +161,8 @@ export const chartEncodingSchemas = {
     { channel: "radius", label: "R", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Not bound" },
   ]),
   MatrixDiagram: defineSchema("MatrixDiagram", "Matrix", "matrix", [
-    { channel: "x", label: "X", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal"], emptyLabel: "Not bound" },
-    { channel: "y", label: "Y", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal"], emptyLabel: "Not bound" },
+    { channel: "x", label: "X", role: "dimension", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound" },
+    { channel: "y", label: "Y", role: "dimension", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound" },
     { channel: "color", label: "Color", role: "measure", required: false, accepts: ["quantitative", "nominal"], emptyLabel: "Static" },
   ]),
   AreaChart: defineSchema("AreaChart", "Area Chart", "area", areaChannels(false), {
@@ -174,8 +174,8 @@ export const chartEncodingSchemas = {
   Streamgraph: defineSchema("Streamgraph", "Streamgraph", "area", areaChannels(true)),
   HorizonChart: defineSchema("HorizonChart", "Horizon Chart", "area", areaChannels(true), { coordinateSystem: "CoordinateFree", shareableChannels: [] }),
   ParallelCoordinatesPlot: defineSchema("ParallelCoordinatesPlot", "Parallel Coordinates", "parallel", [
-    { channel: "dimensions", label: "Dimensions", role: "dimension", required: true, accepts: ["quantitative", "nominal", "ordinal", "temporal"], emptyLabel: "Not bound", multiple: true },
-    { channel: "color", label: "Color", role: "series", required: false, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Static" },
+    { channel: "dimensions", label: "Dimensions", role: "dimension", required: true, accepts: ["quantitative", "nominal", "ordinal"], emptyLabel: "Not bound", multiple: true },
+    { channel: "color", label: "Color", role: "series", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" },
   ]),
   Icicle: defineSchema("Icicle", "Icicle", "hierarchy", hierarchyChannels),
   Sunburst: defineSchema("Sunburst", "Sunburst", "hierarchy", hierarchyChannels, {
@@ -185,18 +185,18 @@ export const chartEncodingSchemas = {
   Treemap: defineSchema("Treemap", "Treemap", "hierarchy", hierarchyChannels),
   Dendrogram: defineSchema("Dendrogram", "Dendrogram", "hierarchy", [
     ...hierarchyChannels,
-    { channel: "category", label: "Leaf order", role: "dimension", required: false, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "category", label: "Leaf order", role: "dimension", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
   ], {
     coordinateSystem: "Cartesian",
     rendererVersion: 3,
     shareableChannels: ["x", "y"],
   }),
   RadialDendrogram: defineSchema("RadialDendrogram", "Radial Dendrogram", "hierarchy", [
-    { channel: "key", label: "Node ID", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
-    { channel: "parent", label: "Parent ID", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "key", label: "Node ID", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "parent", label: "Parent ID", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
     // Leaf order is an optional refinement. A regular tree CSV only needs
     // node_id and parent_id; the renderer falls back to Node ID ordering.
-    { channel: "theta", label: "Leaf order", role: "dimension", required: false, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Static" },
+    { channel: "theta", label: "Leaf order", role: "dimension", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" },
     { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "quantitative"], emptyLabel: "Static" },
     { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
   ], {
@@ -206,15 +206,15 @@ export const chartEncodingSchemas = {
   }),
   RadialBarChart: defineSchema("RadialBarChart", "Radial Bar Chart", "bar", [
     { channel: "theta", label: "Theta", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
-    { channel: "segment", label: "Segment", role: "dimension", required: true, accepts: ["nominal", "temporal", "ordinal"], emptyLabel: "Not bound" },
+    { channel: "segment", label: "Segment", role: "dimension", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound" },
     { channel: "radius", label: "R", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
-    { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "temporal", "ordinal", "quantitative"], emptyLabel: "Static" },
+    { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" },
   ], {
     coordinateSystem: "Polar",
     shareableChannels: ["angle", "radius"],
   }),
   Calendar: defineSchema("Calendar", "Calendar", "calendar", [
-    { channel: "date", label: "Date", role: "dimension", required: true, accepts: ["temporal", "ordinal"], emptyLabel: "Not bound" },
+    { channel: "date", label: "Date", role: "dimension", required: true, accepts: ["ordinal"], emptyLabel: "Not bound" },
     { channel: "value", label: "Daily value", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
     { channel: "color", label: "Color", role: "style", required: false, accepts: ["quantitative", "nominal"], emptyLabel: "Static" },
   ]),
@@ -235,9 +235,9 @@ export const chartEncodingSchemas = {
   Chord: defineSchema("Chord", "Chord", "flow", flowChannels),
   Sankey: defineSchema("Sankey", "Sankey", "flow", flowChannels),
   ForceDirectedGraph: defineSchema("ForceDirectedGraph", "Force-Directed Graph", "flow", [
-    { channel: "key", label: "Node ID", role: "dimension", required: false, accepts: ["nominal", "ordinal", "temporal", "quantitative"], emptyLabel: "Not bound" },
-    { channel: "source", label: "Source", role: "dimension", required: true, accepts: ["nominal", "ordinal", "temporal", "quantitative"], emptyLabel: "Not bound" },
-    { channel: "target", label: "Target", role: "dimension", required: true, accepts: ["nominal", "ordinal", "temporal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "key", label: "Node ID", role: "dimension", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "source", label: "Source", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "target", label: "Target", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
     { channel: "value", label: "Link value", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Not bound" },
     { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" },
     { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" },

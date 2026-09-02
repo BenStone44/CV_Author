@@ -347,7 +347,7 @@ function onColumnTypeChange(columnName: string, event: Event, table?: "nodes" | 
 }
 
 function displayColumnType(type: DataColumnType | undefined) {
-  return type === "temporal" ? "ordinal" : type;
+  return type;
 }
 
 function uniqueOutputField(baseName: string) {
@@ -1453,7 +1453,7 @@ watch(activeDataset, (dataset) => {
 
 .data-table-wrap:hover,
 .data-table-wrap:focus-within {
-  scrollbar-color: #a8b4c4 transparent;
+  scrollbar-color: var(--frontend-scrollbar-thumb) transparent;
 }
 
 .data-table-wrap::-webkit-scrollbar {
@@ -1470,8 +1470,12 @@ watch(activeDataset, (dataset) => {
 .data-table-wrap:focus-within::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: 999px;
-  background: #a8b4c4;
+  background: var(--frontend-scrollbar-thumb);
   background-clip: padding-box;
+}
+.data-table-wrap:hover::-webkit-scrollbar-thumb:hover,
+.data-table-wrap:focus-within::-webkit-scrollbar-thumb:hover {
+  background: var(--frontend-scrollbar-thumb-hover);
 }
 
 .graph-table-section {
@@ -1954,7 +1958,7 @@ watch(activeDataset, (dataset) => {
 
 .transform-control select:focus,
 .transform-control input:focus {
-  border-color: #438dcc;
+  border-color: var(--frontend-control-accent-strong);
   outline: 2px solid rgba(153, 88, 42, 0.16);
   outline-offset: 0;
 }
@@ -1999,7 +2003,7 @@ watch(activeDataset, (dataset) => {
   padding: 2px 5px;
   border: 0;
   background: transparent;
-  color: #1b67a6;
+  color: var(--frontend-control-accent-strong);
   font-size: calc(10px * var(--frontend-font-scale));
   cursor: pointer;
 }
@@ -2016,7 +2020,7 @@ watch(activeDataset, (dataset) => {
   overflow-y: auto;
   border: 1px solid #dce2e8;
   border-radius: 6px;
-  background: #f9fafb;
+  background: var(--frontend-surface-soft);
 }
 
 .transform-value-list label {
@@ -2090,8 +2094,8 @@ watch(activeDataset, (dataset) => {
 }
 
 .transform-segmented__options label.transform-segmented__active {
-  border-color: #438dcc;
-  background: #fefae0;
+  border-color: var(--frontend-control-accent-strong);
+  background: var(--frontend-control-hover);
   color: #432818;
   font-weight: 700;
 }
@@ -2131,7 +2135,7 @@ watch(activeDataset, (dataset) => {
 }
 
 .transform-dialog__apply {
-  border: 1px solid #176eb8;
+  border: 1px solid var(--frontend-control-accent-strong);
   background: #99582a;
   color: var(--frontend-surface-raised);
 }

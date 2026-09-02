@@ -718,9 +718,9 @@ export function useCanvasCoordinateOperations(context: any) {
       y: node.y + (selection.minY - localMinY) * node.scaleY,
     };
     const selectionWidth = selection.width * node.scaleX;
-    const width = Math.min(280, Math.max(252, selectionWidth));
+    const width = Math.min(160, Math.max(100, selectionWidth));
     const memberRows = Math.max(seriesItemMemberCount(node), 1);
-    const height = 30 + memberRows * 30;
+    const height = 26 + memberRows * 26;
     const center = {
       x: selectionTopLeft.x + width / 2,
       y: selectionTopLeft.y + selection.height * node.scaleY / 2,
@@ -842,8 +842,8 @@ export function useCanvasCoordinateOperations(context: any) {
             : quantitativeMode
               ? column.type === "quantitative"
               : normalizeChartTemplate(spec.chartType) === "scatter"
-                ? column.type === "nominal" || column.type === "ordinal" || column.type === "temporal"
-                : column.type === "quantitative" || column.type === "nominal" || column.type === "ordinal" || column.type === "temporal";
+                ? column.type === "nominal" || column.type === "ordinal"
+                : column.type === "quantitative" || column.type === "nominal" || column.type === "ordinal";
           nearestZone = {
             type: "series-item",
             targetNodeId: node.id,

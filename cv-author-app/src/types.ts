@@ -105,17 +105,12 @@ export type CompositionType = "layer" | "facet" | "concat" | "nested";
 export type CoordinateSystem = "Cartesian" | "Polar" | "Geographic" | "CoordinateFree";
 export type IconKind = "cartesian" | "polar" | "geographic" | "coordinate-free";
 
-/**
- * CSV semantic types. `temporal` remains a read-compatibility value for
- * projects saved before ordinal was introduced; new data uses ordinal for
- * ordered discrete values (including date strings) or quantitative for
- * numeric timestamps.
- */
-export type DataColumnType = "nominal" | "ordinal" | "quantitative" | "temporal";
+/** CSV semantic types used by contracts and encodings. */
+export type DataColumnType = "nominal" | "ordinal" | "quantitative";
 
 export function isDataColumnTypeCompatible(accepts: readonly DataColumnType[], type: DataColumnType) {
   return accepts.includes(type)
-    || (type === "ordinal" && (accepts.includes("nominal") || accepts.includes("temporal")));
+    || (type === "ordinal" && accepts.includes("nominal"));
 }
 
 export type DataColumn = {

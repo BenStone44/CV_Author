@@ -53,8 +53,8 @@ function isNumeric(value: string) {
   return Number.isFinite(number);
 }
 
-function isTemporal(value: string) {
-  if (!/^\d{4}-\d{2}-\d{2}(?:[T\s].*)?$/.test(value.trim())) return false;
+function isDateLike(value: string) {
+  if (!/^(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}\/\d{1,2}\/\d{4})(?:[T\s].*)?$/.test(value.trim())) return false;
   return Number.isFinite(Date.parse(value));
 }
 
@@ -62,8 +62,7 @@ export function inferColumnType(values: string[]): DataColumnType {
   const nonEmptyValues = values.map((value) => value.trim()).filter(Boolean);
   if (nonEmptyValues.length === 0) return "nominal";
   if (nonEmptyValues.every(isNumeric)) return "quantitative";
-  if (nonEmptyValues.every(isTemporal)) return "temporal";
-  return "nominal";
+  return nonEmptyValues.every(isDateLike) ? "ordinal" : "nominal";
 }
 
 function normalizeHeaders(sourceHeaders: string[], columnCount: number) {

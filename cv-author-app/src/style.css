@@ -16,9 +16,12 @@ body,
   --frontend-text-muted: #728196;
   --frontend-control-accent: #ffe6a7;
   --frontend-control-accent-strong: #99582a;
-  --frontend-slider-track: #fffaee;
+  --frontend-control-hover: #fff3d0;
+  --frontend-slider-track: #d9c7a3;
   --frontend-slider-thumb: #432818;
   --frontend-control-border: #d9c7a3;
+  --frontend-scrollbar-thumb: #c49a63;
+  --frontend-scrollbar-thumb-hover: #99582a;
   --frontend-component-data: #ffe6a7;
   --frontend-component-chart: #ffe6a7;
   --frontend-component-composition: #f3faf7;
@@ -46,8 +49,39 @@ body {
   box-sizing: border-box;
 }
 
-/* Keep every range input on the same light track across browsers. */
+/* Keep native controls on the same warm palette as the application shell. */
+select {
+  accent-color: var(--frontend-control-accent-strong);
+  color-scheme: light;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+select:hover:not(:disabled) {
+  border-color: var(--frontend-control-accent-strong);
+  background-color: var(--frontend-control-hover);
+}
+
+select option {
+  background: var(--frontend-surface-raised);
+  color: var(--frontend-text-primary);
+}
+
+select option:hover,
+select option:focus {
+  background: var(--frontend-control-hover) !important;
+  color: var(--frontend-text-primary) !important;
+}
+
+select option:checked {
+  background: var(--frontend-control-hover) !important;
+  color: var(--frontend-text-primary) !important;
+}
+
+/* Keep every range input on the same track/thumb palette across browsers. */
 input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
   accent-color: var(--frontend-slider-thumb);
 }
 
@@ -64,21 +98,23 @@ input[type="range"]::-moz-range-track {
 }
 
 input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
   width: 14px;
   height: 14px;
   margin-top: -5px;
   border: 2px solid var(--frontend-slider-thumb);
   border-radius: 50%;
-  background: var(--frontend-surface-raised);
+  background: var(--frontend-slider-thumb);
   box-shadow: 0 1px 3px rgb(67 40 24 / 22%);
-  appearance: none;
 }
 
 input[type="range"]::-moz-range-thumb {
+  appearance: none;
   width: 12px;
   height: 12px;
   border: 2px solid var(--frontend-slider-thumb);
   border-radius: 50%;
-  background: var(--frontend-surface-raised);
+  background: var(--frontend-slider-thumb);
   box-shadow: 0 1px 3px rgb(67 40 24 / 22%);
 }
