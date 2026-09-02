@@ -223,10 +223,31 @@ const {
   alignSelection,
   resetCanvasZoom,
 } = useCanvasStore(canvasRef);
+function deckglLayerOwner(node: CanvasNode) {
+  const stack = node.deckglLayerStack;
+  return stack?.[0] ?? node.id;
+}
 const visibleCanvasNodes = computed(() =>
-  canvasNodes.value.filter((node) => !nestedRenderedChildIds.value.has(node.id)),
+  canvasNodes.value.filter((node) =>
+    !nestedRenderedChildIds.value.has(node.id)
+    && (node.layerKind !== "deckgl" || deckglLayerOwner(node) === node.id),
+  ),
 );
 const deckglLayerNodes = computed(() => visibleCanvasNodes.value.filter((node) => node.layerKind === "deckgl"));
+function deckglLayerRenderSpecs(node: CanvasNode) {
+  const ids = node.deckglLayerStack?.length ? node.deckglLayerStack : [node.id];
+  return ids
+    .map((id) => findCanvasNodeInTree(canvasNodes.value, id))
+    .filter((member): member is CanvasNode => member?.layerKind === "deckgl")
+    .map((member) => ({
+      id: member.id,
+      layerType: deckglLayerType(member),
+      config: deckglLayerConfig(member),
+      binding: member.deckglBinding,
+      datasetRows: deckglLayerDataset(member)?.rows ?? [],
+      geometryFeatures: deckglLayerGeometrySource(member)?.features ?? [],
+    }));
+}
 const chartTransformNode = computed(() => {
   if (selectedIds.value.length === 1) {
     const node = selectedNodes.value[0];
@@ -306,6 +327,8 @@ function deckglLayerGeometrySource(node: CanvasNode) {
 
 function onDeckglMapInteraction(node: CanvasNode, event: PointerEvent) {
   if (event.button !== 0) return;
+  // The map surface belongs to Mapbox/deck.gl. Canvas movement is reserved
+  // for the explicit frame-edge handles rendered above it.
   selectCanvasNode(node.id);
 }
 

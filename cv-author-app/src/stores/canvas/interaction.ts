@@ -728,7 +728,7 @@ export function useCanvasInteraction(context: any) {
     }
     if (selectionTestOnly("composition")) {
       event.stopPropagation();
-      if (node.chartSpec) measureSelectionStage(node.id, "composition", () => {
+      if (node.chartSpec || node.layerKind === "deckgl") measureSelectionStage(node.id, "composition", () => {
         compositionDragSourceId.value = node.id;
       });
       return;
@@ -774,7 +774,7 @@ export function useCanvasInteraction(context: any) {
         && editingCompositionId.value !== repeatableComposition.id
         && repeatableComposition.members.length === nextSelection.length
         && repeatableComposition.members.every((member) => nextSelection.includes(member.nodeId));
-      if (!draggingNestedUnit && node.chartSpec && (nextSelection.length === 1 || draggingWholeComposition)) {
+      if (!draggingNestedUnit && (node.chartSpec || node.layerKind === "deckgl") && (nextSelection.length === 1 || draggingWholeComposition)) {
         compositionDragSourceId.value = node.id;
       }
     });

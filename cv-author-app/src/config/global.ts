@@ -117,7 +117,7 @@ export const frontendTypography = {
   family: "Arial, sans-serif",
   // style: "italic",
   weight: 700,
-  scale: 1.3,
+  scale: 1,
 } as const;
 
 export const frontendTypographyCssVariables = {

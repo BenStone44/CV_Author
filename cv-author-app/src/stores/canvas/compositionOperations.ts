@@ -120,6 +120,49 @@ export function useCanvasCompositionOperations(context: any) {
   } = context;
   let nestedRelationshipBaseSnapshot: ChartRelationshipState | null = null;
 
+  function createDeckglLayer(
+    targetNodeId: string,
+    sourceNodeId: string,
+    recordHistory = true,
+  ) {
+    const target = findCanvasNode(targetNodeId);
+    const source = findCanvasNode(sourceNodeId);
+    if (!target || !source || target.id === source.id
+      || target.layerKind !== "deckgl" || source.layerKind !== "deckgl") return false;
+    const targetStack = target.deckglLayerStack?.length ? target.deckglLayerStack : [target.id];
+    const sourceStack = source.deckglLayerStack?.length ? source.deckglLayerStack : [source.id];
+    if (targetStack.some((id) => sourceStack.includes(id))) return false;
+    const stack = Array.from(new Set([...targetStack, ...sourceStack]));
+    if (stack.length < 2) return false;
+    if (recordHistory) pushCanvasHistory();
+    const frame = {
+      x: target.x,
+      y: target.y,
+      width: target.width,
+      height: target.height,
+      scaleX: target.scaleX,
+      scaleY: target.scaleY,
+      rotation: target.rotation,
+    };
+    target.deckglLayerStack = stack;
+    stack.slice(1).forEach((id) => {
+      const member = findCanvasNode(id);
+      if (!member) return;
+      member.x = frame.x;
+      member.y = frame.y;
+      member.width = frame.width;
+      member.height = frame.height;
+      member.scaleX = frame.scaleX;
+      member.scaleY = frame.scaleY;
+      member.rotation = frame.rotation;
+      member.deckglLayerStack = stack;
+    });
+    setSelection([target.id]);
+    axisBindingTarget.value = null;
+    setImportNotice(`Layer created with ${stack.length} deck.gl maps.`);
+    return true;
+  }
+
   function createLayer(
     recordHistory = true,
     requestedChannels?: CoordinateChannel[],
@@ -1449,6 +1492,23 @@ export function useCanvasCompositionOperations(context: any) {
 
   function compositionDropZoneAtPoint(point: Point, sourceNodeId: string): ChartDropZone | null {
     const source = findCanvasNode(sourceNodeId);
+    if (source?.layerKind === "deckgl") {
+      const target = currentDropZoneScopeNodes().find((node) =>
+        node.id !== sourceNodeId
+        && node.layerKind === "deckgl"
+        && (!node.deckglLayerStack || node.deckglLayerStack[0] === node.id)
+        && pointInBounds(point, collectNodeSelectionBounds(node)),
+      );
+      if (!target) return null;
+      const bounds = collectNodeSelectionBounds(target);
+      return {
+        targetNodeId: target.id,
+        type: "layer",
+        sharedChannels: [],
+        bounds,
+        compatible: true,
+      };
+    }
     if (!source?.chartSpec) return null;
     const nodeElementCache = new Map<string, SVGGraphicsElement | null>();
     const nodeElementFor = (nodeId: string) => {
@@ -1973,7 +2033,14 @@ export function useCanvasCompositionOperations(context: any) {
   function commitCompositionDrop(zone: ChartDropZone, sourceNodeId: string) {
     const source = findCanvasNode(sourceNodeId);
     const target = findCanvasNode(zone.targetNodeId);
-    if (!source || !target || !zone.compatible || !source.chartSpec || !target.chartSpec) return false;
+    if (!source || !target || !zone.compatible) return false;
+    if (source.layerKind === "deckgl" || target.layerKind === "deckgl") {
+      return source.layerKind === "deckgl"
+        && target.layerKind === "deckgl"
+        && zone.type === "layer"
+        && createDeckglLayer(target.id, source.id, false);
+    }
+    if (!source.chartSpec || !target.chartSpec) return false;
     if (zone.enterCompositionId) {
       const entered = enterCompositionDropLevel(zone);
       if (entered) selectedIds.value = [];
@@ -2153,6 +2220,7 @@ export function useCanvasCompositionOperations(context: any) {
   }
   return {
     createLayer,
+    createDeckglLayer,
     createStructuralComposition,
     executeComposition,
     beginNestedRelationshipDraft,

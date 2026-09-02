@@ -2,7 +2,6 @@
 import { computed } from "vue";
 import { X } from "@lucide/vue";
 import type { CompositionSpec, DataColumn } from "../types";
-import CustomSelect from "./CustomSelect.vue";
 
 const props = defineProps<{
   compositionSpec: CompositionSpec;
@@ -110,17 +109,17 @@ function numericValue(event: Event) {
           <header><strong>Facet fields</strong></header>
           <label class="composition-config__field">
             <span>Column</span>
-            <CustomSelect :value="facetColumnField" @change="updateFacetField('column', $event)">
+            <select :value="facetColumnField" @change="updateFacetField('column', ($event.target as HTMLSelectElement).value)">
               <option value="">Not bound</option>
               <option v-for="column in facetColumns" :key="`column-${column.name}`" :value="column.name">{{ column.name }}</option>
-            </CustomSelect>
+            </select>
           </label>
           <label class="composition-config__field">
             <span>Row</span>
-            <CustomSelect :value="facetRowField" @change="updateFacetField('row', $event)">
+            <select :value="facetRowField" @change="updateFacetField('row', ($event.target as HTMLSelectElement).value)">
               <option value="">Not bound</option>
               <option v-for="column in facetColumns" :key="`row-${column.name}`" :value="column.name">{{ column.name }}</option>
-            </CustomSelect>
+            </select>
           </label>
         </section>
 
@@ -128,17 +127,17 @@ function numericValue(event: Event) {
           <header><strong>Facet fields</strong></header>
           <label class="composition-config__field">
             <span>Theta</span>
-            <CustomSelect :value="facetThetaField" @change="updatePolarField('theta', $event)">
+            <select :value="facetThetaField" @change="updatePolarField('theta', ($event.target as HTMLSelectElement).value)">
               <option value="">Not bound</option>
               <option v-for="column in facetColumns" :key="`theta-${column.name}`" :value="column.name">{{ column.name }}</option>
-            </CustomSelect>
+            </select>
           </label>
           <label class="composition-config__field">
             <span>Radius</span>
-            <CustomSelect :value="facetRadiusField" @change="updatePolarField('radius', $event)">
+            <select :value="facetRadiusField" @change="updatePolarField('radius', ($event.target as HTMLSelectElement).value)">
               <option value="">Not bound</option>
               <option v-for="column in facetColumns" :key="`radius-${column.name}`" :value="column.name">{{ column.name }}</option>
-            </CustomSelect>
+            </select>
           </label>
         </section>
 

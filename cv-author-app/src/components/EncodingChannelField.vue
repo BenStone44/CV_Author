@@ -3,7 +3,6 @@ import { computed } from "vue";
 import type { DataColumn } from "../types";
 import type { EncodingChannelConfig } from "../utils/encodingConfig";
 import { isEncodingColumnCompatible } from "../utils/encodingConfig";
-import CustomSelect from "./CustomSelect.vue";
 
 const props = defineProps<{
   config: EncodingChannelConfig;
@@ -27,7 +26,7 @@ const localColumns = computed(() => props.columns.filter((column) => !fatherColu
       <span>{{ config.label }}</span>
       <abbr v-if="config.required" title="Required" aria-label="Required">*</abbr>
     </span>
-    <CustomSelect :value="value" :disabled="disabled" @change="emit('change', $event)">
+    <select :value="value" :disabled="disabled" @change="emit('change', ($event.target as HTMLSelectElement).value)">
       <option value="">{{ config.emptyLabel }}</option>
       <option
         v-for="column in fatherColumns ?? []"
@@ -45,7 +44,7 @@ const localColumns = computed(() => props.columns.filter((column) => !fatherColu
       >
         {{ column.name }} ({{ column.type }})
       </option>
-    </CustomSelect>
+    </select>
   </label>
 </template>
 

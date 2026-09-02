@@ -1013,7 +1013,6 @@
           <div
             class="deckgl-layer-scene"
             :style="{ transform: `translate(${viewPan.x}px, ${viewPan.y}px) scale(${viewZoom})` }"
-            aria-hidden="true"
           >
             <div
               v-for="node in deckglLayerNodes"
@@ -1030,6 +1029,7 @@
                 :binding="node.deckglBinding"
                 :dataset-rows="deckglLayerDataset(node)?.rows ?? []"
                 :geometry-features="deckglLayerGeometrySource(node)?.features ?? []"
+                :layers="deckglLayerRenderSpecs(node)"
                 :width="deckglLayerWidth(node)"
                 :height="deckglLayerHeight(node)"
                 @interaction-start="onDeckglMapInteraction(node, $event)"

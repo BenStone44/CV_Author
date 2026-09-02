@@ -10,7 +10,6 @@ import type {
   GeographicLayerBinding,
   GeographicLayerConfig,
 } from "../types";
-import CustomSelect from "./CustomSelect.vue";
 
 const props = defineProps<{
   layerName: string;
@@ -85,21 +84,21 @@ const quantitativeColumns = computed(() => props.columns.filter((column) => colu
       </div>
       <label v-if="binding" class="encoding-field-control">
         <span>Color</span>
-        <CustomSelect :value="binding.colorField ?? ''" @change="emit('encodingChange', 'color', $event)">
+        <select :value="binding.colorField ?? ''" @change="emit('encodingChange', 'color', ($event.target as HTMLSelectElement).value)">
           <option value="">Static color</option>
           <option v-for="column in quantitativeColumns" :key="column.name" :value="column.name">
             SUM {{ column.name }}
           </option>
-        </CustomSelect>
+        </select>
       </label>
       <label v-if="binding && layerFamily === 'point'" class="encoding-field-control">
         <span>Size</span>
-        <CustomSelect :value="binding.sizeField ?? ''" @change="emit('encodingChange', 'size', $event)">
+        <select :value="binding.sizeField ?? ''" @change="emit('encodingChange', 'size', ($event.target as HTMLSelectElement).value)">
           <option value="">Static size</option>
           <option v-for="column in quantitativeColumns" :key="column.name" :value="column.name">
             SUM {{ column.name }}
           </option>
-        </CustomSelect>
+        </select>
       </label>
       <label v-if="layerFamily === 'point' && !binding?.sizeField" class="appearance-control">
         <span>Size</span>

@@ -2,7 +2,6 @@
 import { computed, ref } from "vue";
 import { ArrowDown, ArrowLeft, ArrowLeftRight, ArrowRight, ArrowUp, X } from "@lucide/vue";
 import EncodingChannelField from "./EncodingChannelField.vue";
-import CustomSelect from "./CustomSelect.vue";
 import VisualMappingEditor from "./VisualMappingEditor.vue";
 import {
   getEncodingChannelConfigsForSpec,
@@ -1075,7 +1074,7 @@ function updateSingleBarTopN(rawValue: string) {
         </header>
         <label v-for="entry in aggregationEntries" :key="entry.channel">
           <span>{{ entry.channel.toUpperCase() }}<em v-if="entry.automatic">Auto</em></span>
-          <CustomSelect
+          <select
             :value="entry.aggregation ?? 'none'"
             :aria-label="`${entry.channel} aggregation`"
             @change="emit(
@@ -1089,7 +1088,7 @@ function updateSingleBarTopN(rawValue: string) {
             <option value="none">None</option>
             <option value="sum">Sum</option>
             <option value="avg">Average</option>
-          </CustomSelect>
+          </select>
         </label>
       </section>
       </template>
@@ -1103,14 +1102,14 @@ function updateSingleBarTopN(rawValue: string) {
         </header>
         <label>
           <span>Sort</span>
-          <CustomSelect
+          <select
             :value="singleBarSortDirection"
             @change="emit('singleBarValueOrderChange', ($event.target as HTMLSelectElement).value as 'source' | 'ascending' | 'descending', singleBarTopN)"
           >
             <option value="source">Source order</option>
             <option value="descending">Highest first</option>
             <option value="ascending">Lowest first</option>
-          </CustomSelect>
+          </select>
         </label>
         <label>
           <span>Top N</span>
@@ -1139,13 +1138,13 @@ function updateSingleBarTopN(rawValue: string) {
         </div>
         <label class="encoding-config__option">
           <span>Facet coordinates</span>
-          <CustomSelect
+          <select
             :value="facetCoordinateSystem"
             @change="emit('compositionChange', { facetCoordinateSystem: ($event.target as HTMLSelectElement).value as 'Cartesian' | 'Polar', facetThetaField: facetColumnField, facetRadiusField: facetRowField })"
           >
             <option value="Cartesian">Cartesian</option>
             <option value="Polar">Polar</option>
-          </CustomSelect>
+          </select>
         </label>
         <EncodingChannelField
           v-if="facetCoordinateSystem === 'Cartesian'"
@@ -1181,13 +1180,13 @@ function updateSingleBarTopN(rawValue: string) {
         />
         <label class="encoding-config__option">
           <span>{{ facetCoordinateSystem === 'Polar' ? 'Primary facet axis' : 'Layout direction' }}</span>
-          <CustomSelect
+          <select
             :value="composition?.facetDirection ?? 'column'"
             @change="emit('compositionChange', { facetDirection: ($event.target as HTMLSelectElement).value as 'row' | 'column' })"
           >
             <option value="column">{{ facetCoordinateSystem === 'Polar' ? 'Theta' : 'Columns' }}</option>
             <option value="row">{{ facetCoordinateSystem === 'Polar' ? 'R' : 'Rows' }}</option>
-          </CustomSelect>
+          </select>
         </label>
         <section v-if="facetCoordinateSystem === 'Cartesian'" class="encoding-config__composition-spacing" aria-label="Facet spacing">
           <strong>Spacing</strong>
@@ -1219,13 +1218,13 @@ function updateSingleBarTopN(rawValue: string) {
     <section v-if="normalizedChartType.includes('treemap')" class="encoding-config__appearance">
       <label class="encoding-config__option">
         <span>Tiling method</span>
-        <CustomSelect :value="treemapTile" @change="emit('markConfigChange', { tile: $event })">
+        <select :value="treemapTile" @change="emit('markConfigChange', { tile: ($event.target as HTMLSelectElement).value })">
           <option value="binary">Binary</option>
           <option value="squarify">Squarify</option>
           <option value="slice-dice">Slice-dice</option>
           <option value="slice">Slice</option>
           <option value="dice">Dice</option>
-        </CustomSelect>
+        </select>
       </label>
     </section>
 
@@ -1352,21 +1351,21 @@ function updateSingleBarTopN(rawValue: string) {
     <section v-if="normalizedChartType.includes('sankey')" class="encoding-config__appearance">
       <label class="encoding-config__option">
         <span>Node alignment</span>
-        <CustomSelect :value="sankeyAlignment" @change="emit('markConfigChange', { nodeAlign: $event })">
+        <select :value="sankeyAlignment" @change="emit('markConfigChange', { nodeAlign: ($event.target as HTMLSelectElement).value })">
           <option value="left">Left</option>
           <option value="right">Right</option>
           <option value="center">Center</option>
           <option value="justify">Justify</option>
-        </CustomSelect>
+        </select>
       </label>
       <label class="encoding-config__option">
         <span>Link color</span>
-        <CustomSelect :value="sankeyLinkColor" @change="emit('markConfigChange', { linkColor: $event })">
+        <select :value="sankeyLinkColor" @change="emit('markConfigChange', { linkColor: ($event.target as HTMLSelectElement).value })">
           <option value="source-target">Source-target</option>
           <option value="source">Source</option>
           <option value="target">Target</option>
           <option value="static">Static</option>
-        </CustomSelect>
+        </select>
       </label>
     </section>
 

@@ -53,6 +53,14 @@ const props = defineProps<{
   mapViewState?: GeographicMapViewState;
   width: number;
   height: number;
+  layers?: Array<{
+    id: string;
+    layerType: string;
+    config: GeographicLayerConfig;
+    binding?: GeographicLayerBinding;
+    datasetRows: DataRow[];
+    geometryFeatures: GeoJsonFeature[];
+  }>;
 }>();
 
 const emit = defineEmits<{
@@ -314,11 +322,14 @@ type BoundGeoJsonFeature = GeoJsonFeature & {
   };
 };
 
-function boundGeometryFeatures(): BoundGeoJsonFeature[] {
-  const binding = props.binding;
+function boundGeometryFeaturesFor(
+  binding: GeographicLayerBinding | undefined,
+  datasetRows: DataRow[],
+  geometryFeatures: GeoJsonFeature[],
+): BoundGeoJsonFeature[] {
   if (!binding) return [];
   const aggregate = new Map<string, { colorValue: number; sizeValue: number }>();
-  props.datasetRows.forEach((row) => {
+  datasetRows.forEach((row) => {
     const id = (row[binding.idField] ?? "").trim();
     if (!id) return;
     const current = aggregate.get(id) ?? { colorValue: 0, sizeValue: 0 };
@@ -328,7 +339,7 @@ function boundGeometryFeatures(): BoundGeoJsonFeature[] {
     if (Number.isFinite(sizeValue)) current.sizeValue += sizeValue;
     aggregate.set(id, current);
   });
-  return props.geometryFeatures.flatMap((feature) => {
+  return geometryFeatures.flatMap((feature) => {
     const values = geoJsonFeatureIds(feature).reduce((result, id) => {
       const match = aggregate.get(id);
       if (!match) return result;
@@ -349,7 +360,9 @@ function boundGeometryFeatures(): BoundGeoJsonFeature[] {
   });
 }
 
-const materializedBoundFeatures = computed(boundGeometryFeatures);
+const materializedBoundFeatures = computed(() =>
+  boundGeometryFeaturesFor(props.binding, props.datasetRows, props.geometryFeatures),
+);
 
 function numericExtent(features: BoundGeoJsonFeature[], field: "__colorValue" | "__sizeValue") {
   const values = features
@@ -363,8 +376,8 @@ function normalizedValue(value: unknown, extent: readonly [number, number] | nul
   return extent[0] === extent[1] ? 0.65 : (value - extent[0]) / (extent[1] - extent[0]);
 }
 
-function mappedColor(value: unknown, extent: readonly [number, number] | null) {
-  const target = colorToRgba(props.config.color, 230);
+function mappedColor(value: unknown, extent: readonly [number, number] | null, config = props.config) {
+  const target = colorToRgba(config.color, 230);
   const t = Math.max(0, Math.min(1, normalizedValue(value, extent)));
   const start = [219, 234, 254];
   return [
@@ -400,17 +413,21 @@ function polygonRecords(features: BoundGeoJsonFeature[]) {
   });
 }
 
-function layerOptions(layerType: string): any {
-  const common = { id: `deckgl-example-${layerType}` };
-  const configuredColor = colorToRgba(props.config.color, 220);
-  const configuredPointSize = Number.isFinite(props.config.size) ? Math.max(props.config.size ?? 8, 1) : 8;
-  const boundFeatures = materializedBoundFeatures.value;
+function layerOptions(layerType: string, layer?: NonNullable<typeof props.layers>[number]): any {
+  const common = { id: `deckgl-example-${layer?.id ?? layerType}` };
+  const config = layer?.config ?? props.config;
+  const binding = layer?.binding ?? props.binding;
+  const datasetRows = layer?.datasetRows ?? props.datasetRows;
+  const geometryFeatures = layer?.geometryFeatures ?? props.geometryFeatures;
+  const configuredColor = colorToRgba(config.color, 220);
+  const configuredPointSize = Number.isFinite(config.size) ? Math.max(config.size ?? 8, 1) : 8;
+  const boundFeatures = boundGeometryFeaturesFor(binding, datasetRows, geometryFeatures);
   const colorExtent = numericExtent(boundFeatures, "__colorValue");
   const sizeExtent = numericExtent(boundFeatures, "__sizeValue");
-  const featureColor = (feature: BoundGeoJsonFeature) => props.binding?.colorField
-    ? mappedColor(feature.properties.__colorValue, colorExtent)
+  const featureColor = (feature: BoundGeoJsonFeature) => binding?.colorField
+    ? mappedColor(feature.properties.__colorValue, colorExtent, config)
     : configuredColor;
-  const featureSize = (feature: BoundGeoJsonFeature) => props.binding?.sizeField
+  const featureSize = (feature: BoundGeoJsonFeature) => binding?.sizeField
     ? 4 + normalizedValue(feature.properties.__sizeValue, sizeExtent) * 28
     : configuredPointSize;
   switch (layerType) {
@@ -425,12 +442,12 @@ function layerOptions(layerType: string): any {
     case "GeoJsonLayer":
       return new GeoJsonLayer({
         ...common,
-        data: props.binding ? boundFeatures : exampleDataUrls.geojson,
+        data: binding ? boundFeatures : exampleDataUrls.geojson,
         opacity: 0.86,
         filled: true,
         stroked: true,
         extruded: false,
-        getFillColor: props.binding ? featureColor : configuredColor,
+        getFillColor: binding ? featureColor : configuredColor,
         getLineColor: [255, 255, 255, 210],
         getLineWidth: 1,
         lineWidthMinPixels: 0.6,
@@ -469,11 +486,11 @@ function layerOptions(layerType: string): any {
     case "SolidPolygonLayer":
       return new (layerType === "PolygonLayer" ? PolygonLayer : SolidPolygonLayer)({
         ...common,
-        data: props.binding ? polygonRecords(boundFeatures) : loadedExampleData.value[layerType] ?? [],
-        getPolygon: props.binding
+        data: binding ? polygonRecords(boundFeatures) : loadedExampleData.value[layerType] ?? [],
+        getPolygon: binding
           ? (datum: { polygon: unknown }) => datum.polygon
           : (datum: number[][]) => datum,
-        getFillColor: props.binding
+        getFillColor: binding
           ? (datum: { feature: BoundGeoJsonFeature }) => featureColor(datum.feature)
           : configuredColor,
         getLineColor: [255, 255, 255, 210],
@@ -485,16 +502,16 @@ function layerOptions(layerType: string): any {
     case "ScatterplotLayer":
       return new ScatterplotLayer({
         ...common,
-        data: props.binding ? boundFeatures : exampleDataUrls.manhattan,
+        data: binding ? boundFeatures : exampleDataUrls.manhattan,
         radiusUnits: "pixels",
         radiusMinPixels: 1,
-        getPosition: props.binding
+        getPosition: binding
           ? (feature: BoundGeoJsonFeature) => geometryCenter(feature)
           : (datum: number[]) => [datum[0], datum[1], 0],
-        getRadius: props.binding
+        getRadius: binding
           ? featureSize
           : configuredPointSize,
-        getFillColor: props.binding
+        getFillColor: binding
           ? featureColor
           : configuredColor,
         getLineColor: [255, 255, 255],
@@ -539,7 +556,15 @@ function layerOptions(layerType: string): any {
 
 function updateOverlay() {
   if (!overlay) return;
-  overlay.setProps({ layers: [layerOptions(props.layerType)] });
+  const layers = props.layers?.length ? props.layers : [{
+    id: "primary",
+    layerType: props.layerType,
+    config: props.config,
+    binding: props.binding,
+    datasetRows: props.datasetRows,
+    geometryFeatures: props.geometryFeatures,
+  }];
+  overlay.setProps({ layers: layers.map((layer) => layerOptions(layer.layerType, layer)) });
 }
 
 async function loadExampleData(layerType: string) {
@@ -620,6 +645,11 @@ async function loadExampleData(layerType: string) {
   }
 }
 
+function loadAllExampleData() {
+  const layerTypes = props.layers?.map((layer) => layer.layerType) ?? [props.layerType];
+  layerTypes.forEach((layerType) => { void loadExampleData(layerType); });
+}
+
 onMounted(() => {
   if (!mapContainer.value) return;
   mapboxgl.accessToken = mapboxToken;
@@ -648,7 +678,9 @@ onMounted(() => {
     new mapboxgl.NavigationControl({ showCompass: true, visualizePitch: true }),
     "top-right",
   );
-  overlay = new MapboxOverlay({ interleaved: true, layers: [] });
+  // Keep deck.gl in its own canvas/context. Sharing Mapbox's WebGL state can
+  // leave enabled attributes and aggregation textures bound inconsistently.
+  overlay = new MapboxOverlay({ interleaved: false, layers: [] });
   map.addControl(overlay);
   const persistViewState = () => {
     if (!map || !userCameraInteraction) return;
@@ -662,7 +694,7 @@ onMounted(() => {
   map.once("load", () => {
     fitMapToLayerData();
     updateOverlay();
-    void loadExampleData(props.layerType);
+    loadAllExampleData();
   });
 });
 
@@ -670,9 +702,13 @@ watch(() => props.layerType, () => {
   initialViewFitted = false;
   updateOverlay();
   fitMapToLayerData();
-  void loadExampleData(props.layerType);
+  loadAllExampleData();
 });
 watch(() => [props.config.size, props.config.color], updateOverlay);
+watch(() => props.layers, () => {
+  updateOverlay();
+  loadAllExampleData();
+}, { deep: true });
 watch(() => [
   props.binding?.datasetId,
   props.binding?.geometrySourceId,

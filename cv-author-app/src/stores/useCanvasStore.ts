@@ -1607,6 +1607,12 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const nestedRelationship = selectedNestedRelationship();
     if (nestedRelationship && removeNestedComposition(nestedRelationship)) return;
     const sel = new Set(selectedIds.value);
+    selectedIds.value.forEach((id) => {
+      const node = findCanvasNode(id);
+      if (node?.layerKind === "deckgl" && node.deckglLayerStack) {
+        node.deckglLayerStack.forEach((memberId) => sel.add(memberId));
+      }
+    });
     if (sel.size === 0) return;
     pushCanvasHistory();
     getSelectionScopeNodes()
@@ -2754,7 +2760,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     isCartesianCompositionChart, isPolarCompositionChart, viewZoom,
   });
   const {
-    createLayer, createStructuralComposition, executeComposition,
+    createLayer, createDeckglLayer, createStructuralComposition, executeComposition,
     beginNestedRelationshipDraft, ensureCommittedNestedRelationship, createNestedPie,
     nestedPieValueFields, applyNestedPiesToNode, closeNestedBinding, confirmNestedBinding,
     openNestedPositionEditor, updateNestedPosition, updateNestedChildScale, resetNestedPosition,
@@ -4591,6 +4597,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     toggleCoordinateSystem,
     createCompositionCandidate,
     createLayer,
+    createDeckglLayer,
     executeComposition,
     createNestedPie,
     confirmNestedBinding,

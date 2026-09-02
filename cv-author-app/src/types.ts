@@ -57,6 +57,9 @@ export type GeographicLayerBinding = {
   aggregation: "sum";
 };
 
+/** Canvas node ids rendered together by one Mapbox/deck.gl instance. */
+export type DeckglLayerStack = string[];
+
 export type CartesianCoordinateGuide = {
   type: "Cartesian";
   origin: Point;
@@ -897,6 +900,7 @@ export type CanvasBaseNode = {
   deckglConfig?: GeographicLayerConfig;
   /** CSV-to-GeoJSON join and optional aggregate visual channels. */
   deckglBinding?: GeographicLayerBinding;
+  deckglLayerStack?: DeckglLayerStack;
 };
 
 export type CanvasLeafNode = CanvasBaseNode & {
