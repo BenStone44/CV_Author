@@ -24,12 +24,13 @@ const emit = defineEmits<{
   close: [];
   mapStyleChange: [mapStyleUrl: string];
   configChange: [patch: GeographicLayerConfig];
-  encodingChange: [channel: "color" | "size", field: string];
+  encodingChange: [channel: "position" | "color" | "size", field: string];
 }>();
 
 const pointSize = computed(() => typeof props.config.size === "number" ? props.config.size : 8);
 const pointColor = computed(() => typeof props.config.color === "string" ? props.config.color : "#99582a");
 const quantitativeColumns = computed(() => props.columns.filter((column) => column.type === "quantitative"));
+const pointColumns = computed(() => props.columns);
 </script>
 
 <template>
@@ -72,16 +73,25 @@ const quantitativeColumns = computed(() => props.columns.filter((column) => colu
       </div>
     </section>
 
-    <section v-if="layerFamily === 'point' || layerFamily === 'area'" class="encoding-config__column" aria-label="Geographic mark appearance">
+    <section v-if="layerFamily === 'point' || layerFamily === 'area' || layerFamily === 'line'" class="encoding-config__column" aria-label="Geographic mark appearance">
       <div class="encoding-config__column-heading">
-        <strong>{{ layerFamily === "point" ? "Circle" : "Area" }}</strong>
-        <span>{{ layerFamily === "point" ? "Point mark" : "Region planning" }}</span>
+        <strong>{{ layerFamily === "point" ? "Circle" : layerFamily === "line" ? "Line" : "Area" }}</strong>
+        <span>{{ layerFamily === "point" ? "Point mark" : layerFamily === "line" ? "Link mark" : "Region planning" }}</span>
       </div>
       <div v-if="binding" class="geometry-binding">
-        <span>ID</span>
-        <strong>{{ binding.idField }}</strong>
-        <small>GeoJSON join · SUM</small>
+        <span>{{ binding.pointField ? "Point" : "ID" }}</span>
+        <strong>{{ binding.pointField ?? binding.idField }}</strong>
+        <small>{{ binding.pointField ? "CSV embedded coordinates" : "GeoJSON join · SUM" }}</small>
       </div>
+      <label v-if="layerFamily === 'point'" class="encoding-field-control">
+        <span>Position</span>
+        <select :value="binding?.pointField ?? ''" @change="emit('encodingChange', 'position', ($event.target as HTMLSelectElement).value)">
+          <option value="">Map geometry</option>
+          <option v-for="column in pointColumns" :key="column.name" :value="column.name">
+            {{ column.name }}
+          </option>
+        </select>
+      </label>
       <label v-if="binding" class="encoding-field-control">
         <span>Color</span>
         <select :value="binding.colorField ?? ''" @change="emit('encodingChange', 'color', ($event.target as HTMLSelectElement).value)">
@@ -112,8 +122,20 @@ const quantitativeColumns = computed(() => props.columns.filter((column) => colu
         />
         <output>{{ pointSize }} px</output>
       </label>
+      <label v-if="layerFamily === 'line'" class="appearance-control">
+        <span>Thickness</span>
+        <input
+          type="range"
+          min="1"
+          max="12"
+          step="1"
+          :value="pointSize"
+          @input="emit('configChange', { size: Number(($event.target as HTMLInputElement).value) })"
+        />
+        <output>{{ pointSize }} px</output>
+      </label>
       <label class="appearance-control">
-        <span>{{ binding?.colorField ? "High color" : layerFamily === "point" ? "Color" : "Area color" }}</span>
+        <span>{{ binding?.colorField ? "High color" : layerFamily === "point" ? "Color" : layerFamily === "line" ? "Color" : "Area color" }}</span>
           <input
             type="color"
             list="frontend-color-palette"

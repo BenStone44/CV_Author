@@ -13,6 +13,8 @@ export type SvgCandidate = {
   /** Optional source metadata for libraries that provide template components. */
   library?: string;
   layerType?: string;
+  /** Optional graph-link insertion mode used by the dedicated link template. */
+  graphLinkMode?: "cartesian" | "polar" | "geographic";
 };
 
 /** Appearance controls shared by the editable geographic point/area templates. */
@@ -50,8 +52,12 @@ export type GeometrySource = {
 
 export type GeographicLayerBinding = {
   datasetId: string;
-  geometrySourceId: string;
-  idField: string;
+  /** External GeoJSON join source. Omit for CSV-embedded point bindings. */
+  geometrySourceId?: string;
+  /** External GeoJSON feature ID field. */
+  idField?: string;
+  /** CSV field containing a GeoJSON [longitude, latitude] position. */
+  pointField?: string;
   colorField?: string;
   sizeField?: string;
   aggregation: "sum";
@@ -900,6 +906,8 @@ export type CanvasBaseNode = {
   deckglConfig?: GeographicLayerConfig;
   /** CSV-to-GeoJSON join and optional aggregate visual channels. */
   deckglBinding?: GeographicLayerBinding;
+  /** Dataset used by unbound geographic graph layers such as Graph Link. */
+  deckglDatasetId?: string;
   deckglLayerStack?: DeckglLayerStack;
 };
 

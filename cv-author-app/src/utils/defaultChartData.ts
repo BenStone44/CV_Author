@@ -13,6 +13,10 @@ import defaultGraphEdgesCsv from "../../../data/edges.csv?raw";
 import defaultChordNodesCsv from "../../../data/chord_nodes.csv?raw";
 import defaultChordEdgesCsv from "../../../data/chord_edges.csv?raw";
 import d3HexbinDiamondsCsv from "../../../data/d3_hexbin_diamonds.csv?raw";
+import case2GraphNodesCsv from "../../../data/case2_graph_nodes.csv?raw";
+import case2GraphLinksCsv from "../../../data/case2_graph_links.csv?raw";
+import hexbinGraphNodesCsv from "../../../data/hexbin_graph_nodes.csv?raw";
+import hexbinGraphLinksCsv from "../../../data/hexbin_graph_links.csv?raw";
 import { getChartTemplateContract, normalizeChartTemplate } from "./chartTemplates";
 import { prepareChartData } from "./chartDataPipeline";
 import { renderDeterministicChart } from "./semanticRenderer";
@@ -22,6 +26,8 @@ export const DEFAULT_TREE_DATASET_ID = "builtin:default-tree-data";
 export const DEFAULT_GRAPH_DATASET_ID = "builtin:default-force-graph-data";
 export const DEFAULT_CHORD_DATASET_ID = "builtin:default-chord-data";
 export const DEFAULT_HEXBIN_DATASET_ID = "builtin:d3-hexbin-diamonds";
+export const CASE2_GRAPH_DATASET_ID = "builtin:case2-station-graph";
+export const HEXBIN_GRAPH_DATASET_ID = "builtin:hexbin-spread-graph";
 
 const defaultRows = Papa.parse<Record<string, string>>(defaultChartDataCsv, {
   header: true,
@@ -57,6 +63,10 @@ const defaultHexbinRows = Papa.parse<Record<string, string>>(d3HexbinDiamondsCsv
   header: true,
   skipEmptyLines: "greedy",
 }).data;
+const case2GraphNodeRows = Papa.parse<Record<string, string>>(case2GraphNodesCsv, { header: true, skipEmptyLines: "greedy" }).data;
+const case2GraphLinkRows = Papa.parse<Record<string, string>>(case2GraphLinksCsv, { header: true, skipEmptyLines: "greedy" }).data;
+const hexbinGraphNodeRows = Papa.parse<Record<string, string>>(hexbinGraphNodesCsv, { header: true, skipEmptyLines: "greedy" }).data;
+const hexbinGraphLinkRows = Papa.parse<Record<string, string>>(hexbinGraphLinksCsv, { header: true, skipEmptyLines: "greedy" }).data;
 
 /**
  * One neutral, long-form table shared by the built-in chart templates.
@@ -88,6 +98,36 @@ export const defaultHexbinDataset: Dataset = {
     { name: "price", type: "quantitative" },
   ],
   rows: defaultHexbinRows,
+};
+
+/** Ten geographically ordered station nodes sampled from the case2 ZIP data. */
+export const case2GraphDataset: Dataset = {
+  id: CASE2_GRAPH_DATASET_ID,
+  name: "case2 station graph",
+  columns: [],
+  rows: [],
+  graph: {
+    nodes: { columns: [
+      { name: "id", type: "nominal" }, { name: "point", type: "nominal" }, { name: "x", type: "quantitative" }, { name: "y", type: "quantitative" },
+      { name: "longitude", type: "quantitative" }, { name: "latitude", type: "quantitative" }, { name: "label", type: "nominal" }, { name: "station_type", type: "nominal" },
+    ], rows: case2GraphNodeRows },
+    edges: { columns: [{ name: "source", type: "nominal" }, { name: "target", type: "nominal" }, { name: "value", type: "quantitative" }], rows: case2GraphLinkRows },
+  },
+};
+
+/** Six-area hexbin spread graph with leader -> middle -> normal links. */
+export const hexbinGraphDataset: Dataset = {
+  id: HEXBIN_GRAPH_DATASET_ID,
+  name: "Hexbin spread graph",
+  columns: [],
+  rows: [],
+  graph: {
+    nodes: { columns: [
+      { name: "hex_id", type: "nominal" }, { name: "x", type: "quantitative" }, { name: "y", type: "quantitative" },
+      { name: "arealabel", type: "nominal" }, { name: "typelabel", type: "nominal" }, { name: "weight", type: "quantitative" },
+    ], rows: hexbinGraphNodeRows },
+    edges: { columns: [{ name: "source", type: "nominal" }, { name: "target", type: "nominal" }, { name: "value", type: "quantitative" }], rows: hexbinGraphLinkRows },
+  },
 };
 
 /** A shared parent-linked hierarchy used by every built-in tree template. */
@@ -186,12 +226,14 @@ export function supportsDefaultChartData(chartType: string) {
     || family === "pie"
     || family === "donut"
     || (family === "flow" && normalized.includes("chord"))
+    || normalized.includes("graphlink")
     || family === "hierarchy"
     || normalized === "forcedirectedgraph";
 }
 
 export function defaultDatasetForChartType(chartType: string): Dataset {
   const normalized = chartType.replace(/[\s_-]/g, "").toLowerCase();
+  if (normalized.includes("graphlink")) return case2GraphDataset;
   if (normalizeChartTemplate(chartType) === "hexbin") return defaultHexbinDataset;
   if (normalizeChartTemplate(chartType) === "hierarchy") return defaultTreeDataset;
   if (normalized === "forcedirectedgraph") return defaultGraphDataset;
@@ -204,7 +246,9 @@ export function isDefaultChartDataSpec(spec: ChartSpec | null | undefined) {
     || spec?.datasetId === DEFAULT_TREE_DATASET_ID
     || spec?.datasetId === DEFAULT_GRAPH_DATASET_ID
     || spec?.datasetId === DEFAULT_CHORD_DATASET_ID
-    || spec?.datasetId === DEFAULT_HEXBIN_DATASET_ID;
+    || spec?.datasetId === DEFAULT_HEXBIN_DATASET_ID
+    || spec?.datasetId === CASE2_GRAPH_DATASET_ID
+    || spec?.datasetId === HEXBIN_GRAPH_DATASET_ID;
 }
 
 /** Start a real-data binding while retaining only chart-local appearance. */
@@ -264,6 +308,18 @@ export function createDefaultChartSpec(chartType: string): ChartSpec | null {
         value: { field: "value", type: "quantitative" },
         color: { field: "group", type: "nominal" },
         size: { field: "size", type: "quantitative" },
+      },
+    };
+  }
+
+  if (normalized.includes("graphlink")) {
+    return {
+      ...base,
+      datasetId: CASE2_GRAPH_DATASET_ID,
+      encodings: {
+        source: { field: "source", type: "nominal" },
+        target: { field: "target", type: "nominal" },
+        value: { field: "value", type: "quantitative" },
       },
     };
   }

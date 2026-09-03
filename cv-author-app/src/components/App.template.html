@@ -487,7 +487,7 @@
               :map-style-url="axisBindingNode.mapStyleUrl ?? ''"
               :config="deckglLayerConfig(axisBindingNode)"
               :binding="axisBindingNode.deckglBinding"
-              :columns="deckglLayerDataset(axisBindingNode)?.columns ?? []"
+              :columns="deckglLayerColumns(axisBindingNode)"
               @close="closeEncodingInspector"
               @map-style-change="setDeckglMapStyle(axisBindingNode.id, $event)"
               @config-change="setDeckglConfig(axisBindingNode.id, $event)"
@@ -1027,12 +1027,12 @@
                 :map-view-state="node.mapViewState"
                 :config="deckglLayerConfig(node)"
                 :binding="node.deckglBinding"
-                :dataset-rows="deckglLayerDataset(node)?.rows ?? []"
+                :dataset="deckglLayerDataset(node)"
+                :dataset-rows="deckglLayerRows(node)"
                 :geometry-features="deckglLayerGeometrySource(node)?.features ?? []"
                 :layers="deckglLayerRenderSpecs(node)"
                 :width="deckglLayerWidth(node)"
                 :height="deckglLayerHeight(node)"
-                @interaction-start="onDeckglMapInteraction(node, $event)"
                 @view-state-change="onDeckglMapViewStateChange(node, $event)"
               />
               <div

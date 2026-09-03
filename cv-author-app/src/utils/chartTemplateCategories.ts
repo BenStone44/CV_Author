@@ -33,7 +33,7 @@ const familyDefinitions: Array<{
   { id: "heatmap", label: "Heatmap", chartTypes: new Set(["matrixdiagram", "contour", "hexbin"]) },
   { id: "arc", label: "Arc", chartTypes: new Set(["piechart", "donutchart", "radialbarchart"]) },
   { id: "tree", label: "Tree", chartTypes: new Set(["sunburst", "icicle", "treemap", "dendrogram", "radialdendrogram"]) },
-  { id: "network", label: "Network", chartTypes: new Set(["forcedirectedgraph"]) },
+  { id: "network", label: "Network", chartTypes: new Set(["forcedirectedgraph", "graphlink", "graphlinkpolar"]) },
 
   { id: "chord", label: "Chord", chartTypes: new Set(["chord"]) },
   { id: "sankey", label: "Sankey", chartTypes: new Set(["sankey"]) },

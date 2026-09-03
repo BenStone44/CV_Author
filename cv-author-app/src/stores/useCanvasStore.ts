@@ -143,7 +143,7 @@ import {
   inferColumnIntents,
   type InputColumnIntentAnalysis,
 } from "../utils/dimensionInference";
-import { geoJsonFeatureIds } from "../utils/geoJsonGeometry";
+import { geoJsonFeatureIds, parseEmbeddedPoint } from "../utils/geoJsonGeometry";
 import {
   createDefaultChartSpec,
   defaultChartDataset,
@@ -499,7 +499,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   }
 
   const coordinateOperations = useCanvasCoordinateOperations({
-    axesForChart, axisBindingTarget, barItemAxisBinding, bindingForChartChannel,
+    activeGeometrySource, axesForChart, axisBindingTarget, barItemAxisBinding, bindingForChartChannel,
     canvasNodes, canvasRef, chartDrilldown, chartRelationships,
     chartsForAxis,
     cloneCanvasNode, collectNodeBounds, collectNodeSelectionBounds,
@@ -585,6 +585,22 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   function encodingForSharedChannel(node: CanvasNode, channel: CoordinateChannel) {
     const spec = node.chartSpec;
     if (!spec) return undefined;
+    const normalizedType = spec.chartType.replace(/[\s_-]/g, "").toLowerCase();
+    if (normalizedType.includes("graphlink")) {
+      const dataset = getDataset(spec.datasetId);
+      const nodeColumns = new Set(dataset?.graph?.nodes.columns.map((column) => column.name) ?? []);
+      const field = channel === "x"
+        ? ["x", "longitude", "lon"].find((candidate) => nodeColumns.has(candidate))
+        : channel === "y"
+          ? ["y", "latitude", "lat"].find((candidate) => nodeColumns.has(candidate))
+          : channel === "angle"
+            ? ["theta", "angle"].find((candidate) => nodeColumns.has(candidate))
+            : channel === "radius"
+              ? ["radius", "r"].find((candidate) => nodeColumns.has(candidate))
+              : undefined;
+      const type = field ? dataset?.graph?.nodes.columns.find((column) => column.name === field)?.type : undefined;
+      return field && type ? { field, type } : channel === "radius" ? undefined : undefined;
+    }
     const facet = node.compositionSpec?.type === "facet" ? node.compositionSpec : null;
     if (facet) {
       const facetChannel: CoordinateChannel = (facet.facetCoordinateSystem ?? node.coordinateGuide?.type) === "Polar"
@@ -3862,23 +3878,30 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       const target = findCanvasNode(zone.targetNodeId);
       if (zone.type === "geographic-body") {
         const source = activeGeometrySource.value;
-        if (!target || target.layerKind !== "deckgl" || !source) return;
+        const dataset = getDataset(csvPayload.datasetId);
+        const rows = csvPayload.table === "nodes" && dataset?.graph
+          ? dataset.graph.nodes.rows
+          : dataset?.rows ?? [];
+        const pointField = rows.some((row) => parseEmbeddedPoint(row[csvPayload.field]) !== null)
+          ? csvPayload.field
+          : undefined;
+        if (!target || target.layerKind !== "deckgl" || (!source && !pointField)) return;
         pushCanvasHistory();
         target.deckglBinding = {
           datasetId: csvPayload.datasetId,
-          geometrySourceId: source.id,
-          idField: csvPayload.field,
+          ...(pointField ? { pointField } : { geometrySourceId: source!.id, idField: csvPayload.field }),
           aggregation: "sum",
         };
         setSelection([target.id]);
         axisBindingTarget.value = { nodeId: target.id, channel: "x" };
-        const dataset = getDataset(csvPayload.datasetId);
-        const datasetIds = new Set(dataset?.rows
+        const datasetIds = new Set(rows
           .map((row) => (row[csvPayload.field] ?? "").trim())
           .filter(Boolean) ?? []);
-        const matchedFeatureCount = source.features.filter((feature) =>
+        const matchedFeatureCount = source?.features.filter((feature) =>
           geoJsonFeatureIds(feature).some((id) => datasetIds.has(id))).length;
-        setImportNotice(`${csvPayload.field} joined to ${matchedFeatureCount} GeoJSON geometries.`);
+        setImportNotice(pointField
+          ? `${csvPayload.field} bound as embedded map points.`
+          : `${csvPayload.field} joined to ${matchedFeatureCount ?? 0} GeoJSON geometries.`);
         return;
       }
       if (!target?.chartSpec) return;
@@ -3960,10 +3983,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (!candidateId) return;
     const candidate = getCandidate(candidateId);
     if (!candidate) return;
-    // Geographic deck.gl examples are visual layers, not semantic chart
-    // members. Always place them as standalone objects, even over a
-    // composition drop zone.
-    const zone = candidate.renderMode === "static-layer" ? null : activeDropZone.value;
+    // Link templates and geographic layers can be dropped directly on an
+    // existing point/map. The source node must exist before the normal
+    // composition hit-test can resolve the target, so those candidates use a
+    // small post-insert layer pass below when no preview zone was available.
+    let zone = candidate.renderMode === "static-layer" ? null : activeDropZone.value;
     if (candidate.renderMode === "static-layer") activeDropZone.value = null;
     if (zone) {
       activeDropZone.value = null;
@@ -4006,6 +4030,23 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
             target.id,
             dropped.id,
           );
+        }
+      }
+      draggedCandidateId.value = null;
+      return;
+    }
+    if (!zone && (candidate.graphLinkMode || candidate.renderMode === "static-layer")) {
+      pushCanvasHistory();
+      const created = await createCanvasItem(candidate, point, false);
+      const dropped = created?.[0];
+      if (dropped) {
+        const resolvedZone = compositionDropZoneAtPoint(point, dropped.id);
+        if (resolvedZone?.compatible && resolvedZone.type === "layer") {
+          const target = findCanvasNode(resolvedZone.targetNodeId);
+          if (target) {
+            executeComposition("layer", false, resolvedZone.sharedChannels, undefined, undefined, target.id, dropped.id);
+            setImportNotice(`${candidate.name} layered on ${target.name}.`);
+          }
         }
       }
       draggedCandidateId.value = null;

@@ -882,9 +882,9 @@ describe("advanced chart cards", () => {
     expect(contour.content).toContain('stroke="#fff"');
     expect(hexbin.content).toContain('data-mark-role="hexagon"');
     expect(hexbin.content).toContain("data-count=");
-    expect(hexbin.content).toContain('data-scale="log-log"');
+    expect(hexbin.content).toContain('data-scale="linear-linear"');
     expect(hexbin.content).toContain('data-renderer="observable-hexbin@2"');
-    expect(hexbin.scales?.x.type).toBe("log");
+    expect(hexbin.scales?.x.type).toBe("linear");
   });
 
   it("rejects sparse contour input instead of filling missing grid cells", () => {

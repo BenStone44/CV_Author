@@ -148,6 +148,18 @@ and control arcs only, so it must not redraw the static axes or make their
 strokes appear thicker. Hide the persistent polar layer only when both Theta
 and R axes are explicitly disabled.
 
+### CSV-Embedded Geographic Points
+
+A CSV may embed GeoJSON point geometry directly in a column. The column value
+must be a parseable GeoJSON position array, conventionally a JSON string such
+as `"[-74.01008,40.67593]"`, ordered `[longitude, latitude]`. This is distinct
+from an external GeoJSON ID join: dragging the embedded-point column onto a
+`ScatterplotLayer` binds the column as the point position and renders one mark
+per valid CSV row without requiring a `GeometrySource`. The position binding
+is persisted separately from optional color and size bindings and is exposed
+in the geographic Encoding Config panel. Invalid or missing positions are
+skipped and must not be silently interpreted as feature IDs.
+
 ### Filter Intent and Facet Clues
 
 A categorical or ordinal single-select filter may be either a permanent hard

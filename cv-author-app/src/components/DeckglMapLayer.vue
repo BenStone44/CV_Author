@@ -35,12 +35,13 @@ import { ScenegraphLayer, SimpleMeshLayer } from "@deck.gl/mesh-layers";
 import "mapbox-gl/dist/mapbox-gl.css";
 import type {
   DataRow,
+  Dataset,
   GeoJsonFeature,
   GeographicLayerBinding,
   GeographicLayerConfig,
   GeographicMapViewState,
 } from "../types";
-import { geoJsonFeatureIds } from "../utils/geoJsonGeometry";
+import { geoJsonFeatureIds, parseEmbeddedPoint } from "../utils/geoJsonGeometry";
 import { frontendPalette } from "../config/global";
 
 const props = defineProps<{
@@ -49,6 +50,7 @@ const props = defineProps<{
   binding?: GeographicLayerBinding;
   datasetRows: DataRow[];
   geometryFeatures: GeoJsonFeature[];
+  dataset?: Dataset | null;
   mapStyleUrl: string;
   mapViewState?: GeographicMapViewState;
   width: number;
@@ -60,11 +62,11 @@ const props = defineProps<{
     binding?: GeographicLayerBinding;
     datasetRows: DataRow[];
     geometryFeatures: GeoJsonFeature[];
+    dataset?: Dataset | null;
   }>;
 }>();
 
 const emit = defineEmits<{
-  interactionStart: [event: PointerEvent];
   viewStateChange: [state: GeographicMapViewState];
 }>();
 
@@ -73,10 +75,17 @@ let map: mapboxgl.Map | null = null;
 let overlay: MapboxOverlay | null = null;
 let initialViewFitted = false;
 let userCameraInteraction = false;
+// Preserve deliberate user camera changes across reactive layer updates.
+let userViewState = false;
+let viewStateCommitTimer: number | null = null;
 const loadedExampleData = ref<Record<string, unknown[]>>({});
 
-function onInteractionPointerDown(event: PointerEvent) {
-  emit("interactionStart", event);
+function onMapPointerDown(event: PointerEvent) {
+  if (event.button === 0 && map?.isStyleLoaded()) {
+    // Pointerdown can synchronously trigger Vue watchers before Mapbox emits
+    // movestart. Mark the camera as user-owned so they cannot fit during drag.
+    userViewState = true;
+  }
 }
 
 const mapboxStyle = "mapbox://styles/shifuchen/cm0yq9yda01fh01q03vmn75i5";
@@ -229,7 +238,7 @@ function emitCurrentViewState() {
 
 function fitMapToLayerData(options: { force?: boolean; persist?: boolean } = {}) {
   const force = options.force ?? false;
-  if (!map || !map.isStyleLoaded() || (!force && (initialViewFitted || props.mapViewState))) return;
+  if (!map || !map.isStyleLoaded() || userViewState || (!force && (initialViewFitted || props.mapViewState))) return;
   const fittedFeatures = props.binding ? materializedBoundFeatures.value : [];
   if (fittedFeatures.length > 0) {
     const coordinates: Coordinate[] = [];
@@ -261,6 +270,24 @@ function fitMapToLayerData(options: { force?: boolean; persist?: boolean } = {})
       if (options.persist) emitCurrentViewState();
       return;
     }
+  }
+  const fittedPoints = props.binding?.pointField ? materializedBoundPoints.value : [];
+  if (fittedPoints.length > 0) {
+    const longitudes = fittedPoints.map(({ position }) => position[0]);
+    const latitudes = fittedPoints.map(({ position }) => position[1]);
+    let minLongitude = Math.min(...longitudes);
+    let maxLongitude = Math.max(...longitudes);
+    let minLatitude = Math.min(...latitudes);
+    let maxLatitude = Math.max(...latitudes);
+    if (minLongitude === maxLongitude) { minLongitude -= 0.01; maxLongitude += 0.01; }
+    if (minLatitude === maxLatitude) { minLatitude -= 0.01; maxLatitude += 0.01; }
+    map.fitBounds(
+      [[minLongitude, minLatitude], [maxLongitude, maxLatitude]],
+      { padding: Math.max(24, Math.min(props.width, props.height) * 0.08), maxZoom: 12, duration: 0 },
+    );
+    initialViewFitted = true;
+    if (options.persist) emitCurrentViewState();
+    return;
   }
   const exampleView = exampleViewStates[props.layerType];
   if (exampleView) {
@@ -322,15 +349,22 @@ type BoundGeoJsonFeature = GeoJsonFeature & {
   };
 };
 
+type BoundPointRow = {
+  position: [number, number];
+  colorValue?: number;
+  sizeValue?: number;
+};
+
 function boundGeometryFeaturesFor(
   binding: GeographicLayerBinding | undefined,
   datasetRows: DataRow[],
   geometryFeatures: GeoJsonFeature[],
 ): BoundGeoJsonFeature[] {
-  if (!binding) return [];
+  if (!binding?.idField || !geometryFeatures.length) return [];
+  const idField = binding.idField;
   const aggregate = new Map<string, { colorValue: number; sizeValue: number }>();
   datasetRows.forEach((row) => {
-    const id = (row[binding.idField] ?? "").trim();
+    const id = (row[idField] ?? "").trim();
     if (!id) return;
     const current = aggregate.get(id) ?? { colorValue: 0, sizeValue: 0 };
     const colorValue = binding.colorField ? Number(row[binding.colorField]) : 0;
@@ -360,13 +394,35 @@ function boundGeometryFeaturesFor(
   });
 }
 
+function boundPointRowsFor(
+  binding: GeographicLayerBinding | undefined,
+  datasetRows: DataRow[],
+): BoundPointRow[] {
+  if (!binding?.pointField) return [];
+  const pointField = binding.pointField;
+  return datasetRows.flatMap((row) => {
+    const position = parseEmbeddedPoint(row[pointField]);
+    if (!position) return [];
+    const colorValue = binding.colorField ? Number(row[binding.colorField]) : undefined;
+    const sizeValue = binding.sizeField ? Number(row[binding.sizeField]) : undefined;
+    return [{
+      position,
+      ...(Number.isFinite(colorValue) ? { colorValue } : {}),
+      ...(Number.isFinite(sizeValue) ? { sizeValue } : {}),
+    }];
+  });
+}
+
 const materializedBoundFeatures = computed(() =>
   boundGeometryFeaturesFor(props.binding, props.datasetRows, props.geometryFeatures),
 );
+const materializedBoundPoints = computed(() =>
+  boundPointRowsFor(props.binding, props.datasetRows),
+);
 
-function numericExtent(features: BoundGeoJsonFeature[], field: "__colorValue" | "__sizeValue") {
+function numericExtent(features: unknown[], field: string) {
   const values = features
-    .map((feature) => feature.properties[field])
+    .map((feature) => (feature as Record<string, unknown>)[field])
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
   return values.length ? [Math.min(...values), Math.max(...values)] as const : null;
 }
@@ -419,16 +475,28 @@ function layerOptions(layerType: string, layer?: NonNullable<typeof props.layers
   const binding = layer?.binding ?? props.binding;
   const datasetRows = layer?.datasetRows ?? props.datasetRows;
   const geometryFeatures = layer?.geometryFeatures ?? props.geometryFeatures;
+  const dataset = layer?.dataset ?? props.dataset;
   const configuredColor = colorToRgba(config.color, 220);
   const configuredPointSize = Number.isFinite(config.size) ? Math.max(config.size ?? 8, 1) : 8;
   const boundFeatures = boundGeometryFeaturesFor(binding, datasetRows, geometryFeatures);
-  const colorExtent = numericExtent(boundFeatures, "__colorValue");
-  const sizeExtent = numericExtent(boundFeatures, "__sizeValue");
+  const boundPoints = boundPointRowsFor(binding, datasetRows);
+  const colorExtent = binding?.pointField
+    ? numericExtent(boundPoints, "colorValue")
+    : numericExtent(boundFeatures, "__colorValue");
+  const sizeExtent = binding?.pointField
+    ? numericExtent(boundPoints, "sizeValue")
+    : numericExtent(boundFeatures, "__sizeValue");
   const featureColor = (feature: BoundGeoJsonFeature) => binding?.colorField
     ? mappedColor(feature.properties.__colorValue, colorExtent, config)
     : configuredColor;
   const featureSize = (feature: BoundGeoJsonFeature) => binding?.sizeField
     ? 4 + normalizedValue(feature.properties.__sizeValue, sizeExtent) * 28
+    : configuredPointSize;
+  const pointColor = (point: BoundPointRow) => binding?.colorField
+    ? mappedColor(point.colorValue, colorExtent, config)
+    : configuredColor;
+  const pointSize = (point: BoundPointRow) => binding?.sizeField
+    ? 4 + normalizedValue(point.sizeValue, sizeExtent) * 28
     : configuredPointSize;
   switch (layerType) {
     case "ArcLayer":
@@ -475,6 +543,18 @@ function layerOptions(layerType: string, layer?: NonNullable<typeof props.layers
         pickable: true,
       });
     case "LineLayer":
+      if (dataset?.graph) {
+        const nodeId = dataset.graph.nodes.columns.find((column) => ["id", "node_id", "hex_id"].includes(column.name))?.name ?? "id";
+        const longitude = dataset.graph.nodes.columns.find((column) => ["longitude", "lon", "x"].includes(column.name))?.name ?? "longitude";
+        const latitude = dataset.graph.nodes.columns.find((column) => ["latitude", "lat", "y"].includes(column.name))?.name ?? "latitude";
+        const positions = new Map(dataset.graph.nodes.rows.map((row) => [row[nodeId], [Number(row[longitude]), Number(row[latitude])] as [number, number]]));
+        const graphLines = dataset.graph.edges.rows.flatMap((row) => {
+          const start = positions.get(row.source ?? "");
+          const end = positions.get(row.target ?? "");
+          return start && end && start.every(Number.isFinite) && end.every(Number.isFinite) ? [{ start, end, value: Number(row.value ?? 1) }] : [];
+        });
+        return new LineLayer({ ...common, data: graphLines, opacity: 0.82, getSourcePosition: (d: { start: number[] }) => d.start, getTargetPosition: (d: { end: number[] }) => d.end, getColor: configuredColor, getWidth: (d: { value: number }) => Math.max(1, Math.min(12, d.value || 2)) });
+      }
       return new LineLayer({ ...common, data: exampleDataUrls.lineFlights, opacity: 0.8, getSourcePosition: (d: { start: number[] }) => d.start, getTargetPosition: (d: { end: number[] }) => d.end, getColor: [239, 68, 68], getWidth: 8 });
     case "MVTLayer":
       return new MVTLayer({ ...common, data: `https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/{z}/{x}/{y}.vector.pbf?access_token=${mapboxToken}`, getFillColor: configuredColor, getLineColor: [15, 53, 80], getLineWidth: 1 });
@@ -502,17 +582,23 @@ function layerOptions(layerType: string, layer?: NonNullable<typeof props.layers
     case "ScatterplotLayer":
       return new ScatterplotLayer({
         ...common,
-        data: binding ? boundFeatures : exampleDataUrls.manhattan,
+        data: binding?.pointField ? boundPoints : binding ? boundFeatures : exampleDataUrls.manhattan,
         radiusUnits: "pixels",
         radiusMinPixels: 1,
-        getPosition: binding
-          ? (feature: BoundGeoJsonFeature) => geometryCenter(feature)
+        getPosition: binding?.pointField
+          ? (point: BoundPointRow) => point.position
+          : binding
+            ? (feature: BoundGeoJsonFeature) => geometryCenter(feature)
           : (datum: number[]) => [datum[0], datum[1], 0],
-        getRadius: binding
-          ? featureSize
+        getRadius: binding?.pointField
+          ? pointSize
+          : binding
+            ? featureSize
           : configuredPointSize,
-        getFillColor: binding
-          ? featureColor
+        getFillColor: binding?.pointField
+          ? pointColor
+          : binding
+            ? featureColor
           : configuredColor,
         getLineColor: [255, 255, 255],
         lineWidthMinPixels: 1,
@@ -685,10 +771,17 @@ onMounted(() => {
   const persistViewState = () => {
     if (!map || !userCameraInteraction) return;
     userCameraInteraction = false;
-    emitCurrentViewState();
+    userViewState = true;
+    // Mapbox can emit several moveend events during a wheel gesture. Keep the
+    // camera local to Mapbox until interaction settles, then commit once.
+    if (viewStateCommitTimer !== null) window.clearTimeout(viewStateCommitTimer);
+    viewStateCommitTimer = window.setTimeout(() => {
+      viewStateCommitTimer = null;
+      emitCurrentViewState();
+    }, 120);
   };
   map.on("movestart", (event) => {
-    userCameraInteraction = !!event.originalEvent;
+    if (event.originalEvent) userCameraInteraction = true;
   });
   map.on("moveend", persistViewState);
   map.once("load", () => {
@@ -714,19 +807,24 @@ watch(() => [
   props.binding?.geometrySourceId,
   props.binding?.idField,
 ], () => {
+  if (userViewState) {
+    updateOverlay();
+    return;
+  }
   initialViewFitted = false;
   updateOverlay();
   fitMapToLayerData({ force: true, persist: true });
 });
 watch(() => props.datasetRows, () => {
   updateOverlay();
-  if (!props.binding) return;
+  if (!props.binding || userViewState) return;
   initialViewFitted = false;
   fitMapToLayerData({ force: true, persist: true });
 });
 watch(() => props.geometryFeatures, () => {
   initialViewFitted = false;
   updateOverlay();
+  if (userViewState) return;
   fitMapToLayerData({
     force: !!props.binding,
     persist: !!props.binding,
@@ -737,6 +835,8 @@ watch(() => [props.width, props.height], () => {
 });
 
 onBeforeUnmount(() => {
+  if (viewStateCommitTimer !== null) window.clearTimeout(viewStateCommitTimer);
+  viewStateCommitTimer = null;
   overlay?.finalize();
   overlay = null;
   map?.remove();
@@ -750,7 +850,7 @@ onBeforeUnmount(() => {
     class="deckgl-map-layer"
     :style="{ width: `${width}px`, height: `${height}px` }"
     aria-label="Mapbox map with deck.gl example layer"
-    @pointerdown.capture="onInteractionPointerDown"
+    @pointerdown.capture="onMapPointerDown"
   />
 </template>
 

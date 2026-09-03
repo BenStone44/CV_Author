@@ -14,6 +14,7 @@ import type {
   SvgCandidate,
 } from "../../types";
 import { defaultDatasetForChartType } from "../../utils/defaultChartData";
+import { parseEmbeddedPoint } from "../../utils/geoJsonGeometry";
 
 export function useCanvasImportOperations(context: any) {
   const {
@@ -96,6 +97,24 @@ export function useCanvasImportOperations(context: any) {
           ...(value?.type === "quantitative" ? { value } : {}),
           ...(color ? { color } : {}),
           ...(size?.type === "quantitative" ? { size } : {}),
+        },
+      };
+    }
+    if (normalizedChartType.includes("graphlink") && dataset?.graph) {
+      const edgeColumns = dataset.graph.edges.columns;
+      const findColumn = (names: string[]) => {
+        const column = edgeColumns.find((candidate) => names.includes(candidate.name.toLowerCase()));
+        return column ? { field: column.name, type: column.type } : undefined;
+      };
+      const source = findColumn(["source", "from", "source_id"]);
+      const target = findColumn(["target", "to", "target_id"]);
+      const value = findColumn(["value", "weight", "link_value"]);
+      return {
+        ...unbound,
+        encodings: {
+          ...(source ? { source } : {}),
+          ...(target ? { target } : {}),
+          ...(value?.type === "quantitative" ? { value } : {}),
         },
       };
     }
@@ -335,11 +354,11 @@ export function useCanvasImportOperations(context: any) {
         : undefined;
       if (node.kind === "leaf") {
         nameCounters.leaf += 1;
-        return { kind: "leaf", id, candidateId: sourceId, name: `${name}-${nameCounters.leaf}`, content: scopeSvgContent(node.content, id), viewBox: node.viewBox, width: Math.max(nodeBounds.width, 1), height: Math.max(nodeBounds.height, 1), x: nodeX, y: nodeY, scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, contentMinX: node.contentMinX, contentMinY: node.contentMinY, coordinateGuide, chartSpec, layerKind, deckglLayerType, mapStyleUrl, deckglConfig: initialDeckglConfig ? { ...initialDeckglConfig } : undefined } satisfies CanvasLeafNode;
+        return { kind: "leaf", id, candidateId: sourceId, name: `${name}-${nameCounters.leaf}`, content: scopeSvgContent(node.content, id), viewBox: node.viewBox, width: Math.max(nodeBounds.width, 1), height: Math.max(nodeBounds.height, 1), x: nodeX, y: nodeY, scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, contentMinX: node.contentMinX, contentMinY: node.contentMinY, coordinateGuide, chartSpec, layerKind, deckglLayerType, deckglDatasetId: layerKind === "deckgl" ? datasetId : undefined, mapStyleUrl, deckglConfig: initialDeckglConfig ? { ...initialDeckglConfig } : undefined } satisfies CanvasLeafNode;
       }
       nameCounters.group += 1;
       const groupName = node.name ? `${name}-${node.name}` : `${name}-group-${nameCounters.group}`;
-      return { kind: "group", id, name: groupName, x: nodeX, y: nodeY, width: Math.max(nodeBounds.width, 1), height: Math.max(nodeBounds.height, 1), scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, coordinateGuide, chartSpec, layerKind, deckglLayerType, mapStyleUrl, deckglConfig: initialDeckglConfig ? { ...initialDeckglConfig } : undefined, children: node.children.map((c) => instantiateNode(c, node.bounds)) } satisfies CanvasGroupNode;
+      return { kind: "group", id, name: groupName, x: nodeX, y: nodeY, width: Math.max(nodeBounds.width, 1), height: Math.max(nodeBounds.height, 1), scaleX: nodeScaleX, scaleY: nodeScaleY, rotation: 0, coordinateGuide, chartSpec, layerKind, deckglLayerType, deckglDatasetId: layerKind === "deckgl" ? datasetId : undefined, mapStyleUrl, deckglConfig: initialDeckglConfig ? { ...initialDeckglConfig } : undefined, children: node.children.map((c) => instantiateNode(c, node.bounds)) } satisfies CanvasGroupNode;
     };
     let nextItems = template.nodes.map((n) => instantiateNode(n, null));
     if (forceOuterGroup && (nextItems.length !== 1 || nextItems[0]?.kind !== "group")) {
@@ -455,12 +474,29 @@ export function useCanvasImportOperations(context: any) {
       ...patch,
     };
   }
-  function setDeckglEncoding(nodeId: string, channel: "color" | "size", field: string) {
+  function setDeckglEncoding(nodeId: string, channel: "position" | "color" | "size", field: string) {
     const node = findCanvasNode(nodeId);
     const binding = node?.deckglBinding;
-    const dataset = binding ? getDataset(binding.datasetId) : null;
-    if (!node || !binding || !dataset) return;
-    const column = dataset.columns.find((item) => item.name === field);
+    const dataset = node ? getDataset(binding?.datasetId ?? node.deckglDatasetId ?? "") : null;
+    if (!node || !dataset) return;
+    const columns = dataset.columns.length ? dataset.columns : dataset.graph?.nodes.columns ?? [];
+    const column = columns.find((item) => item.name === field);
+    const rows = dataset.rows.length ? dataset.rows : dataset.graph?.nodes.rows ?? [];
+    if (channel === "position") {
+      if (field && !rows.some((row) => parseEmbeddedPoint(row[field]) !== null)) return;
+      if (field) {
+        node.deckglBinding = {
+          ...(binding ?? { datasetId: dataset.id, aggregation: "sum" as const }),
+          pointField: field,
+          geometrySourceId: undefined,
+          idField: undefined,
+        };
+      } else if (binding) {
+        node.deckglBinding = { ...binding, pointField: undefined };
+      }
+      return;
+    }
+    if (!binding) return;
     if (field && column?.type !== "quantitative") return;
     node.deckglBinding = {
       ...binding,

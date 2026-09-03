@@ -23,6 +23,10 @@ import {
   defaultChordDataset,
   defaultHexbinDataset,
   defaultTreeDataset,
+  case2GraphDataset,
+  hexbinGraphDataset,
+  CASE2_GRAPH_DATASET_ID,
+  HEXBIN_GRAPH_DATASET_ID,
 } from "../utils/defaultChartData";
 
 type ParsedCsv = {
@@ -333,6 +337,8 @@ function getDataset(datasetId: string) {
   if (datasetId === DEFAULT_GRAPH_DATASET_ID) return defaultGraphDataset;
   if (datasetId === DEFAULT_CHORD_DATASET_ID) return defaultChordDataset;
   if (datasetId === DEFAULT_HEXBIN_DATASET_ID) return defaultHexbinDataset;
+  if (datasetId === CASE2_GRAPH_DATASET_ID) return case2GraphDataset;
+  if (datasetId === HEXBIN_GRAPH_DATASET_ID) return hexbinGraphDataset;
   if (datasetId === DEFAULT_TREE_DATASET_ID) return defaultTreeDataset;
   return datasets.value.find((dataset) => dataset.id === datasetId) ?? null;
 }

@@ -245,6 +245,30 @@ export const chartEncodingSchemas = {
     markRole: "node",
     aggregationPolicy: "forbidden",
   }),
+  GraphLink: defineSchema("GraphLink", "Graph Link", "flow", [
+    { channel: "source", label: "Source", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "target", label: "Target", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "value", label: "Link value", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Not bound" },
+    { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" },
+    { channel: "size", label: "Thickness", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
+  ], {
+    coordinateSystem: "Cartesian",
+    markRole: "link",
+    aggregationPolicy: "forbidden",
+    shareableChannels: ["x", "y"],
+  }),
+  GraphLinkPolar: defineSchema("GraphLinkPolar", "Graph Link (Polar)", "flow", [
+    { channel: "source", label: "Source", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "target", label: "Target", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "value", label: "Link value", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Not bound" },
+    { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" },
+    { channel: "size", label: "Thickness", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
+  ], {
+    coordinateSystem: "Polar",
+    markRole: "link",
+    aggregationPolicy: "forbidden",
+    shareableChannels: ["angle", "radius"],
+  }),
 } satisfies Record<string, ChartEncodingSchema>;
 
 export type SupportedChartType = keyof typeof chartEncodingSchemas;

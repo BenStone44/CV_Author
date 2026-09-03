@@ -22,7 +22,6 @@ import {
   range as d3Range,
   ribbon as d3Ribbon,
   scaleLinear,
-  scaleLog,
   scaleOrdinal,
   scalePoint,
   scaleSequential,
@@ -1367,13 +1366,15 @@ function renderHexbin(input: GenericRenderInput) {
   const points = input.dataset.rows.flatMap((row, rowIndex) => {
     const x = numeric(row, xEncoding);
     const y = numeric(row, yEncoding);
-    return x > 0 && y > 0 ? [{ row, rowIndex, x, y }] : [];
+    return Number.isFinite(x) && Number.isFinite(y) ? [{ row, rowIndex, x, y }] : [];
   });
-  if (!points.length) throw new Error("Hexbin renderer requires positive X and Y values for logarithmic scales.");
+  if (!points.length) throw new Error("Hexbin renderer requires finite X and Y values.");
   const xDomain = finiteDomain(points.map((point) => point.x), [1, 10]);
   const yDomain = finiteDomain(points.map((point) => point.y), [1, 10]);
-  const x = scaleLog().domain(xDomain).range([area.x, area.x + area.width]);
-  const y = scaleLog().domain(yDomain).rangeRound([area.y + area.height, area.y]);
+  // Hexbin occupies a regular Cartesian grid. Linear scales keep equal data
+  // intervals equally spaced, including zero-valued coordinates.
+  const x = scaleLinear().domain(xDomain).range([area.x, area.x + area.width]);
+  const y = scaleLinear().domain(yDomain).rangeRound([area.y + area.height, area.y]);
   const configuredRadius = Math.max(2, Math.min(20, Number(sharedConfig(input, "hexagon").radius ?? 8)));
   const radius = configuredRadius * input.width / 928;
   const layout = hexbin<typeof points[number]>()
@@ -1388,7 +1389,7 @@ function renderHexbin(input: GenericRenderInput) {
     const indices = bin.map((point) => point.rowIndex);
     return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="hexagon" data-mark-group-id="mark-group:${esc(input.chartId)}:hexagon" data-count="${bin.length}" data-row-indices="${indices.join(",")}" transform="translate(${bin.x} ${bin.y})" d="${layout.hexagon()}" fill="${color(bin.length)}" stroke="black"><title>${bin.length}</title></path>`;
   }).join("");
-  return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="hexbin" data-radius="${configuredRadius}" data-scale="log-log" data-source-row-count="${points.length}" data-renderer="observable-hexbin@2">${marks}</g>`, plotArea: area, scales: { x: { type: "log", domain: xDomain, range: [area.x, area.x + area.width] }, y: { type: "log", domain: yDomain, range: [area.y + area.height, area.y] } } };
+  return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="hexbin" data-radius="${configuredRadius}" data-scale="linear-linear" data-source-row-count="${points.length}" data-renderer="observable-hexbin@2">${marks}</g>`, plotArea: area, scales: { x: { type: "linear", domain: xDomain, range: [area.x, area.x + area.width] }, y: { type: "linear", domain: yDomain, range: [area.y + area.height, area.y] } } };
 }
 
 function flowLinks(input: GenericRenderInput) {
@@ -1603,6 +1604,108 @@ function renderForceDirected(input: GenericRenderInput) {
   };
 }
 
+/** Render only the links from a graph dataset, using node coordinates as endpoints. */
+function renderGraphLink(input: GenericRenderInput) {
+  const graph = input.dataset.graph;
+  if (!graph) throw new Error("Graph Link requires separate nodes and edges tables.");
+  const sourceField = input.chartSpec.encodings.source?.field ?? "source";
+  const targetField = input.chartSpec.encodings.target?.field ?? "target";
+  const valueEncoding = input.chartSpec.encodings.value;
+  const colorEncoding = input.chartSpec.encodings.color;
+  const sizeEncoding = input.chartSpec.encodings.size;
+  const area = input.sharedPlotArea ?? plotArea(input, 10);
+  const nodeColumns = new Set(graph.nodes.columns.map((column) => column.name));
+  const xField = ["x", "longitude", "lon"].find((field) => nodeColumns.has(field));
+  const yField = ["y", "latitude", "lat"].find((field) => nodeColumns.has(field));
+  const thetaField = ["theta", "angle"].find((field) => nodeColumns.has(field));
+  const radiusField = ["radius", "r"].find((field) => nodeColumns.has(field));
+  const nodeRows = graph.nodes.rows.flatMap((row, index) => {
+    const id = (row.id ?? row.node_id ?? row.hex_id ?? row.key ?? String(index)).trim();
+    return id ? [{ id, row, index }] : [];
+  });
+  const nodeById = new Map(nodeRows.map((node) => [node.id, node]));
+  const edgeRows = graph.edges.rows.flatMap((row, index) => {
+    const source = (row[sourceField] ?? "").trim();
+    const target = (row[targetField] ?? "").trim();
+    return source && target && nodeById.has(source) && nodeById.has(target)
+      ? [{ row, source, target, index }]
+      : [];
+  });
+  const extent = (field: string | undefined, fallback: [number, number]) => {
+    const values = field
+      ? nodeRows.map(({ row }) => Number(row[field] ?? "")).filter(Number.isFinite)
+      : [];
+    if (!values.length) return fallback;
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    return min === max ? [min - 1, max + 1] as [number, number] : [min, max] as [number, number];
+  };
+  const xDomain = extent(xField, [0, Math.max(1, nodeRows.length - 1)]);
+  const yDomain = extent(yField, [0, Math.max(1, nodeRows.length - 1)]);
+  const xScaleSpec = input.sharedScales?.x ?? { type: "linear" as const, domain: xDomain, range: [area.x, area.x + area.width] as [number, number] };
+  const yScaleSpec = input.sharedScales?.y ?? { type: "linear" as const, domain: yDomain, range: [area.y + area.height, area.y] as [number, number] };
+  const xScale = scaleLinear().domain(xScaleSpec.domain as [number, number]).range(xScaleSpec.range);
+  const yScale = scaleLinear().domain(yScaleSpec.domain as [number, number]).range(yScaleSpec.range);
+  const indexPosition = (node: typeof nodeRows[number], field: string | undefined, scale: (value: number) => number) => {
+    const value = field ? Number(node.row[field] ?? "") : node.index;
+    return scale(Number.isFinite(value) ? value : node.index);
+  };
+  const polar = normalizedType(input.chartSpec.chartType).includes("polar");
+  const polarGuide = input.coordinateGuide?.type === "Polar" ? input.coordinateGuide : undefined;
+  const polarPoints = new Map<string, { x: number; y: number }>();
+  if (polar) {
+    const cx = polarGuide?.origin.x ?? area.x + area.width / 2;
+    const cy = polarGuide?.origin.y ?? area.y + area.height / 2;
+    const outerRadius = Math.max(1, polarGuide?.radius ?? Math.min(area.width, area.height) * 0.42);
+    const radiusDomain = extent(radiusField, [0, 1]);
+    nodeRows.forEach((node) => {
+      const rawTheta = thetaField ? Number(node.row[thetaField] ?? "") : node.index * 360 / Math.max(1, nodeRows.length);
+      const theta = (Number.isFinite(rawTheta) ? rawTheta : 0) * Math.PI / 180;
+      const rawRadius = radiusField ? Number(node.row[radiusField] ?? "") : 1;
+      const normalizedRadius = radiusDomain[1] === radiusDomain[0]
+        ? 1
+        : (Number.isFinite(rawRadius) ? (rawRadius - radiusDomain[0]) / (radiusDomain[1] - radiusDomain[0]) : 0.5);
+      const radius = Math.max(0, Math.min(1, normalizedRadius)) * outerRadius;
+      polarPoints.set(node.id, { x: cx + Math.sin(theta) * radius, y: cy - Math.cos(theta) * radius });
+    });
+  }
+  const palette = globalPalette.categorical;
+  const colorDomain = colorEncoding
+    ? Array.from(new Set(edgeRows.map(({ row }) => row[colorEncoding.field] ?? "")))
+    : [];
+  const colorFor = (row: Dataset["rows"][number], index: number) => {
+    if (!colorEncoding) return "#64748b";
+    const raw = row[colorEncoding.field] ?? "";
+    if (colorEncoding.type === "quantitative") {
+      const values = edgeRows.map(({ row: item }) => Number(item[colorEncoding.field] ?? "")).filter(Number.isFinite);
+      const domain = values.length ? [Math.min(...values), Math.max(...values)] as [number, number] : [0, 1] as [number, number];
+      return globalGradientColor(domain[1] === domain[0] ? 0.5 : (Number(raw) - domain[0]) / (domain[1] - domain[0]), [0, 1]);
+    }
+    return palette[Math.max(0, colorDomain.indexOf(raw)) % palette.length] ?? "#64748b";
+  };
+  const widthFor = (row: Dataset["rows"][number]) => {
+    if (!sizeEncoding) return 2;
+    const value = Number(row[sizeEncoding.field] ?? "");
+    return Number.isFinite(value) ? Math.max(1, Math.min(12, value)) : 2;
+  };
+  const linkMarks = edgeRows.map(({ row, source, target }) => {
+    const sourceNode = nodeById.get(source)!;
+    const targetNode = nodeById.get(target)!;
+    const sourcePoint = polar
+      ? polarPoints.get(source)!
+      : { x: indexPosition(sourceNode, xField, xScale), y: indexPosition(sourceNode, yField, yScale) };
+    const targetPoint = polar
+      ? polarPoints.get(target)!
+      : { x: indexPosition(targetNode, xField, xScale), y: indexPosition(targetNode, yField, yScale) };
+    return `<line data-chart-id="${esc(input.chartId)}" data-mark-role="link" data-mark-group-id="mark-group:${esc(input.chartId)}:link" data-source="${esc(source)}" data-target="${esc(target)}" x1="${sourcePoint.x}" y1="${sourcePoint.y}" x2="${targetPoint.x}" y2="${targetPoint.y}" stroke="${esc(colorFor(row, sourceNode.index))}" stroke-opacity="0.72" stroke-width="${widthFor(row)}" vector-effect="non-scaling-stroke"><title>${esc(source)} to ${esc(target)}${valueEncoding ? `\\n${formatTick(Number(row[valueEncoding.field] ?? 0))}` : ""}</title></line>`;
+  }).join("");
+  return {
+    content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="graph-link" data-renderer="deterministic-graph-link@1">${linkMarks}</g>`,
+    plotArea: area,
+    scales: polar ? undefined : { x: xScaleSpec, y: yScaleSpec },
+  };
+}
+
 function renderChord(input: GenericRenderInput) {
   const links = flowLinks(input);
   const area = plotArea(input, 0);
@@ -1681,6 +1784,7 @@ function renderSankey(input: GenericRenderInput) {
 
 export function renderAdvancedChart(input: GenericRenderInput) {
   const type = normalizedType(input.chartSpec.chartType);
+  if (type.includes("graphlink")) return renderGraphLink(input);
   if (type.includes("forcedirected")) return renderForceDirected(input);
   if (type.includes("area") || type.includes("stream") || type.includes("horizon")) return renderArea(input);
   if (type.includes("parallel")) return renderParallel(input);

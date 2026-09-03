@@ -48,8 +48,43 @@ const defaultDataTemplateDefinitions = [
   { id: "builtin-template:chord", name: "Chord", chartType: "Chord", coordinateSystem: "CoordinateFree" },
 ] satisfies Array<Omit<SvgCandidate, "src" | "svgMarkup">>;
 
+const graphLinkTemplateDefinitions: SvgCandidate[] = [
+  {
+    id: "builtin-template:graph-link",
+    name: "Graph Link",
+    chartType: "GraphLink",
+    coordinateSystem: "Cartesian",
+    graphLinkMode: "cartesian",
+    src: "data:image/svg+xml;charset=utf-8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><g fill="none" stroke="#64748b" stroke-width="3"><path d="M50 125L145 55L265 105"/></g><g fill="#2563eb" stroke="#fff" stroke-width="2"><circle cx="50" cy="125" r="7"/><circle cx="145" cy="55" r="7"/><circle cx="265" cy="105" r="7"/></g></svg>'),
+    svgMarkup: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><g fill="none" stroke="#64748b" stroke-width="3"><path d="M50 125L145 55L265 105"/></g><g fill="#2563eb" stroke="#fff" stroke-width="2"><circle cx="50" cy="125" r="7"/><circle cx="145" cy="55" r="7"/><circle cx="265" cy="105" r="7"/></g></svg>',
+  },
+  {
+    id: "builtin-template:graph-link-polar",
+    name: "Graph Link (Polar)",
+    chartType: "GraphLinkPolar",
+    coordinateSystem: "Polar",
+    graphLinkMode: "polar",
+    unavailable: true,
+    src: "data:image/svg+xml;charset=utf-8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><g transform="translate(160 90)" fill="none" stroke="#64748b" stroke-width="3"><path d="M0-62L60 0L0 62L-60 0Z"/></g><g fill="#2563eb" stroke="#fff" stroke-width="2"><circle cx="160" cy="28" r="7"/><circle cx="220" cy="90" r="7"/><circle cx="160" cy="152" r="7"/><circle cx="100" cy="90" r="7"/></g></svg>'),
+    svgMarkup: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><g transform="translate(160 90)" fill="none" stroke="#64748b" stroke-width="3"><path d="M0-62L60 0L0 62L-60 0Z"/></g><g fill="#2563eb" stroke="#fff" stroke-width="2"><circle cx="160" cy="28" r="7"/><circle cx="220" cy="90" r="7"/><circle cx="160" cy="152" r="7"/><circle cx="100" cy="90" r="7"/></g></svg>',
+  },
+  {
+    id: "builtin-template:graph-link-geographic",
+    name: "Graph Link (Geographic)",
+    chartType: "LineLayer",
+    coordinateSystem: "Geographic",
+    graphLinkMode: "geographic",
+    renderMode: "static-layer",
+    layerType: "LineLayer",
+    mapStyleUrl: undefined,
+    src: "/deckgl-examples/line-layer.jpg",
+    svgMarkup: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><rect width="320" height="180" fill="transparent"/></svg>',
+  },
+];
+
 export const implementedTemplateDefinitions: SvgCandidate[] = ([
   ...defaultDataTemplateDefinitions.map(createDefaultDataCandidate),
+  ...graphLinkTemplateDefinitions,
   ...advancedTemplateDefinitions.filter((candidate) => !supportsDefaultChartData(candidate.chartType)),
   ...geographicLayerDefinitions,
 ] as SvgCandidate[])

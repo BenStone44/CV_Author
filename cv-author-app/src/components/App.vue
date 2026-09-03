@@ -244,7 +244,8 @@ function deckglLayerRenderSpecs(node: CanvasNode) {
       layerType: deckglLayerType(member),
       config: deckglLayerConfig(member),
       binding: member.deckglBinding,
-      datasetRows: deckglLayerDataset(member)?.rows ?? [],
+      dataset: deckglLayerDataset(member),
+      datasetRows: deckglLayerRows(member),
       geometryFeatures: deckglLayerGeometrySource(member)?.features ?? [],
     }));
 }
@@ -318,18 +319,26 @@ function deckglLayerConfig(node: CanvasNode) {
 }
 
 function deckglLayerDataset(node: CanvasNode) {
-  return node.deckglBinding ? getDataset(node.deckglBinding.datasetId) : null;
+  return getDataset(node.deckglBinding?.datasetId ?? node.deckglDatasetId ?? "");
+}
+
+function deckglLayerRows(node: CanvasNode) {
+  const dataset = deckglLayerDataset(node);
+  return dataset?.rows.length
+    ? dataset.rows
+    : dataset?.graph?.nodes.rows ?? [];
+}
+
+function deckglLayerColumns(node: CanvasNode) {
+  const dataset = deckglLayerDataset(node);
+  return dataset?.columns.length
+    ? dataset.columns
+    : dataset?.graph?.nodes.columns ?? [];
 }
 
 function deckglLayerGeometrySource(node: CanvasNode) {
-  return node.deckglBinding ? getGeometrySource(node.deckglBinding.geometrySourceId) : null;
-}
-
-function onDeckglMapInteraction(node: CanvasNode, event: PointerEvent) {
-  if (event.button !== 0) return;
-  // The map surface belongs to Mapbox/deck.gl. Canvas movement is reserved
-  // for the explicit frame-edge handles rendered above it.
-  selectCanvasNode(node.id);
+  const sourceId = node.deckglBinding?.geometrySourceId;
+  return sourceId ? getGeometrySource(sourceId) : null;
 }
 
 function onDeckglMapViewStateChange(node: CanvasNode, state: GeographicMapViewState) {

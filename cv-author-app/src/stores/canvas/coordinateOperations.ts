@@ -1,13 +1,14 @@
 import { computed, nextTick } from "vue";
 import type { Bounds, CanvasGroupNode, CanvasNode, ChartEncodingChannel, CoordinateChannel, CoordinateSystemSpec, DataBindingDropZone, Point } from "../../types";
 import type { CsvColumnDragPayload } from "../../utils/csvColumnDrag";
+import { geoJsonFeatureIds, parseEmbeddedPoint } from "../../utils/geoJsonGeometry";
 import { materializeGraphDataset } from "../../utils/chartDataPipeline";
 import { cartesianTreeDirection, cartesianTreeLeafAxis, isCartesianTreeChart } from "../../utils/treeLayout";
 import type { Matrix } from "./coordinates";
 
 export function useCanvasCoordinateOperations(context: any) {
   const {
-    axesForChart, axisBindingTarget, barItemAxisBinding, bindingForChartChannel,
+    activeGeometrySource, axesForChart, axisBindingTarget, barItemAxisBinding, bindingForChartChannel,
     canvasNodes, canvasRef, chartDrilldown, chartRelationships,
     chartsForAxis,
     cloneCanvasNode, collectNodeBounds, collectNodeSelectionBounds,
@@ -770,10 +771,11 @@ export function useCanvasCoordinateOperations(context: any) {
   function dataBindingDropZoneAtPoint(point: Point, payload: CsvColumnDragPayload): DataBindingDropZone | null {
     const geographicTarget = [...getSelectionScopeNodes()].reverse().find((node) => {
       if (node.layerKind !== "deckgl") return false;
-      const supportedLayer = node.deckglLayerType === "GeoJsonLayer"
-        || node.deckglLayerType === "PolygonLayer"
-        || node.deckglLayerType === "SolidPolygonLayer"
-        || node.deckglLayerType === "ScatterplotLayer";
+      const layerType = node.deckglLayerType ?? node.name.replace(/-(?:group|leaf)-\d+$/, "");
+      const supportedLayer = layerType === "GeoJsonLayer"
+        || layerType === "PolygonLayer"
+        || layerType === "SolidPolygonLayer"
+        || layerType === "ScatterplotLayer";
       if (!supportedLayer) return false;
       const local = toNodeLocalPoint(node, point);
       const minX = node.kind === "leaf" ? node.contentMinX : 0;
@@ -784,18 +786,34 @@ export function useCanvasCoordinateOperations(context: any) {
     if (geographicTarget) {
       const dataset = getDataset(payload.datasetId);
       const source = activeGeometrySource.value;
-      const column = dataset?.columns.find((item) => item.name === payload.field);
+      const table = payload.table === "nodes" && dataset?.graph ? dataset.graph.nodes : dataset;
+      const column = table?.columns.find((item) => item.name === payload.field);
+      const layerType = geographicTarget.deckglLayerType ?? geographicTarget.name.replace(/-(?:group|leaf)-\d+$/, "");
       const usableFeatures = source?.features.filter((feature) =>
-        geographicTarget.deckglLayerType === "ScatterplotLayer"
+        layerType === "ScatterplotLayer"
           || feature.geometry.type === "Polygon"
           || feature.geometry.type === "MultiPolygon") ?? [];
-      const geometryIds = new Set(usableFeatures.flatMap(geoJsonFeatureIds));
-      const hasMatch = !!dataset && !!column && dataset.rows.some((row) => geometryIds.has((row[payload.field] ?? "").trim()));
+      const canonical = (value: string) => {
+        const trimmed = value.trim();
+        if (!trimmed) return "";
+        const numeric = Number(trimmed);
+        return Number.isFinite(numeric) && /^\d+(?:\.0+)?$/.test(trimmed)
+          ? String(Math.trunc(numeric))
+          : trimmed;
+      };
+      const geometryIds = new Set(usableFeatures.flatMap(geoJsonFeatureIds).map(canonical));
+      const rows = table?.rows ?? [];
+      const hasEmbeddedPoint = layerType === "ScatterplotLayer"
+        && rows.some((row) => parseEmbeddedPoint(row[payload.field]) !== null);
+      const hasMatch = hasEmbeddedPoint || (!!dataset && !!column && rows.some((row) => geometryIds.has(canonical(row[payload.field] ?? ""))));
       return {
         type: "geographic-body",
         targetNodeId: geographicTarget.id,
         fieldName: payload.field,
-        compatible: !!source && column?.type === payload.type && hasMatch,
+        compatible: !!column
+          && (hasEmbeddedPoint || !!source)
+          && (column.type === payload.type || (column.type === "quantitative" && payload.type === "ordinal"))
+          && hasMatch,
         bounds: collectNodeSelectionBounds(geographicTarget),
       };
     }

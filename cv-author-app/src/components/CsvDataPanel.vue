@@ -23,6 +23,10 @@ import academicScoresCsv from "../../../data/academic_scores.csv?raw";
 import treeNodesCsv from "../../../data/tree_nodes.csv?raw";
 import graphNodesCsv from "../../../data/nodes.csv?raw";
 import graphEdgesCsv from "../../../data/edges.csv?raw";
+import case2GraphNodesCsv from "../../../data/case2_graph_nodes.csv?raw";
+import case2GraphLinksCsv from "../../../data/case2_graph_links.csv?raw";
+import hexbinGraphNodesCsv from "../../../data/hexbin_graph_nodes.csv?raw";
+import hexbinGraphLinksCsv from "../../../data/hexbin_graph_links.csv?raw";
 import { useDatasetStore } from "../stores/useDatasetStore";
 import type {
   ChartDataTransform,
@@ -555,6 +559,20 @@ async function ensurePresetDatasets() {
       new File([graphNodesCsv], "nodes.csv", { type: "text/csv" }),
       new File([graphEdgesCsv], "edges.csv", { type: "text/csv" }),
       "nodes.csv + edges.csv",
+    );
+  }
+  if (!datasets.value.some((dataset) => dataset.name === "case2_graph_nodes.csv + case2_graph_links.csv")) {
+    await importGraphDataset(
+      new File([case2GraphNodesCsv], "case2_graph_nodes.csv", { type: "text/csv" }),
+      new File([case2GraphLinksCsv], "case2_graph_links.csv", { type: "text/csv" }),
+      "case2_graph_nodes.csv + case2_graph_links.csv",
+    );
+  }
+  if (!datasets.value.some((dataset) => dataset.name === "hexbin_graph_nodes.csv + hexbin_graph_links.csv")) {
+    await importGraphDataset(
+      new File([hexbinGraphNodesCsv], "hexbin_graph_nodes.csv", { type: "text/csv" }),
+      new File([hexbinGraphLinksCsv], "hexbin_graph_links.csv", { type: "text/csv" }),
+      "hexbin_graph_nodes.csv + hexbin_graph_links.csv",
     );
   }
   const preferred = presetDatasets.value.find((dataset) => dataset.name === "case1.csv") ?? presetDatasets.value[0];
