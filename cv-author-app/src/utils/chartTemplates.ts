@@ -5,15 +5,15 @@ import type {
   CoordinateChannel,
 } from "../types";
 import {
-  chartTemplateContracts as schemaContracts,
-  getChartEncodingSchema,
+  chartTemplateContracts,
+  getChartContract,
   normalizeChartFamily,
   type ChartEncodingChannelSchema,
   type ChartEncodingSchema,
-} from "./chartEncodingSchemas";
+} from "./chartContracts";
 
-/** Compatibility exports. The declarative definitions live in chartEncodingSchemas.ts. */
-export const chartTemplateContracts = schemaContracts;
+/** Compatibility exports. The declarative definitions live in chartContracts.ts. */
+export { chartTemplateContracts };
 export type ChartTemplateContract = ChartEncodingSchema;
 export type TemplateChannelMapping = ChartEncodingChannelSchema;
 
@@ -287,11 +287,11 @@ export function semanticSlotForChannel(
 }
 
 export function getChartTemplateContract(chartType: string) {
-  return getChartEncodingSchema(chartType);
+  return getChartContract(chartType);
 }
 
 export function getDimensionChartUpgradeOptions(chartType: string) {
-  return getChartEncodingSchema(chartType)?.dimensionUpgrades.map(({ chartType: targetChartType, label }) => ({
+  return getChartContract(chartType)?.dimensionUpgrades.map(({ chartType: targetChartType, label }) => ({
     chartType: targetChartType,
     label,
   })) ?? [];

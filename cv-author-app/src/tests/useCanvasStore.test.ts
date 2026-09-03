@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { nextTick, ref } from "vue";
-import type { CanvasGroupNode, CanvasLeafNode, CanvasNode, Dataset } from "../types";
+import type { CanvasGroupNode, CanvasLeafNode, CanvasNode, Dataset, PolarCoordinateGuide } from "../types";
 import { collectNodeSelectionBounds } from "../utils/canvasUtils";
 import { csvColumnDragMime, encodeCsvColumnDragPayload } from "../utils/csvColumnDrag";
 import { inferColumnIntents } from "../utils/dimensionInference";
@@ -106,6 +106,17 @@ const layerDataset: Dataset = {
   ],
   primaryKey: ["series", "time"],
 };
+
+function polarGuide(node: CanvasNode): PolarCoordinateGuide | undefined {
+  return node.coordinateGuide?.type === "Polar" ? node.coordinateGuide : undefined;
+}
+
+function coordinateCanvasRef() {
+  return ref({
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 1800, height: 1000 }),
+    querySelectorAll: () => [],
+  } as unknown as HTMLElement);
+}
 
 function leaf(id: string, x: number, y: number): CanvasLeafNode {
   return {
@@ -408,7 +419,7 @@ describe("implemented chart template cards", () => {
   });
 
   it("exposes Single Line and Multi-Line as independent SVG cards", () => {
-    const store = useCanvasStore(ref(null));
+    const store = useCanvasStore(coordinateCanvasRef());
     const lineCandidates = store.implementedTemplateCandidates.value
       .filter((candidate) => candidate.chartType === "LineGraph" || candidate.chartType === "MultiLineChart");
     const lineCards = lineCandidates.map(({ id, name, chartType, src }) => ({ id, name, chartType, src }));
@@ -1093,7 +1104,7 @@ describe("composition selection hierarchy", () => {
   it("keeps concat visual scales unchanged when removing the composition", () => {
     const first = cartesianChart("concat-removal-a", 100, "LineGraph");
     const second = cartesianChart("concat-removal-b", 950, "SingleBarChart");
-    const store = useCanvasStore(coordinateCanvasRef());
+    const store = useCanvasStore(ref(null));
     store.relationshipStore.dispatch({ type: "clear" });
     useDatasetStore().datasets.value = [layerDataset];
     store.canvasNodes.value = [first, second];
@@ -2071,13 +2082,6 @@ describe("dimension overflow decisions", () => {
 });
 
 describe("composition coordinate editing", () => {
-  function coordinateCanvasRef() {
-    return ref({
-      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1800, height: 1000 }),
-      querySelectorAll: () => [],
-    } as unknown as HTMLElement);
-  }
-
   it("synchronizes every facet coordinate guide for origin, scale, and direction edits", async () => {
     const dataset: Dataset = {
       ...layerDataset,
@@ -2236,6 +2240,7 @@ describe("composition coordinate editing", () => {
         mode: "values",
         field: "series",
         values: ["A"],
+        single: true,
         purpose: "filter",
       }],
     };
@@ -2247,6 +2252,7 @@ describe("composition coordinate editing", () => {
         mode: "values",
         field: "series",
         values: ["B"],
+        single: true,
         purpose: "filter",
       }],
     };
@@ -2669,7 +2675,7 @@ describe("composition coordinate editing", () => {
     expect(store.executeComposition("concat", true, ["angle"], "radial")).toBe(true);
     const radialMembers = store.canvasNodes.value;
     expect(radialMembers[0]?.coordinateGuide?.origin).toEqual(radialMembers[1]?.coordinateGuide?.origin);
-    expect(radialMembers.map((node) => [node.coordinateGuide?.innerRadiusRatio, node.coordinateGuide?.outerRadiusRatio])).toEqual([[0, 0.5], [0.5, 1]]);
+    expect(radialMembers.map((node) => [polarGuide(node)?.innerRadiusRatio, polarGuide(node)?.outerRadiusRatio])).toEqual([[0, 0.5], [0.5, 1]]);
     store.axisBindingTarget.value = { nodeId: radialMembers[1]!.id, channel: "angle" };
     expect(store.axisBindingNode.value?.id).toBe(radialMembers[1]!.id);
     store.setAxisBindingAggregation("theta", "sum");
@@ -2683,19 +2689,19 @@ describe("composition coordinate editing", () => {
     expect(store.executeComposition("concat", true, ["radius"], "angular")).toBe(true);
     const angularMembers = store.canvasNodes.value;
     expect(angularMembers[0]?.coordinateGuide?.origin).toEqual(angularMembers[1]?.coordinateGuide?.origin);
-    expect(angularMembers.map((node) => [node.coordinateGuide?.angleOffset, node.coordinateGuide?.angleSpan])).toEqual([[0, 60], [60, 60]]);
+    expect(angularMembers.map((node) => [polarGuide(node)?.angleOffset, polarGuide(node)?.angleSpan])).toEqual([[0, 60], [60, 60]]);
   });
 
   it("uses annular outlines instead of a rectangular selection box for Polar nodes", () => {
     const inner = polarChart("polar-selection-inner", 100, 120);
     const outer = polarChart("polar-selection-outer", 100, 120);
     inner.coordinateGuide = {
-      ...inner.coordinateGuide!,
+      ...polarGuide(inner)!,
       innerRadiusRatio: 0,
       outerRadiusRatio: 0.5,
     };
     outer.coordinateGuide = {
-      ...outer.coordinateGuide!,
+      ...polarGuide(outer)!,
       innerRadiusRatio: 0.5,
       outerRadiusRatio: 1,
     };
@@ -2894,8 +2900,8 @@ describe("composition coordinate editing", () => {
     await nextTick();
 
     expect(store.canvasNodes.value.every((node) => node.compositionSpec?.type === "concat")).toBe(true);
-    expect(tree.chartSpec?.scales?.x.domain).toEqual(barDomain);
-    expect(bars.chartSpec?.scales?.x.domain).toEqual(barDomain);
+    expect(tree.chartSpec?.scales?.x?.domain).toEqual(barDomain);
+    expect(bars.chartSpec?.scales?.x?.domain).toEqual(barDomain);
     expect(bars.renderedContent?.match(/data-mark-role="bar"/g)).toHaveLength(barDomain.length);
     expect(hasNonLeafBars).toBe(barDomain.some((value) => value === "Root" || value === "Branch"));
   });
@@ -3143,8 +3149,8 @@ describe("composition coordinate editing", () => {
     expect(concatStore.canvasNodes.value).toHaveLength(3);
     expect(concatStore.canvasNodes.value.every((node) => node.compositionSpec?.id === concatCompositionId)).toBe(true);
     expect(concatStore.canvasNodes.value.map((node) => [
-      node.coordinateGuide?.innerRadiusRatio,
-      node.coordinateGuide?.outerRadiusRatio,
+      polarGuide(node)?.innerRadiusRatio,
+      polarGuide(node)?.outerRadiusRatio,
     ])).toEqual([[0, 1 / 3], [1 / 3, 2 / 3], [2 / 3, 1]]);
 
     const angularFirst = polarChart("repeat-polar-angular-first", 100, 120);
@@ -3166,8 +3172,8 @@ describe("composition coordinate editing", () => {
       angularThird.id,
     )).toBe(true);
     expect(angularStore.canvasNodes.value.map((node) => [
-      node.coordinateGuide?.angleOffset,
-      node.coordinateGuide?.angleSpan,
+      polarGuide(node)?.angleOffset,
+      polarGuide(node)?.angleSpan,
     ])).toEqual([[0, 40], [40, 40], [80, 40]]);
   });
 

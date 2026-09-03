@@ -4,7 +4,7 @@ import { arc, pie } from "d3-shape";
 import type { CartesianCoordinateGuide, ChartEncoding, ChartSpec, Dataset, LayerSpec, NestedChildFrame, NestedSpec, ChartPlotArea, ChartPolarArea, ChartScaleSpec, CoordinateGuide, MarkGroupSharedConfig } from "../types";
 import { renderLineChart, type LineRenderInput } from "./lineRenderer";
 import { cartesianAxisEncoding, normalizeBarChartVariant, normalizeChartTemplate, physicalCartesianAxisEncoding } from "./chartTemplates";
-import { getChartEncodingSchema, type ChartRendererKey } from "./chartEncodingSchemas";
+import { getChartContract, type ChartRendererKey } from "./chartContracts";
 import { resolvedPolarRadiusMode } from "./encodingConfig";
 import {
   defaultColorMapping,
@@ -1043,7 +1043,7 @@ export const deterministicChartPipelines: Record<ChartRendererKey, ChartPipeline
 };
 
 export function renderDeterministicChart(input: GenericRenderInput) {
-  const schema = getChartEncodingSchema(input.chartSpec.chartType);
+  const schema = getChartContract(input.chartSpec.chartType);
   if (!schema) throw new Error(`Unsupported chart template: ${input.chartSpec.chartType}`);
   const pipeline = deterministicChartPipelines[schema.renderer];
   const coordinateSystem = schema.coordinateSystem ?? pipeline.coordinateSystem;

@@ -1,6 +1,7 @@
 import { getChartTemplateContract, normalizeBarChartVariant } from "./chartTemplates";
 import { isDataColumnTypeCompatible } from "../types";
 import type { DataColumnType, Dataset, ChartSpec } from "../types";
+import type { ChartContract, ChartRoleContract } from "./chartContracts";
 
 export type ChartRepairStatus =
   | "VALID"
@@ -11,23 +12,11 @@ export type ChartRepairStatus =
 
 export type ChartRepairIssue = Exclude<ChartRepairStatus, "VALID" | "UNRESOLVABLE">;
 
-export type ChartRepairRoleContract = {
-  id: string;
-  kind: "dimension" | "measure" | "style";
-  accepts: DataColumnType[];
-  minFields: number;
-  maxFields: number;
-  requiresPartition?: boolean;
-  minCardinality?: number;
-  maxCardinality?: number;
-};
+export type ChartRepairRoleContract = Omit<ChartRoleContract, "kind"> & { kind: "dimension" | "measure" | "style" };
 
-export type ChartRepairContract = {
+/** Repair is an algorithmic view of the canonical chart contract. */
+export type ChartRepairContract = Pick<ChartContract, "allowFieldReuse" | "aggregationPolicy" | "requiresFunctionalDependency" | "requiresIndependentDimensions"> & {
   roles: ChartRepairRoleContract[];
-  allowFieldReuse: boolean;
-  aggregationPolicy: "allowed" | "forbidden";
-  requiresFunctionalDependency: boolean;
-  requiresIndependentDimensions: boolean;
 };
 
 export type ChartRoleBinding = Record<string, string[]>;

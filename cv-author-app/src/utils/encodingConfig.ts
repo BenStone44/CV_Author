@@ -1,5 +1,5 @@
 import type { ChartSpec, ChartEncodingChannel, DataColumnType } from "../types";
-import { getChartEncodingSchema } from "./chartEncodingSchemas";
+import { getChartContract } from "./chartContracts";
 import { normalizeBarChartVariant, normalizeChartTemplate } from "./chartTemplates";
 
 export type EncodingChannelConfig = {
@@ -77,7 +77,7 @@ export function resolvedPolarRadiusMode(spec: ChartSpec): PolarRadiusBindingMode
 
 export function resolvedPolarAxisRoles(spec: ChartSpec, field: string): PolarAxisRole[] {
   const template = normalizeChartTemplate(spec.chartType);
-  if (getChartEncodingSchema(spec.chartType)?.coordinateSystem !== "Polar") return [];
+  if (getChartContract(spec.chartType)?.coordinateSystem !== "Polar") return [];
   const thetaField = spec.encodings.theta?.field ?? spec.encodings.angle?.field ?? spec.encodings.y?.field;
   const radiusField = spec.encodings.radius?.field;
   const segmentField = spec.encodings.segment?.field;
@@ -93,7 +93,7 @@ export function resolvedPolarAxisRoles(spec: ChartSpec, field: string): PolarAxi
 }
 
 export function getEncodingChannelConfigs(chartType: string): EncodingChannelConfig[] {
-  const schema = getChartEncodingSchema(chartType);
+  const schema = getChartContract(chartType);
   if (!schema) return [];
   return schema.channels
     .filter((channel) => channel.configurable !== false)
@@ -147,7 +147,7 @@ function uniqueFields(fields: Array<string | undefined>) {
 
 export function resolveChartEncodingIssues(spec: ChartSpec): EncodingResolutionIssue[] {
   const configs = getEncodingChannelConfigsForSpec(spec);
-  const contract = getChartEncodingSchema(spec.chartType);
+  const contract = getChartContract(spec.chartType);
   const issues: EncodingResolutionIssue[] = [];
   const resolvedDataChannels: Array<{
     channel: ChartEncodingChannel | "series";

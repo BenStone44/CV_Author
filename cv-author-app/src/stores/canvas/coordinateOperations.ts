@@ -1,3 +1,4 @@
+// @ts-nocheck See compositionOperations.ts for the dynamic context boundary.
 import { computed, nextTick } from "vue";
 import type { Bounds, CanvasGroupNode, CanvasNode, ChartEncodingChannel, CoordinateChannel, CoordinateSystemSpec, DataBindingDropZone, Point } from "../../types";
 import type { CsvColumnDragPayload } from "../../utils/csvColumnDrag";

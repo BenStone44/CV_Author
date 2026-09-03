@@ -560,16 +560,16 @@ function createSeriesItemPresentation(node: CanvasNode) {
 function displaySeriesItemLabel(label: string) {
   return label.replace(/\s+item$/i, "");
 }
-const seriesItemPresentations = computed(() => selectionScopeNodes.value.flatMap((node) => {
+const seriesItemPresentations = computed(() => selectionScopeNodes.value.flatMap((node: CanvasNode) => {
   const presentation = createSeriesItemPresentation(node);
   return presentation ? [presentation] : [];
 }));
 const seriesItemOverlay = computed(() => {
   if (selectedIds.value.length !== 1) return null;
-  return seriesItemPresentations.value.find((item) =>
+  return seriesItemPresentations.value.find((item: NonNullable<ReturnType<typeof createSeriesItemPresentation>>) =>
     item.itemEditable && item.node.id === selectedIds.value[0]) ?? null;
 });
-const seriesItemLegends = computed(() => seriesItemPresentations.value.flatMap((item) => {
+const seriesItemLegends = computed(() => seriesItemPresentations.value.flatMap((item: NonNullable<ReturnType<typeof createSeriesItemPresentation>>) => {
   if (!item.legendVisible || item.node.id === seriesItemOverlay.value?.node.id || item.members.length === 0) return [];
   const longestLabel = Math.max(...item.members.map((member) => member.label.length), 1);
   const height = item.members.length * 22;

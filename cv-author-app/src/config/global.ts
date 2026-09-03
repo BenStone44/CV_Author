@@ -115,7 +115,7 @@ export const frontendPaletteCssVariables = {
 /** Typography shared by all editor UI components. */
 export const frontendTypography = {
   family: "Arial, sans-serif",
-  // style: "italic",
+  style: "normal",
   weight: 700,
   scale: 1,
 } as const;

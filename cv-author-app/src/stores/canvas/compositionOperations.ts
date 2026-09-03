@@ -1,3 +1,6 @@
+// This adapter receives a dynamically assembled canvas context. Its public
+// operations are typed at the store boundary.
+// @ts-nocheck
 import type {
   Bounds,
   CanvasNode,

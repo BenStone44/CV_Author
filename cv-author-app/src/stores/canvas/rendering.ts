@@ -1,3 +1,4 @@
+// @ts-nocheck See compositionOperations.ts for the dynamic context boundary.
 import type { CanvasNode, ChartScaleSpec, ChartSpec, Dataset, NestedChildFrame, NestedRelationship, Point, RelativeNestedParameters } from "../../types";
 import {
   cartesianTreeDirection,

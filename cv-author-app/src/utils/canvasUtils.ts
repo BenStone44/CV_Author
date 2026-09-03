@@ -6,7 +6,7 @@ import type {
   AbsoluteNodeFrame,
   ChartSpec,
 } from "../types";
-import { getChartEncodingSchema } from "./chartEncodingSchemas";
+import { getChartContract } from "./chartContracts";
 import { RADIAL_DENDROGRAM_SELECTION_PADDING } from "./radialClusterLayout";
 
 export function clamp(value: number, min: number, max: number) {
@@ -195,7 +195,7 @@ export function getPolarOccupiedGeometry(node: CanvasNode): PolarOccupiedGeometr
   const guide = node.coordinateGuide;
   const plotArea = node.chartSpec?.plotArea;
   const polarGuide = guide?.type === "Polar" ? guide : null;
-  const chartSchema = node.chartSpec ? getChartEncodingSchema(node.chartSpec.chartType) : null;
+  const chartSchema = node.chartSpec ? getChartContract(node.chartSpec.chartType) : null;
   const declaredPolar = node.coordinateSystem?.type === "Polar"
     || chartSchema?.coordinateSystem === "Polar";
   if (!polarGuide && !declaredPolar) return null;

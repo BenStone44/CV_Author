@@ -21,6 +21,7 @@ import type {
   ChartAxisChannel,
   ChartAxisConfig,
   ChartSpec,
+  ChartGroupValueOrderTransform,
   CompositionSpec,
   CoordinateGuide,
   DataColumn,
@@ -263,7 +264,7 @@ const aggregationEntries = computed(() => {
 const singleBarValueOrder = computed(() => {
   const groupField = props.chartSpec.encodings.x?.field;
   const valueField = props.chartSpec.encodings.y?.field;
-  return props.chartSpec.dataTransforms?.find((transform) => transform.kind === "order"
+  return props.chartSpec.dataTransforms?.find((transform): transform is ChartGroupValueOrderTransform => transform.kind === "order"
     && transform.groupField === groupField
     && transform.valueField === valueField) ?? null;
 });

@@ -1,0 +1,405 @@
+import type {
+  ChartEncodingChannel,
+  ChartTemplateKind,
+  CoordinateChannel,
+  CoordinateSystem,
+  DataColumnType,
+} from "../types";
+
+export type EncodingRole = "dimension" | "measure" | "series" | "style";
+export type EncodingEmptyLabel = "Not bound" | "Static";
+export type ChartRendererKey =
+  | "line"
+  | "scatter"
+  | "bar"
+  | "pie"
+  | "donut"
+  | "matrix"
+  | ChartTemplateKind;
+
+/** A channel-level data role in a chart contract. */
+export type ChartChannelContract = {
+  channel: ChartEncodingChannel;
+  label: string;
+  semanticLabel?: string;
+  role: EncodingRole;
+  required: boolean;
+  accepts: DataColumnType[];
+  emptyLabel: EncodingEmptyLabel;
+  multiple?: boolean;
+  /** Categorical bindings stay single-select even when measure-set bindings are multi-select. */
+  categoricalExclusive?: boolean;
+  configurable?: boolean;
+};
+
+/** Backwards-compatible name used by encoding controls. */
+export type ChartEncodingChannelSchema = ChartChannelContract;
+
+export type ChartDimensionUpgradeSchema = {
+  chartType: string;
+  label: string;
+  role: "series";
+};
+
+export type ChartRoleContract = {
+  id: string;
+  kind: "dimension" | "measure";
+  accepts: DataColumnType[];
+  minFields: number;
+  maxFields: number;
+  requiresPartition?: boolean;
+  minCardinality?: number;
+  maxCardinality?: number;
+};
+
+/**
+ * Declarative data contract for an implemented chart block.
+ *
+ * `channels` describes the channel assignments exposed by the renderer. The
+ * explicit capacity and uniqueness fields describe the analytical contract
+ * independently of any renderer or UI implementation.
+ */
+export type ChartContract = {
+  chartType: string;
+  id: ChartTemplateKind;
+  family: ChartTemplateKind;
+  label: string;
+  renderer: ChartRendererKey;
+  rendererVersion: 1 | 3;
+  coordinateSystem: Exclude<CoordinateSystem, "Geographic">;
+  markRole: "line" | "point" | "bar" | "arc" | "cell" | "area" | "path" | "node" | "box" | "contour" | "hexagon" | "link";
+  channels: ChartEncodingChannelSchema[];
+  aggregationPolicy: "allowed" | "forbidden";
+  requiresFunctionalDependency: boolean;
+  requiresIndependentDimensions: boolean;
+  allowFieldReuse: boolean;
+  supportsLayerComposition: boolean;
+  shareableChannels: CoordinateChannel[];
+  unusedDimensionStrategies: Array<"flatten" | "facet" | "nested">;
+  dimensionUpgrades: ChartDimensionUpgradeSchema[];
+  /** Required channel ids for instantiating this block. */
+  requiredChannels: string[];
+  /** Capacity of analytical dimensions and measures represented by the block. */
+  dimensions: { min: number; max: number };
+  measures: { min: number; max: number };
+  /** Role-level constraints used by compatibility and repair algorithms. */
+  roles: ChartRoleContract[];
+  /** `unique(channels...)`; omitted only for marks with no visual key. */
+  uniqueness?: { channels: string[] };
+  /** Alias matching the notation unique(c1, ..., ck). */
+  unique?: string[];
+  /** Contract-level aggregation semantics. */
+  aggregation: { allowed: boolean; default: "sum" | "mean" | "count" | "none" };
+};
+
+/** Compatibility alias for existing encoding consumers. */
+export type ChartEncodingSchema = ChartContract;
+
+type SchemaDefaults = Omit<ChartContract, "chartType" | "label" | "channels" | "requiredChannels" | "dimensions" | "measures" | "roles" | "uniqueness" | "unique" | "aggregation">;
+
+const commonStrategies: ChartEncodingSchema["unusedDimensionStrategies"] = ["flatten", "facet", "nested"];
+
+const familyDefaults: Record<ChartTemplateKind, SchemaDefaults> = {
+  line: { id: "line", family: "line", renderer: "line", rendererVersion: 3, coordinateSystem: "Cartesian", markRole: "line", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  scatter: { id: "scatter", family: "scatter", renderer: "scatter", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "point", aggregationPolicy: "forbidden", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  bar: { id: "bar", family: "bar", renderer: "bar", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "bar", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  pie: { id: "pie", family: "pie", renderer: "pie", rendererVersion: 1, coordinateSystem: "Polar", markRole: "arc", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: true, supportsLayerComposition: true, shareableChannels: ["angle", "radius"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  donut: { id: "donut", family: "donut", renderer: "donut", rendererVersion: 1, coordinateSystem: "Polar", markRole: "arc", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: true, supportsLayerComposition: true, shareableChannels: ["angle", "radius"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  matrix: { id: "matrix", family: "matrix", renderer: "matrix", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "cell", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  area: { id: "area", family: "area", renderer: "area", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "area", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  parallel: { id: "parallel", family: "parallel", renderer: "parallel", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "path", aggregationPolicy: "forbidden", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: true, supportsLayerComposition: true, shareableChannels: [], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  hierarchy: { id: "hierarchy", family: "hierarchy", renderer: "hierarchy", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "node", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: false, shareableChannels: [], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  calendar: { id: "calendar", family: "calendar", renderer: "calendar", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "cell", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: [], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  boxplot: { id: "boxplot", family: "boxplot", renderer: "boxplot", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "box", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  contour: { id: "contour", family: "contour", renderer: "contour", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "contour", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  hexbin: { id: "hexbin", family: "hexbin", renderer: "hexbin", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "hexagon", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  flow: { id: "flow", family: "flow", renderer: "flow", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "link", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: [], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+};
+
+function defineSchema(
+  chartType: string,
+  label: string,
+  family: ChartTemplateKind,
+  channels: ChartEncodingChannelSchema[],
+  overrides: Partial<SchemaDefaults> = {},
+): ChartContract {
+  const base = { chartType, label, channels, ...familyDefaults[family], ...overrides };
+  const dimensions = channels.filter((channel) => channel.role === "dimension" || channel.role === "series");
+  const measures = channels.filter((channel) => channel.role === "measure");
+  const requiredChannels = channels.filter((channel) => channel.required).map((channel) => channel.channel);
+  const uniquenessChannels = dimensions.filter((channel) => channel.required).map((channel) => channel.channel);
+  const roles: ChartRoleContract[] = channels
+    .filter((channel) => channel.role === "dimension" || channel.role === "series" || channel.role === "measure")
+    .map((channel) => ({
+      id: channel.channel,
+      kind: channel.role === "measure" ? "measure" : "dimension",
+      accepts: [...channel.accepts],
+      minFields: channel.required ? 1 : 0,
+      maxFields: channel.multiple ? Number.POSITIVE_INFINITY : 1,
+    }));
+  return {
+    ...base,
+    requiredChannels,
+    dimensions: { min: dimensions.filter((channel) => channel.required).length, max: dimensions.filter((channel) => channel.multiple).length ? Number.POSITIVE_INFINITY : dimensions.length },
+    measures: { min: measures.filter((channel) => channel.required).length, max: measures.filter((channel) => channel.multiple).length ? Number.POSITIVE_INFINITY : measures.length },
+    roles,
+    uniqueness: uniquenessChannels.length ? { channels: [...new Set(uniquenessChannels)] } : undefined,
+    unique: uniquenessChannels.length ? [...new Set(uniquenessChannels)] : undefined,
+    aggregation: { allowed: base.aggregationPolicy === "allowed", default: base.aggregationPolicy === "allowed" ? "sum" : "none" },
+  };
+}
+
+const xAny = { channel: "x", label: "X", role: "dimension", required: true, accepts: ["ordinal", "quantitative", "nominal"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
+const yMeasure = { channel: "y", label: "Y", role: "measure", required: true, accepts: ["ordinal", "quantitative"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
+const multiLineYMeasure = { ...yMeasure, multiple: true } satisfies ChartEncodingChannelSchema;
+const lineSize = { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
+const lineShape = { channel: "shape", label: "Shape", role: "style", required: false, accepts: ["nominal"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
+const lineSeries = { channel: "color", label: "Color", semanticLabel: "Series", role: "series", required: false, accepts: ["nominal", "ordinal"], emptyLabel: "Static", categoricalExclusive: true } satisfies ChartEncodingChannelSchema;
+const scatterColor = { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
+const barX = { channel: "x", label: "X", role: "dimension", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
+const categoricalBarX = { ...barX, accepts: ["nominal", "ordinal"] } satisfies ChartEncodingChannelSchema;
+const barY = { channel: "y", label: "Y", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
+const barStyle = { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
+const barSeries = { channel: "color", label: "Color", semanticLabel: "Series", role: "series", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Static", multiple: true, categoricalExclusive: true } satisfies ChartEncodingChannelSchema;
+const barSize = { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
+const areaChannels = (requiresSeries: boolean): ChartEncodingChannelSchema[] => [
+  xAny,
+  { ...yMeasure, accepts: ["quantitative"] },
+  { ...lineSeries, required: requiresSeries },
+];
+const hierarchyChannels: ChartEncodingChannelSchema[] = [
+  { channel: "key", label: "Node ID", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+  { channel: "parent", label: "Parent ID", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+  { channel: "value", label: "Node value", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Not bound" },
+  { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "quantitative"], emptyLabel: "Static" },
+  { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
+];
+const flowChannels: ChartEncodingChannelSchema[] = [
+  { channel: "source", label: "Source", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+  { channel: "target", label: "Target", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+  { channel: "value", label: "Flow value", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Not bound" },
+  { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "quantitative"], emptyLabel: "Static" },
+];
+
+/**
+ * The single reviewable source of truth for every chart exposed by the app.
+ * Encoding controls consume `channels`; rendering consumes `renderer` and
+ * `coordinateSystem`; validation consumes the remaining contract fields.
+ */
+export const chartContracts = {
+  LineGraph: defineSchema("LineGraph", "Single Line", "line", [xAny, yMeasure, { ...lineSeries, configurable: false }, lineSize, lineShape], {
+    aggregationPolicy: "forbidden",
+    requiresFunctionalDependency: true,
+    dimensionUpgrades: [{ chartType: "MultiLineChart", label: "Multi-line", role: "series" }],
+  }),
+  MultiLineChart: defineSchema("MultiLineChart", "Multi-Line Chart", "line", [xAny, multiLineYMeasure, lineSeries, lineSize, lineShape]),
+  Scatterplot: defineSchema("Scatterplot", "Scatterplot", "scatter", [
+    xAny,
+    { ...yMeasure, accepts: ["quantitative", "ordinal", "nominal"] },
+    scatterColor,
+    lineSize,
+  ]),
+  SingleBarChart: defineSchema("SingleBarChart", "Single Bar", "bar", [barX, barY, barStyle, barSize], {
+    dimensionUpgrades: [
+      { chartType: "GroupedBarChart", label: "Grouped bar", role: "series" },
+      { chartType: "StackedBarChart", label: "Stacked bar", role: "series" },
+    ],
+  }),
+  GroupedBarChart: defineSchema("GroupedBarChart", "Grouped Bar", "bar", [categoricalBarX, barY, { ...barSeries, semanticLabel: "Group item" }, barSize]),
+  StackedBarChart: defineSchema("StackedBarChart", "Stacked Bar", "bar", [categoricalBarX, barY, { ...barSeries, semanticLabel: "Segment item" }, barSize]),
+  DivergentBarChart: defineSchema("DivergentBarChart", "Divergent Bar", "bar", [barX, barY, barStyle, barSize], {
+    dimensionUpgrades: [{ chartType: "DivergentStackedBarChart", label: "Divergent stacked bar", role: "series" }],
+  }),
+  DivergentStackedBarChart: defineSchema("DivergentStackedBarChart", "Divergent Stacked Bar", "bar", [categoricalBarX, barY, { ...barSeries, semanticLabel: "Segment item" }, barSize]),
+  PieChart: defineSchema("PieChart", "Pie Chart", "pie", [
+    { channel: "theta", label: "Theta", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
+    { channel: "segment", label: "Segment", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound", multiple: true, categoricalExclusive: true },
+    { channel: "radius", label: "R", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Not bound" },
+  ]),
+  DonutChart: defineSchema("DonutChart", "Donut", "donut", [
+    { channel: "theta", label: "Theta", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
+    { channel: "segment", label: "Segment", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound", multiple: true, categoricalExclusive: true },
+    { channel: "radius", label: "R", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Not bound" },
+  ]),
+  MatrixDiagram: defineSchema("MatrixDiagram", "Matrix", "matrix", [
+    { channel: "x", label: "X", role: "dimension", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound" },
+    { channel: "y", label: "Y", role: "dimension", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound" },
+    { channel: "color", label: "Color", role: "measure", required: false, accepts: ["quantitative", "nominal"], emptyLabel: "Static" },
+  ]),
+  AreaChart: defineSchema("AreaChart", "Area Chart", "area", areaChannels(false), {
+    aggregationPolicy: "allowed",
+    requiresFunctionalDependency: false,
+    dimensionUpgrades: [{ chartType: "StackedAreaChart", label: "Stacked area", role: "series" }],
+  }),
+  StackedAreaChart: defineSchema("StackedAreaChart", "Stacked Area", "area", areaChannels(true)),
+  Streamgraph: defineSchema("Streamgraph", "Streamgraph", "area", areaChannels(true)),
+  HorizonChart: defineSchema("HorizonChart", "Horizon Chart", "area", areaChannels(true), { coordinateSystem: "CoordinateFree", shareableChannels: [] }),
+  ParallelCoordinatesPlot: defineSchema("ParallelCoordinatesPlot", "Parallel Coordinates", "parallel", [
+    { channel: "dimensions", label: "Dimensions", role: "dimension", required: true, accepts: ["quantitative", "nominal", "ordinal"], emptyLabel: "Not bound", multiple: true },
+    { channel: "color", label: "Color", role: "series", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" },
+  ]),
+  Icicle: defineSchema("Icicle", "Icicle", "hierarchy", hierarchyChannels),
+  Sunburst: defineSchema("Sunburst", "Sunburst", "hierarchy", hierarchyChannels, {
+    coordinateSystem: "Polar",
+    shareableChannels: ["angle", "radius"],
+  }),
+  Treemap: defineSchema("Treemap", "Treemap", "hierarchy", hierarchyChannels),
+  Dendrogram: defineSchema("Dendrogram", "Dendrogram", "hierarchy", [
+    ...hierarchyChannels,
+    { channel: "category", label: "Leaf order", role: "dimension", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+  ], {
+    coordinateSystem: "Cartesian",
+    rendererVersion: 3,
+    shareableChannels: ["x", "y"],
+  }),
+  RadialDendrogram: defineSchema("RadialDendrogram", "Radial Dendrogram", "hierarchy", [
+    { channel: "key", label: "Node ID", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "parent", label: "Parent ID", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+    // Leaf order is an optional refinement. A regular tree CSV only needs
+    // node_id and parent_id; the renderer falls back to Node ID ordering.
+    { channel: "theta", label: "Leaf order", role: "dimension", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" },
+    { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "quantitative"], emptyLabel: "Static" },
+    { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
+  ], {
+    coordinateSystem: "Polar",
+    rendererVersion: 3,
+    shareableChannels: ["angle", "radius"],
+  }),
+  RadialBarChart: defineSchema("RadialBarChart", "Radial Bar Chart", "bar", [
+    { channel: "theta", label: "Theta", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
+    { channel: "segment", label: "Segment", role: "dimension", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound" },
+    { channel: "radius", label: "R", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
+    { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" },
+  ], {
+    coordinateSystem: "Polar",
+    shareableChannels: ["angle", "radius"],
+  }),
+  Calendar: defineSchema("Calendar", "Calendar", "calendar", [
+    { channel: "date", label: "Date", role: "dimension", required: true, accepts: ["ordinal"], emptyLabel: "Not bound" },
+    { channel: "value", label: "Daily value", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
+    { channel: "color", label: "Color", role: "style", required: false, accepts: ["quantitative", "nominal"], emptyLabel: "Static" },
+  ]),
+  Boxplot: defineSchema("Boxplot", "Box Plot", "boxplot", [
+    { channel: "x", label: "X", role: "dimension", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
+    { channel: "y", label: "Y", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
+    { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "quantitative"], emptyLabel: "Static" },
+  ]),
+  Contour: defineSchema("Contour", "Contour", "contour", [
+    { channel: "x", label: "X", role: "dimension", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
+    { channel: "y", label: "Y", role: "dimension", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
+    { channel: "color", label: "Value", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
+  ]),
+  Hexbin: defineSchema("Hexbin", "Hexbin", "hexbin", [
+    { channel: "x", label: "X", role: "dimension", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
+    { channel: "y", label: "Y", role: "dimension", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
+  ]),
+  Chord: defineSchema("Chord", "Chord", "flow", flowChannels),
+  Sankey: defineSchema("Sankey", "Sankey", "flow", flowChannels),
+  ForceDirectedGraph: defineSchema("ForceDirectedGraph", "Force-Directed Graph", "flow", [
+    { channel: "key", label: "Node ID", role: "dimension", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "source", label: "Source", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "target", label: "Target", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "value", label: "Link value", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Not bound" },
+    { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" },
+    { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
+  ], {
+    markRole: "node",
+    aggregationPolicy: "forbidden",
+  }),
+  GraphLink: defineSchema("GraphLink", "Graph Link", "flow", [
+    { channel: "source", label: "Source", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "target", label: "Target", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "value", label: "Link value", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Not bound" },
+    { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" },
+    { channel: "size", label: "Thickness", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
+  ], {
+    coordinateSystem: "Cartesian",
+    markRole: "link",
+    aggregationPolicy: "forbidden",
+    shareableChannels: ["x", "y"],
+  }),
+  GraphLinkPolar: defineSchema("GraphLinkPolar", "Graph Link (Polar)", "flow", [
+    { channel: "source", label: "Source", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "target", label: "Target", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+    { channel: "value", label: "Link value", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Not bound" },
+    { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" },
+    { channel: "size", label: "Thickness", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
+  ], {
+    coordinateSystem: "Polar",
+    markRole: "link",
+    aggregationPolicy: "forbidden",
+    shareableChannels: ["angle", "radius"],
+  }),
+} satisfies Record<string, ChartEncodingSchema>;
+
+/** Compatibility export for the former encoding-schema module. */
+export const chartEncodingSchemas = chartContracts;
+
+export type SupportedChartType = keyof typeof chartContracts;
+
+function normalizedName(value: string) {
+  return value.replace(/[\s_-]/g, "").toLowerCase();
+}
+
+const exactSchemas = new Map(
+  Object.values(chartContracts).map((schema) => [normalizedName(schema.chartType), schema]),
+);
+
+const familyMatchers: Array<readonly [ChartTemplateKind, (value: string) => boolean]> = [
+  ["parallel", (value) => value.includes("parallelcoordinate")],
+  ["hierarchy", (value) => ["icicle", "sunburst", "treemap", "dendrogram"].some((name) => value.includes(name))],
+  ["calendar", (value) => value.includes("calendar")],
+  ["boxplot", (value) => value.includes("boxplot") || value.includes("boxandwhisker")],
+  ["contour", (value) => value.includes("contour")],
+  ["hexbin", (value) => value.includes("hexbin")],
+  ["flow", (value) => value.includes("chord") || value.includes("sankey")],
+  ["area", (value) => value.includes("area") || value.includes("streamgraph") || value.includes("horizon")],
+  ["scatter", (value) => value.includes("scatter")],
+  ["bar", (value) => value.includes("barchart") || value === "bar"],
+  ["donut", (value) => value.includes("donut")],
+  ["pie", (value) => value.includes("pie")],
+  ["matrix", (value) => value.includes("matrix") || value.includes("heatmap")],
+  ["line", (value) => value === "linegraph" || value.includes("linechart")],
+];
+
+const familyFallbacks: Record<ChartTemplateKind, ChartEncodingSchema> = {
+  line: chartContracts.LineGraph,
+  scatter: chartContracts.Scatterplot,
+  bar: chartContracts.SingleBarChart,
+  pie: chartContracts.PieChart,
+  donut: chartContracts.DonutChart,
+  matrix: chartContracts.MatrixDiagram,
+  area: chartContracts.AreaChart,
+  parallel: chartContracts.ParallelCoordinatesPlot,
+  hierarchy: chartContracts.Icicle,
+  calendar: chartContracts.Calendar,
+  boxplot: chartContracts.Boxplot,
+  contour: chartContracts.Contour,
+  hexbin: chartContracts.Hexbin,
+  flow: chartContracts.Chord,
+};
+
+export function normalizeChartFamily(chartType: string): ChartTemplateKind | null {
+  const value = normalizedName(chartType);
+  return exactSchemas.get(value)?.family
+    ?? familyMatchers.find(([, matches]) => matches(value))?.[0]
+    ?? null;
+}
+
+export function getChartContract(chartType: string): ChartContract | null {
+  const value = normalizedName(chartType);
+  const exact = exactSchemas.get(value);
+  if (exact) return exact;
+  const family = normalizeChartFamily(chartType);
+  if (!family) return null;
+  const fallback = familyFallbacks[family];
+  return { ...fallback, chartType, label: chartType };
+}
+
+/** Resolve the contract for an exact chart type or its chart family. */
+/** Compatibility name retained for consumers of the old schema module. */
+export const getChartEncodingSchema = getChartContract;
+
+export const chartTemplateContracts = Object.fromEntries(
+  (Object.keys(familyFallbacks) as ChartTemplateKind[]).map((family) => [family, familyFallbacks[family]]),
+) as Record<ChartTemplateKind, ChartEncodingSchema>;

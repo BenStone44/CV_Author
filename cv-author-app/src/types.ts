@@ -115,11 +115,12 @@ export type CoordinateSystem = "Cartesian" | "Polar" | "Geographic" | "Coordinat
 export type IconKind = "cartesian" | "polar" | "geographic" | "coordinate-free";
 
 /** CSV semantic types used by contracts and encodings. */
-export type DataColumnType = "nominal" | "ordinal" | "quantitative";
+export type DataColumnType = "nominal" | "ordinal" | "quantitative" | "temporal";
 
 export function isDataColumnTypeCompatible(accepts: readonly DataColumnType[], type: DataColumnType) {
   return accepts.includes(type)
-    || (type === "ordinal" && accepts.includes("nominal"));
+    || (type === "ordinal" && accepts.includes("nominal"))
+    || (type === "temporal" && (accepts.includes("ordinal") || accepts.includes("nominal")));
 }
 
 export type DataColumn = {

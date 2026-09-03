@@ -1516,7 +1516,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const snapshotNodes = canvasNodesWithRestoredCompositionLayout();
     return {
       instanceDocument: createChartInstanceDocument(snapshotNodes),
-      nodes: snapshotNodes.map((node) => cloneCanvasNode(node)),
+      nodes: snapshotNodes.map((node: CanvasNode) => cloneCanvasNode(node)),
       selectedIds: [...selectedIds.value],
       editingGroupPath: [...editingGroupPath.value],
       relationships,
@@ -2356,11 +2356,11 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         || (transform.purpose === undefined && transform.single));
   }
 
-  function facetClueTransforms(spec: ChartSpec | undefined) {
+  function facetClueTransforms(spec: ChartSpec | null | undefined) {
     return (spec?.dataTransforms ?? []).filter(isFacetClueTransform);
   }
 
-  function nestClueTransforms(spec: ChartSpec | undefined) {
+  function nestClueTransforms(spec: ChartSpec | null | undefined) {
     return (spec?.dataTransforms ?? []).filter((transform): transform is Extract<ChartDataTransform, { kind: "filter"; mode: "values" }> =>
       transform.kind === "filter"
         && transform.mode === "values"
@@ -2443,7 +2443,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       : undefined;
     const parentDimensionFields = chartRoleFields(parentSpec, new Set<NestedContextRole>(["dimension"]));
     const parentSeriesFields = chartRoleFields(parentSpec, new Set<NestedContextRole>(["series"]));
-    const clues = nestClueTransforms(child.chartSpec);
+    const clues = nestClueTransforms(childSpec);
     const fieldsToResolve = clues.length > 0
       ? clues.map((clue) => clue.field)
       : hierarchyKeyField
@@ -2520,7 +2520,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const ownerClues = facetClueTransforms(owner.chartSpec);
     if (ownerClues.length === 0) return;
     const sharedFields = new Set(ownerClues
-      .filter((clue) => members.every((member) => facetClueTransforms(member.chartSpec).some((candidate) => candidate.field === clue.field)))
+      .filter((clue) => members.every((member: CanvasNode) => facetClueTransforms(member.chartSpec).some((candidate) => candidate.field === clue.field)))
       .map((clue) => clue.field));
     if (sharedFields.size === 0) return;
     const retained = ownerTransforms.map((transform) => ({ ...transform }));
@@ -2796,7 +2796,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const currentDirection = axis === "x" ? node.coordinateGuide.xDirection : node.coordinateGuide.yDirection;
     const nextDirection: 1 | -1 = currentDirection === 1 ? -1 : 1;
     const axisIds = new Set<string>();
-    targets.forEach((member) => {
+    targets.forEach((member: CanvasNode) => {
       const binding = bindingForChartChannel(member.id, axis);
       if (binding) axisIds.add(binding.axisId);
     });
@@ -2809,7 +2809,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         changes: { config: { direction: nextDirection } },
       });
     });
-    targets.forEach((member) => {
+    targets.forEach((member: CanvasNode) => {
       if (member.coordinateGuide?.type !== "Cartesian") return;
       member.llmRenderer = null;
       if (axis === "x") member.coordinateGuide.xDirection = nextDirection;
@@ -3403,7 +3403,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const node = axisBindingNode.value;
     const dataset = axisBindingDataset.value;
     const column = dataset?.columns.find((item) => item.name === fieldName && item.type === "quantitative");
-    if (!node?.chartSpec || !column) return;
+    if (!node?.chartSpec || !column || !dataset) return;
     updateEncodingTargets(node, (_target, spec) => {
       spec = replaceDefaultDataBinding(spec, dataset.id);
       return {
@@ -4639,6 +4639,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     createCompositionCandidate,
     createLayer,
     createDeckglLayer,
+    concatNodesAreCompatible,
     executeComposition,
     createNestedPie,
     confirmNestedBinding,

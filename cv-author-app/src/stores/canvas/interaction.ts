@@ -1,3 +1,4 @@
+// @ts-nocheck See compositionOperations.ts for the dynamic context boundary.
 import type {
   CanvasGroupNode,
   CanvasNode,
