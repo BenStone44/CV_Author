@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 
 type SelectOption = { value: string; label: string; disabled: boolean };
 
@@ -94,7 +94,6 @@ onBeforeUnmount(() => {
   observer?.disconnect();
   document.removeEventListener("mousedown", handleOutsideClick);
 });
-watch(() => [props.modelValue, props.value], refreshOptions);
 </script>
 
 <template>

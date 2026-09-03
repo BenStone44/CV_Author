@@ -107,7 +107,7 @@ export function useCanvasInteraction(context: any) {
   } = context;
   let pendingMoveUpdate: { point: Point; interaction: MoveInteraction } | null = null;
   let moveUpdateFrame: number | null = null;
-  let transformOnlyElements: SVGGElement[] | null = null;
+  let transformOnlyElements: Element[] | null = null;
 
   function attachPointerListeners() {
     window.addEventListener("pointermove", onWindowPointerMove);
@@ -152,6 +152,11 @@ export function useCanvasInteraction(context: any) {
       || (transformItemIds.length > 1 && compositionIds.size === 1);
     const snapshots = Object.fromEntries(transformItemIds.map((id) => { const item = getSelectionNode(id); return [id, { x: item?.x ?? 0, y: item?.y ?? 0 }]; }));
     const scopeGroupId = editingGroupPath.value.at(-1);
+    // Mapbox/deck.gl layers are HTML siblings of the SVG canvas. Updating
+    // their reactive node position on every pointer event forces each map to
+    // process a layout update, so keep their movement in the DOM until drop.
+    const deferModelMove = transformOnly || transformItemIds.some((id) =>
+      getSelectionNode(id)?.layerKind === "deckgl");
     interaction.value = {
       type: "move",
       startPoint: toSelectionScopePoint(event.clientX, event.clientY, scopeGroupId),
@@ -159,7 +164,7 @@ export function useCanvasInteraction(context: any) {
       snapshots,
       scopeGroupId,
       historyCommitted: false,
-      transformOnly,
+      transformOnly: deferModelMove,
       deferred,
       nestedRelationshipIds,
     };
@@ -176,7 +181,7 @@ export function useCanvasInteraction(context: any) {
     if (!canvas) return;
     if (!transformOnlyElements) {
       const ids = new Set(interactionState.itemIds);
-      const elements = Array.from(canvas.querySelectorAll<SVGGElement>(
+      const elements = Array.from(canvas.querySelectorAll<Element>(
         "[data-node-id], [data-coordinate-node-id], [data-canvas-owner-node-id]",
       ));
       transformOnlyElements = elements.filter((element) => {
@@ -185,26 +190,31 @@ export function useCanvasInteraction(context: any) {
           ?? element.dataset.canvasOwnerNodeId
           ?? "";
         if (!ids.has(elementNodeId)) return false;
-        const parentNode = element.parentElement?.closest<SVGGElement>("[data-node-id]");
+        const parentNode = element.parentElement?.closest<Element>("[data-node-id]");
         return !parentNode || !ids.has(parentNode.dataset.nodeId ?? "");
       });
-      const overlay = canvas.querySelector?.(".selection-overlay") as SVGGElement | null | undefined;
+      const overlay = canvas.querySelector?.(".selection-overlay");
       if (overlay) transformOnlyElements.push(overlay);
     }
     transformOnlyElements.forEach((element) => {
+      const isHtmlElement = element.namespaceURI === "http://www.w3.org/1999/xhtml";
       const baseTransform = element.dataset.transformOnlyBase
-        ?? element.getAttribute("transform")
+        ?? (isHtmlElement ? element.style.transform : element.getAttribute("transform"))
         ?? "";
       element.dataset.transformOnlyBase = baseTransform;
-      element.setAttribute("transform", `translate(${dx} ${dy}) ${baseTransform}`);
+      if (isHtmlElement) element.style.transform = `translate(${dx}px, ${dy}px) ${baseTransform}`;
+      else element.setAttribute("transform", `translate(${dx} ${dy}) ${baseTransform}`);
     });
   }
 
   function clearTransformOnlyMove() {
     const canvas = canvasRef.value;
     if (!canvas) return;
-    Array.from(canvas.querySelectorAll<SVGGElement>("[data-transform-only-base]")).forEach((element) => {
-      element.setAttribute("transform", element.dataset.transformOnlyBase ?? "");
+    Array.from(canvas.querySelectorAll<Element>("[data-transform-only-base]")).forEach((element) => {
+      if (element.namespaceURI === "http://www.w3.org/1999/xhtml") {
+        element.style.transform = element.dataset.transformOnlyBase ?? "";
+      }
+      else element.setAttribute("transform", element.dataset.transformOnlyBase ?? "");
       delete element.dataset.transformOnlyBase;
     });
     transformOnlyElements = null;
@@ -1017,7 +1027,7 @@ export function useCanvasInteraction(context: any) {
     const pending = pendingMoveUpdate;
     pendingMoveUpdate = null;
     if (!pending || interaction.value !== pending.interaction) return;
-    if (pending.interaction.deferred) {
+    if (pending.interaction.transformOnly || pending.interaction.deferred) {
       setTransformOnlyMove(
         pending.interaction,
         pending.point.x - pending.interaction.startPoint.x,
@@ -1342,6 +1352,7 @@ export function useCanvasInteraction(context: any) {
   }
   function onWindowPointerUp(event: PointerEvent) {
     const ai = interaction.value;
+    let finalMovePoint: Point | null = null;
     const nestedLayoutIds = ai && ai.type !== "move" && "itemIds" in ai
       ? Object.values(chartRelationships.value.nestedRelationships)
         .filter((relationship) => ai.itemIds.includes(relationship.parentChartId)
@@ -1350,7 +1361,7 @@ export function useCanvasInteraction(context: any) {
       : [];
     if (ai?.type === "move") {
       if (ai.historyCommitted) {
-        if (ai.deferred) {
+        if (ai.transformOnly || ai.deferred) {
           if (moveUpdateFrame !== null) {
             cancelAnimationFrame(moveUpdateFrame);
             moveUpdateFrame = null;
@@ -1359,6 +1370,7 @@ export function useCanvasInteraction(context: any) {
           const finalPoint = ai.scopeGroupId
             ? toSelectionScopePoint(event.clientX, event.clientY, ai.scopeGroupId)
             : toCanvasPoint(event.clientX, event.clientY);
+          finalMovePoint = finalPoint;
           updateMoveInteraction(finalPoint, ai);
           pushMoveHistory(ai);
           // The model now owns the final position. Restore the temporary DOM
@@ -1383,7 +1395,11 @@ export function useCanvasInteraction(context: any) {
     if (ai?.type === "polar-angle") polarAngleInputVisible.value = true;
     if (dragTestStage === null || dragTestStage === "full") {
       if (ai?.type === "move" && ai.historyCommitted && compositionDragSourceId.value) {
-        flushCompositionDropZone();
+        if (ai.transformOnly && finalMovePoint) {
+          activeDropZone.value = compositionDropZoneAtPoint(finalMovePoint, compositionDragSourceId.value);
+        } else {
+          flushCompositionDropZone();
+        }
         if (activeDropZone.value) {
           commitCompositionDrop(activeDropZone.value, compositionDragSourceId.value);
         }
@@ -1414,15 +1430,15 @@ export function useCanvasInteraction(context: any) {
       const movePoint = ai.scopeGroupId
         ? toSelectionScopePoint(event.clientX, event.clientY, ai.scopeGroupId)
         : point;
-      if (ai.transformOnly) {
-        setTransformOnlyMove(ai, movePoint.x - ai.startPoint.x, movePoint.y - ai.startPoint.y);
-        return;
-      }
       if (!ai.historyCommitted) {
         const dragThreshold = 2 / Math.max(viewZoom.value, 0.01);
         if (Math.abs(movePoint.x - ai.startPoint.x) <= dragThreshold
           && Math.abs(movePoint.y - ai.startPoint.y) <= dragThreshold) return;
         ai.historyCommitted = true;
+      }
+      if (ai.transformOnly) {
+        setTransformOnlyMove(ai, movePoint.x - ai.startPoint.x, movePoint.y - ai.startPoint.y);
+        return;
       }
       scheduleMoveInteraction(movePoint, ai);
       if (dragTestStage === "position") return;

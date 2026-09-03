@@ -100,7 +100,7 @@ export const defaultHexbinDataset: Dataset = {
   rows: defaultHexbinRows,
 };
 
-/** Ten geographically ordered station nodes sampled from the case2 ZIP data. */
+/** Ten station nodes joined to NYC ZIP geometries through the point ID field. */
 export const case2GraphDataset: Dataset = {
   id: CASE2_GRAPH_DATASET_ID,
   name: "case2 station graph",
@@ -108,8 +108,8 @@ export const case2GraphDataset: Dataset = {
   rows: [],
   graph: {
     nodes: { columns: [
-      { name: "id", type: "nominal" }, { name: "point", type: "nominal" }, { name: "x", type: "quantitative" }, { name: "y", type: "quantitative" },
-      { name: "longitude", type: "quantitative" }, { name: "latitude", type: "quantitative" }, { name: "label", type: "nominal" }, { name: "station_type", type: "nominal" },
+      { name: "id", type: "nominal" }, { name: "point", type: "nominal" },
+      { name: "label", type: "nominal" }, { name: "station_type", type: "nominal" },
     ], rows: case2GraphNodeRows },
     edges: { columns: [{ name: "source", type: "nominal" }, { name: "target", type: "nominal" }, { name: "value", type: "quantitative" }], rows: case2GraphLinkRows },
   },

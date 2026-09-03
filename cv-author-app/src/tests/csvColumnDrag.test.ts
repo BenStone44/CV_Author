@@ -5,6 +5,7 @@ import {
   encodeCsvColumnDragPayload,
   endCsvColumnDrag,
   getActiveCsvColumnDrag,
+  isCsvColumnDrag,
 } from "../utils/csvColumnDrag";
 
 describe("CSV column drag payload", () => {
@@ -21,5 +22,13 @@ describe("CSV column drag payload", () => {
     expect(getActiveCsvColumnDrag()).toEqual(payload);
     endCsvColumnDrag();
     expect(getActiveCsvColumnDrag()).toBeNull();
+  });
+
+  it("identifies an active CSV drag when the browser hides custom MIME types", () => {
+    const payload = { datasetId: "dataset-1", field: "date", type: "temporal" as const };
+    beginCsvColumnDrag(payload);
+    expect(isCsvColumnDrag({ types: [], getData: () => "" } as unknown as DataTransfer)).toBe(true);
+    endCsvColumnDrag();
+    expect(isCsvColumnDrag({ types: [], getData: () => "" } as unknown as DataTransfer)).toBe(false);
   });
 });

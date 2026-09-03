@@ -25,6 +25,24 @@ user-provided running endpoints for integration checks.
 
 Use Vue 3 Composition API, TypeScript, and two-space indentation. Use PascalCase components, camelCase functions/variables, and `use` prefixes for stores/composables. Preserve `noUncheckedIndexedAccess`.
 
+## Reactive State Policy
+
+Do not use Vue `watch`, `watchEffect`, `watchPostEffect`, `watchSyncEffect`,
+component `$watch`, or equivalent open-ended reactive subscriptions. Do not
+add deep reactive observation over canvas nodes, datasets, rows, or other large
+object graphs.
+
+Prefer pure `computed` state, explicit event/action entry points, keyed local
+draft state, and direct synchronization at the mutation boundary. When a
+third-party imperative renderer must react to component inputs, use one bounded
+lifecycle update that compares a small, explicit input snapshot and performs
+each required side effect at most once. Do not evade this policy by wrapping a
+watcher in a differently named helper.
+
+When touching existing watcher-based code, remove the watcher when practical
+and preserve its behavior through an explicit flow. Verify additions with an
+`rg` search that covers all prohibited APIs.
+
 ## CSV-Native Data Engine
 
 Raw CSV rows are the source of truth; do not recreate `CubeResult`, `CubeBinding`, or permanent dimension/measure classes. The primary interaction is user-triggered inference: a user drags one CSV column into a chart, and that column becomes the explicit inference input. Keep the existing automatic-detection code available for diagnostics or explicitly requested workflows, but do not invoke it automatically on CSV import, chart creation, rendering, or background state changes.
@@ -148,17 +166,22 @@ and control arcs only, so it must not redraw the static axes or make their
 strokes appear thicker. Hide the persistent polar layer only when both Theta
 and R axes are explicitly disabled.
 
-### CSV-Embedded Geographic Points
+### GeoJSON ID Joins
 
-A CSV may embed GeoJSON point geometry directly in a column. The column value
-must be a parseable GeoJSON position array, conventionally a JSON string such
-as `"[-74.01008,40.67593]"`, ordered `[longitude, latitude]`. This is distinct
-from an external GeoJSON ID join: dragging the embedded-point column onto a
-`ScatterplotLayer` binds the column as the point position and renders one mark
-per valid CSV row without requiring a `GeometrySource`. The position binding
-is persisted separately from optional color and size bindings and is exposed
-in the geographic Encoding Config panel. Invalid or missing positions are
-skipped and must not be silently interpreted as feature IDs.
+Geographic layers must resolve CSV and graph-node rows through an imported
+GeoJSON feature ID. A geographic binding stores `geometrySourceId` and the
+CSV/graph-node `idField`; the field value is matched against the feature's
+canonical `id` and declared aliases. This is the only CSV-to-geometry path:
+do not parse or infer longitude, latitude, x/y, coordinate arrays, WKT, or any
+other embedded geography from CSV columns.
+
+`ScatterplotLayer` renders the resolved point geometry directly, or the center
+of a resolved polygon/multipolygon. Graph nodes retain their graph identity
+field separately from the GeoJSON join field; graph links resolve both
+endpoints from the same ID-to-feature mapping. Invalid or unmatched IDs are
+reported and skipped. Geographic columns are not ordinary coordinate encoding
+inputs, and the Encoding Config panel exposes the selected GeoJSON ID join plus
+optional color and size fields only.
 
 ### Filter Intent and Facet Clues
 

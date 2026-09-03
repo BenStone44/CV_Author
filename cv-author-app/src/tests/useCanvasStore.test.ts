@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { nextTick, ref } from "vue";
-import type { CanvasGroupNode, CanvasLeafNode, CanvasNode, Dataset, PolarCoordinateGuide } from "../types";
+import type { CanvasGroupNode, CanvasLeafNode, CanvasNode, Dataset, GeometrySource, PolarCoordinateGuide } from "../types";
 import { collectNodeSelectionBounds } from "../utils/canvasUtils";
 import { csvColumnDragMime, encodeCsvColumnDragPayload } from "../utils/csvColumnDrag";
 import { inferColumnIntents } from "../utils/dimensionInference";
@@ -213,11 +213,40 @@ describe("nested parent grain", () => {
     expect(getNestedParentContextFields(parent.chartSpec!)).toEqual(["time", "series"]);
   });
 
-  it("keeps measure coordinates for an unaggregated point", () => {
+  it("does not infer a default filter context for a record-mode scatterplot", () => {
     const parent = lineChart("nested-row-parent", 100, false);
     parent.chartSpec = { ...parent.chartSpec!, chartType: "Scatterplot" };
 
-    expect(getNestedParentContextFields(parent.chartSpec!)).toEqual(["time", "value"]);
+    expect(getNestedParentContextFields(parent.chartSpec!)).toEqual([]);
+  });
+
+  it("uses the graph node ID as the default nested context", () => {
+    const graph = {
+      chartType: "ForceDirectedGraph",
+      datasetId: "graph",
+      encodings: {
+        key: { field: "node_id", type: "nominal" as const },
+        source: { field: "source", type: "nominal" as const },
+        target: { field: "target", type: "nominal" as const },
+      },
+    };
+
+    expect(getNestedParentContextFields(graph)).toEqual(["node_id"]);
+  });
+
+  it("inherits every stacked-bar dimension rather than its visual appearance", () => {
+    const stacked = lineChart("nested-stacked-parent", 100, false);
+    stacked.chartSpec = {
+      ...stacked.chartSpec!,
+      chartType: "StackedBarChart",
+      encodings: {
+        x: { field: "time", type: "temporal" },
+        y: { field: "value", type: "quantitative" },
+        color: { field: "series", type: "nominal" },
+      },
+    };
+
+    expect(getNestedParentContextFields(stacked.chartSpec!)).toEqual(["time", "series"]);
   });
 
   it("allows a concrete scatter row to supply an unbound nested clue", () => {
@@ -1008,6 +1037,41 @@ describe("composition selection hierarchy", () => {
     expect(store.canUndo.value).toBe(true);
     expect(JSON.stringify(store.chartRelationships.value)).toBe(relationshipStateBefore);
     expect(Array.from(storage.entries())).toEqual(storageBefore);
+  });
+
+  it("defers geographic node position updates until the drag ends", () => {
+    listeners.clear();
+    const mapElement = {
+      namespaceURI: "http://www.w3.org/1999/xhtml",
+      dataset: { nodeId: "geographic-drag-node" },
+      style: { transform: "translate(100px, 100px)" },
+      parentElement: null,
+      getAttribute: () => null,
+      setAttribute: () => undefined,
+    };
+    const canvasRef = ref({
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1800, height: 1000 }),
+      querySelectorAll: (selector: string) => selector === "[data-transform-only-base]"
+        ? ("transformOnlyBase" in mapElement.dataset ? [mapElement] : [])
+        : [mapElement],
+      querySelector: () => null,
+    } as unknown as HTMLElement);
+    const store = useCanvasStore(canvasRef);
+    const geographicNode = lineChart("geographic-drag-node", 100, false);
+    geographicNode.layerKind = "deckgl";
+    geographicNode.deckglLayerType = "ScatterplotLayer";
+    store.canvasNodes.value = [geographicNode];
+
+    store.onCanvasNodePointerDown(geographicNode, pointerEvent(140, 140));
+    listeners.get("pointermove")?.(pointerEvent(190, 180));
+
+    expect([geographicNode.x, geographicNode.y]).toEqual([100, 100]);
+    expect(mapElement.style.transform).toContain("translate(50px, 40px)");
+
+    listeners.get("pointerup")?.(pointerEvent(190, 180));
+
+    expect([geographicNode.x, geographicNode.y]).toEqual([150, 140]);
+    expect(mapElement.style.transform).toBe("translate(100px, 100px)");
   });
 
   it("selects and drags every member until the composition is entered", () => {
@@ -3269,6 +3333,110 @@ describe("CSV column axis drag binding", () => {
       querySelectorAll: () => [],
     } as unknown as HTMLElement);
   }
+
+  it("binds a geographic Scatterplot ID and keeps using its selected GeoJSON source", async () => {
+    const dataset: Dataset = {
+      id: "geographic-id-drag",
+      name: "geographic-id-drag.csv",
+      columns: [{ name: "place_id", type: "nominal" }],
+      rows: [{ place_id: "place-a" }],
+    };
+    const matchingSource: GeometrySource = {
+      id: "geometry:matching",
+      name: "matching.geojson",
+      features: [{
+        type: "Feature",
+        id: "place-a",
+        properties: {},
+        geometry: { type: "Point", coordinates: [0, 0] },
+      }],
+    };
+    const unrelatedSource: GeometrySource = {
+      id: "geometry:unrelated",
+      name: "unrelated.geojson",
+      features: [{
+        type: "Feature",
+        id: "place-b",
+        properties: {},
+        geometry: { type: "Point", coordinates: [1, 1] },
+      }],
+    };
+    const scatterplot = lineChart("geographic-scatterplot", 100, false);
+    scatterplot.layerKind = "deckgl";
+    scatterplot.deckglLayerType = "ScatterplotLayer";
+    const store = useCanvasStore(dragCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    const datasetStore = useDatasetStore();
+    datasetStore.datasets.value = [dataset];
+    datasetStore.geometrySources.value = [matchingSource, unrelatedSource];
+    datasetStore.activeGeometrySourceId.value = matchingSource.id;
+    store.canvasNodes.value = [scatterplot];
+
+    expect(store.setDeckglDataBinding(scatterplot.id, dataset.id, matchingSource.id, "place_id")).toBe(true);
+    datasetStore.activeGeometrySourceId.value = unrelatedSource.id;
+
+    const event = columnDragEvent(dataset.id, "place_id", "nominal", 500, 300);
+    store.onCanvasDragOver(event);
+    expect(store.activeDataBindingDropZone.value).toMatchObject({
+      type: "geographic-body",
+      targetNodeId: scatterplot.id,
+      compatible: true,
+    });
+
+    await store.onCanvasDrop(event);
+    expect(scatterplot.deckglBinding).toMatchObject({
+      datasetId: dataset.id,
+      geometrySourceId: matchingSource.id,
+      idField: "place_id",
+    });
+  });
+
+  it("binds a geographic PolygonLayer ID from a dropped CSV column", async () => {
+    const dataset: Dataset = {
+      id: "geographic-polygon-drag",
+      name: "geographic-polygon-drag.csv",
+      columns: [{ name: "district_id", type: "nominal" }],
+      rows: [{ district_id: "district-a" }],
+    };
+    const source: GeometrySource = {
+      id: "geometry:polygon",
+      name: "districts.geojson",
+      features: [{
+        type: "Feature",
+        id: "district-a",
+        properties: {},
+        geometry: {
+          type: "Polygon",
+          coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]],
+        },
+      }],
+    };
+    const polygon = lineChart("geographic-polygon", 100, false);
+    polygon.layerKind = "deckgl";
+    polygon.deckglLayerType = "PolygonLayer";
+    const store = useCanvasStore(dragCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    const datasetStore = useDatasetStore();
+    datasetStore.datasets.value = [dataset];
+    datasetStore.geometrySources.value = [source];
+    datasetStore.activeGeometrySourceId.value = source.id;
+    store.canvasNodes.value = [polygon];
+
+    const event = columnDragEvent(dataset.id, "district_id", "nominal", 500, 300);
+    store.onCanvasDragOver(event);
+    expect(store.activeDataBindingDropZone.value).toMatchObject({
+      type: "geographic-body",
+      targetNodeId: polygon.id,
+      compatible: true,
+    });
+
+    await store.onCanvasDrop(event);
+    expect(polygon.deckglBinding).toMatchObject({
+      datasetId: dataset.id,
+      geometrySourceId: source.id,
+      idField: "district_id",
+    });
+  });
 
   it("highlights and binds a compatible column on a Cartesian axis", async () => {
     const chart = lineChart("column-drag-chart", 100, false);

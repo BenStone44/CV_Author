@@ -1,5 +1,7 @@
 import type {
   ChartEncodingChannel,
+  ChartEncoding,
+  ChartSpec,
   ChartTemplateKind,
   CoordinateChannel,
   CoordinateSystem,
@@ -17,7 +19,10 @@ export type ChartRendererKey =
   | "matrix"
   | ChartTemplateKind;
 
-/** A channel-level data role in a chart contract. */
+/**
+ * Legacy renderer/UI role. Grain resolution uses the type of the completed
+ * binding instead of this static hint.
+ */
 export type ChartChannelContract = {
   channel: ChartEncodingChannel;
   label: string;
@@ -52,6 +57,17 @@ export type ChartRoleContract = {
   maxCardinality?: number;
 };
 
+/** How a chart materializes its input rows after bindings are resolved. */
+export type ChartDataMode = "grouped-scalar" | "record" | "distribution" | "derived" | "relational";
+
+export type ChartDataModeCondition = {
+  /** All listed channels must currently bind dimension fields. */
+  dimensionChannels: ChartEncodingChannel[];
+  resolveAs: ChartDataMode;
+};
+
+export type NestedContextPolicy = "bound-dimensions" | "node-id" | "none";
+
 /**
  * Declarative data contract for an implemented chart block.
  *
@@ -70,6 +86,11 @@ export type ChartContract = {
   markRole: "line" | "point" | "bar" | "arc" | "cell" | "area" | "path" | "node" | "box" | "contour" | "hexagon" | "link";
   channels: ChartEncodingChannelSchema[];
   aggregationPolicy: "allowed" | "forbidden";
+  /** Default materialization mode; conditions may refine it from a binding. */
+  dataMode: ChartDataMode;
+  dataModeConditions?: ChartDataModeCondition[];
+  /** Default relationship context for a child nested in this chart. */
+  nestedContext: NestedContextPolicy;
   requiresFunctionalDependency: boolean;
   requiresIndependentDimensions: boolean;
   allowFieldReuse: boolean;
@@ -100,20 +121,20 @@ type SchemaDefaults = Omit<ChartContract, "chartType" | "label" | "channels" | "
 const commonStrategies: ChartEncodingSchema["unusedDimensionStrategies"] = ["flatten", "facet", "nested"];
 
 const familyDefaults: Record<ChartTemplateKind, SchemaDefaults> = {
-  line: { id: "line", family: "line", renderer: "line", rendererVersion: 3, coordinateSystem: "Cartesian", markRole: "line", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
-  scatter: { id: "scatter", family: "scatter", renderer: "scatter", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "point", aggregationPolicy: "forbidden", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
-  bar: { id: "bar", family: "bar", renderer: "bar", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "bar", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
-  pie: { id: "pie", family: "pie", renderer: "pie", rendererVersion: 1, coordinateSystem: "Polar", markRole: "arc", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: true, supportsLayerComposition: true, shareableChannels: ["angle", "radius"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
-  donut: { id: "donut", family: "donut", renderer: "donut", rendererVersion: 1, coordinateSystem: "Polar", markRole: "arc", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: true, supportsLayerComposition: true, shareableChannels: ["angle", "radius"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
-  matrix: { id: "matrix", family: "matrix", renderer: "matrix", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "cell", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
-  area: { id: "area", family: "area", renderer: "area", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "area", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
-  parallel: { id: "parallel", family: "parallel", renderer: "parallel", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "path", aggregationPolicy: "forbidden", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: true, supportsLayerComposition: true, shareableChannels: [], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
-  hierarchy: { id: "hierarchy", family: "hierarchy", renderer: "hierarchy", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "node", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: false, shareableChannels: [], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
-  calendar: { id: "calendar", family: "calendar", renderer: "calendar", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "cell", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: [], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
-  boxplot: { id: "boxplot", family: "boxplot", renderer: "boxplot", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "box", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
-  contour: { id: "contour", family: "contour", renderer: "contour", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "contour", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
-  hexbin: { id: "hexbin", family: "hexbin", renderer: "hexbin", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "hexagon", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
-  flow: { id: "flow", family: "flow", renderer: "flow", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "link", aggregationPolicy: "allowed", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: [], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  line: { id: "line", family: "line", renderer: "line", rendererVersion: 3, coordinateSystem: "Cartesian", markRole: "line", aggregationPolicy: "allowed", dataMode: "grouped-scalar", nestedContext: "bound-dimensions", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  scatter: { id: "scatter", family: "scatter", renderer: "scatter", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "point", aggregationPolicy: "forbidden", dataMode: "record", dataModeConditions: [{ dimensionChannels: ["x", "y"], resolveAs: "grouped-scalar" }], nestedContext: "bound-dimensions", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  bar: { id: "bar", family: "bar", renderer: "bar", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "bar", aggregationPolicy: "allowed", dataMode: "grouped-scalar", nestedContext: "bound-dimensions", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  pie: { id: "pie", family: "pie", renderer: "pie", rendererVersion: 1, coordinateSystem: "Polar", markRole: "arc", aggregationPolicy: "allowed", dataMode: "grouped-scalar", nestedContext: "bound-dimensions", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: true, supportsLayerComposition: true, shareableChannels: ["angle", "radius"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  donut: { id: "donut", family: "donut", renderer: "donut", rendererVersion: 1, coordinateSystem: "Polar", markRole: "arc", aggregationPolicy: "allowed", dataMode: "grouped-scalar", nestedContext: "bound-dimensions", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: true, supportsLayerComposition: true, shareableChannels: ["angle", "radius"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  matrix: { id: "matrix", family: "matrix", renderer: "matrix", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "cell", aggregationPolicy: "allowed", dataMode: "grouped-scalar", nestedContext: "bound-dimensions", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  area: { id: "area", family: "area", renderer: "area", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "area", aggregationPolicy: "allowed", dataMode: "grouped-scalar", nestedContext: "bound-dimensions", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  parallel: { id: "parallel", family: "parallel", renderer: "parallel", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "path", aggregationPolicy: "forbidden", dataMode: "record", nestedContext: "none", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: true, supportsLayerComposition: true, shareableChannels: [], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  hierarchy: { id: "hierarchy", family: "hierarchy", renderer: "hierarchy", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "node", aggregationPolicy: "allowed", dataMode: "relational", nestedContext: "node-id", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: false, shareableChannels: [], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  calendar: { id: "calendar", family: "calendar", renderer: "calendar", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "cell", aggregationPolicy: "allowed", dataMode: "grouped-scalar", nestedContext: "bound-dimensions", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: [], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  boxplot: { id: "boxplot", family: "boxplot", renderer: "boxplot", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "box", aggregationPolicy: "allowed", dataMode: "distribution", nestedContext: "none", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  contour: { id: "contour", family: "contour", renderer: "contour", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "contour", aggregationPolicy: "allowed", dataMode: "derived", nestedContext: "none", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  hexbin: { id: "hexbin", family: "hexbin", renderer: "hexbin", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "hexagon", aggregationPolicy: "allowed", dataMode: "derived", nestedContext: "none", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  flow: { id: "flow", family: "flow", renderer: "flow", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "link", aggregationPolicy: "allowed", dataMode: "grouped-scalar", nestedContext: "bound-dimensions", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: [], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
 };
 
 function defineSchema(
@@ -127,7 +148,6 @@ function defineSchema(
   const dimensions = channels.filter((channel) => channel.role === "dimension" || channel.role === "series");
   const measures = channels.filter((channel) => channel.role === "measure");
   const requiredChannels = channels.filter((channel) => channel.required).map((channel) => channel.channel);
-  const uniquenessChannels = dimensions.filter((channel) => channel.required).map((channel) => channel.channel);
   const roles: ChartRoleContract[] = channels
     .filter((channel) => channel.role === "dimension" || channel.role === "series" || channel.role === "measure")
     .map((channel) => ({
@@ -143,10 +163,59 @@ function defineSchema(
     dimensions: { min: dimensions.filter((channel) => channel.required).length, max: dimensions.filter((channel) => channel.multiple).length ? Number.POSITIVE_INFINITY : dimensions.length },
     measures: { min: measures.filter((channel) => channel.required).length, max: measures.filter((channel) => channel.multiple).length ? Number.POSITIVE_INFINITY : measures.length },
     roles,
-    uniqueness: uniquenessChannels.length ? { channels: [...new Set(uniquenessChannels)] } : undefined,
-    unique: uniquenessChannels.length ? [...new Set(uniquenessChannels)] : undefined,
     aggregation: { allowed: base.aggregationPolicy === "allowed", default: base.aggregationPolicy === "allowed" ? "sum" : "none" },
   };
+}
+
+function boundEncodings(spec: ChartSpec, channel: ChartEncodingChannel, role: EncodingRole): ChartEncoding[] {
+  if (role === "series") {
+    if (spec.seriesFields?.length) return spec.seriesFields;
+    if (spec.series) return [spec.series];
+  }
+  if (channel === "segment") return spec.encodings.segment ? [spec.encodings.segment] : [];
+  if (channel === "y" && spec.valueFields?.length) return spec.valueFields;
+  if ((channel === "theta" || channel === "angle") && spec.angleFields?.length) return spec.angleFields;
+  const encoding = spec.encodings[channel]
+    ?? (channel === "x" ? spec.encodings.column : undefined)
+    ?? (channel === "y" ? spec.encodings.row : undefined);
+  return encoding ? [encoding] : [];
+}
+
+export function bindingIsDimension(encoding: ChartEncoding) {
+  return encoding.type !== "quantitative";
+}
+
+/** Resolve the chart's materialization mode from its completed bindings. */
+export function resolveChartDataMode(spec: ChartSpec): ChartDataMode | null {
+  const contract = getChartContract(spec.chartType);
+  if (!contract) return null;
+  const condition = contract.dataModeConditions?.find((candidate) => candidate.dimensionChannels.every((channel) => {
+    const mapping = contract.channels.find((item) => item.channel === channel);
+    return mapping !== undefined
+      && boundEncodings(spec, channel, mapping.role).some(bindingIsDimension);
+  }));
+  return condition?.resolveAs ?? contract.dataMode;
+}
+
+/** Fields that form the dynamic grain of a grouped-scalar binding. */
+export function groupedScalarDimensionFields(spec: ChartSpec) {
+  const contract = getChartContract(spec.chartType);
+  if (!contract || resolveChartDataMode(spec) !== "grouped-scalar") return [];
+  return Array.from(new Set(contract.channels.flatMap((channel) =>
+    boundEncodings(spec, channel.channel, channel.role)
+      .filter(bindingIsDimension)
+      .map((encoding) => encoding.field))));
+}
+
+export function nestedContextFields(spec: ChartSpec) {
+  const contract = getChartContract(spec.chartType);
+  if (!contract) return [];
+  if (contract.nestedContext === "node-id") {
+    return spec.encodings.key ? [spec.encodings.key.field] : [];
+  }
+  return contract.nestedContext === "bound-dimensions"
+    ? groupedScalarDimensionFields(spec)
+    : [];
 }
 
 const xAny = { channel: "x", label: "X", role: "dimension", required: true, accepts: ["ordinal", "quantitative", "nominal"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
@@ -305,6 +374,8 @@ export const chartContracts = {
   ], {
     markRole: "node",
     aggregationPolicy: "forbidden",
+    dataMode: "relational",
+    nestedContext: "node-id",
   }),
   GraphLink: defineSchema("GraphLink", "Graph Link", "flow", [
     { channel: "source", label: "Source", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
@@ -316,6 +387,8 @@ export const chartContracts = {
     coordinateSystem: "Cartesian",
     markRole: "link",
     aggregationPolicy: "forbidden",
+    dataMode: "relational",
+    nestedContext: "none",
     shareableChannels: ["x", "y"],
   }),
   GraphLinkPolar: defineSchema("GraphLinkPolar", "Graph Link (Polar)", "flow", [
@@ -328,6 +401,8 @@ export const chartContracts = {
     coordinateSystem: "Polar",
     markRole: "link",
     aggregationPolicy: "forbidden",
+    dataMode: "relational",
+    nestedContext: "none",
     shareableChannels: ["angle", "radius"],
   }),
 } satisfies Record<string, ChartEncodingSchema>;

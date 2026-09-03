@@ -16,7 +16,7 @@ function graphLinkSpec(chartType = "GraphLink"): ChartSpec {
 }
 
 describe("graph link template", () => {
-  it("renders one link mark per valid edge with Cartesian node coordinates", () => {
+  it("renders one link mark from structural graph order without geographic columns", () => {
     const result = renderDeterministicChart({
       chartId: "graph-link",
       width: 400,
@@ -29,6 +29,8 @@ describe("graph link template", () => {
     });
     expect(result.content.match(/data-mark-role="link"/g)).toHaveLength(13);
     expect(result.content).toContain('data-source="10307"');
+    const nodes = case2GraphDataset.graph!.nodes.rows;
+    expect(nodes.every((row) => row.point && !row.x && !row.y && !row.longitude && !row.latitude)).toBe(true);
   });
 
   it("supports the Polar link contract without rendering node marks", () => {

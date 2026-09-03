@@ -234,8 +234,8 @@ function visualKeyFields(spec: ChartSpec) {
   const contract = getChartTemplateContract(spec.chartType);
   if (!contract) return [];
   return Array.from(new Set(contract.channels.flatMap((mapping) => {
-    // A categorical style/color binding creates separate marks, while a
-    // quantitative style only changes appearance and must not split values.
+    // Renderer aggregation keeps its established key semantics while grain
+    // compatibility resolves through ChartDataMode in chartContracts.
     if (mapping.role === "measure") return [];
     return encodingsForChannel(spec, mapping.channel, mapping.role)
       .filter((encoding) => encoding.type !== "quantitative")

@@ -488,10 +488,13 @@
               :config="deckglLayerConfig(axisBindingNode)"
               :binding="axisBindingNode.deckglBinding"
               :columns="deckglLayerColumns(axisBindingNode)"
+              :datasets="datasets"
+              :geometry-sources="geometrySources"
               @close="closeEncodingInspector"
               @map-style-change="setDeckglMapStyle(axisBindingNode.id, $event)"
               @config-change="setDeckglConfig(axisBindingNode.id, $event)"
               @encoding-change="(channel, field) => setDeckglEncoding(axisBindingNode.id, channel, field)"
+              @data-binding-change="(datasetId, geometrySourceId, idField) => setDeckglDataBinding(axisBindingNode.id, datasetId, geometrySourceId, idField)"
             />
           </aside>
 
@@ -549,9 +552,9 @@
                   </select>
                   <select
                     v-if="group.id === 'filter'"
-                    :value="dimensionFilterSelection[group.id]"
+                    :value="selectedDimensionFilter(group)"
                     aria-label="Filter value"
-                    @change="dimensionFilterSelection[group.id] = $event.target.value"
+                    @change="chooseDimensionFilter(group.id, $event.target.value)"
                   >
                     <option
                       v-for="value in group.intents[0]?.filterValues ?? []"
@@ -735,7 +738,8 @@
 
           <aside
             v-if="nestedBindingTarget"
-            ref="nestedBindingPopupRef"
+            :key="nestedBindingDraftKey"
+            :ref="setNestedBindingPopupRef"
             class="nested-binding-popup"
             role="dialog"
             aria-modal="false"
@@ -1018,6 +1022,7 @@
               v-for="node in deckglLayerNodes"
               :key="`deckgl-layer-${node.id}`"
               class="deckgl-layer-node"
+              :data-node-id="node.id"
               :style="deckglLayerStyle(node)"
             >
               <DeckglMapLayer
@@ -1031,9 +1036,14 @@
                 :dataset-rows="deckglLayerRows(node)"
                 :geometry-features="deckglLayerGeometrySource(node)?.features ?? []"
                 :layers="deckglLayerRenderSpecs(node)"
+                :nested-overlays="deckglNestedOverlays(node)"
                 :width="deckglLayerWidth(node)"
                 :height="deckglLayerHeight(node)"
                 @view-state-change="onDeckglMapViewStateChange(node, $event)"
+                @point-select="selectCanvasNode($event.layerId)"
+                @point-drop="onDeckglPointDrop($event)"
+                @column-drag-over="onCanvasDragOver($event)"
+                @column-drop="onCanvasDrop($event)"
               />
               <div
                 v-if="selectedIds.includes(node.id)"

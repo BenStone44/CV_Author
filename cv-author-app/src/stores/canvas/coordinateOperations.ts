@@ -2,7 +2,7 @@
 import { computed, nextTick } from "vue";
 import type { Bounds, CanvasGroupNode, CanvasNode, ChartEncodingChannel, CoordinateChannel, CoordinateSystemSpec, DataBindingDropZone, Point } from "../../types";
 import type { CsvColumnDragPayload } from "../../utils/csvColumnDrag";
-import { geoJsonFeatureIds, parseEmbeddedPoint } from "../../utils/geoJsonGeometry";
+import { canonicalGeoJsonJoinId, geoJsonFeatureIds } from "../../utils/geoJsonGeometry";
 import { materializeGraphDataset } from "../../utils/chartDataPipeline";
 import { cartesianTreeDirection, cartesianTreeLeafAxis, isCartesianTreeChart } from "../../utils/treeLayout";
 import type { Matrix } from "./coordinates";
@@ -18,7 +18,7 @@ export function useCanvasCoordinateOperations(context: any) {
     endCsvColumnDrag, findCanvasNode, getActiveCsvColumnDrag,
     generatedCandidates, getChartTemplateContract, getGroupAtPath, getGroupsAtPath,
     getRootNode, hasRequiredChartEncodings,
-    getSelectionScopeNodes, getSelectionNode, getDataset, getNodeSelectionBounds, getNodeTransform,
+    getSelectionScopeNodes, getSelectionNode, getDataset, getGeometrySource, getNodeSelectionBounds, getNodeTransform,
     getPolarOccupiedGeometry, identityMatrix, invertMatrix,
     implementedTemplateDefinitions, inferColumnIntents, isDataColumnTypeCompatible,
     isDefaultChartDataSpec, logicalAxisChannel, multiplyMatrix, nestedDropPath, normalizeBounds,
@@ -30,6 +30,44 @@ export function useCanvasCoordinateOperations(context: any) {
     walkCanvasNodes, chartScalePosition, csvColumnDragMime, compositionEditLayout,
     candidates, compositionOptions, coordinateOptions, getLeafNodeTransform,
   } = context;
+
+  let geographicDropCache: {
+    payload: CsvColumnDragPayload;
+    targetNodeId: string;
+    dataset: unknown;
+    source: unknown;
+    compatible: boolean;
+  } | null = null;
+
+  function geographicDropCompatible(
+    targetNodeId: string,
+    payload: CsvColumnDragPayload,
+    dataset: any,
+    source: any,
+    column: any,
+    usableFeatures: any[],
+  ) {
+    const cached = geographicDropCache;
+    if (cached
+      && cached.targetNodeId === targetNodeId
+      && cached.dataset === dataset
+      && cached.source === source
+      && cached.payload.datasetId === payload.datasetId
+      && cached.payload.field === payload.field
+      && cached.payload.type === payload.type
+      && cached.payload.table === payload.table) return cached.compatible;
+
+    const geometryIds = new Set(usableFeatures.flatMap(geoJsonFeatureIds).map(canonicalGeoJsonJoinId));
+    const rows = dataset?.rows ?? [];
+    const hasMatch = !!dataset && !!column && rows.some((row: any) =>
+      geometryIds.has(canonicalGeoJsonJoinId(row[payload.field])));
+    const compatible = !!column
+      && !!source
+      && (column.type === payload.type || (column.type === "quantitative" && payload.type === "ordinal"))
+      && hasMatch;
+    geographicDropCache = { payload: { ...payload }, targetNodeId, dataset, source, compatible };
+    return compatible;
+  }
 
   function registerChartRelationship(
     node: CanvasNode,
@@ -786,7 +824,9 @@ export function useCanvasCoordinateOperations(context: any) {
     });
     if (geographicTarget) {
       const dataset = getDataset(payload.datasetId);
-      const source = activeGeometrySource.value;
+      const source = geographicTarget.deckglBinding?.geometrySourceId
+        ? getGeometrySource(geographicTarget.deckglBinding.geometrySourceId)
+        : activeGeometrySource.value;
       const table = payload.table === "nodes" && dataset?.graph ? dataset.graph.nodes : dataset;
       const column = table?.columns.find((item) => item.name === payload.field);
       const layerType = geographicTarget.deckglLayerType ?? geographicTarget.name.replace(/-(?:group|leaf)-\d+$/, "");
@@ -794,27 +834,18 @@ export function useCanvasCoordinateOperations(context: any) {
         layerType === "ScatterplotLayer"
           || feature.geometry.type === "Polygon"
           || feature.geometry.type === "MultiPolygon") ?? [];
-      const canonical = (value: string) => {
-        const trimmed = value.trim();
-        if (!trimmed) return "";
-        const numeric = Number(trimmed);
-        return Number.isFinite(numeric) && /^\d+(?:\.0+)?$/.test(trimmed)
-          ? String(Math.trunc(numeric))
-          : trimmed;
-      };
-      const geometryIds = new Set(usableFeatures.flatMap(geoJsonFeatureIds).map(canonical));
-      const rows = table?.rows ?? [];
-      const hasEmbeddedPoint = layerType === "ScatterplotLayer"
-        && rows.some((row) => parseEmbeddedPoint(row[payload.field]) !== null);
-      const hasMatch = hasEmbeddedPoint || (!!dataset && !!column && rows.some((row) => geometryIds.has(canonical(row[payload.field] ?? ""))));
       return {
         type: "geographic-body",
         targetNodeId: geographicTarget.id,
         fieldName: payload.field,
-        compatible: !!column
-          && (hasEmbeddedPoint || !!source)
-          && (column.type === payload.type || (column.type === "quantitative" && payload.type === "ordinal"))
-          && hasMatch,
+        compatible: geographicDropCompatible(
+          geographicTarget.id,
+          payload,
+          table,
+          source,
+          column,
+          usableFeatures,
+        ),
         bounds: collectNodeSelectionBounds(geographicTarget),
       };
     }

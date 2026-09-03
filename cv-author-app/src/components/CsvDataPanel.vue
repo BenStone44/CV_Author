@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref } from "vue";
 import {
   ChevronsLeft,
   ChevronsRight,
@@ -123,7 +123,8 @@ const geographicJoinStatus = computed(() => {
   const field = geographicJoinField.value;
   if (!source || !field || !activeDataset.value) return null;
   const ids = new Set(source.features.map((feature) => feature.id));
-  const values = activeDataset.value.rows
+  const joinRows = activeDataset.value.graph?.nodes.rows ?? activeDataset.value.rows;
+  const values = joinRows
     .map((row) => (row[field] ?? "").trim())
     .filter(Boolean);
   const matched = values.filter((value) => ids.has(value)).length;
@@ -131,8 +132,9 @@ const geographicJoinStatus = computed(() => {
 });
 const localGeometryBindings = [
   { datasetName: "case2.csv", field: "incident_zip", sourceName: "nyc-zip-boundaries.geojson", path: "/geodata/nyc-zip-boundaries.geojson" },
+  { datasetName: "geo", field: "point", sourceName: "nyc-zip-boundaries.geojson", path: "/geodata/nyc-zip-boundaries.geojson" },
 ] as const;
-const localGeometryLoading = new Set<string>();
+const localGeometryLoading = new Map<string, Promise<void>>();
 const chartDataset = computed(() => props.chartSpec ? getDataset(props.chartSpec.datasetId) : null);
 const transformedChartDataset = computed(() => chartDataset.value
   ? materializeChartDataTransforms(chartDataset.value, props.chartSpec?.dataTransforms)
@@ -249,10 +251,12 @@ function updateExpandedWidth() {
   if (!canExpand.value) isExpanded.value = false;
 }
 
-function onDatasetChange(event: Event) {
+async function onDatasetChange(event: Event) {
   const datasetId = (event.target as HTMLSelectElement).value;
   if (datasetId) {
     setActiveDataset(datasetId);
+    const dataset = getDataset(datasetId);
+    if (dataset) await syncLocalGeometry(dataset);
     emit("datasetChange", datasetId);
   }
 }
@@ -561,11 +565,16 @@ async function ensurePresetDatasets() {
       "nodes.csv + edges.csv",
     );
   }
-  if (!datasets.value.some((dataset) => dataset.name === "case2_graph_nodes.csv + case2_graph_links.csv")) {
+  const legacyGeoDataset = datasets.value.find(
+    (dataset) => dataset.name === "case2_graph_nodes.csv + case2_graph_links.csv",
+  );
+  if (legacyGeoDataset) {
+    legacyGeoDataset.name = "geo";
+  } else if (!datasets.value.some((dataset) => dataset.name === "geo")) {
     await importGraphDataset(
       new File([case2GraphNodesCsv], "case2_graph_nodes.csv", { type: "text/csv" }),
       new File([case2GraphLinksCsv], "case2_graph_links.csv", { type: "text/csv" }),
-      "case2_graph_nodes.csv + case2_graph_links.csv",
+      "geo",
     );
   }
   if (!datasets.value.some((dataset) => dataset.name === "hexbin_graph_nodes.csv + hexbin_graph_links.csv")) {
@@ -582,29 +591,39 @@ async function ensurePresetDatasets() {
 
 async function syncLocalGeometry(dataset: Dataset) {
   const binding = localGeometryBindings.find((item) => item.datasetName === dataset.name);
-  if (!binding || !dataset.columns.some((column) => column.name === binding.field)) return;
+  const joinColumns = dataset.graph?.nodes.columns ?? dataset.columns;
+  if (!binding || !joinColumns.some((column) => column.name === binding.field)) return;
   geographicJoinField.value = binding.field;
   const existing = geometrySources.value.find((source) => source.name === binding.sourceName);
   if (existing) {
     setActiveGeometrySource(existing.id);
     return;
   }
-  if (localGeometryLoading.has(binding.sourceName)) return;
-  localGeometryLoading.add(binding.sourceName);
-  try {
-    const response = await fetch(binding.path);
-    if (!response.ok) return;
-    const source = await importGeometrySource(new File(
-      [await response.blob()],
-      binding.sourceName,
-      { type: "application/geo+json" },
-    ));
-    if (source) {
-      setActiveGeometrySource(source.id);
-      geographicJoinField.value = binding.field;
+  const loading = localGeometryLoading.get(binding.sourceName);
+  if (loading) {
+    await loading;
+    return;
+  }
+  const importLocalSource = (async () => {
+    try {
+      const response = await fetch(binding.path);
+      if (!response.ok) return;
+      const source = await importGeometrySource(new File(
+        [await response.blob()],
+        binding.sourceName,
+        { type: "application/geo+json" },
+      ));
+      if (source) {
+        setActiveGeometrySource(source.id);
+        geographicJoinField.value = binding.field;
+      }
+    } catch {
+      // Local pairing is optional; users can import another geometry source.
     }
-  } catch {
-    // Local pairing is optional; users can import another geometry source.
+  })();
+  localGeometryLoading.set(binding.sourceName, importLocalSource);
+  try {
+    await importLocalSource;
   } finally {
     localGeometryLoading.delete(binding.sourceName);
   }
@@ -620,11 +639,23 @@ onBeforeUnmount(() => {
   window.removeEventListener("keydown", onWindowKeydown);
 });
 
-watch(() => props.chartId, closeTransformEditor);
-watch(headers, () => void nextTick(updateExpandedWidth));
-watch(activeDataset, (dataset) => {
-  if (dataset) void syncLocalGeometry(dataset);
-}, { immediate: true });
+let priorChartId = props.chartId;
+let priorHeaderSignature = headers.value.join("\u0000");
+let priorDatasetId = activeDataset.value?.id;
+onUpdated(() => {
+  const nextHeaderSignature = headers.value.join("\u0000");
+  const nextDataset = activeDataset.value;
+  const chartChanged = props.chartId !== priorChartId;
+  const headersChanged = nextHeaderSignature !== priorHeaderSignature;
+  const datasetChanged = nextDataset?.id !== priorDatasetId;
+  priorChartId = props.chartId;
+  priorHeaderSignature = nextHeaderSignature;
+  priorDatasetId = nextDataset?.id;
+
+  if (chartChanged) closeTransformEditor();
+  if (headersChanged) void nextTick(updateExpandedWidth);
+  if (datasetChanged && nextDataset) void syncLocalGeometry(nextDataset);
+});
 </script>
 
 <template>
@@ -915,6 +946,7 @@ watch(activeDataset, (dataset) => {
                 >
                   <GripVertical :size="12" :stroke-width="1.8" aria-hidden="true" />
                   <span class="data-table__column-label">{{ header }}</span>
+                  <MapPinned v-if="isGeographicJoinColumn(header)" :size="12" aria-label="Geographic join field" />
                 </span>
                 <select
                   :value="displayColumnType(graphTable.table.columns[columnIndex]?.type)"
@@ -976,6 +1008,7 @@ watch(activeDataset, (dataset) => {
                 >
                   <GripVertical :size="12" :stroke-width="1.8" aria-hidden="true" />
                   <span class="data-table__column-label">{{ column.name }}</span>
+                  <MapPinned v-if="isGeographicJoinColumn(column.name)" :size="12" aria-label="Geographic join field" />
                 </span>
                 <select
                   :value="displayColumnType(column.type)"

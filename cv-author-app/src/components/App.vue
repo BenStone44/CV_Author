@@ -5,7 +5,6 @@ import {
   onBeforeUnmount,
   onMounted,
   ref,
-  watch,
 } from "vue";
 import { ArrowLeftRight, ArrowUp, Check, ChevronDown, Move, RotateCcw, SlidersHorizontal, Split as SplitIcon, X } from "@lucide/vue";
 import { CanvasNodeView } from "./CanvasNodeView";
@@ -25,9 +24,12 @@ import type {
   ChartEncodingChannel,
   CompositionType,
   CoordinateChannel,
+  DeckglNestedOverlay,
+  DeckglPointTarget,
   EncodingChannel,
   GeographicMapViewState,
   MarkGroupSharedConfig,
+  RelativeNestedParameters,
   SvgCandidate,
 } from "../types";
 import { materializeChartDataTransforms } from "../utils/chartDataTransforms";
@@ -62,7 +64,7 @@ const NESTED_MAX_DIAMETER = 360;
 
 const canvasRef = ref<HTMLElement | null>(null);
 const encodingInspectorOpen = ref(true);
-const compositionInspectorOpen = ref(false);
+const compositionInspectorTargetId = ref<string | null>(null);
 const activeTemplateCategoryId = ref<string | null>(null);
 const templateCategoryMenuPosition = ref({ left: 0, top: 0, width: 560 });
 const facetClueDialog = ref<{
@@ -78,7 +80,7 @@ const facetClueDialog = ref<{
 
 const {
   selectedCoordinateSystems,
-  toggleCoordinateSystem,
+  toggleCoordinateSystem: toggleCoordinateSystemInStore,
   implementedTemplateCandidates,
   compositionCandidates,
   canvasNodes,
@@ -153,6 +155,7 @@ const {
   onCanvasDragOver,
   onCanvasDragLeave,
   onCanvasDrop,
+  createDeckglPointNested,
   onCanvasWheel,
   onCanvasContextMenu,
   onCanvasNodePointerDown,
@@ -188,6 +191,7 @@ const {
   setDeckglMapViewState,
   setDeckglConfig,
   setDeckglEncoding,
+  setDeckglDataBinding,
   selectCanvasNode,
   updateAxisBindingMarkGroupConfig,
   updateSelectedChartMarkGroupConfig,
@@ -212,7 +216,7 @@ const {
   createFacetFromFields,
   applyDimensionFacet,
   confirmNestedBinding,
-  closeNestedBinding,
+  closeNestedBinding: closeNestedBindingInStore,
   updateNestedPosition,
   updateNestedChildScale,
   resetNestedPosition,
@@ -249,6 +253,35 @@ function deckglLayerRenderSpecs(node: CanvasNode) {
       geometryFeatures: deckglLayerGeometrySource(member)?.features ?? [],
     }));
 }
+function deckglNestedOverlays(node: CanvasNode): DeckglNestedOverlay[] {
+  const layerIds = new Set(node.deckglLayerStack?.length ? node.deckglLayerStack : [node.id]);
+  return Object.values(chartRelationships.value.nestedRelationships).flatMap((relationship) => {
+    if (relationship.status !== "active" || !layerIds.has(relationship.parentChartId) || !relationship.parentDataKey) return [];
+    const child = findCanvasNodeInTree(canvasNodes.value, relationship.childChartId);
+    const parameters = relationship.parameters as Partial<RelativeNestedParameters>;
+    if (!child?.renderedContent || !parameters.parentAnchor || !parameters.childAnchor
+      || !parameters.offset || !parameters.scale) return [];
+    const parent = findCanvasNodeInTree(canvasNodes.value, relationship.parentChartId);
+    const parentRadius = Number(deckglLayerConfig(parent ?? node).size ?? 8);
+    return [{
+      relationshipId: relationship.id,
+      parentNodeId: relationship.parentChartId,
+      parentDataKey: relationship.parentDataKey,
+      content: child.renderedContent,
+      width: child.width,
+      height: child.height,
+      parentRadius: Number.isFinite(parentRadius) ? Math.max(parentRadius, 1) : 8,
+      parameters: {
+        parentAnchor: { ...parameters.parentAnchor },
+        childAnchor: { ...parameters.childAnchor },
+        offset: { ...parameters.offset },
+        scale: { ...parameters.scale },
+        rotation: parameters.rotation ?? 0,
+        retainParent: parameters.retainParent,
+      },
+    }];
+  });
+}
 const chartTransformNode = computed(() => {
   if (selectedIds.value.length === 1) {
     const node = selectedNodes.value[0];
@@ -277,6 +310,12 @@ const selectedCompositionSpec = computed(() => {
   return composition.members.every((member) => selected.has(member.nodeId))
     ? composition
     : null;
+});
+const compositionInspectorOpen = computed({
+  get: () => selectedCompositionSpec.value?.id === compositionInspectorTargetId.value,
+  set: (open: boolean) => {
+    compositionInspectorTargetId.value = open ? selectedCompositionSpec.value?.id ?? null : null;
+  },
 });
 const implementedTemplateCategories = computed(() =>
   groupChartTemplateCandidates(implementedTemplateCandidates.value.filter((candidate) =>
@@ -345,6 +384,10 @@ function onDeckglMapViewStateChange(node: CanvasNode, state: GeographicMapViewSt
   setDeckglMapViewState(node.id, state);
 }
 
+async function onDeckglPointDrop(target: DeckglPointTarget) {
+  await createDeckglPointNested(target);
+}
+
 function deckglLayerStyle(node: CanvasNode) {
   const width = Math.max(node.width * Math.abs(node.scaleX), 1);
   const height = Math.max(node.height * Math.abs(node.scaleY), 1);
@@ -394,7 +437,10 @@ function closeTemplateCategoryMenu() {
   activeTemplateCategoryId.value = null;
 }
 
-watch(selectedCoordinateSystems, closeTemplateCategoryMenu);
+function toggleCoordinateSystem(value: Parameters<typeof toggleCoordinateSystemInStore>[0]) {
+  toggleCoordinateSystemInStore(value);
+  closeTemplateCategoryMenu();
+}
 
 function toggleTemplateCategory(category: ChartTemplateCategory, event: MouseEvent) {
   if (activeTemplateCategoryId.value === category.id) {
@@ -417,7 +463,7 @@ function onTemplateCandidateDragEnd() {
   closeTemplateCategoryMenu();
 }
 
-const { activeDataset, getDataset, getGeometrySource } = useDatasetStore();
+const { activeDataset, datasets, geometrySources, getDataset, getGeometrySource } = useDatasetStore();
 const axisBindingRows = computed(() => {
   const datasetId = axisBindingNode.value?.chartSpec?.datasetId;
   const dataset = datasetId ? getDataset(datasetId) : activeDataset.value;
@@ -585,10 +631,55 @@ const seriesItemLegends = computed(() => seriesItemPresentations.value.flatMap((
 }));
 const nestedBindingPopupRef = ref<HTMLElement | null>(null);
 const nestedBindingPopupPosition = ref<{ left: number; top: number } | null>(null);
-const nestedPointXField = ref("");
-const nestedPointYField = ref("");
-const nestedPieRadiusField = ref("");
-const nestedPieAngleFields = ref<string[]>([]);
+type NestedBindingDraft = {
+  targetKey: string;
+  xField?: string;
+  yField?: string;
+  radiusField?: string;
+  angleFields?: string[];
+};
+const nestedBindingDraft = ref<NestedBindingDraft | null>(null);
+const nestedBindingDraftKey = computed(() => {
+  const target = nestedBindingTarget.value;
+  return target ? `${target.nodeId}\u0000${target.rowKey}\u0000${target.clientX}\u0000${target.clientY}` : "";
+});
+const activeNestedBindingDraft = computed(() =>
+  nestedBindingDraft.value?.targetKey === nestedBindingDraftKey.value ? nestedBindingDraft.value : null,
+);
+const defaultNestedPointXField = computed(() => nestedBindingNode.value?.chartSpec?.encodings.x?.field ?? "");
+const defaultNestedPointYField = computed(() => nestedBindingNode.value?.chartSpec?.encodings.y?.field ?? "");
+const defaultNestedAngleFields = computed<string[]>(() => {
+  const fields = nestedBindingNode.value?.nestedSpec?.valueFields;
+  return fields?.length ? fields : nestedBindingSuggestedAngleFields.value;
+});
+
+function updateNestedBindingDraft(patch: Omit<Partial<NestedBindingDraft>, "targetKey">) {
+  nestedBindingDraft.value = {
+    ...activeNestedBindingDraft.value,
+    targetKey: nestedBindingDraftKey.value,
+    ...patch,
+  };
+}
+
+const nestedPointXField = computed({
+  get: () => activeNestedBindingDraft.value?.xField ?? defaultNestedPointXField.value,
+  set: (xField: string) => updateNestedBindingDraft({ xField }),
+});
+const nestedPointYField = computed({
+  get: () => activeNestedBindingDraft.value?.yField ?? defaultNestedPointYField.value,
+  set: (yField: string) => updateNestedBindingDraft({ yField }),
+});
+const nestedPieRadiusField = computed({
+  get: () => activeNestedBindingDraft.value?.radiusField
+    ?? nestedBindingNode.value?.nestedSpec?.radiusField
+    ?? defaultNestedPointYField.value,
+  set: (radiusField: string) => updateNestedBindingDraft({ radiusField }),
+});
+const nestedPieAngleFields = computed<string[]>({
+  get: () => activeNestedBindingDraft.value?.angleFields
+    ?? defaultNestedAngleFields.value,
+  set: (angleFields: string[]) => updateNestedBindingDraft({ angleFields }),
+});
 
 const canConfirmNestedBinding = computed(() =>
   !!nestedPointXField.value
@@ -623,7 +714,7 @@ function positionNestedBindingPopup() {
 
 function toggleNestedAngleField(field: string) {
   nestedPieAngleFields.value = nestedPieAngleFields.value.includes(field)
-    ? nestedPieAngleFields.value.filter((item) => item !== field)
+    ? nestedPieAngleFields.value.filter((item: string) => item !== field)
     : [...nestedPieAngleFields.value, field];
 }
 
@@ -637,18 +728,17 @@ function submitNestedBinding() {
   });
 }
 
-watch(nestedBindingTarget, (target) => {
+function setNestedBindingPopupRef(element: Element | null) {
+  nestedBindingPopupRef.value = element instanceof HTMLElement ? element : null;
+  if (!element) return;
   nestedBindingPopupPosition.value = null;
-  if (!target) return;
-  nestedPointXField.value = nestedBindingNode.value?.chartSpec?.encodings.x?.field ?? "";
-  nestedPointYField.value = nestedBindingNode.value?.chartSpec?.encodings.y?.field ?? "";
-  nestedPieRadiusField.value = nestedBindingNode.value?.nestedSpec?.radiusField
-    ?? nestedPointYField.value;
-  nestedPieAngleFields.value = nestedBindingNode.value?.nestedSpec?.valueFields?.length
-    ? [...nestedBindingNode.value.nestedSpec.valueFields]
-    : [...nestedBindingSuggestedAngleFields.value];
   void nextTick(positionNestedBindingPopup);
-});
+}
+
+function closeNestedBinding() {
+  nestedBindingPopupPosition.value = null;
+  closeNestedBindingInStore();
+}
 
 type AlignmentMode = "left" | "center-x" | "right" | "top" | "center-y" | "bottom";
 type NestedAnchorSide = "parentAnchor" | "childAnchor";
@@ -1053,8 +1143,19 @@ const dimensionDropNode = computed(() => dimensionDropTarget.value
   ? selectedNodes.value.find((node) => node.id === dimensionDropTarget.value?.nodeId) ?? null
   : null);
 const dimensionDropField = computed(() => dimensionDropTarget.value?.fieldName ?? "");
-const dimensionIntentSelection = ref<Record<string, string>>({});
-const dimensionFilterSelection = ref<Record<string, string>>({});
+type DimensionIntentDraft = {
+  targetKey: string;
+  intents: Record<string, string>;
+  filters: Record<string, string>;
+};
+const dimensionIntentDraft = ref<DimensionIntentDraft | null>(null);
+const dimensionIntentTargetKey = computed(() => {
+  const target = dimensionDropTarget.value;
+  return target ? `${target.nodeId}\u0000${target.fieldName}\u0000${target.clientX}\u0000${target.clientY}` : "";
+});
+const activeDimensionIntentDraft = computed(() =>
+  dimensionIntentDraft.value?.targetKey === dimensionIntentTargetKey.value ? dimensionIntentDraft.value : null,
+);
 const dimensionIntentGroups = computed(() => {
   const intents = dimensionDropTarget.value?.analysis.intents ?? [];
   const groups = [
@@ -1090,33 +1191,34 @@ const dimensionIntentGroups = computed(() => {
   return groups;
 });
 
-watch(dimensionDropTarget, (target) => {
-  if (!target) return;
-  dimensionIntentSelection.value = {};
-  dimensionFilterSelection.value = {};
-  dimensionIntentGroups.value.forEach((group) => {
-    if (group.intents[0]) {
-      dimensionIntentSelection.value[group.id] = group.intents[0].id;
-    }
-    const filterIntent = group.intents.find((intent) => intent.kind === "filter");
-    if (filterIntent?.filterValues?.[0]) {
-      dimensionFilterSelection.value[group.id] = filterIntent.filterValues[0];
-    }
-  });
-}, { immediate: true });
-
 function selectedDimensionIntent(group: { id: string; intents: Array<{ id: string }> }) {
-  return dimensionIntentSelection.value[group.id] ?? group.intents[0]?.id ?? "";
+  return activeDimensionIntentDraft.value?.intents[group.id] ?? group.intents[0]?.id ?? "";
 }
 
 function chooseDimensionIntent(groupId: string, intentId: string) {
-  dimensionIntentSelection.value[groupId] = intentId;
+  dimensionIntentDraft.value = {
+    targetKey: dimensionIntentTargetKey.value,
+    intents: { ...activeDimensionIntentDraft.value?.intents, [groupId]: intentId },
+    filters: { ...activeDimensionIntentDraft.value?.filters },
+  };
+}
+
+function selectedDimensionFilter(group: { id: string; intents: Array<{ filterValues?: string[] }> }) {
+  return activeDimensionIntentDraft.value?.filters[group.id] ?? group.intents[0]?.filterValues?.[0] ?? "";
+}
+
+function chooseDimensionFilter(groupId: string, value: string) {
+  dimensionIntentDraft.value = {
+    targetKey: dimensionIntentTargetKey.value,
+    intents: { ...activeDimensionIntentDraft.value?.intents },
+    filters: { ...activeDimensionIntentDraft.value?.filters, [groupId]: value },
+  };
 }
 
 function applyDimensionIntentGroup(group: { id: string; intents: Array<{ id: string; kind: string; filterValues?: string[] }> }) {
   const intentId = selectedDimensionIntent(group);
   if (!intentId) return;
-  const filterValue = group.id === "filter" ? dimensionFilterSelection.value[group.id] : undefined;
+  const filterValue = group.id === "filter" ? selectedDimensionFilter(group) : undefined;
   applyInputColumnIntent(intentId, filterValue);
 }
 
@@ -1166,9 +1268,6 @@ function openSelectedCompositionConfig() {
 function closeCompositionInspector() {
   compositionInspectorOpen.value = false;
 }
-watch(selectedCompositionSpec, (composition) => {
-  if (!composition) compositionInspectorOpen.value = false;
-});
 const selectedCanvasNodesWithCoordinateGuides = coordinateGuideNodes;
 const cartesianAxisSwapNode = computed(() => {
   if (semanticSelection.value || selectedIds.value.length !== 1) return null;

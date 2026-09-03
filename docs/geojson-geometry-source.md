@@ -31,6 +31,9 @@ resolve the same geometry without duplicating overlapping shapes.
 Supported geometry types are `Point`, `MultiPoint`, `Polygon`, and
 `MultiPolygon`. Polygon templates consume polygon geometries. Scatterplot
 templates consume point geometries or use the center of a polygon geometry.
+CSV and graph-node tables never carry coordinate arrays or longitude/latitude
+columns for geographic rendering; every geographic mark is resolved through
+this ID join.
 
 After an ID column is bound, repeated CSV IDs remain separate in the raw data.
 The geographic view groups them by resolved feature and sums every numeric

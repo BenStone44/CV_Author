@@ -1,10 +1,10 @@
 import { extent } from "d3-array";
 import { scaleLinear, scaleLog, scalePoint, scaleUtc } from "d3-scale";
-import { arc, pie } from "d3-shape";
+import { arc, line as d3Line, pie } from "d3-shape";
 import type { CartesianCoordinateGuide, ChartEncoding, ChartSpec, Dataset, LayerSpec, NestedChildFrame, NestedSpec, ChartPlotArea, ChartPolarArea, ChartScaleSpec, CoordinateGuide, MarkGroupSharedConfig } from "../types";
 import { renderLineChart, type LineRenderInput } from "./lineRenderer";
 import { cartesianAxisEncoding, normalizeBarChartVariant, normalizeChartTemplate, physicalCartesianAxisEncoding } from "./chartTemplates";
-import { getChartContract, type ChartRendererKey } from "./chartContracts";
+import { getChartContract, groupedScalarDimensionFields, resolveChartDataMode, type ChartRendererKey } from "./chartContracts";
 import { resolvedPolarRadiusMode } from "./encodingConfig";
 import {
   defaultColorMapping,
@@ -152,13 +152,25 @@ function renderScatterChart(input: LineRenderInput) {
     : {};
   const colorDomain = visualDomain(input.dataset.rows, colorEncoding);
   const mappedSizeDomain = visualDomain(input.dataset.rows, sizeEncoding);
-  const marks = input.dataset.rows.map((row, index) => {
+  const groupedDimensions = groupedScalarDimensionFields(input.chartSpec);
+  const rows = resolveChartDataMode(input.chartSpec) === "grouped-scalar"
+    ? Array.from(new Map(input.dataset.rows.map((row) => [
+      JSON.stringify(groupedDimensions.map((field) => row[field] ?? "")),
+      row,
+    ])).values())
+    : input.dataset.rows;
+  const pointPositions = new Map<string, { x: number; y: number }>();
+  const nodeIdField = input.dataset.graph?.nodes.columns
+    .find((column) => ["id", "node_id", "hex_id", "key"].includes(column.name.toLowerCase()))?.name;
+  const marks = rows.map((row, index) => {
     const xv = row[xEncoding.field] ?? "";
     const yv = row[yEncoding.field] ?? "";
     const swapped = input.chartSpec.axisSwapped === true;
     const cx = xPosition(swapped ? yv : xv);
     const cy = yPosition(swapped ? xv : yv);
     if (!Number.isFinite(cx) || !Number.isFinite(cy)) return "";
+    const nodeId = nodeIdField ? (row[nodeIdField] ?? "").trim() : "";
+    if (nodeId) pointPositions.set(nodeId, { x: cx, y: cy });
     const rowKey = key(input.dataset, row) || String(index);
     const seriesKey = colorField ? row[colorField] ?? "" : input.chartSpec.series ? row[input.chartSpec.series.field] ?? "" : "";
     const colorIndex = colorField ? Math.max(0, colorValues.indexOf(seriesKey)) : 0;
@@ -176,7 +188,29 @@ function renderScatterChart(input: LineRenderInput) {
         : visualColor(row, colorEncoding, colorDomain, config, palette[colorIndex % palette.length]!));
     return `<circle data-chart-id="${esc(input.chartId)}" data-mark-role="point" data-mark-group-id="mark-group:${esc(input.chartId)}:point" data-row-key="${esc(rowKey)}" data-series-key="${esc(seriesKey)}" cx="${cx}" cy="${cy}" r="${radius}" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 0.88)}" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
   }).join("");
-  const content = `<g data-chart-id="${esc(input.chartId)}" data-chart-type="scatter" data-renderer="deterministic-scatter-marks@1">${marks}</g>`;
+  const links = input.chartSpec.link && input.dataset.graph
+    ? (() => {
+      const sourceField = input.dataset.graph.edges.columns
+        .find((column) => ["source", "from", "source_id"].includes(column.name.toLowerCase()))?.name;
+      const targetField = input.dataset.graph.edges.columns
+        .find((column) => ["target", "to", "target_id"].includes(column.name.toLowerCase()))?.name;
+      if (!sourceField || !targetField) return "";
+      const path = d3Line<{ x: number; y: number }>()
+        .x((point) => point.x)
+        .y((point) => point.y);
+      return input.dataset.graph.edges.rows.flatMap((row) => {
+        const source = (row[sourceField] ?? "").trim();
+        const target = (row[targetField] ?? "").trim();
+        const sourcePoint = pointPositions.get(source);
+        const targetPoint = pointPositions.get(target);
+        const d = sourcePoint && targetPoint ? path([sourcePoint, targetPoint]) : null;
+        return d
+          ? [`<path data-chart-id="${esc(input.chartId)}" data-mark-role="link" data-mark-group-id="mark-group:${esc(input.chartId)}:link" data-source="${esc(source)}" data-target="${esc(target)}" d="${d}" fill="none" stroke="#64748b" stroke-opacity="0.72" stroke-width="2" vector-effect="non-scaling-stroke"/>`]
+          : [];
+      }).join("");
+    })()
+    : "";
+  const content = `<g data-chart-id="${esc(input.chartId)}" data-chart-type="scatter" data-renderer="deterministic-scatter-marks@1"${input.chartSpec.link ? " data-link=\"true\"" : ""}>${links}${marks}</g>`;
   return { ...base, content };
 }
 

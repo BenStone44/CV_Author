@@ -15,7 +15,7 @@ import type {
   SvgCandidate,
 } from "../../types";
 import { defaultDatasetForChartType } from "../../utils/defaultChartData";
-import { parseEmbeddedPoint } from "../../utils/geoJsonGeometry";
+import { canonicalGeoJsonJoinId, geoJsonFeatureIds } from "../../utils/geoJsonGeometry";
 
 export function useCanvasImportOperations(context: any) {
   const {
@@ -39,6 +39,7 @@ export function useCanvasImportOperations(context: any) {
     getCandidate,
     getCanvasNodeListBounds,
     getDataset,
+    getGeometrySource,
     getSelectionScopeBounds,
     getSelectionScopeNodes,
     isLineChartType,
@@ -55,6 +56,7 @@ export function useCanvasImportOperations(context: any) {
     selectedIds,
     semanticSelection,
     setSelection,
+    setActiveGeometrySource,
     standaloneCoordinateSystem,
     supportsDefaultChartData,
     walkCanvasNodes,
@@ -475,34 +477,44 @@ export function useCanvasImportOperations(context: any) {
       ...patch,
     };
   }
-  function setDeckglEncoding(nodeId: string, channel: "position" | "color" | "size", field: string) {
+  function setDeckglEncoding(nodeId: string, channel: "color" | "size", field: string) {
     const node = findCanvasNode(nodeId);
     const binding = node?.deckglBinding;
     const dataset = node ? getDataset(binding?.datasetId ?? node.deckglDatasetId ?? "") : null;
     if (!node || !dataset) return;
     const columns = dataset.columns.length ? dataset.columns : dataset.graph?.nodes.columns ?? [];
     const column = columns.find((item) => item.name === field);
-    const rows = dataset.rows.length ? dataset.rows : dataset.graph?.nodes.rows ?? [];
-    if (channel === "position") {
-      if (field && !rows.some((row) => parseEmbeddedPoint(row[field]) !== null)) return;
-      if (field) {
-        node.deckglBinding = {
-          ...(binding ?? { datasetId: dataset.id, aggregation: "sum" as const }),
-          pointField: field,
-          geometrySourceId: undefined,
-          idField: undefined,
-        };
-      } else if (binding) {
-        node.deckglBinding = { ...binding, pointField: undefined };
-      }
-      return;
-    }
     if (!binding) return;
     if (field && column?.type !== "quantitative") return;
     node.deckglBinding = {
       ...binding,
       [channel === "color" ? "colorField" : "sizeField"]: field || undefined,
     };
+  }
+  function setDeckglDataBinding(nodeId: string, datasetId: string, geometrySourceId: string, idField: string) {
+    const node = findCanvasNode(nodeId);
+    const dataset = getDataset(datasetId);
+    const source = getGeometrySource(geometrySourceId);
+    const table = dataset?.columns.length ? dataset : dataset?.graph?.nodes;
+    const column = table?.columns.find((candidate) => candidate.name === idField);
+    if (!node || node.layerKind !== "deckgl" || !dataset || !source || !column) return false;
+    const geometryIds = new Set(source.features.flatMap(geoJsonFeatureIds).map(canonicalGeoJsonJoinId));
+    const matched = table.rows.some((row) =>
+      geometryIds.has(canonicalGeoJsonJoinId(row[idField])));
+    if (!matched) {
+      setImportNotice(`${idField} has no matching ID in ${source.name}.`);
+      return false;
+    }
+    pushCanvasHistory();
+    node.deckglBinding = {
+      datasetId,
+      geometrySourceId,
+      idField,
+      aggregation: "sum",
+    };
+    setActiveGeometrySource(geometrySourceId);
+    setImportNotice(`${idField} joined to ${source.name}.`);
+    return true;
   }
   function selectCanvasNode(nodeId: string) {
     const node = findCanvasNode(nodeId);
@@ -632,6 +644,7 @@ export function useCanvasImportOperations(context: any) {
     setDeckglMapViewState,
     setDeckglConfig,
     setDeckglEncoding,
+    setDeckglDataBinding,
     selectCanvasNode,
     insertCompositionCandidate,
     createCanvasNodesFromFile,

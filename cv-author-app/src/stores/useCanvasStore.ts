@@ -3,7 +3,6 @@ import {
   shallowRef,
   computed,
   nextTick,
-  watch,
   onMounted,
   onBeforeUnmount,
   type Ref,
@@ -68,6 +67,7 @@ import type {
   ChartDataTransform,
   GeographicLayerConfig,
   GeographicMapViewState,
+  DeckglPointTarget,
   ConcatLinkSpec,
   ConcatSplitControl,
 } from "../types";
@@ -143,7 +143,7 @@ import {
   inferColumnIntents,
   type InputColumnIntentAnalysis,
 } from "../utils/dimensionInference";
-import { geoJsonFeatureIds, parseEmbeddedPoint } from "../utils/geoJsonGeometry";
+import { canonicalGeoJsonJoinId, geoJsonFeatureIds } from "../utils/geoJsonGeometry";
 import {
   createDefaultChartSpec,
   defaultChartDataset,
@@ -202,6 +202,7 @@ export {
 } from "./canvas/catalog";
 
 const singleBarValueOrderTransformId = "encoding:single-bar:value-order";
+const DECKGL_NESTED_DEFAULT_DIAMETER = 140;
 export const MIN_ZOOM = 0.25;
 export const MAX_ZOOM = 4;
 
@@ -282,6 +283,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     activeDataset,
     getDataset,
     activeGeometrySource,
+    getGeometrySource,
+    setActiveGeometrySource,
   } = useDatasetStore();
   const relationshipStore = useChartRelationshipStore();
   const {
@@ -508,7 +511,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     dispatchRelationship, editingCompositionId, editingGroupPath, endCsvColumnDrag,
     findCanvasNode, generatedCandidates, getActiveCsvColumnDrag, getChartTemplateContract,
     getGroupAtPath,
-    getGroupsAtPath, getRootNode, getSelectionScopeNodes, getSelectionNode, getDataset,
+    getGroupsAtPath, getRootNode, getSelectionScopeNodes, getSelectionNode, getDataset, getGeometrySource,
     getNodeSelectionBounds, hasRequiredChartEncodings,
     getNodeTransform, getPolarOccupiedGeometry, identityMatrix, invertMatrix,
     implementedTemplateDefinitions, inferColumnIntents, isDataColumnTypeCompatible,
@@ -1153,9 +1156,15 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       }];
     }),
   );
-  const nestedRenderedChildIds = computed<ReadonlySet<string>>(() =>
-    new Set(nestedRenderPlacements.value.map((placement) => placement.child.id)),
-  );
+  const nestedRenderedChildIds = computed<ReadonlySet<string>>(() => {
+    const ids = new Set(nestedRenderPlacements.value.map((placement) => placement.child.id));
+    Object.values(chartRelationships.value.nestedRelationships).forEach((relationship) => {
+      if (relationship.status !== "active") return;
+      const parent = findCanvasNode(relationship.parentChartId);
+      if (parent?.layerKind === "deckgl") ids.add(relationship.childChartId);
+    });
+    return ids;
+  });
   /**
    * Nested children are rendered inside their parent's mark layer but remain
    * separate canvas nodes. Include their resolved footprints in the parent
@@ -1634,7 +1643,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     getSelectionScopeNodes()
       .filter((node) => sel.has(node.id))
       .flatMap((node) => walkCanvasNodes([node]))
-      .filter((node) => !!node.chartSpec)
+      .filter((node) => !!node.chartSpec || node.layerKind === "deckgl")
       .forEach((node) => dispatchRelationship({ type: "unregister-chart", chartId: node.id, keepAxes: true }));
     replaceSelectionScopeNodes(getSelectionScopeNodes().filter((n) => !sel.has(n.id)));
     reconcileCoordinateSystems();
@@ -2438,17 +2447,12 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const parentXField = parentSpec.encodings.x?.field ?? parentSpec.encodings.column?.field;
     const parentYField = parentSpec.encodings.y?.field ?? parentSpec.encodings.row?.field;
     const parentStructuralFields = getNestedParentContextFields(parentSpec);
-    const hierarchyKeyField = normalizeChartTemplate(parentSpec.chartType) === "hierarchy"
-      ? parentSpec.encodings.key?.field
-      : undefined;
     const parentDimensionFields = chartRoleFields(parentSpec, new Set<NestedContextRole>(["dimension"]));
     const parentSeriesFields = chartRoleFields(parentSpec, new Set<NestedContextRole>(["series"]));
     const clues = nestClueTransforms(childSpec);
     const fieldsToResolve = clues.length > 0
       ? clues.map((clue) => clue.field)
-      : hierarchyKeyField
-        ? [hierarchyKeyField]
-        : parentStructuralFields;
+      : parentStructuralFields;
     let identity: {
       rowKey?: string;
       categoryKey?: string;
@@ -3659,14 +3663,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   renderChartNodeImplementation = renderedChartNode;
   renderSharedCoordinateCompositionImplementation = renderedSharedCoordinateComposition;
 
-  watch(canvasNodes, (nodes) => {
-    walkCanvasNodes(nodes).forEach((node) => {
-      if (node.chartSpec && !node.renderedContent && node.chartSpec.renderer?.status !== "error") {
-        renderChartNode(node);
-      }
-    });
-  }, { flush: "post" });
-
   const {
     cloneCanvasNodeForPaste: cloneCanvasNodeForPasteFromClipboard,
     copySelectedNodes,
@@ -3713,6 +3709,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     setDeckglMapViewState,
     setDeckglConfig,
     setDeckglEncoding,
+    setDeckglDataBinding,
     selectCanvasNode,
     insertCompositionCandidate,
     createCanvasNodesFromFile,
@@ -3740,6 +3737,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     getCandidate,
     getCanvasNodeListBounds,
     getDataset,
+    getGeometrySource,
     getSelectionScopeBounds,
     getSelectionScopeNodes,
     isLineChartType,
@@ -3757,6 +3755,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     semanticSelection,
     setSelection,
     standaloneCoordinateSystem,
+    setActiveGeometrySource,
     supportsDefaultChartData,
     walkCanvasNodes,
     nestedBindingTarget,
@@ -3854,7 +3853,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   async function onCanvasDrop(event: DragEvent) {
     event.preventDefault();
     const point = toSelectionScopePoint(event.clientX, event.clientY);
-    const csvPayload = decodeCsvColumnDragPayload(event.dataTransfer?.getData(csvColumnDragMime));
+    const csvPayload = decodeCsvColumnDragPayload(event.dataTransfer?.getData(csvColumnDragMime))
+      ?? getActiveCsvColumnDrag();
     if (csvPayload) {
       const zone = dataBindingDropZoneAtPoint(point, csvPayload) ?? activeDataBindingDropZone.value;
       activeDataBindingDropZone.value = null;
@@ -3877,31 +3877,29 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       }
       const target = findCanvasNode(zone.targetNodeId);
       if (zone.type === "geographic-body") {
-        const source = activeGeometrySource.value;
+        const source = target?.deckglBinding?.geometrySourceId
+          ? getGeometrySource(target.deckglBinding.geometrySourceId)
+          : activeGeometrySource.value;
         const dataset = getDataset(csvPayload.datasetId);
         const rows = csvPayload.table === "nodes" && dataset?.graph
           ? dataset.graph.nodes.rows
           : dataset?.rows ?? [];
-        const pointField = rows.some((row) => parseEmbeddedPoint(row[csvPayload.field]) !== null)
-          ? csvPayload.field
-          : undefined;
-        if (!target || target.layerKind !== "deckgl" || (!source && !pointField)) return;
+        if (!target || target.layerKind !== "deckgl" || !source) return;
         pushCanvasHistory();
         target.deckglBinding = {
           datasetId: csvPayload.datasetId,
-          ...(pointField ? { pointField } : { geometrySourceId: source!.id, idField: csvPayload.field }),
+          geometrySourceId: source.id,
+          idField: csvPayload.field,
           aggregation: "sum",
         };
         setSelection([target.id]);
         axisBindingTarget.value = { nodeId: target.id, channel: "x" };
         const datasetIds = new Set(rows
-          .map((row) => (row[csvPayload.field] ?? "").trim())
+          .map((row) => canonicalGeoJsonJoinId(row[csvPayload.field]))
           .filter(Boolean) ?? []);
         const matchedFeatureCount = source?.features.filter((feature) =>
-          geoJsonFeatureIds(feature).some((id) => datasetIds.has(id))).length;
-        setImportNotice(pointField
-          ? `${csvPayload.field} bound as embedded map points.`
-          : `${csvPayload.field} joined to ${matchedFeatureCount ?? 0} GeoJSON geometries.`);
+          geoJsonFeatureIds(feature).some((id) => datasetIds.has(canonicalGeoJsonJoinId(id)))).length;
+        setImportNotice(`${csvPayload.field} joined to ${matchedFeatureCount ?? 0} GeoJSON geometries.`);
         return;
       }
       if (!target?.chartSpec) return;
@@ -3983,6 +3981,45 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (!candidateId) return;
     const candidate = getCandidate(candidateId);
     if (!candidate) return;
+    if (candidate.graphLinkMode) {
+      const target = [...getSelectionScopeNodes()].reverse().find((node) =>
+        pointInBounds(point, collectNodeSelectionBounds(node))
+        && (normalizeChartTemplate(node.chartSpec?.chartType ?? "") === "scatter"
+          || (node.layerKind === "deckgl" && node.deckglLayerType === "ScatterplotLayer")),
+      );
+      if (target?.chartSpec && normalizeChartTemplate(target.chartSpec.chartType) === "scatter") {
+        if (!getDataset(target.chartSpec.datasetId)?.graph) {
+          setImportNotice("Graph Link requires the scatterplot to use a graph CSV dataset.");
+          draggedCandidateId.value = null;
+          return;
+        }
+        pushCanvasHistory();
+        target.chartSpec = { ...target.chartSpec, link: true };
+        renderChartNode(target);
+        setSelection([target.id]);
+        setImportNotice("Graph links enabled for this Scatterplot.");
+        draggedCandidateId.value = null;
+        return;
+      }
+      if (target?.layerKind === "deckgl" && target.deckglLayerType === "ScatterplotLayer") {
+        const dataset = getDataset(target.deckglBinding?.datasetId ?? target.deckglDatasetId ?? "");
+        if (!dataset?.graph) {
+          setImportNotice("Graph Link requires the map scatterplot to use a graph CSV dataset.");
+          draggedCandidateId.value = null;
+          return;
+        }
+        pushCanvasHistory();
+        target.deckglConfig = {
+          ...defaultGeographicLayerConfig("ScatterplotLayer"),
+          ...target.deckglConfig,
+          link: true,
+        };
+        setSelection([target.id]);
+        setImportNotice("Graph links enabled for this map Scatterplot.");
+        draggedCandidateId.value = null;
+        return;
+      }
+    }
     // Link templates and geographic layers can be dropped directly on an
     // existing point/map. The source node must exist before the normal
     // composition hit-test can resolve the target, so those candidates use a
@@ -4064,6 +4101,77 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       };
     }
     draggedCandidateId.value = null;
+  }
+
+  async function createDeckglPointNested(target: DeckglPointTarget) {
+    const candidateId = draggedCandidateId.value;
+    const candidate = candidateId ? getCandidate(candidateId) : null;
+    const parent = findCanvasNode(target.layerId);
+    const parentLayerType = parent?.deckglLayerType ?? parent?.name;
+    if (!candidate || !parent || parent.layerKind !== "deckgl"
+      || parentLayerType !== "ScatterplotLayer") return false;
+    if (normalizeChartTemplate(candidate.chartType) !== "bar") {
+      setImportNotice("Only bar charts can be nested on map scatterplot points.");
+      return false;
+    }
+
+    const point = toSelectionScopePoint(target.clientX, target.clientY);
+    pushCanvasHistory();
+    const created = await createCanvasItem(candidate, point, false);
+    const child = created?.[0];
+    if (!child?.chartSpec) return false;
+
+    const parentDatasetId = parent.deckglBinding?.datasetId ?? parent.deckglDatasetId ?? null;
+    dispatchRelationship({
+      type: "register-chart",
+      chart: {
+        id: parent.id,
+        nodeId: parent.id,
+        chartType: "ScatterplotLayer",
+        datasetId: parentDatasetId,
+        instanceKind: "canvas",
+      },
+      channels: [],
+    });
+    const scale = DECKGL_NESTED_DEFAULT_DIAMETER / Math.max(child.width, child.height, 1);
+    const sourceFrame = {
+      x: child.x,
+      y: child.y,
+      scaleX: child.scaleX,
+      scaleY: child.scaleY,
+      rotation: child.rotation,
+    };
+    const batchId = `nested-batch:${crypto.randomUUID()}`;
+    child.name = `${candidate.name} nested`;
+    registerChartRelationship(child, { instanceKind: "nested-child", sourceChartId: parent.id });
+    const relationshipId = `nested:${crypto.randomUUID()}`;
+    dispatchRelationship({
+      type: "begin-nested",
+      relationship: {
+        id: relationshipId,
+        parentChartId: parent.id,
+        parentElementId: `deckgl-point:${parent.id}:${target.rowKey}`,
+        parentDataKey: target.rowKey,
+        childChartId: child.id,
+        relationType: "relative-position",
+        parameters: {
+          ...defaultRelativeParameters(),
+          scale: { x: scale, y: scale },
+          batchId,
+          sourceChildId: child.id,
+          sourceChildName: candidate.name,
+          sourceFrame,
+        },
+        resolverVersion: 1,
+      },
+    });
+    dispatchRelationship({ type: "commit-nested", relationshipId });
+    setSelection([parent.id]);
+    axisBindingTarget.value = { nodeId: parent.id, channel: "x" };
+    openNestedPositionEditor([relationshipId]);
+    setImportNotice(`${candidate.name} nested on map point ${target.rowKey}.`);
+    draggedCandidateId.value = null;
+    return true;
   }
 
   // --- movement / ordering / grouping ---
@@ -4557,6 +4665,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     onCanvasDragOver,
     onCanvasDragLeave,
     onCanvasDrop,
+    createDeckglPointNested,
     onCanvasWheel,
     onCanvasContextMenu,
     onCanvasNodePointerDown,
@@ -4602,6 +4711,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     setDeckglMapViewState,
     setDeckglConfig,
     setDeckglEncoding,
+    setDeckglDataBinding,
     selectCanvasNode,
     clearMarkField,
     clearAxisBinding: clearMarkField,

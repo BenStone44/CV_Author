@@ -21,6 +21,8 @@ export type SvgCandidate = {
 export type GeographicLayerConfig = {
   size?: number;
   color?: string;
+  /** Render graph-table links beneath geographic scatterplot points. */
+  link?: boolean;
 };
 
 /** Persisted Mapbox camera state for geographic canvas nodes. */
@@ -52,12 +54,10 @@ export type GeometrySource = {
 
 export type GeographicLayerBinding = {
   datasetId: string;
-  /** External GeoJSON join source. Omit for CSV-embedded point bindings. */
-  geometrySourceId?: string;
+  /** Imported GeoJSON source resolved through idField. */
+  geometrySourceId: string;
   /** External GeoJSON feature ID field. */
-  idField?: string;
-  /** CSV field containing a GeoJSON [longitude, latitude] position. */
-  pointField?: string;
+  idField: string;
   colorField?: string;
   sizeField?: string;
   aggregation: "sum";
@@ -65,6 +65,28 @@ export type GeographicLayerBinding = {
 
 /** Canvas node ids rendered together by one Mapbox/deck.gl instance. */
 export type DeckglLayerStack = string[];
+
+/** A picked ScatterplotLayer datum expressed in map-container coordinates. */
+export type DeckglPointTarget = {
+  layerId: string;
+  rowKey: string;
+  position: [number, number];
+  radius: number;
+  clientX: number;
+  clientY: number;
+};
+
+/** SVG content positioned by Mapbox above a particular geographic point. */
+export type DeckglNestedOverlay = {
+  relationshipId: string;
+  parentNodeId: string;
+  parentDataKey: string;
+  content: string;
+  width: number;
+  height: number;
+  parentRadius: number;
+  parameters: RelativeNestedParameters;
+};
 
 export type CartesianCoordinateGuide = {
   type: "Cartesian";
@@ -390,6 +412,8 @@ export type ChartSpec = {
   datasetId: string;
   /** Built-in bindings are preview scaffolding until the author supplies fields. */
   defaultDataBinding?: boolean;
+  /** Render graph-table links beneath Cartesian scatterplot points. */
+  link?: boolean;
   axisSwapped?: boolean;
   encodings: Partial<Record<ChartEncodingChannel, ChartEncoding>>;
   aggregations?: Partial<Record<ChartEncodingChannel, "sum" | "avg">>;

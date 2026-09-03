@@ -3,7 +3,7 @@
 // stack assembled at runtime; the normalized layer data is validated before
 // reaching this rendering boundary.
 // @ts-nocheck
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, onUpdated, ref, toRaw } from "vue";
 import mapboxgl from "mapbox-gl";
 import { MapboxOverlay } from "@deck.gl/mapbox";
 import {
@@ -40,12 +40,21 @@ import "mapbox-gl/dist/mapbox-gl.css";
 import type {
   DataRow,
   Dataset,
+  DeckglNestedOverlay,
+  DeckglPointTarget,
   GeoJsonFeature,
   GeographicLayerBinding,
   GeographicLayerConfig,
   GeographicMapViewState,
 } from "../types";
-import { geoJsonFeatureIds, parseEmbeddedPoint } from "../utils/geoJsonGeometry";
+import {
+  bindGeoJsonFeatures,
+  geoJsonFeatureBounds,
+  geoJsonFeatureIds,
+  geoJsonPolygonRecords,
+  type BoundGeoJsonFeature,
+} from "../utils/geoJsonGeometry";
+import { isCsvColumnDrag } from "../utils/csvColumnDrag";
 import { frontendPalette } from "../config/global";
 
 const props = defineProps<{
@@ -68,10 +77,16 @@ const props = defineProps<{
     geometryFeatures: GeoJsonFeature[];
     dataset?: Dataset | null;
   }>;
+  nestedOverlays?: DeckglNestedOverlay[];
 }>();
 
 const emit = defineEmits<{
   viewStateChange: [state: GeographicMapViewState];
+  pointHover: [target: DeckglPointTarget | null];
+  pointSelect: [target: DeckglPointTarget];
+  pointDrop: [target: DeckglPointTarget];
+  columnDragOver: [event: DragEvent];
+  columnDrop: [event: DragEvent];
 }>();
 
 const mapContainer = ref<HTMLDivElement | null>(null);
@@ -83,11 +98,13 @@ let userCameraInteraction = false;
 let userViewState = false;
 let viewStateCommitTimer: number | null = null;
 const loadedExampleData = ref<Record<string, unknown[]>>({});
+const hoveredPoint = ref<{ layerId: string; rowKey: string } | null>(null);
+let nestedProjectionFrame: number | null = null;
 
 function onMapPointerDown(event: PointerEvent) {
   if (event.button === 0 && map?.isStyleLoaded()) {
-    // Pointerdown can synchronously trigger Vue watchers before Mapbox emits
-    // movestart. Mark the camera as user-owned so they cannot fit during drag.
+    // Parent updates can arrive before Mapbox emits movestart. Mark the camera
+    // as user-owned so those updates cannot fit the map during a drag.
     userViewState = true;
   }
 }
@@ -201,15 +218,6 @@ const simpleMeshExampleData = Array.from({ length: 100 }, (_, index) => {
 });
 type Coordinate = [number, number];
 
-function collectCoordinates(value: unknown, result: Coordinate[]) {
-  if (!Array.isArray(value)) return;
-  if (value.length >= 2 && typeof value[0] === "number" && typeof value[1] === "number") {
-    result.push([value[0], value[1]]);
-    return;
-  }
-  value.forEach((item) => collectCoordinates(item, result));
-}
-
 function layerCoordinates(layerType: string): Coordinate[] {
   switch (layerType) {
     case "ArcLayer":
@@ -245,15 +253,14 @@ function fitMapToLayerData(options: { force?: boolean; persist?: boolean } = {})
   if (!map || !map.isStyleLoaded() || userViewState || (!force && (initialViewFitted || props.mapViewState))) return;
   const fittedFeatures = props.binding ? materializedBoundFeatures.value : [];
   if (fittedFeatures.length > 0) {
-    const coordinates: Coordinate[] = [];
-    fittedFeatures.forEach((feature) => collectCoordinates(feature.geometry.coordinates, coordinates));
-    if (coordinates.length > 0) {
-      const longitudes = coordinates.map(([longitude]) => longitude);
-      const latitudes = coordinates.map(([, latitude]) => latitude);
-      let minLongitude = Math.min(...longitudes);
-      let maxLongitude = Math.max(...longitudes);
-      let minLatitude = Math.min(...latitudes);
-      let maxLatitude = Math.max(...latitudes);
+    const fittedBounds = geoJsonFeatureBounds(fittedFeatures);
+    if (fittedBounds) {
+      let {
+        minLongitude,
+        maxLongitude,
+        minLatitude,
+        maxLatitude,
+      } = fittedBounds;
       if (minLongitude === maxLongitude) {
         minLongitude -= 0.01;
         maxLongitude += 0.01;
@@ -274,24 +281,6 @@ function fitMapToLayerData(options: { force?: boolean; persist?: boolean } = {})
       if (options.persist) emitCurrentViewState();
       return;
     }
-  }
-  const fittedPoints = props.binding?.pointField ? materializedBoundPoints.value : [];
-  if (fittedPoints.length > 0) {
-    const longitudes = fittedPoints.map(({ position }) => position[0]);
-    const latitudes = fittedPoints.map(({ position }) => position[1]);
-    let minLongitude = Math.min(...longitudes);
-    let maxLongitude = Math.max(...longitudes);
-    let minLatitude = Math.min(...latitudes);
-    let maxLatitude = Math.max(...latitudes);
-    if (minLongitude === maxLongitude) { minLongitude -= 0.01; maxLongitude += 0.01; }
-    if (minLatitude === maxLatitude) { minLatitude -= 0.01; maxLatitude += 0.01; }
-    map.fitBounds(
-      [[minLongitude, minLatitude], [maxLongitude, maxLatitude]],
-      { padding: Math.max(24, Math.min(props.width, props.height) * 0.08), maxZoom: 12, duration: 0 },
-    );
-    initialViewFitted = true;
-    if (options.persist) emitCurrentViewState();
-    return;
   }
   const exampleView = exampleViewStates[props.layerType];
   if (exampleView) {
@@ -346,87 +335,50 @@ function colorToRgba(color: string | undefined, alpha = 255): [number, number, n
   return [(parsed >> 16) & 255, (parsed >> 8) & 255, parsed & 255, alpha];
 }
 
-type BoundGeoJsonFeature = GeoJsonFeature & {
-  properties: Record<string, unknown> & {
-    __colorValue?: number;
-    __sizeValue?: number;
-  };
-};
+const materializedBoundFeatures = computed(() =>
+  bindGeoJsonFeatures(props.binding, props.datasetRows, props.geometryFeatures),
+);
+const boundFeatureCache = new Map<string, {
+  bindingKey: string;
+  datasetRows: DataRow[];
+  geometryFeatures: GeoJsonFeature[];
+  features: BoundGeoJsonFeature[];
+}>();
 
-type BoundPointRow = {
-  position: [number, number];
-  colorValue?: number;
-  sizeValue?: number;
-};
+function bindingCacheKey(binding: GeographicLayerBinding | undefined) {
+  return binding
+    ? [binding.datasetId, binding.geometrySourceId, binding.idField,
+      binding.colorField ?? "", binding.sizeField ?? "", binding.aggregation].join("\u0000")
+    : "";
+}
 
-function boundGeometryFeaturesFor(
+function cachedBoundFeatures(
+  cacheKey: string,
   binding: GeographicLayerBinding | undefined,
   datasetRows: DataRow[],
   geometryFeatures: GeoJsonFeature[],
-): BoundGeoJsonFeature[] {
-  if (!binding?.idField || !geometryFeatures.length) return [];
-  const idField = binding.idField;
-  const aggregate = new Map<string, { colorValue: number; sizeValue: number }>();
-  datasetRows.forEach((row) => {
-    const id = (row[idField] ?? "").trim();
-    if (!id) return;
-    const current = aggregate.get(id) ?? { colorValue: 0, sizeValue: 0 };
-    const colorValue = binding.colorField ? Number(row[binding.colorField]) : 0;
-    const sizeValue = binding.sizeField ? Number(row[binding.sizeField]) : 0;
-    if (Number.isFinite(colorValue)) current.colorValue += colorValue;
-    if (Number.isFinite(sizeValue)) current.sizeValue += sizeValue;
-    aggregate.set(id, current);
+) {
+  const rawRows = toRaw(datasetRows);
+  const rawFeatures = toRaw(geometryFeatures);
+  const nextBindingKey = bindingCacheKey(binding);
+  const cached = boundFeatureCache.get(cacheKey);
+  if (cached
+    && cached.bindingKey === nextBindingKey
+    && cached.datasetRows === rawRows
+    && cached.geometryFeatures === rawFeatures) return cached.features;
+  const features = bindGeoJsonFeatures(binding, datasetRows, geometryFeatures);
+  boundFeatureCache.set(cacheKey, {
+    bindingKey: nextBindingKey,
+    datasetRows: rawRows,
+    geometryFeatures: rawFeatures,
+    features,
   });
-  return geometryFeatures.flatMap((feature) => {
-    const values = geoJsonFeatureIds(feature).reduce((result, id) => {
-      const match = aggregate.get(id);
-      if (!match) return result;
-      result.colorValue += match.colorValue;
-      result.sizeValue += match.sizeValue;
-      result.matched = true;
-      return result;
-    }, { colorValue: 0, sizeValue: 0, matched: false });
-    if (!values.matched) return [];
-    return [{
-      ...feature,
-      properties: {
-        ...feature.properties,
-        ...(binding.colorField ? { __colorValue: values.colorValue } : {}),
-        ...(binding.sizeField ? { __sizeValue: values.sizeValue } : {}),
-      },
-    }];
-  });
+  return features;
 }
-
-function boundPointRowsFor(
-  binding: GeographicLayerBinding | undefined,
-  datasetRows: DataRow[],
-): BoundPointRow[] {
-  if (!binding?.pointField) return [];
-  const pointField = binding.pointField;
-  return datasetRows.flatMap((row) => {
-    const position = parseEmbeddedPoint(row[pointField]);
-    if (!position) return [];
-    const colorValue = binding.colorField ? Number(row[binding.colorField]) : undefined;
-    const sizeValue = binding.sizeField ? Number(row[binding.sizeField]) : undefined;
-    return [{
-      position,
-      ...(Number.isFinite(colorValue) ? { colorValue } : {}),
-      ...(Number.isFinite(sizeValue) ? { sizeValue } : {}),
-    }];
-  });
-}
-
-const materializedBoundFeatures = computed(() =>
-  boundGeometryFeaturesFor(props.binding, props.datasetRows, props.geometryFeatures),
-);
-const materializedBoundPoints = computed(() =>
-  boundPointRowsFor(props.binding, props.datasetRows),
-);
 
 function numericExtent(features: unknown[], field: string) {
   const values = features
-    .map((feature) => (feature as Record<string, unknown>)[field])
+    .map((feature) => (feature as BoundGeoJsonFeature).properties[field])
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
   return values.length ? [Math.min(...values), Math.max(...values)] as const : null;
 }
@@ -463,13 +415,165 @@ function geometryCenter(feature: GeoJsonFeature): [number, number] {
   return [total[0] / rings.length, total[1] / rings.length];
 }
 
-function polygonRecords(features: BoundGeoJsonFeature[]) {
-  return features.flatMap((feature) => {
-    if (feature.geometry.type === "Polygon") return [{ feature, polygon: feature.geometry.coordinates }];
-    if (feature.geometry.type === "MultiPolygon") {
-      return (feature.geometry.coordinates as number[][][][]).map((polygon) => ({ feature, polygon }));
-    }
-    return [];
+function graphNodePositions(
+  dataset: Dataset | null | undefined,
+  binding: GeographicLayerBinding | undefined,
+  geometryFeatures: GeoJsonFeature[],
+) {
+  const graph = dataset?.graph;
+  if (!graph || !binding) return new Map<string, [number, number]>();
+  const idField = graph.nodes.columns
+    .find((column) => ["id", "node_id", "hex_id", "key"].includes(column.name.toLowerCase()))?.name;
+  if (!idField) return new Map<string, [number, number]>();
+  const positionsByGeometryId = new Map(
+    geometryFeatures.flatMap((feature) => geoJsonFeatureIds(feature).map((id) => [id, geometryCenter(feature)] as const)),
+  );
+  return new Map(graph.nodes.rows.flatMap((row) => {
+    const id = (row[idField] ?? "").trim();
+    const position = positionsByGeometryId.get((row[binding.idField] ?? "").trim());
+    return id && position ? [[id, position] as const] : [];
+  }));
+}
+
+function graphPointRecords(
+  dataset: Dataset | null | undefined,
+  binding: GeographicLayerBinding | undefined,
+  geometryFeatures: GeoJsonFeature[],
+) {
+  return Array.from(graphNodePositions(dataset, binding, geometryFeatures), ([rowKey, position]) => ({ rowKey, position }));
+}
+
+function pointTargetFromPick(info: any, layerId: string): DeckglPointTarget | null {
+  const object = info?.object as { position?: unknown; rowKey?: unknown } | null;
+  const position = Array.isArray(object?.position)
+    && Number.isFinite(object.position[0])
+    && Number.isFinite(object.position[1])
+    ? [Number(object.position[0]), Number(object.position[1])] as [number, number]
+    : null;
+  if (!object || !position) return null;
+  const radius = Number(info.layer?.props?.getRadius?.(object));
+  const point = info?.pixel ?? [info?.x, info?.y];
+  const containerRect = mapContainer.value?.getBoundingClientRect();
+  return {
+    layerId,
+    rowKey: typeof object.rowKey === "string" ? object.rowKey : String(info.index ?? ""),
+    position,
+    radius: Number.isFinite(radius) ? Math.max(radius, 1) : 8,
+    clientX: (containerRect?.left ?? 0) + Number(point?.[0] ?? 0),
+    clientY: (containerRect?.top ?? 0) + Number(point?.[1] ?? 0),
+  };
+}
+
+function onScatterplotHover(info: any, layerId: string) {
+  const target = pointTargetFromPick(info, layerId);
+  const next = target ? { layerId: target.layerId, rowKey: target.rowKey } : null;
+  if (hoveredPoint.value?.layerId !== next?.layerId || hoveredPoint.value?.rowKey !== next?.rowKey) {
+    hoveredPoint.value = next;
+    emit("pointHover", target);
+    updateOverlay();
+  }
+}
+
+function pickScatterplotPoint(event: DragEvent) {
+  const rect = mapContainer.value?.getBoundingClientRect();
+  if (!overlay || !rect) return null;
+  const info = overlay.pickObject({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+  const layerId = String(info?.layer?.id ?? "").replace(/^deckgl-example-/, "");
+  const target = layerId ? pointTargetFromPick(info, layerId) : null;
+  return target ? { ...target, clientX: event.clientX, clientY: event.clientY } : null;
+}
+
+function onMapDragOver(event: DragEvent) {
+  if (isCsvColumnDrag(event.dataTransfer)) {
+    event.stopPropagation();
+    emit("columnDragOver", event);
+    return;
+  }
+  event.preventDefault();
+  const target = pickScatterplotPoint(event);
+  if (event.dataTransfer) event.dataTransfer.dropEffect = target ? "copy" : "none";
+  onScatterplotHover({ object: target ? { position: target.position, rowKey: target.rowKey } : null }, target?.layerId ?? "");
+}
+
+function onMapDrop(event: DragEvent) {
+  if (isCsvColumnDrag(event.dataTransfer)) {
+    event.stopPropagation();
+    emit("columnDrop", event);
+    return;
+  }
+  event.preventDefault();
+  const target = pickScatterplotPoint(event);
+  if (!target) return;
+  event.stopPropagation();
+  emit("pointDrop", target);
+}
+
+function nestedOverlayTransform(nested: DeckglNestedOverlay) {
+  const point = map?.project(nestedPointPosition(nested));
+  if (!point) return "translate(-10000 -10000)";
+  const parameters = nested.parameters;
+  const anchorX = point.x + (parameters.parentAnchor.x - 0.5) * nested.parentRadius * 2 + parameters.offset.x;
+  const anchorY = point.y + (parameters.parentAnchor.y - 0.5) * nested.parentRadius * 2 + parameters.offset.y;
+  const scaleX = parameters.scale.x;
+  const scaleY = parameters.scale.y;
+  const childX = anchorX - parameters.childAnchor.x * nested.width * scaleX;
+  const childY = anchorY - parameters.childAnchor.y * nested.height * scaleY;
+  return `translate(${childX} ${childY}) rotate(${parameters.rotation} ${nested.width * scaleX / 2} ${nested.height * scaleY / 2}) scale(${scaleX} ${scaleY})`;
+}
+
+function updateNestedOverlayProjection() {
+  nestedProjectionFrame = null;
+  const container = mapContainer.value;
+  if (!container) return;
+  const overlays = new Map(
+    (props.nestedOverlays ?? []).map((nested) => [nested.relationshipId, nested]),
+  );
+  container.querySelectorAll<SVGGElement>("[data-nested-relationship-id]").forEach((element) => {
+    const nested = overlays.get(element.dataset.nestedRelationshipId ?? "");
+    if (nested) element.setAttribute("transform", nestedOverlayTransform(nested));
+  });
+}
+
+function scheduleNestedOverlayProjection() {
+  if (!props.nestedOverlays?.length || nestedProjectionFrame !== null) return;
+  nestedProjectionFrame = requestAnimationFrame(updateNestedOverlayProjection);
+}
+
+function nestedPointPosition(nested: DeckglNestedOverlay): [number, number] {
+  const layer = props.layers?.find((item) => item.id === nested.parentNodeId);
+  const feature = cachedBoundFeatures(
+    layer?.id ?? nested.parentNodeId,
+    layer?.binding,
+    layer?.datasetRows ?? [],
+    layer?.geometryFeatures ?? [],
+  ).find((item) => item.id === nested.parentDataKey);
+  if (feature) return geometryCenter(feature);
+  const graphPoint = graphPointRecords(
+    layer?.dataset,
+    layer?.binding,
+    layer?.geometryFeatures ?? [],
+  ).find((item) => item.rowKey === nested.parentDataKey);
+  return graphPoint?.position ?? [0, 0];
+}
+
+function graphLineRecords(
+  dataset: Dataset | null | undefined,
+  binding: GeographicLayerBinding | undefined,
+  geometryFeatures: GeoJsonFeature[],
+) {
+  const graph = dataset?.graph;
+  if (!graph) return [];
+  const sourceField = graph.edges.columns
+    .find((column) => ["source", "from", "source_id"].includes(column.name.toLowerCase()))?.name;
+  const targetField = graph.edges.columns
+    .find((column) => ["target", "to", "target_id"].includes(column.name.toLowerCase()))?.name;
+  if (!sourceField || !targetField) return [];
+  const positions = graphNodePositions(dataset, binding, geometryFeatures);
+  return graph.edges.rows.flatMap((row) => {
+    const start = positions.get((row[sourceField] ?? "").trim());
+    const end = positions.get((row[targetField] ?? "").trim());
+    const value = Number(row.value ?? 1);
+    return start && end ? [{ start, end, value: Number.isFinite(value) ? value : 1 }] : [];
   });
 }
 
@@ -482,25 +586,16 @@ function layerOptions(layerType: string, layer?: NonNullable<typeof props.layers
   const dataset = layer?.dataset ?? props.dataset;
   const configuredColor = colorToRgba(config.color, 220);
   const configuredPointSize = Number.isFinite(config.size) ? Math.max(config.size ?? 8, 1) : 8;
-  const boundFeatures = boundGeometryFeaturesFor(binding, datasetRows, geometryFeatures);
-  const boundPoints = boundPointRowsFor(binding, datasetRows);
-  const colorExtent = binding?.pointField
-    ? numericExtent(boundPoints, "colorValue")
-    : numericExtent(boundFeatures, "__colorValue");
-  const sizeExtent = binding?.pointField
-    ? numericExtent(boundPoints, "sizeValue")
-    : numericExtent(boundFeatures, "__sizeValue");
+  const boundFeatures = layer
+    ? cachedBoundFeatures(layer.id, binding, datasetRows, geometryFeatures)
+    : materializedBoundFeatures.value;
+  const colorExtent = numericExtent(boundFeatures, "__colorValue");
+  const sizeExtent = numericExtent(boundFeatures, "__sizeValue");
   const featureColor = (feature: BoundGeoJsonFeature) => binding?.colorField
     ? mappedColor(feature.properties.__colorValue, colorExtent, config)
     : configuredColor;
   const featureSize = (feature: BoundGeoJsonFeature) => binding?.sizeField
     ? 4 + normalizedValue(feature.properties.__sizeValue, sizeExtent) * 28
-    : configuredPointSize;
-  const pointColor = (point: BoundPointRow) => binding?.colorField
-    ? mappedColor(point.colorValue, colorExtent, config)
-    : configuredColor;
-  const pointSize = (point: BoundPointRow) => binding?.sizeField
-    ? 4 + normalizedValue(point.sizeValue, sizeExtent) * 28
     : configuredPointSize;
   switch (layerType) {
     case "ArcLayer":
@@ -548,15 +643,7 @@ function layerOptions(layerType: string, layer?: NonNullable<typeof props.layers
       });
     case "LineLayer":
       if (dataset?.graph) {
-        const nodeId = dataset.graph.nodes.columns.find((column) => ["id", "node_id", "hex_id"].includes(column.name))?.name ?? "id";
-        const longitude = dataset.graph.nodes.columns.find((column) => ["longitude", "lon", "x"].includes(column.name))?.name ?? "longitude";
-        const latitude = dataset.graph.nodes.columns.find((column) => ["latitude", "lat", "y"].includes(column.name))?.name ?? "latitude";
-        const positions = new Map(dataset.graph.nodes.rows.map((row) => [row[nodeId], [Number(row[longitude]), Number(row[latitude])] as [number, number]]));
-        const graphLines = dataset.graph.edges.rows.flatMap((row) => {
-          const start = positions.get(row.source ?? "");
-          const end = positions.get(row.target ?? "");
-          return start && end && start.every(Number.isFinite) && end.every(Number.isFinite) ? [{ start, end, value: Number(row.value ?? 1) }] : [];
-        });
+        const graphLines = graphLineRecords(dataset, binding, geometryFeatures);
         return new LineLayer({ ...common, data: graphLines, opacity: 0.82, getSourcePosition: (d: { start: number[] }) => d.start, getTargetPosition: (d: { end: number[] }) => d.end, getColor: configuredColor, getWidth: (d: { value: number }) => Math.max(1, Math.min(12, d.value || 2)) });
       }
       return new LineLayer({ ...common, data: exampleDataUrls.lineFlights, opacity: 0.8, getSourcePosition: (d: { start: number[] }) => d.start, getTargetPosition: (d: { end: number[] }) => d.end, getColor: [239, 68, 68], getWidth: 8 });
@@ -570,7 +657,7 @@ function layerOptions(layerType: string, layer?: NonNullable<typeof props.layers
     case "SolidPolygonLayer":
       return new (layerType === "PolygonLayer" ? PolygonLayer : SolidPolygonLayer)({
         ...common,
-        data: binding ? polygonRecords(boundFeatures) : loadedExampleData.value[layerType] ?? [],
+        data: binding ? geoJsonPolygonRecords(boundFeatures) : loadedExampleData.value[layerType] ?? [],
         getPolygon: binding
           ? (datum: { polygon: unknown }) => datum.polygon
           : (datum: number[][]) => datum,
@@ -584,30 +671,72 @@ function layerOptions(layerType: string, layer?: NonNullable<typeof props.layers
         filled: true,
       });
     case "ScatterplotLayer":
-      return new ScatterplotLayer({
+      const graphPoints = config.link ? graphPointRecords(dataset, binding, geometryFeatures) : [];
+      const hasPointRecords = !!binding || graphPoints.length > 0;
+      const pointData = graphPoints.length > 0
+        ? graphPoints.map((point) => ({ ...point, layerId: layer?.id ?? layerType }))
+        : binding
+          ? boundFeatures.map((feature) => ({
+            ...feature,
+            position: geometryCenter(feature),
+            rowKey: feature.id,
+            layerId: layer?.id ?? layerType,
+          }))
+          : points.map((point, index) => ({
+            position: point.position,
+            rowKey: String(index),
+            layerId: layer?.id ?? layerType,
+          }));
+      const scatterplot = new ScatterplotLayer({
         ...common,
-        data: binding?.pointField ? boundPoints : binding ? boundFeatures : exampleDataUrls.manhattan,
+        data: hasPointRecords ? pointData : exampleDataUrls.manhattan,
         radiusUnits: "pixels",
         radiusMinPixels: 1,
-        getPosition: binding?.pointField
-          ? (point: BoundPointRow) => point.position
+        getPosition: hasPointRecords
+          ? (point: { position: [number, number] }) => point.position
+          : (point: number[]) => [point[0], point[1]],
+        getRadius: graphPoints.length > 0
+          ? configuredPointSize
           : binding
-            ? (feature: BoundGeoJsonFeature) => geometryCenter(feature)
-          : (datum: number[]) => [datum[0], datum[1], 0],
-        getRadius: binding?.pointField
-          ? pointSize
+            ? (point: BoundGeoJsonFeature) => featureSize(point)
+            : configuredPointSize,
+        getFillColor: graphPoints.length > 0
+          ? configuredColor
           : binding
-            ? featureSize
-          : configuredPointSize,
-        getFillColor: binding?.pointField
-          ? pointColor
-          : binding
-            ? featureColor
-          : configuredColor,
-        getLineColor: [255, 255, 255],
+            ? (point: BoundGeoJsonFeature) => featureColor(point)
+            : configuredColor,
+        getLineColor: (point: { layerId: string; rowKey: string }) =>
+          hoveredPoint.value?.layerId === point.layerId && hoveredPoint.value?.rowKey === point.rowKey
+            ? [15, 23, 42, 255]
+            : [255, 255, 255, 255],
+        getLineWidth: (point: { layerId: string; rowKey: string }) =>
+          hoveredPoint.value?.layerId === point.layerId && hoveredPoint.value?.rowKey === point.rowKey ? 3 : 1,
         lineWidthMinPixels: 1,
         stroked: true,
+        pickable: true,
+        onHover: (info: any) => onScatterplotHover(info, layer?.id ?? layerType),
+        onClick: (info: any) => {
+          const target = pointTargetFromPick(info, layer?.id ?? layerType);
+          if (target) emit("pointSelect", target);
+        },
       });
+      const graphLines = config.link ? graphLineRecords(dataset, binding, geometryFeatures) : [];
+      return graphLines.length > 0
+        ? [
+          new LineLayer({
+            ...common,
+            id: `${common.id}-links`,
+            data: graphLines,
+            opacity: 0.82,
+            getSourcePosition: (line: typeof graphLines[number]) => line.start,
+            getTargetPosition: (line: typeof graphLines[number]) => line.end,
+            getColor: [100, 116, 139, 190],
+            getWidth: (line: typeof graphLines[number]) => Math.max(1, Math.min(12, line.value)),
+            widthMinPixels: 1,
+          }),
+          scatterplot,
+        ]
+        : scatterplot;
     case "ScreenGridLayer":
       return new ScreenGridLayer({ ...common, data: exampleDataUrls.heatmap, getPosition: (d: number[]) => [d[0], d[1]], getWeight: (d: number[]) => d[2] ?? 1, cellSizePixels: 32 });
     case "TerrainLayer":
@@ -654,7 +783,10 @@ function updateOverlay() {
     datasetRows: props.datasetRows,
     geometryFeatures: props.geometryFeatures,
   }];
-  overlay.setProps({ layers: layers.map((layer) => layerOptions(layer.layerType, layer)) });
+  overlay.setProps({ layers: layers.flatMap((layer) => {
+    const rendered = layerOptions(layer.layerType, layer);
+    return Array.isArray(rendered) ? rendered : [rendered];
+  }) });
 }
 
 async function loadExampleData(layerType: string) {
@@ -740,6 +872,93 @@ function loadAllExampleData() {
   layerTypes.forEach((layerType) => { void loadExampleData(layerType); });
 }
 
+let referenceSequence = 0;
+const referenceIds = new WeakMap<object, number>();
+function referenceId(value: unknown) {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) return 0;
+  const rawValue = toRaw(value as object);
+  const existing = referenceIds.get(rawValue);
+  if (existing) return existing;
+  referenceSequence += 1;
+  referenceIds.set(rawValue, referenceSequence);
+  return referenceSequence;
+}
+
+// App creates lightweight layer wrapper objects during render. Watch the data
+// and options they point to, not wrapper identity or every cell in large CSVs.
+const layerRenderSignature = computed(() => JSON.stringify((props.layers ?? []).map((layer) => [
+  layer.id,
+  layer.layerType,
+  layer.config.size ?? null,
+  layer.config.color ?? null,
+  layer.config.link ?? null,
+  bindingCacheKey(layer.binding),
+  referenceId(layer.datasetRows),
+  layer.datasetRows.length,
+  referenceId(layer.geometryFeatures),
+  layer.geometryFeatures.length,
+  referenceId(layer.dataset),
+  layer.dataset?.graph?.nodes.rows.length ?? 0,
+  layer.dataset?.graph?.edges.rows.length ?? 0,
+])));
+const layerTypeSignature = computed(() =>
+  (props.layers ?? []).map((layer) => layer.layerType).join("\u0000"),
+);
+function nestedOverlayInputs() {
+  return (props.nestedOverlays ?? []).map((nested) => [
+    nested.relationshipId,
+    nested.parentNodeId,
+    nested.parentDataKey,
+    nested.content,
+    nested.width,
+    nested.height,
+    nested.parentRadius,
+    nested.parameters.parentAnchor.x,
+    nested.parameters.parentAnchor.y,
+    nested.parameters.childAnchor.x,
+    nested.parameters.childAnchor.y,
+    nested.parameters.offset.x,
+    nested.parameters.offset.y,
+    nested.parameters.scale.x,
+    nested.parameters.scale.y,
+    nested.parameters.rotation,
+    nested.parameters.retainParent,
+  ]);
+}
+
+function sameNestedOverlayInputs(left: unknown[][], right: unknown[][]) {
+  return left.length === right.length && left.every((entry, index) => {
+    const other = right[index];
+    return !!other && entry.length === other.length
+      && entry.every((value, valueIndex) => value === other[valueIndex]);
+  });
+}
+
+function componentInputSnapshot() {
+  return {
+    layerType: props.layerType,
+    configSize: props.config.size,
+    configColor: props.config.color,
+    configLink: props.config.link,
+    layerRender: layerRenderSignature.value,
+    layerTypes: layerTypeSignature.value,
+    join: [
+      props.binding?.datasetId ?? "",
+      props.binding?.geometrySourceId ?? "",
+      props.binding?.idField ?? "",
+    ].join("\u0000"),
+    colorField: props.binding?.colorField,
+    sizeField: props.binding?.sizeField,
+    datasetRows: referenceId(props.datasetRows),
+    geometryFeatures: referenceId(props.geometryFeatures),
+    width: props.width,
+    height: props.height,
+    nestedOverlays: nestedOverlayInputs(),
+  };
+}
+
+let previousInput = componentInputSnapshot();
+
 onMounted(() => {
   if (!mapContainer.value) return;
   mapboxgl.accessToken = mapboxToken;
@@ -788,6 +1007,7 @@ onMounted(() => {
     if (event.originalEvent) userCameraInteraction = true;
   });
   map.on("moveend", persistViewState);
+  map.on("move", scheduleNestedOverlayProjection);
   map.once("load", () => {
     fitMapToLayerData();
     updateOverlay();
@@ -795,52 +1015,65 @@ onMounted(() => {
   });
 });
 
-watch(() => props.layerType, () => {
-  initialViewFitted = false;
-  updateOverlay();
-  fitMapToLayerData();
-  loadAllExampleData();
-});
-watch(() => [props.config.size, props.config.color], updateOverlay);
-watch(() => props.layers, () => {
-  updateOverlay();
-  loadAllExampleData();
-}, { deep: true });
-watch(() => [
-  props.binding?.datasetId,
-  props.binding?.geometrySourceId,
-  props.binding?.idField,
-], () => {
-  if (userViewState) {
+onUpdated(() => {
+  const current = componentInputSnapshot();
+  const prior = previousInput;
+  previousInput = current;
+
+  const hasLayerStack = !!props.layers?.length;
+  const layerTypeChanged = current.layerType !== prior.layerType;
+  const joinChanged = current.join !== prior.join;
+  const rowsChanged = current.datasetRows !== prior.datasetRows;
+  const featuresChanged = current.geometryFeatures !== prior.geometryFeatures;
+  const primaryOverlayChanged = layerTypeChanged
+    || current.configSize !== prior.configSize
+    || current.configColor !== prior.configColor
+    || current.configLink !== prior.configLink
+    || joinChanged
+    || current.colorField !== prior.colorField
+    || current.sizeField !== prior.sizeField
+    || rowsChanged
+    || featuresChanged;
+
+  if (current.layerRender !== prior.layerRender || (!hasLayerStack && primaryOverlayChanged)) {
     updateOverlay();
-    return;
   }
-  initialViewFitted = false;
-  updateOverlay();
-  fitMapToLayerData({ force: true, persist: true });
-});
-watch(() => props.datasetRows, () => {
-  updateOverlay();
-  if (!props.binding || userViewState) return;
-  initialViewFitted = false;
-  fitMapToLayerData({ force: true, persist: true });
-});
-watch(() => props.geometryFeatures, () => {
-  initialViewFitted = false;
-  updateOverlay();
-  if (userViewState) return;
-  fitMapToLayerData({
-    force: !!props.binding,
-    persist: !!props.binding,
-  });
-});
-watch(() => [props.width, props.height], () => {
-  requestAnimationFrame(() => map?.resize());
+  if (current.layerTypes !== prior.layerTypes || (!hasLayerStack && layerTypeChanged)) {
+    loadAllExampleData();
+  }
+
+  if (joinChanged) {
+    // A new ID join is an explicit request to show different geometry. It must
+    // not inherit a stale camera lock from selecting or panning the empty map.
+    userViewState = false;
+    initialViewFitted = false;
+    fitMapToLayerData({ force: true, persist: true });
+  } else if (rowsChanged && props.binding && !userViewState) {
+    initialViewFitted = false;
+    fitMapToLayerData({ force: true, persist: true });
+  } else if (featuresChanged) {
+    initialViewFitted = false;
+    if (!userViewState) {
+      fitMapToLayerData({ force: !!props.binding, persist: !!props.binding });
+    }
+  } else if (!hasLayerStack && layerTypeChanged) {
+    initialViewFitted = false;
+    fitMapToLayerData();
+  }
+
+  if (current.width !== prior.width || current.height !== prior.height) {
+    requestAnimationFrame(() => map?.resize());
+  }
+  if (!sameNestedOverlayInputs(current.nestedOverlays, prior.nestedOverlays)) {
+    scheduleNestedOverlayProjection();
+  }
 });
 
 onBeforeUnmount(() => {
   if (viewStateCommitTimer !== null) window.clearTimeout(viewStateCommitTimer);
   viewStateCommitTimer = null;
+  if (nestedProjectionFrame !== null) cancelAnimationFrame(nestedProjectionFrame);
+  nestedProjectionFrame = null;
   overlay?.finalize();
   overlay = null;
   map?.remove();
@@ -855,7 +1088,26 @@ onBeforeUnmount(() => {
     :style="{ width: `${width}px`, height: `${height}px` }"
     aria-label="Mapbox map with deck.gl example layer"
     @pointerdown.capture="onMapPointerDown"
-  />
+    @dragover.capture="onMapDragOver"
+    @drop.capture="onMapDrop"
+  >
+    <svg
+      v-if="nestedOverlays?.length"
+      class="deckgl-nested-overlay"
+      :width="width"
+      :height="height"
+      aria-hidden="true"
+    >
+      <g
+        v-for="nested in nestedOverlays"
+        :key="nested.relationshipId"
+        class="deckgl-nested-overlay__child"
+        :data-nested-relationship-id="nested.relationshipId"
+        :transform="nestedOverlayTransform(nested)"
+        v-html="nested.content"
+      />
+    </svg>
+  </div>
 </template>
 
 <style scoped>
@@ -873,5 +1125,17 @@ onBeforeUnmount(() => {
 .deckgl-map-layer :deep(.mapboxgl-ctrl-logo),
 .deckgl-map-layer :deep(.mapboxgl-ctrl-attrib) {
   display: none;
+}
+
+.deckgl-nested-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.deckgl-nested-overlay__child {
+  pointer-events: none;
 }
 </style>

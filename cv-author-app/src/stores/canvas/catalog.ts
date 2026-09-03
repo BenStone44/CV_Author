@@ -19,6 +19,7 @@ import {
   getGeographicLayerFamily,
 } from "../../utils/geographicLayerCards";
 import { getChartTemplateContract, normalizeChartTemplate } from "../../utils/chartTemplates";
+import { nestedContextFields } from "../../utils/chartContracts";
 
 const defaultDataTemplateDefinitions = [
   { id: "builtin-template:line", name: "Single Line", chartType: "LineGraph", coordinateSystem: "Cartesian" },
@@ -147,12 +148,7 @@ export function chartRoleFields(spec: ChartSpec, roles: ReadonlySet<NestedContex
 }
 
 export function getNestedParentContextFields(spec: ChartSpec) {
-  const contract = getChartTemplateContract(spec.chartType);
-  const hasAggregation = Object.keys(spec.dimensionAggregations ?? {}).length > 0
-    || contract?.channels.some((mapping) => mapping.role === "measure" && spec.aggregations?.[mapping.channel] !== undefined) === true;
-  const roles = new Set<NestedContextRole>(["dimension", "series"]);
-  if (!hasAggregation) roles.add("measure");
-  return chartRoleFields(spec, roles);
+  return nestedContextFields(spec);
 }
 
 export function canResolveNestedParentField(spec: ChartSpec, field: string, parentRow: DataRow | undefined) {

@@ -43,3 +43,13 @@ export function endCsvColumnDrag() {
 export function getActiveCsvColumnDrag() {
   return activeCsvColumnDragPayload;
 }
+
+/**
+ * Some browsers hide custom DataTransfer types while a drag is in progress.
+ * The in-page payload is therefore the authoritative signal for CSV drags.
+ */
+export function isCsvColumnDrag(dataTransfer: DataTransfer | null | undefined) {
+  return !!getActiveCsvColumnDrag()
+    || Array.from(dataTransfer?.types ?? []).includes(csvColumnDragMime)
+    || !!decodeCsvColumnDragPayload(dataTransfer?.getData(csvColumnDragMime));
+}

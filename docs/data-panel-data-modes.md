@@ -42,6 +42,12 @@ link encodings for flow charts. The bundled tree example is the ordinary CSV
 `data/tree_nodes.csv`, which includes `node_id` and `parent_id` alongside node
 attributes and a per-row `weight` field.
 
+Graph nodes use the same GeoJSON ID join as wide CSVs. A node identity such as
+`id` remains the graph endpoint key, while a separate field such as `point`
+or `incident_zip` is dragged onto a geographic layer to resolve a GeoJSON
+feature. Node tables do not provide longitude, latitude, x/y, or embedded
+coordinate columns for map positioning.
+
 ## Wide CSV joined to GeoJSON
 
 GeoJSON is an independently imported `GeometrySource`; it is not automatically
