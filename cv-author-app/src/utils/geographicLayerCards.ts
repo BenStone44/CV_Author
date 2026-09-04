@@ -1,9 +1,9 @@
 import type { SvgCandidate } from "../types";
 
-export const deckglLightMapStyleUrl = "https://basemaps.cartocdn.com/gl/positron-nolabels-gl-style/style.json";
-export const deckglDarkMapStyleUrl = "https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json";
+export const deckglLightMapStyleUrl = "mapbox://styles/shifuchen/cmtmopiqi00eo01sn25fq6efl";
+export const deckglDarkMapStyleUrl = "mapbox://styles/shifuchen/clhswk0lv000y01pgc15v0wfv";
 const mapboxAccessToken = import.meta.env.VITE_MAPBOX_TOKEN ?? "";
-const mapboxStaticImageUrl = `https://api.mapbox.com/styles/v1/shifuchen/cm0yq9yda01fh01q03vmn75i5/static/0,20,1.1/640x360?access_token=${mapboxAccessToken}`;
+const mapboxStaticImageUrl = `https://api.mapbox.com/styles/v1/shifuchen/cmtmopiqi00eo01sn25fq6efl/static/0,20,1.1/640x360?access_token=${mapboxAccessToken}`;
 
 export type GeographicTemplateFamily = "point" | "line" | "area";
 

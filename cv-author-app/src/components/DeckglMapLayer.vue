@@ -57,6 +57,7 @@ import {
 } from "../utils/geoJsonGeometry";
 import { isCsvColumnDrag } from "../utils/csvColumnDrag";
 import { frontendPalette } from "../config/global";
+import { deckglLightMapStyleUrl } from "../utils/geographicLayerCards";
 
 const props = defineProps<{
   layerType: string;
@@ -112,11 +113,10 @@ function onMapPointerDown(event: PointerEvent) {
   }
 }
 
-const mapboxStyle = "mapbox://styles/shifuchen/cm0yq9yda01fh01q03vmn75i5";
+const mapboxStyle = deckglLightMapStyleUrl;
 const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN ?? "";
-const mapboxStaticImage = `https://api.mapbox.com/styles/v1/shifuchen/cm0yq9yda01fh01q03vmn75i5/static/0,20,1.1/640x360?access_token=${mapboxToken}`;
-const deckglDarkStyle = "https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json";
-const deckglLightStyle = "https://basemaps.cartocdn.com/gl/positron-nolabels-gl-style/style.json";
+const mapboxStaticImage = `https://api.mapbox.com/styles/v1/shifuchen/cmtmopiqi00eo01sn25fq6efl/static/0,20,1.1/640x360?access_token=${mapboxToken}`;
+const deckglLightStyle = deckglLightMapStyleUrl;
 const deckglDataBase = "https://raw.githubusercontent.com/visgl/deck.gl-data/master";
 
 type ExampleViewState = {
@@ -134,31 +134,31 @@ type ExampleViewState = {
 // deck.gl gallery/website example. They are intentionally kept separate from
 // the canvas viewport zoom: wheel events inside the map change this view.
 const exampleViewStates: Record<string, ExampleViewState> = {
-  ArcLayer: { longitude: -100, latitude: 40.7, zoom: 3, maxZoom: 15, pitch: 30, bearing: 30, mapStyle: deckglDarkStyle },
-  BitmapLayer: { longitude: -75.789, latitude: 41.874, zoom: 5, maxZoom: 9, mapStyle: deckglDarkStyle },
-  ColumnLayer: { longitude: -122.4, latitude: 37.74, zoom: 10, maxZoom: 15, pitch: 30, mapStyle: deckglDarkStyle },
-  ContourLayer: { longitude: -119.3, latitude: 35.6, zoom: 6, maxZoom: 20, mapStyle: deckglDarkStyle },
+  ArcLayer: { longitude: -100, latitude: 40.7, zoom: 3, maxZoom: 15, pitch: 30, bearing: 30, mapStyle: deckglLightStyle },
+  BitmapLayer: { longitude: -75.789, latitude: 41.874, zoom: 5, maxZoom: 9, mapStyle: deckglLightStyle },
+  ColumnLayer: { longitude: -122.4, latitude: 37.74, zoom: 10, maxZoom: 15, mapStyle: deckglLightStyle },
+  ContourLayer: { longitude: -119.3, latitude: 35.6, zoom: 6, maxZoom: 20, mapStyle: deckglLightStyle },
   GeoJsonLayer: { longitude: -123.13, latitude: 49.254, zoom: 11, maxZoom: 16, pitch: 45, mapStyle: deckglLightStyle },
-  GreatCircleLayer: { longitude: -122.38, latitude: 37.6, zoom: 1, maxZoom: 20, pitch: 30, bearing: 0, mapStyle: deckglDarkStyle },
-  GridCellLayer: { longitude: -1.415727, latitude: 52.232395, zoom: 6.6, minZoom: 5, maxZoom: 15, pitch: 40.5, bearing: -27, mapStyle: deckglDarkStyle },
-  GridLayer: { longitude: -1.415727, latitude: 52.232395, zoom: 6.6, minZoom: 5, maxZoom: 15, pitch: 40.5, bearing: -27, mapStyle: deckglDarkStyle },
-  HeatmapLayer: { longitude: -73.75, latitude: 40.73, zoom: 9, maxZoom: 16, mapStyle: deckglDarkStyle },
-  HexagonLayer: { longitude: -1.4157, latitude: 52.2324, zoom: 6, minZoom: 5, maxZoom: 15, pitch: 40.5, mapStyle: deckglDarkStyle },
+  GreatCircleLayer: { longitude: -122.38, latitude: 37.6, zoom: 1, maxZoom: 20, pitch: 30, bearing: 0, mapStyle: deckglLightStyle },
+  GridCellLayer: { longitude: -1.415727, latitude: 52.232395, zoom: 6.6, minZoom: 5, maxZoom: 15, pitch: 40.5, bearing: -27, mapStyle: deckglLightStyle },
+  GridLayer: { longitude: -1.415727, latitude: 52.232395, zoom: 6.6, minZoom: 5, maxZoom: 15, pitch: 40.5, bearing: -27, mapStyle: deckglLightStyle },
+  HeatmapLayer: { longitude: -73.75, latitude: 40.73, zoom: 9, maxZoom: 16, mapStyle: deckglLightStyle },
+  HexagonLayer: { longitude: -1.4157, latitude: 52.2324, zoom: 6, minZoom: 5, maxZoom: 15, pitch: 40.5, mapStyle: deckglLightStyle },
   IconLayer: { longitude: 0, latitude: 0, zoom: 3, maxZoom: 20, mapStyle: deckglLightStyle },
-  LineLayer: { longitude: -0.11, latitude: 51.51, zoom: 8, maxZoom: 16, pitch: 50, bearing: 0, mapStyle: deckglDarkStyle },
+  LineLayer: { longitude: -0.11, latitude: 51.51, zoom: 8, maxZoom: 16, pitch: 50, bearing: 0, mapStyle: deckglLightStyle },
   MVTLayer: { longitude: -122.4, latitude: 37.78, zoom: 11, maxZoom: 16, mapStyle: deckglLightStyle },
-  PathLayer: { longitude: -0.11, latitude: 51.51, zoom: 8, maxZoom: 16, pitch: 50, bearing: 0, mapStyle: deckglDarkStyle },
-  PointCloudLayer: { longitude: 0, latitude: 0, zoom: 5, maxZoom: 20, pitch: 45, bearing: -45, mapStyle: deckglDarkStyle },
+  PathLayer: { longitude: -0.11, latitude: 51.51, zoom: 8, maxZoom: 16, pitch: 50, bearing: 0, mapStyle: deckglLightStyle },
+  PointCloudLayer: { longitude: 0, latitude: 0, zoom: 5, maxZoom: 20, pitch: 45, bearing: -45, mapStyle: deckglLightStyle },
   PolygonLayer: { longitude: -123.13, latitude: 49.254, zoom: 11, maxZoom: 16, pitch: 45, mapStyle: deckglLightStyle },
   ScatterplotLayer: { longitude: -74, latitude: 40.76, zoom: 11, maxZoom: 16, mapStyle: deckglLightStyle },
-  ScreenGridLayer: { longitude: -119.3, latitude: 35.6, zoom: 6, maxZoom: 20, mapStyle: deckglDarkStyle },
+  ScreenGridLayer: { longitude: -119.3, latitude: 35.6, zoom: 6, maxZoom: 20, mapStyle: deckglLightStyle },
   SolidPolygonLayer: { longitude: -123.13, latitude: 49.254, zoom: 11, maxZoom: 16, pitch: 45, mapStyle: deckglLightStyle },
-  TerrainLayer: { longitude: -122.18, latitude: 46.2, zoom: 12.5, maxZoom: 20, pitch: 45, bearing: 120, mapStyle: deckglDarkStyle },
-  TextLayer: { longitude: -122.4, latitude: 37.74, zoom: 11, maxZoom: 15, pitch: 30, bearing: 0, mapStyle: deckglDarkStyle },
+  TerrainLayer: { longitude: -122.18, latitude: 46.2, zoom: 12.5, maxZoom: 20, pitch: 45, bearing: 120, mapStyle: deckglLightStyle },
+  TextLayer: { longitude: -122.4, latitude: 37.74, zoom: 11, maxZoom: 15, pitch: 30, bearing: 0, mapStyle: deckglLightStyle },
   TileLayer: { longitude: -122.45, latitude: 37.78, zoom: 11, maxZoom: 16, mapStyle: deckglLightStyle },
-  TripsLayer: { longitude: -74, latitude: 40.72, zoom: 13, maxZoom: 16, pitch: 45, bearing: 0, mapStyle: deckglDarkStyle },
-  ScenegraphLayer: { longitude: -94.57, latitude: 39.1, zoom: 3.8, maxZoom: 16, mapStyle: deckglDarkStyle },
-  SimpleMeshLayer: { longitude: 0, latitude: 0, zoom: 0, maxZoom: 20, pitch: 0, bearing: 0, mapStyle: deckglDarkStyle },
+  TripsLayer: { longitude: -74, latitude: 40.72, zoom: 13, maxZoom: 16, pitch: 45, bearing: 0, mapStyle: deckglLightStyle },
+  ScenegraphLayer: { longitude: -94.57, latitude: 39.1, zoom: 3.8, maxZoom: 16, mapStyle: deckglLightStyle },
+  SimpleMeshLayer: { longitude: 0, latitude: 0, zoom: 0, maxZoom: 20, pitch: 0, bearing: 0, mapStyle: deckglLightStyle },
 };
 
 const exampleDataUrls = {

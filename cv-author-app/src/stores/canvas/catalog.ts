@@ -15,6 +15,7 @@ import {
 } from "../../utils/defaultChartData";
 import { withD3GalleryThumbnail } from "../../utils/d3GalleryThumbnails";
 import {
+  deckglLightMapStyleUrl,
   geographicLayerDefinitions,
   getGeographicLayerFamily,
 } from "../../utils/geographicLayerCards";
@@ -77,7 +78,7 @@ const graphLinkTemplateDefinitions: SvgCandidate[] = [
     graphLinkMode: "geographic",
     renderMode: "static-layer",
     layerType: "LineLayer",
-    mapStyleUrl: undefined,
+    mapStyleUrl: deckglLightMapStyleUrl,
     src: "/deckgl-examples/line-layer.jpg",
     svgMarkup: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><rect width="320" height="180" fill="transparent"/></svg>',
   },
