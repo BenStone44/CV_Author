@@ -362,6 +362,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   const draggedCandidateId = ref<string | null>(null);
   const activeDropZone = ref<ChartDropZone | null>(null);
   const compositionDragSourceId = ref<string | null>(null);
+  const deckglPointDropTarget = ref<DeckglPointTarget | null>(null);
   type CompositionEditFrame = Pick<CanvasNode, "x" | "y" | "width" | "height" | "scaleX" | "scaleY" | "rotation">;
   const compositionEditLayout = shallowRef<{
     compositionId: string;
@@ -1585,6 +1586,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   }
   function pushMoveHistory(mi: MoveInteraction) {
     return canvasHistory.pushMovePatch(mi.itemIds, mi.snapshots);
+  }
+  function pushCanvasHistorySnapshot(snapshot: CanvasHistorySnapshot) {
+    canvasHistory.pushSnapshot(snapshot);
   }
   function undoCanvasChange() {
     canvasHistory.undo();
@@ -3768,7 +3772,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     canConfigureSelectionComposition, canEnterSelection, canRemoveSelectionComposition,
     canvasRef, chartDrilldown, chartRelationships, clamp, clearCompositionDropZoneSchedule,
     collectNodeSelectionBounds, commitCompositionDrop, compositionDropZoneAtPoint,
-    compositionDragSourceId, concatEditableAxis,
+    compositionDragSourceId, concatEditableAxis, captureCanvasHistory, deckglPointDropTarget,
     concatLinkId, concatLinksFor,
     coordinateTargets, coordinateTransformItemIds, dispatchRelationship, dragTestStage,
     editingCompositionId, editingGroupPath, enterCompositionDropLevel, enterNestedDropLevel,
@@ -3779,7 +3783,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     nestedPositionEditor, nestedSelectionRelationships, nodeLocalToSelectionScopePoint,
     normalizeBounds, normalizeChartTemplate, normalizeSelection, openNestedPositionEditor, pointInBounds,
     polarAngleSpanFromPoint, polarPointAtAngle, polarAngleInputVisible,
-    pushCanvasHistory, pushMoveHistory, reconcileCoordinateSystems,
+    pushCanvasHistory, pushCanvasHistorySnapshot, pushMoveHistory, reconcileCoordinateSystems,
     registerChartRelationship, renderChartNode, renderCoordinateTargets,
     renderSharedCoordinateComposition,
     replaceSelectionScopeNodes, restoreCompositionEditLayout, rotationInputVisible,
@@ -3789,6 +3793,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     selectionTestOnly, standaloneCoordinateSystem, toCanvasPoint, toNodeLocalPoint,
     toSelectionScopePoint, transformPoint, toggleSelection, walkCanvasNodes, measureSelectionStage,
     topLevelSelectionNodeId, viewPan, viewZoom, MAX_ZOOM, MIN_ZOOM, contextMenu,
+    nestCanvasNodeOnDeckglPoint,
   });
   const {
     attachPointerListeners, detachPointerListeners, startMove, commitMoveHistory,
@@ -4103,6 +4108,129 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     draggedCandidateId.value = null;
   }
 
+  type DeckglNestedTarget = {
+    rowKey: string;
+    contextField?: string;
+    contextValue?: string;
+  };
+
+  function deckglNestedTargets(parent: CanvasNode, fallback: DeckglPointTarget): DeckglNestedTarget[] {
+    const dataset = getDataset(parent.deckglBinding?.datasetId ?? parent.deckglDatasetId ?? "");
+    const binding = parent.deckglBinding;
+    const source = binding?.geometrySourceId ? getGeometrySource(binding.geometrySourceId) : null;
+    if (!dataset || !binding?.idField || !source) return [{ rowKey: fallback.rowKey }];
+
+    const geometryIds = new Set(source.features
+      .flatMap(geoJsonFeatureIds)
+      .map(canonicalGeoJsonJoinId));
+    const table = dataset.graph?.nodes;
+    const rows = table?.rows ?? dataset.rows;
+    if (rows.length === 0) return [{ rowKey: fallback.rowKey }];
+
+    if (table) {
+      const nodeIdField = table.columns.find((column) =>
+        ["id", "node_id", "hex_id", "key"].includes(column.name.toLowerCase()))?.name;
+      if (!nodeIdField) return [{ rowKey: fallback.rowKey }];
+      const targets = new Map<string, DeckglNestedTarget>();
+      rows.forEach((row) => {
+        const rowKey = (row[nodeIdField] ?? "").trim();
+        const contextValue = (row[binding.idField] ?? "").trim();
+        if (!rowKey || !contextValue || !geometryIds.has(canonicalGeoJsonJoinId(contextValue))) return;
+        targets.set(rowKey, { rowKey, contextField: binding.idField, contextValue });
+      });
+      return targets.size > 0 ? Array.from(targets.values()) : [{ rowKey: fallback.rowKey }];
+    }
+
+    const targets = source.features.flatMap((feature) => {
+      const geometryFeatureIds = new Set(geoJsonFeatureIds(feature).map(canonicalGeoJsonJoinId));
+      const matchingRow = rows.find((row) => geometryFeatureIds.has(canonicalGeoJsonJoinId(row[binding.idField])));
+      return matchingRow
+        ? [{
+          rowKey: feature.id,
+          contextField: binding.idField,
+          contextValue: matchingRow[binding.idField] ?? feature.id,
+        }]
+        : [];
+    });
+    return targets.length > 0 ? targets : [{ rowKey: fallback.rowKey }];
+  }
+
+  function nestChartOnDeckglPoints(
+    parent: CanvasNode,
+    source: CanvasNode,
+    fallback: DeckglPointTarget,
+    sourceName: string,
+    sourceFrame: NonNullable<RelativeNestedParameters["sourceFrame"]>,
+  ) {
+    const parentDatasetId = parent.deckglBinding?.datasetId ?? parent.deckglDatasetId ?? null;
+    dispatchRelationship({
+      type: "register-chart",
+      chart: {
+        id: parent.id,
+        nodeId: parent.id,
+        chartType: "ScatterplotLayer",
+        datasetId: parentDatasetId,
+        instanceKind: "canvas",
+      },
+      channels: [],
+    });
+
+    const targets = deckglNestedTargets(parent, fallback);
+    const scale = DECKGL_NESTED_DEFAULT_DIAMETER / Math.max(source.width, source.height, 1);
+    const batchId = `nested-batch:${crypto.randomUUID()}`;
+    const instances = targets.map((target, index) => {
+      const child = index === 0 ? source : cloneCanvasNodeForPaste(source, false);
+      child.name = `${sourceName} nested ${index + 1}`;
+      registerChartRelationship(child, { instanceKind: "nested-child", sourceChartId: parent.id });
+      const relationshipId = `nested:${crypto.randomUUID()}`;
+      const inheritedFilterContexts: InheritedFilterContext[] | undefined = target.contextField && target.contextValue
+        ? [{
+          parentChartId: parent.id,
+          parentDataKey: target.rowKey,
+          parentField: target.contextField,
+          childField: target.contextField,
+          value: target.contextValue,
+          source: "parent-row",
+        }]
+        : undefined;
+      dispatchRelationship({
+        type: "begin-nested",
+        relationship: {
+          id: relationshipId,
+          parentChartId: parent.id,
+          parentElementId: `deckgl-point:${parent.id}:${target.rowKey}`,
+          parentDataKey: target.rowKey,
+          childChartId: child.id,
+          inheritedFilterContexts,
+          relationType: "relative-position",
+          parameters: {
+            ...defaultRelativeParameters(),
+            scale: { x: scale, y: scale },
+            batchId,
+            sourceChildId: source.id,
+            sourceChildName: sourceName,
+            sourceFrame,
+          },
+          resolverVersion: 1,
+        },
+      });
+      dispatchRelationship({ type: "commit-nested", relationshipId });
+      return { child, relationshipId };
+    });
+    if (instances.length > 1) {
+      replaceSelectionScopeNodes([
+        ...getSelectionScopeNodes(),
+        ...instances.slice(1).map(({ child }) => child),
+      ]);
+    }
+    instances.forEach(({ child }) => renderChartNode(child));
+    setSelection([parent.id]);
+    axisBindingTarget.value = null;
+    openNestedPositionEditor(instances.map(({ relationshipId }) => relationshipId));
+    setImportNotice(`${sourceName} nested on ${instances.length} map points.`);
+    return instances.length > 0;
+  }
+
   async function createDeckglPointNested(target: DeckglPointTarget) {
     const candidateId = draggedCandidateId.value;
     const candidate = candidateId ? getCandidate(candidateId) : null;
@@ -4117,23 +4245,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
 
     const point = toSelectionScopePoint(target.clientX, target.clientY);
     pushCanvasHistory();
-    const created = await createCanvasItem(candidate, point, false);
-    const child = created?.[0];
+    const child = (await createCanvasItem(candidate, point, false))?.[0];
     if (!child?.chartSpec) return false;
-
-    const parentDatasetId = parent.deckglBinding?.datasetId ?? parent.deckglDatasetId ?? null;
-    dispatchRelationship({
-      type: "register-chart",
-      chart: {
-        id: parent.id,
-        nodeId: parent.id,
-        chartType: "ScatterplotLayer",
-        datasetId: parentDatasetId,
-        instanceKind: "canvas",
-      },
-      channels: [],
-    });
-    const scale = DECKGL_NESTED_DEFAULT_DIAMETER / Math.max(child.width, child.height, 1);
     const sourceFrame = {
       x: child.x,
       y: child.y,
@@ -4141,37 +4254,35 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       scaleY: child.scaleY,
       rotation: child.rotation,
     };
-    const batchId = `nested-batch:${crypto.randomUUID()}`;
-    child.name = `${candidate.name} nested`;
-    registerChartRelationship(child, { instanceKind: "nested-child", sourceChartId: parent.id });
-    const relationshipId = `nested:${crypto.randomUUID()}`;
-    dispatchRelationship({
-      type: "begin-nested",
-      relationship: {
-        id: relationshipId,
-        parentChartId: parent.id,
-        parentElementId: `deckgl-point:${parent.id}:${target.rowKey}`,
-        parentDataKey: target.rowKey,
-        childChartId: child.id,
-        relationType: "relative-position",
-        parameters: {
-          ...defaultRelativeParameters(),
-          scale: { x: scale, y: scale },
-          batchId,
-          sourceChildId: child.id,
-          sourceChildName: candidate.name,
-          sourceFrame,
-        },
-        resolverVersion: 1,
-      },
-    });
-    dispatchRelationship({ type: "commit-nested", relationshipId });
-    setSelection([parent.id]);
-    axisBindingTarget.value = { nodeId: parent.id, channel: "x" };
-    openNestedPositionEditor([relationshipId]);
-    setImportNotice(`${candidate.name} nested on map point ${target.rowKey}.`);
+    const created = nestChartOnDeckglPoints(parent, child, target, candidate.name, sourceFrame);
     draggedCandidateId.value = null;
-    return true;
+    return created;
+  }
+
+  function nestCanvasNodeOnDeckglPoint(
+    sourceNodeId: string,
+    target: DeckglPointTarget,
+    historySnapshot?: CanvasHistorySnapshot,
+    sourcePosition?: Point,
+  ) {
+    const source = findCanvasNode(sourceNodeId);
+    const parent = findCanvasNode(target.layerId);
+    const parentLayerType = parent?.deckglLayerType ?? parent?.name;
+    if (!source?.chartSpec || !source.renderedContent || !parent || parent.layerKind !== "deckgl"
+      || parentLayerType !== "ScatterplotLayer" || source.id === parent.id) return false;
+
+    if (historySnapshot) pushCanvasHistorySnapshot(historySnapshot);
+    else pushCanvasHistory();
+
+    const sourceFrame = {
+      x: sourcePosition?.x ?? source.x,
+      y: sourcePosition?.y ?? source.y,
+      scaleX: source.scaleX,
+      scaleY: source.scaleY,
+      rotation: source.rotation,
+    };
+    const sourceName = source.name;
+    return nestChartOnDeckglPoints(parent, source, target, sourceName, sourceFrame);
   }
 
   // --- movement / ordering / grouping ---
@@ -4623,6 +4734,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     draggedCandidateId,
     compositionDragSourceId,
     activeDropZone,
+    deckglPointDropTarget,
     activeDataBindingDropZone,
     dimensionDropTarget,
     loadingDrop,
@@ -4666,6 +4778,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     onCanvasDragLeave,
     onCanvasDrop,
     createDeckglPointNested,
+    nestCanvasNodeOnDeckglPoint,
     onCanvasWheel,
     onCanvasContextMenu,
     onCanvasNodePointerDown,

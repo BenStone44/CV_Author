@@ -110,6 +110,7 @@ export const case2GraphDataset: Dataset = {
     nodes: { columns: [
       { name: "id", type: "nominal" }, { name: "point", type: "nominal" },
       { name: "label", type: "nominal" }, { name: "station_type", type: "nominal" },
+      { name: "month", type: "ordinal" }, { name: "value", type: "quantitative" },
     ], rows: case2GraphNodeRows },
     edges: { columns: [{ name: "source", type: "nominal" }, { name: "target", type: "nominal" }, { name: "value", type: "quantitative" }], rows: case2GraphLinkRows },
   },

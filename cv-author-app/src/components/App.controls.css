@@ -621,6 +621,15 @@
   overflow: visible;
   z-index: 1;
 }
+.canvas-scene--composition-dragging {
+  /* Render SVG nodes above the HTML map while leaving map point picking active. */
+  z-index: 3;
+  pointer-events: none;
+}
+.canvas-board .canvas-scene.canvas-scene--composition-dragging,
+.canvas-board .canvas-scene.canvas-scene--composition-dragging * {
+  pointer-events: none !important;
+}
 .deckgl-layer-scene {
   position: absolute;
   inset: 0;

@@ -873,19 +873,31 @@ function renderHierarchy(input: GenericRenderInput) {
     const cx = guide?.origin.x ?? area.x + area.width / 2;
     const cy = guide?.origin.y ?? area.y + area.height / 2;
     const radius = Math.max(1, Math.min(area.width, area.height) / 2 * (guide?.radiusScale ?? 1));
-    const layoutRoot = partition<Dataset["rows"][number]>().size([Math.PI * 2, radius])(root.sort((a, b) => (b.value ?? 0) - (a.value ?? 0)));
+    // Keep hierarchy charts in the same polar frame as radial dendrograms:
+    // zero degrees is the rightward ray and the configured span is the only
+    // angular space available to the chart.
+    const angleSpan = Math.max(1, Math.min(guide?.angleSpan ?? 360, 360));
+    const angleOffset = guide?.angleOffset ?? 0;
+    const startAngle = (-270 + angleOffset) * Math.PI / 180;
+    const spanRadians = angleSpan * Math.PI / 180;
+    const layoutRoot = partition<Dataset["rows"][number]>()
+      .size([spanRadians, radius])(root.sort((a, b) => (b.value ?? 0) - (a.value ?? 0)));
     type Node = ReturnType<typeof layoutRoot.descendants>[number];
     const arc = d3Arc<Node>()
-      .startAngle((node) => node.x0)
-      .endAngle((node) => node.x1)
+      .startAngle((node) => startAngle + node.x0)
+      .endAngle((node) => startAngle + node.x1)
       .padAngle((node) => Math.min((node.x1 - node.x0) / 2, 0.005))
       .padRadius(radius / 2)
       .innerRadius((node) => node.y0)
       .outerRadius((node) => Math.max(node.y0, node.y1 - 1));
     const nodes = layoutRoot.descendants().filter((node) => node.depth && visible(node));
-    const marks = nodes.map((node) => `<path data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-row-key="${esc(rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)))}" d="${arc(node) ?? ""}" fill="${nodeColor(node, topAncestorColor(node, rainbow))}" fill-opacity="0.6"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}\n${formatTick(node.value ?? 0)}</title></path>`).join("");
+    const marks = nodes.map((node) => {
+      const start = startAngle + node.x0;
+      const end = startAngle + node.x1;
+      return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-row-key="${esc(rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)))}" data-angle-start="${start}" data-angle-end="${end}" d="${arc(node) ?? ""}" fill="${nodeColor(node, topAncestorColor(node, rainbow))}" fill-opacity="0.6"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}\n${formatTick(node.value ?? 0)}</title></path>`;
+    }).join("");
     const labels = nodeLabelsVisible ? nodes.filter((node) => ((node.y0 + node.y1) / 2) * (node.x1 - node.x0) > 10).map((node) => {
-      const angle = (node.x0 + node.x1) / 2 * 180 / Math.PI;
+      const angle = (startAngle + (node.x0 + node.x1) / 2) * 180 / Math.PI;
       const radiusPosition = (node.y0 + node.y1) / 2;
       const label = node.id ?? "";
       const style = adaptiveLabel({ text: label, width: Math.max(8, radiusPosition * (node.x1 - node.x0)), height: 16, background: nodeColor(node, topAncestorColor(node, rainbow)), fontSize: 10, minFontSize: 5, maxFontSize: 10, padding: 1 });
@@ -894,9 +906,9 @@ function renderHierarchy(input: GenericRenderInput) {
         : "";
     }).join("") : "";
     return {
-      content: `<g transform="translate(${cx} ${cy})" data-chart-id="${esc(input.chartId)}" data-chart-type="sunburst" data-renderer="observable-sunburst@2">${marks}<g pointer-events="none">${labels}</g></g>`,
+      content: `<g transform="translate(${cx} ${cy})" data-chart-id="${esc(input.chartId)}" data-chart-type="sunburst" data-renderer="observable-sunburst@2" data-angle-span="${angleSpan}" data-angle-offset="${angleOffset}">${marks}<g pointer-events="none">${labels}</g></g>`,
       plotArea: { x: cx - radius, y: cy - radius, width: radius * 2, height: radius * 2 },
-      polarArea: { startAngle: 0, angleSpan: 360, innerRadius: 0, outerRadius: radius },
+      polarArea: { startAngle: angleOffset, angleSpan, innerRadius: 0, outerRadius: radius },
     };
   }
 

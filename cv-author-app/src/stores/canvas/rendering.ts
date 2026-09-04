@@ -669,6 +669,10 @@ export function useCanvasRendering(context: any) {
     );
     let dataset = prepared.dataset;
     let syncedChartSpec = prepared.chartSpec;
+    const nestedBarDataset = chartRelationships.value.charts[node.id]?.instanceKind === "nested-child"
+      && template === "bar"
+      ? { ...dataset, graph: undefined }
+      : dataset;
     // When a Cartesian concat contains a dendrogram, its leaf domain is the
     // shared structural key. Restrict every non-tree Cartesian member to the
     // rows represented by those leaves so bars/marks stay aligned with the
@@ -766,7 +770,7 @@ export function useCanvasRendering(context: any) {
         minY: node.kind === "leaf" ? node.contentMinY : 0,
         coordinateGuide: node.coordinateGuide,
         chartSpec: syncedChartSpec,
-        dataset,
+        dataset: nestedBarDataset,
         polarConcatDirection: node.compositionSpec?.type === "concat"
           && (node.compositionSpec.direction === "radial" || node.compositionSpec.direction === "angular")
           ? node.compositionSpec.direction

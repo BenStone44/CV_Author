@@ -76,6 +76,8 @@ export type DeckglPointTarget = {
   clientY: number;
 };
 
+export const deckglPointNestHoverEvent = "cv-author:deckgl-point-nest-hover";
+
 /** SVG content positioned by Mapbox above a particular geographic point. */
 export type DeckglNestedOverlay = {
   relationshipId: string;
@@ -1139,6 +1141,8 @@ export type MoveInteraction = {
   transformOnly?: boolean;
   deferred?: boolean;
   nestedRelationshipIds?: string[];
+  /** Full pre-drag state used when a move becomes a structural map nesting. */
+  historySnapshot?: CanvasHistorySnapshot;
 };
 
 export type MarqueeInteraction = {

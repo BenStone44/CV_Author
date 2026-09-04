@@ -47,6 +47,7 @@ import type {
   GeographicLayerConfig,
   GeographicMapViewState,
 } from "../types";
+import { deckglPointNestHoverEvent } from "../types";
 import {
   bindGeoJsonFeatures,
   geoJsonFeatureBounds,
@@ -78,6 +79,7 @@ const props = defineProps<{
     dataset?: Dataset | null;
   }>;
   nestedOverlays?: DeckglNestedOverlay[];
+  nestDragSourceId?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -89,6 +91,7 @@ const emit = defineEmits<{
   columnDrop: [event: DragEvent];
 }>();
 
+const mapShell = ref<HTMLDivElement | null>(null);
 const mapContainer = ref<HTMLDivElement | null>(null);
 let map: mapboxgl.Map | null = null;
 let overlay: MapboxOverlay | null = null;
@@ -98,7 +101,7 @@ let userCameraInteraction = false;
 let userViewState = false;
 let viewStateCommitTimer: number | null = null;
 const loadedExampleData = ref<Record<string, unknown[]>>({});
-const hoveredPoint = ref<{ layerId: string; rowKey: string } | null>(null);
+const hoveredPoint = ref<DeckglPointTarget | null>(null);
 let nestedProjectionFrame: number | null = null;
 
 function onMapPointerDown(event: PointerEvent) {
@@ -465,22 +468,46 @@ function pointTargetFromPick(info: any, layerId: string): DeckglPointTarget | nu
 }
 
 function onScatterplotHover(info: any, layerId: string) {
-  const target = pointTargetFromPick(info, layerId);
-  const next = target ? { layerId: target.layerId, rowKey: target.rowKey } : null;
-  if (hoveredPoint.value?.layerId !== next?.layerId || hoveredPoint.value?.rowKey !== next?.rowKey) {
-    hoveredPoint.value = next;
+  setHoveredPoint(pointTargetFromPick(info, layerId));
+}
+
+function setHoveredPoint(target: DeckglPointTarget | null) {
+  if (hoveredPoint.value?.layerId !== target?.layerId || hoveredPoint.value?.rowKey !== target?.rowKey) {
+    hoveredPoint.value = target;
     emit("pointHover", target);
     updateOverlay();
   }
 }
 
-function pickScatterplotPoint(event: DragEvent) {
+function pickScatterplotPoint(event: Pick<PointerEvent, "clientX" | "clientY">) {
   const rect = mapContainer.value?.getBoundingClientRect();
   if (!overlay || !rect) return null;
   const info = overlay.pickObject({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+  if (!(info?.layer instanceof ScatterplotLayer)) return null;
   const layerId = String(info?.layer?.id ?? "").replace(/^deckgl-example-/, "");
   const target = layerId ? pointTargetFromPick(info, layerId) : null;
   return target ? { ...target, clientX: event.clientX, clientY: event.clientY } : null;
+}
+
+function onMapPointerMove(event: PointerEvent) {
+  if (!props.nestDragSourceId) return;
+  const target = pickScatterplotPoint(event);
+  setHoveredPoint(target);
+  window.dispatchEvent(new CustomEvent<DeckglPointTarget | null>(deckglPointNestHoverEvent, {
+    detail: target,
+  }));
+}
+
+function onMapPointerLeave() {
+  if (!props.nestDragSourceId) return;
+  setHoveredPoint(null);
+  window.dispatchEvent(new CustomEvent<DeckglPointTarget | null>(deckglPointNestHoverEvent, {
+    detail: null,
+  }));
+}
+
+function hoveredPointScreenPosition() {
+  return hoveredPoint.value ? map?.project(hoveredPoint.value.position) ?? null : null;
 }
 
 function onMapDragOver(event: DragEvent) {
@@ -523,12 +550,12 @@ function nestedOverlayTransform(nested: DeckglNestedOverlay) {
 
 function updateNestedOverlayProjection() {
   nestedProjectionFrame = null;
-  const container = mapContainer.value;
-  if (!container) return;
+  const shell = mapShell.value;
+  if (!shell) return;
   const overlays = new Map(
     (props.nestedOverlays ?? []).map((nested) => [nested.relationshipId, nested]),
   );
-  container.querySelectorAll<SVGGElement>("[data-nested-relationship-id]").forEach((element) => {
+  shell.querySelectorAll<SVGGElement>("[data-nested-relationship-id]").forEach((element) => {
     const nested = overlays.get(element.dataset.nestedRelationshipId ?? "");
     if (nested) element.setAttribute("transform", nestedOverlayTransform(nested));
   });
@@ -1083,14 +1110,33 @@ onBeforeUnmount(() => {
 
 <template>
   <div
-    ref="mapContainer"
-    class="deckgl-map-layer"
+    ref="mapShell"
+    class="deckgl-map-shell"
     :style="{ width: `${width}px`, height: `${height}px` }"
-    aria-label="Mapbox map with deck.gl example layer"
     @pointerdown.capture="onMapPointerDown"
+    @pointermove.capture="onMapPointerMove"
+    @pointerleave.capture="onMapPointerLeave"
     @dragover.capture="onMapDragOver"
     @drop.capture="onMapDrop"
   >
+    <div
+      ref="mapContainer"
+      class="deckgl-map-layer"
+      aria-label="Mapbox map with deck.gl example layer"
+    />
+    <svg
+      v-if="hoveredPointScreenPosition()"
+      class="deckgl-nest-target-overlay"
+      :width="width"
+      :height="height"
+      aria-hidden="true"
+    >
+      <circle
+        :cx="hoveredPointScreenPosition()?.x"
+        :cy="hoveredPointScreenPosition()?.y"
+        :r="Math.max(hoveredPoint?.radius ?? 8, 5) + 5"
+      />
+    </svg>
     <svg
       v-if="nestedOverlays?.length"
       class="deckgl-nested-overlay"
@@ -1111,8 +1157,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.deckgl-map-layer {
-  position: absolute;
+.deckgl-map-shell {
+  position: relative;
   box-sizing: border-box;
   overflow: hidden;
   border: 1px solid rgba(15, 53, 80, 0.72);
@@ -1120,6 +1166,11 @@ onBeforeUnmount(() => {
   background: #bfe3ee;
   box-shadow: 0 8px 24px rgba(15, 53, 80, 0.16);
   pointer-events: auto;
+}
+
+.deckgl-map-layer {
+  position: absolute;
+  inset: 0;
 }
 
 .deckgl-map-layer :deep(.mapboxgl-ctrl-logo),
@@ -1133,6 +1184,21 @@ onBeforeUnmount(() => {
   z-index: 3;
   overflow: visible;
   pointer-events: none;
+}
+
+.deckgl-nest-target-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.deckgl-nest-target-overlay circle {
+  fill: none;
+  stroke: #f59e0b;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
 }
 
 .deckgl-nested-overlay__child {

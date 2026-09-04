@@ -5,6 +5,7 @@ import type {
   CoordinateAxisScaleInteraction,
   CoordinateChannel,
   CoordinateOriginInteraction,
+  DeckglPointTarget,
   MarqueeInteraction,
   MoveInteraction,
   NestedRelationship,
@@ -15,6 +16,7 @@ import type {
   ScaleHandle,
   ScaleInteraction,
 } from "../../types";
+import { deckglPointNestHoverEvent } from "../../types";
 
 export function useCanvasInteraction(context: any) {
   const {
@@ -34,6 +36,8 @@ export function useCanvasInteraction(context: any) {
     collectNodeSelectionBounds,
     compositionDropZoneAtPoint,
     compositionDragSourceId,
+    captureCanvasHistory,
+    deckglPointDropTarget,
     concatEditableAxis,
     concatLinkId,
     concatLinksFor,
@@ -60,6 +64,7 @@ export function useCanvasInteraction(context: any) {
     nestedDropPath,
     nestedPositionEditor,
     nestedSelectionRelationships,
+    nestCanvasNodeOnDeckglPoint,
     nodeLocalToSelectionScopePoint,
     normalizeBounds,
     normalizeChartTemplate,
@@ -112,10 +117,15 @@ export function useCanvasInteraction(context: any) {
   function attachPointerListeners() {
     window.addEventListener("pointermove", onWindowPointerMove);
     window.addEventListener("pointerup", onWindowPointerUp, { once: true });
+    window.addEventListener(deckglPointNestHoverEvent, onDeckglPointNestHover);
   }
   function detachPointerListeners() {
     window.removeEventListener("pointermove", onWindowPointerMove);
     window.removeEventListener("pointerup", onWindowPointerUp);
+    window.removeEventListener(deckglPointNestHoverEvent, onDeckglPointNestHover);
+  }
+  function onDeckglPointNestHover(event: Event) {
+    deckglPointDropTarget.value = (event as CustomEvent<DeckglPointTarget | null>).detail ?? null;
   }
   function startMove(itemIds: string[], event: PointerEvent, transformOnly = false) {
     const transformItemIds = coordinateTransformItemIds(itemIds);
@@ -167,6 +177,7 @@ export function useCanvasInteraction(context: any) {
       transformOnly: deferModelMove,
       deferred,
       nestedRelationshipIds,
+      historySnapshot: captureCanvasHistory(),
     };
     attachPointerListeners();
   }
@@ -1105,7 +1116,13 @@ export function useCanvasInteraction(context: any) {
       const item = getSelectionNode(id);
       const snap = si.snapshots[id];
       if (!item || !snap) return;
-      if (item.chartSpec && item.coordinateGuide) {
+      if (item.layerKind === "deckgl") {
+        // Mapbox owns an HTML viewport, so it may resize freely on both axes.
+        item.x = anchor.x + (snap.x - anchor.x) * scaleX;
+        item.y = anchor.y + (snap.y - anchor.y) * scaleY;
+        item.scaleX = Math.max(snap.scaleX * scaleX, 0.01);
+        item.scaleY = Math.max(snap.scaleY * scaleY, 0.01);
+      } else if (item.chartSpec && item.coordinateGuide) {
         item.x = anchor.x + (snap.x - anchor.x) * scaleX;
         item.y = anchor.y + (snap.y - anchor.y) * scaleY;
         // Deterministic charts derive their marks from width/height. Commit
@@ -1352,6 +1369,12 @@ export function useCanvasInteraction(context: any) {
   }
   function onWindowPointerUp(event: PointerEvent) {
     const ai = interaction.value;
+    const deckglSource = ai?.type === "move" && compositionDragSourceId.value
+      ? findCanvasNode(compositionDragSourceId.value)
+      : null;
+    const deckglDropTarget = deckglSource?.chartSpec && deckglSource.renderedContent
+      ? deckglPointDropTarget.value
+      : null;
     let finalMovePoint: Point | null = null;
     const nestedLayoutIds = ai && ai.type !== "move" && "itemIds" in ai
       ? Object.values(chartRelationships.value.nestedRelationships)
@@ -1372,13 +1395,13 @@ export function useCanvasInteraction(context: any) {
             : toCanvasPoint(event.clientX, event.clientY);
           finalMovePoint = finalPoint;
           updateMoveInteraction(finalPoint, ai);
-          pushMoveHistory(ai);
+          if (!deckglDropTarget) pushMoveHistory(ai);
           // The model now owns the final position. Restore the temporary DOM
           // transform so it cannot become the base for the next drag.
           clearTransformOnlyMove();
         } else {
           flushMoveInteraction();
-          commitMoveHistory(ai);
+          if (!deckglDropTarget) commitMoveHistory(ai);
           if (ai.transformOnly) clearTransformOnlyMove();
         }
       } else {
@@ -1394,7 +1417,14 @@ export function useCanvasInteraction(context: any) {
     if (ai?.type === "rotate") rotationInputVisible.value = true;
     if (ai?.type === "polar-angle") polarAngleInputVisible.value = true;
     if (dragTestStage === null || dragTestStage === "full") {
-      if (ai?.type === "move" && ai.historyCommitted && compositionDragSourceId.value) {
+      if (ai?.type === "move" && ai.historyCommitted && compositionDragSourceId.value && deckglDropTarget) {
+        nestCanvasNodeOnDeckglPoint(
+          compositionDragSourceId.value,
+          deckglDropTarget,
+          ai.historySnapshot,
+          ai.snapshots[compositionDragSourceId.value],
+        );
+      } else if (ai?.type === "move" && ai.historyCommitted && compositionDragSourceId.value) {
         if (ai.transformOnly && finalMovePoint) {
           activeDropZone.value = compositionDropZoneAtPoint(finalMovePoint, compositionDragSourceId.value);
         } else {
@@ -1408,6 +1438,7 @@ export function useCanvasInteraction(context: any) {
     interaction.value = null;
     if (nestedLayoutIds.length > 0) scheduleNestedChildLayout(nestedLayoutIds);
     compositionDragSourceId.value = null;
+    deckglPointDropTarget.value = null;
     clearCompositionDropZoneSchedule();
     activeDropZone.value = null;
     detachPointerListeners();

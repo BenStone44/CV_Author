@@ -777,6 +777,31 @@ describe("advanced chart cards", () => {
     expect(dendrogram.polarArea).toMatchObject({ angleSpan: 120, outerRadius: 54 });
   });
 
+  it("fits a sunburst to the configured polar angle span and offset", () => {
+    const sunburst = render("Sunburst", hierarchyDataset, {
+      encodings: {
+        key: { field: "id", type: "nominal" },
+        parent: { field: "parent", type: "nominal" },
+        value: { field: "value", type: "quantitative" },
+      },
+    }, {
+      type: "Polar",
+      origin: { x: 160, y: 90 },
+      angleSpan: 120,
+      angleOffset: 30,
+    });
+
+    expect(sunburst.content).toContain('data-chart-type="sunburst"');
+    expect(sunburst.content).toContain('data-angle-span="120"');
+    expect(sunburst.content).toContain('data-angle-offset="30"');
+    expect(sunburst.polarArea).toMatchObject({ startAngle: 30, angleSpan: 120 });
+    // The first visible arc begins at the guide's rightward-ray offset
+    // (-270 degrees in d3's clockwise-from-12-o'clock convention).
+    const firstArc = sunburst.content.match(/data-angle-start="([^"]+)"/);
+    expect(firstArc).not.toBeNull();
+    expect(Number(firstArc?.[1])).toBeCloseTo((-240 * Math.PI) / 180);
+  });
+
   it("routes tree and network links around embedded child selection boxes", () => {
     const frame: NestedChildFrame = {
       parentDataKey: JSON.stringify({ rowKey: "3", role: "node" }),

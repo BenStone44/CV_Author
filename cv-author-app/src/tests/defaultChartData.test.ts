@@ -54,6 +54,18 @@ describe("built-in default chart data", () => {
     expect(svg).not.toContain("<image");
   });
 
+  it("provides a monthly value series for every case2 station", async () => {
+    const { case2GraphDataset } = await import("../utils/defaultChartData");
+    const nodes = case2GraphDataset.graph!.nodes;
+    expect(nodes.columns).toContainEqual({ name: "month", type: "ordinal" });
+    expect(nodes.columns).toContainEqual({ name: "value", type: "quantitative" });
+    expect(nodes.rows).toHaveLength(120);
+    expect(new Set(nodes.rows.map((row) => row.id)).size).toBe(10);
+    expect(nodes.rows.every((row) => Number(row.month) >= 1 && Number(row.month) <= 12)).toBe(true);
+    expect(nodes.rows.every((row) => Number(row.value) >= 0 && Number(row.value) <= 100)).toBe(true);
+    expect(Array.from(new Set(nodes.rows.map((row) => `${row.id}:${row.month}`)))).toHaveLength(120);
+  });
+
   it("provides 10 horizontal values and 5 series with stable row identities", () => {
     expect(defaultChartDataset.id).toBe(DEFAULT_CHART_DATASET_ID);
     expect(defaultChartDataset.rows).toHaveLength(50);

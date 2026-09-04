@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { nextTick, ref } from "vue";
 import type { CanvasGroupNode, CanvasLeafNode, CanvasNode, Dataset, GeometrySource, PolarCoordinateGuide } from "../types";
+import { deckglPointNestHoverEvent } from "../types";
 import { collectNodeSelectionBounds } from "../utils/canvasUtils";
 import { csvColumnDragMime, encodeCsvColumnDragPayload } from "../utils/csvColumnDrag";
 import { inferColumnIntents } from "../utils/dimensionInference";
@@ -1072,6 +1073,128 @@ describe("composition selection hierarchy", () => {
 
     expect([geographicNode.x, geographicNode.y]).toEqual([150, 140]);
     expect(mapElement.style.transform).toBe("translate(100px, 100px)");
+  });
+
+  it("nests an existing chart on a picked geographic scatterplot point", () => {
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    const map = lineChart("map-scatter", 100, false);
+    map.layerKind = "deckgl";
+    map.deckglLayerType = "ScatterplotLayer";
+    map.renderedContent = null;
+    const child = cartesianChart("bar-for-map", 960, "SingleBarChart");
+    store.canvasNodes.value = [map, child];
+
+    const target = {
+      layerId: map.id,
+      rowKey: "geo-17",
+      position: [12.4, 48.8],
+      radius: 9,
+      clientX: 320,
+      clientY: 240,
+    } as const;
+    store.onCanvasNodePointerDown(child, pointerEvent(1000, 140));
+    listeners.get("pointermove")?.(pointerEvent(320, 240));
+    listeners.get(deckglPointNestHoverEvent)?.({ detail: target });
+    listeners.get("pointerup")?.(pointerEvent(320, 240));
+
+    const relationship = Object.values(store.chartRelationships.value.nestedRelationships)[0];
+    expect(relationship).toMatchObject({
+      status: "active",
+      parentChartId: map.id,
+      parentDataKey: "geo-17",
+      childChartId: child.id,
+    });
+    expect(store.nestedRenderedChildIds.value.has(child.id)).toBe(true);
+
+    store.undoCanvasChange();
+    expect(Object.keys(store.chartRelationships.value.nestedRelationships)).toHaveLength(0);
+    expect(store.nestedRenderedChildIds.value.has(child.id)).toBe(false);
+  });
+
+  it("nests one chart instance on every visible geographic scatterplot point", () => {
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    const dataset: Dataset = {
+      id: "map-monthly-data",
+      name: "map-monthly-data",
+      columns: [],
+      rows: [],
+      graph: {
+        nodes: {
+          columns: [
+            { name: "id", type: "nominal" },
+            { name: "point", type: "nominal" },
+            { name: "month", type: "ordinal" },
+            { name: "value", type: "quantitative" },
+          ],
+          rows: [
+            { id: "point-a", point: "geo-a", month: "1", value: "10" },
+            { id: "point-a", point: "geo-a", month: "2", value: "20" },
+            { id: "point-b", point: "geo-b", month: "1", value: "30" },
+            { id: "point-b", point: "geo-b", month: "2", value: "40" },
+          ],
+        },
+        edges: { columns: [], rows: [] },
+      },
+    };
+    const geometry: GeometrySource = {
+      id: "map-monthly-geometry",
+      name: "map-monthly-geometry",
+      features: ["geo-a", "geo-b"].map((id) => ({
+        type: "Feature" as const,
+        id,
+        properties: { id },
+        geometry: { type: "Point" as const, coordinates: [0, 0] },
+      })),
+    };
+    useDatasetStore().datasets.value = [dataset];
+    useDatasetStore().geometrySources.value = [geometry];
+
+    const map = lineChart("map-every-point", 100, false);
+    map.layerKind = "deckgl";
+    map.deckglLayerType = "ScatterplotLayer";
+    map.renderedContent = null;
+    map.deckglBinding = {
+      datasetId: dataset.id,
+      geometrySourceId: geometry.id,
+      idField: "point",
+      aggregation: "sum",
+    };
+    const child = cartesianChart("bar-every-point", 960, "SingleBarChart");
+    child.chartSpec = { ...child.chartSpec!, datasetId: dataset.id };
+    store.canvasNodes.value = [map, child];
+
+    const target = {
+      layerId: map.id,
+      rowKey: "point-a",
+      position: [0, 0],
+      radius: 9,
+      clientX: 320,
+      clientY: 240,
+    } as const;
+    store.onCanvasNodePointerDown(child, pointerEvent(1000, 140));
+    listeners.get("pointermove")?.(pointerEvent(320, 240));
+    listeners.get(deckglPointNestHoverEvent)?.({ detail: target });
+    listeners.get("pointerup")?.(pointerEvent(320, 240));
+
+    const relationships = Object.values(store.chartRelationships.value.nestedRelationships);
+    expect(relationships).toHaveLength(2);
+    expect(relationships.map((relationship) => relationship.parentDataKey).sort()).toEqual(["point-a", "point-b"]);
+    expect(new Set(relationships.map((relationship) => relationship.childChartId)).size).toBe(2);
+    expect(relationships.every((relationship) => relationship.inheritedFilterContexts?.[0])).toBe(true);
+    expect(relationships.map((relationship) => relationship.inheritedFilterContexts?.[0]?.value).sort()).toEqual(["geo-a", "geo-b"]);
+
+    store.axisBindingTarget.value = { nodeId: relationships[0]!.childChartId, channel: "x" };
+    store.setChartEncoding("x", "month");
+    store.axisBindingTarget.value = { nodeId: relationships[0]!.childChartId, channel: "y" };
+    store.setChartEncoding("y", "value");
+    const renderedValues = relationships.map((relationship) => {
+      const nestedChild = store.canvasNodes.value.find((node) => node.id === relationship.childChartId);
+      return Array.from(nestedChild?.renderedContent?.matchAll(/data-value="([^"]+)"/g) ?? [], (match) => Number(match[1]))
+        .sort((left, right) => left - right);
+    }).sort((left, right) => left[0]! - right[0]!);
+    expect(renderedValues).toEqual([[10, 20], [30, 40]]);
   });
 
   it("selects and drags every member until the composition is entered", () => {

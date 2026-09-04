@@ -1037,6 +1037,7 @@
                 :geometry-features="deckglLayerGeometrySource(node)?.features ?? []"
                 :layers="deckglLayerRenderSpecs(node)"
                 :nested-overlays="deckglNestedOverlays(node)"
+                :nest-drag-source-id="compositionDragSourceId"
                 :width="deckglLayerWidth(node)"
                 :height="deckglLayerHeight(node)"
                 @view-state-change="onDeckglMapViewStateChange(node, $event)"
@@ -1064,6 +1065,7 @@
 
           <svg
             class="canvas-scene"
+            :class="{ 'canvas-scene--composition-dragging': compositionDragSourceId }"
             preserveAspectRatio="none"
             @pointerdown="onCanvasPointerDown"
             @wheel="onCanvasWheel"

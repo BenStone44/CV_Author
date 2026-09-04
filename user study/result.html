@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>User Study Results</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/echarts@6/dist/echarts.min.js"></script>
+
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+
+    #chart {
+      width: 1450px;
+      height: 520px;
+      margin: 20px auto;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="chart"></div>
+
+  <script>
+    // ============================================================
+    // Mock data
+    // 后续只需要替换这里的数值
+    // ============================================================
+    const MOCK_DATA = {
+      systems: [
+        "System A",
+        "System B",
+        "System C"
+      ],
+
+      // 单位：分钟
+      authoringTime: [
+        8.2,
+        13.6,
+        16.4
+      ],
+
+      // 单位：求助次数
+      assistanceCount: [
+        1.1,
+        2.4,
+        3.2
+      ],
+
+      ratingDimensions: [
+        "Ease of\nLearning",
+        "Ease of\nUse",
+        "Composition\nConstruction",
+        "Relationship\nComprehension"
+      ],
+
+      // 每个数组依次对应上面的四个 rating 指标
+      ratings: {
+        "System A": [
+          6.3,
+          6.1,
+          6.5,
+          6.4
+        ],
+
+        "System B": [
+          5.4,
+          5.2,
+          4.6,
+          4.3
+        ],
+
+        "System C": [
+          4.7,
+          4.9,
+          4.2,
+          3.9
+        ]
+      }
+    };
+
+    // ============================================================
+    // 三个系统的颜色
+    // ============================================================
+    const SYSTEM_COLORS = [
+      "#432818",
+      "#BB9457",
+      "#99582A"
+    ];
+
+    const chart = echarts.init(
+      document.getElementById("chart"),
+      null,
+      {
+        renderer: "svg"
+      }
+    );
+
+    // 左侧 Authoring Time 系列
+    const authoringTimeSeries = MOCK_DATA.systems.map(
+      (system, index) => ({
+        name: system,
+        type: "bar",
+
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+
+        // 只在 Authoring Time 位置显示
+        data: [
+          MOCK_DATA.authoringTime[index],
+          null
+        ],
+
+        barWidth: 30,
+        barGap: "20%",
+        barCategoryGap: "45%",
+
+        itemStyle: {
+          color: SYSTEM_COLORS[index]
+        },
+
+        label: {
+          show: true,
+          position: "top",
+          distance: 5,
+          color: "#333333",
+          fontSize: 12,
+          formatter: ({ value }) => {
+            return value == null
+              ? ""
+              : Number(value).toFixed(1);
+          }
+        },
+
+        emphasis: {
+          disabled: true
+        }
+      })
+    );
+
+    // 左侧 Assistance Count 系列
+    const assistanceSeries = MOCK_DATA.systems.map(
+      (system, index) => ({
+        name: system,
+        type: "bar",
+
+        // 使用同一个 grid 中的第二个 X 轴和右侧 Y 轴
+        xAxisIndex: 1,
+        yAxisIndex: 1,
+
+        // 只在 Assistance Count 位置显示
+        data: [
+          null,
+          MOCK_DATA.assistanceCount[index]
+        ],
+
+        barWidth: 30,
+        barGap: "20%",
+        barCategoryGap: "45%",
+
+        itemStyle: {
+          color: SYSTEM_COLORS[index]
+        },
+
+        label: {
+          show: true,
+          position: "top",
+          distance: 5,
+          color: "#333333",
+          fontSize: 12,
+          formatter: ({ value }) => {
+            return value == null
+              ? ""
+              : Number(value).toFixed(1);
+          }
+        },
+
+        emphasis: {
+          disabled: true
+        }
+      })
+    );
+
+    // 右侧 Ratings 系列
+    const ratingSeries = MOCK_DATA.systems.map(
+      (system, index) => ({
+        name: system,
+        type: "bar",
+
+        xAxisIndex: 2,
+        yAxisIndex: 2,
+
+        data: MOCK_DATA.ratings[system],
+
+        barWidth: 25,
+        barGap: "18%",
+        barCategoryGap: "32%",
+
+        itemStyle: {
+          color: SYSTEM_COLORS[index]
+        },
+
+        label: {
+          show: true,
+          position: "top",
+          distance: 4,
+          color: "#333333",
+          fontSize: 11,
+          formatter: ({ value }) => {
+            return Number(value).toFixed(1);
+          }
+        },
+
+        emphasis: {
+          disabled: true
+        }
+      })
+    );
+
+    const option = {
+      backgroundColor: "#ffffff",
+
+      animation: false,
+
+      textStyle: {
+        fontFamily: "Arial, Helvetica, sans-serif",
+        color: "#222222"
+      },
+
+      color: SYSTEM_COLORS,
+
+      // ==========================================================
+      // 图例：只表示三个系统
+      // ==========================================================
+      legend: {
+        data: MOCK_DATA.systems,
+
+        top: 10,
+        left: "center",
+
+        itemWidth: 18,
+        itemHeight: 12,
+        itemGap: 32,
+
+        textStyle: {
+          color: "#222222",
+          fontSize: 14
+        }
+      },
+
+      // ==========================================================
+      // 标题
+      // ==========================================================
+      title: [
+        {
+          text: "(a) Efficiency",
+
+          left: "23%",
+          top: 55,
+          textAlign: "center",
+
+          textStyle: {
+            color: "#111111",
+            fontSize: 17,
+            fontWeight: "bold"
+          }
+        },
+        {
+          text: "(b) Ratings",
+
+          left: "73%",
+          top: 55,
+          textAlign: "center",
+
+          textStyle: {
+            color: "#111111",
+            fontSize: 17,
+            fontWeight: "bold"
+          }
+        }
+      ],
+
+      tooltip: {
+        trigger: "axis",
+
+        axisPointer: {
+          type: "shadow"
+        },
+
+        backgroundColor: "rgba(255,255,255,0.96)",
+        borderColor: "#999999",
+        borderWidth: 1,
+
+        textStyle: {
+          color: "#222222",
+          fontSize: 13
+        },
+
+        valueFormatter: function (value) {
+          return Number(value).toFixed(1);
+        }
+      },
+
+      // ==========================================================
+      // 两个区域放在同一行
+      // ==========================================================
+      grid: [
+        {
+          // 左侧：Authoring Time + Assistance Count
+          left: "6%",
+          width: "39%",
+          top: 110,
+          bottom: 90,
+          containLabel: true
+        },
+
+        {
+          // 右侧：四个 Ratings
+          left: "54%",
+          right: "3%",
+          top: 110,
+          bottom: 90,
+          containLabel: true
+        }
+      ],
+
+      // ==========================================================
+      // X 轴
+      // ==========================================================
+      xAxis: [
+        {
+          // 左侧可见的 X 轴
+          type: "category",
+          gridIndex: 0,
+
+          data: [
+            "Authoring Time",
+            "Assistance Count"
+          ],
+
+          axisLine: {
+            show: true,
+            lineStyle: {
+              color: "#333333",
+              width: 1
+            }
+          },
+
+          axisTick: {
+            show: false
+          },
+
+          axisLabel: {
+            show: true,
+            interval: 0,
+            margin: 16,
+            color: "#222222",
+            fontSize: 13
+          }
+        },
+
+        {
+          // 与上面的 X 轴重合，用于将 Assistance Count
+          // 绑定到右侧 Y 轴
+          type: "category",
+          gridIndex: 0,
+
+          data: [
+            "Authoring Time",
+            "Assistance Count"
+          ],
+
+          position: "bottom",
+
+          axisLine: {
+            show: false
+          },
+
+          axisTick: {
+            show: false
+          },
+
+          axisLabel: {
+            show: false
+          }
+        },
+
+        {
+          // 右侧 Ratings
+          type: "category",
+          gridIndex: 1,
+
+          data: MOCK_DATA.ratingDimensions,
+
+          axisLine: {
+            show: true,
+            lineStyle: {
+              color: "#333333",
+              width: 1
+            }
+          },
+
+          axisTick: {
+            show: false
+          },
+
+          axisLabel: {
+            show: true,
+            interval: 0,
+            margin: 15,
+            color: "#222222",
+            fontSize: 12,
+            lineHeight: 17
+          }
+        }
+      ],
+
+      // ==========================================================
+      // Y 轴
+      // ==========================================================
+      yAxis: [
+        {
+          // Authoring Time：左侧 Y 轴
+          type: "value",
+          gridIndex: 0,
+          position: "left",
+
+          name: "Authoring Time (min)",
+          nameLocation: "middle",
+          nameGap: 48,
+
+          min: 0,
+          max: 20,
+          interval: 5,
+
+          nameTextStyle: {
+            color: "#222222",
+            fontSize: 13
+          },
+
+          axisLine: {
+            show: true,
+            lineStyle: {
+              color: "#333333"
+            }
+          },
+
+          axisTick: {
+            show: true
+          },
+
+          axisLabel: {
+            color: "#333333",
+            fontSize: 12
+          },
+
+          splitLine: {
+            show: true,
+            lineStyle: {
+              color: "#dddddd",
+              width: 0.8,
+              type: "dashed"
+            }
+          }
+        },
+
+        {
+          // Assistance Count：右侧 Y 轴
+          type: "value",
+          gridIndex: 0,
+          position: "right",
+
+          name: "Assistance Count",
+          nameLocation: "middle",
+          nameGap: 45,
+
+          min: 0,
+          max: 4,
+          interval: 1,
+
+          nameTextStyle: {
+            color: "#222222",
+            fontSize: 13
+          },
+
+          axisLine: {
+            show: true,
+            lineStyle: {
+              color: "#333333"
+            }
+          },
+
+          axisTick: {
+            show: true
+          },
+
+          axisLabel: {
+            color: "#333333",
+            fontSize: 12
+          },
+
+          // 避免出现两套重叠的网格线
+          splitLine: {
+            show: false
+          }
+        },
+
+        {
+          // Ratings Y 轴
+          type: "value",
+          gridIndex: 1,
+          position: "left",
+
+          name: "Rating",
+          nameLocation: "middle",
+          nameGap: 42,
+
+          min: 1,
+          max: 7,
+          interval: 1,
+
+          nameTextStyle: {
+            color: "#222222",
+            fontSize: 13
+          },
+
+          axisLine: {
+            show: true,
+            lineStyle: {
+              color: "#333333"
+            }
+          },
+
+          axisTick: {
+            show: true
+          },
+
+          axisLabel: {
+            color: "#333333",
+            fontSize: 12
+          },
+
+          splitLine: {
+            show: true,
+            lineStyle: {
+              color: "#dddddd",
+              width: 0.8,
+              type: "dashed"
+            }
+          }
+        }
+      ],
+
+      series: [
+        ...authoringTimeSeries,
+        ...assistanceSeries,
+        ...ratingSeries
+      ]
+    };
+
+    chart.setOption(option);
+
+    window.addEventListener("resize", function () {
+      chart.resize();
+    });
+  </script>
+</body>
+</html>
