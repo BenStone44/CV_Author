@@ -144,6 +144,7 @@ import {
   type InputColumnIntentAnalysis,
 } from "../utils/dimensionInference";
 import { canonicalGeoJsonJoinId, geoJsonFeatureIds } from "../utils/geoJsonGeometry";
+import { geographicGraphLineRecords } from "../utils/geographicGraphLinks";
 import {
   createDefaultChartSpec,
   defaultChartDataset,
@@ -4010,6 +4011,21 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         const dataset = getDataset(target.deckglBinding?.datasetId ?? target.deckglDatasetId ?? "");
         if (!dataset?.graph) {
           setImportNotice("Graph Link requires the map scatterplot to use a graph CSV dataset.");
+          draggedCandidateId.value = null;
+          return;
+        }
+        const binding = target.deckglBinding;
+        const geometrySource = binding?.geometrySourceId
+          ? getGeometrySource(binding.geometrySourceId)
+          : null;
+        if (!binding || !geometrySource) {
+          setImportNotice("Graph Link requires a GeoJSON ID join on the map Scatterplot.");
+          draggedCandidateId.value = null;
+          return;
+        }
+        const resolvedLinks = geographicGraphLineRecords(dataset, binding, geometrySource.features);
+        if (resolvedLinks.length === 0) {
+          setImportNotice("No graph links matched the graph node IDs and GeoJSON ID join.");
           draggedCandidateId.value = null;
           return;
         }

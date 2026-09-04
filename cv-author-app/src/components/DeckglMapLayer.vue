@@ -36,6 +36,7 @@ import {
   TripsLayer,
 } from "@deck.gl/geo-layers";
 import { ScenegraphLayer, SimpleMeshLayer } from "@deck.gl/mesh-layers";
+import { CubeGeometry } from "@luma.gl/engine";
 import "mapbox-gl/dist/mapbox-gl.css";
 import type {
   DataRow,
@@ -51,12 +52,17 @@ import { deckglPointNestHoverEvent } from "../types";
 import {
   bindGeoJsonFeatures,
   geoJsonFeatureBounds,
-  geoJsonFeatureIds,
   geoJsonPolygonRecords,
   type BoundGeoJsonFeature,
 } from "../utils/geoJsonGeometry";
+import {
+  geographicGraphLineRecords,
+  geographicGraphNodeRecords,
+} from "../utils/geographicGraphLinks";
 import { isCsvColumnDrag } from "../utils/csvColumnDrag";
-import { frontendPalette } from "../config/global";
+import { resolveDeckglNumericAccessor } from "../utils/deckglAccessors";
+import { isGraphLinkTemplateDrag } from "../utils/deckglDropRouting";
+import { frontendPalette, globalPalette } from "../config/global";
 import { deckglLightMapStyleUrl } from "../utils/geographicLayerCards";
 
 const props = defineProps<{
@@ -70,6 +76,7 @@ const props = defineProps<{
   mapViewState?: GeographicMapViewState;
   width: number;
   height: number;
+  thumbnailCapture?: boolean;
   layers?: Array<{
     id: string;
     layerType: string;
@@ -81,6 +88,8 @@ const props = defineProps<{
   }>;
   nestedOverlays?: DeckglNestedOverlay[];
   nestDragSourceId?: string | null;
+  /** Let the canvas handle whole-map template operations such as Graph Link. */
+  passThroughCandidateDrop?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -115,7 +124,6 @@ function onMapPointerDown(event: PointerEvent) {
 
 const mapboxStyle = deckglLightMapStyleUrl;
 const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN ?? "";
-const mapboxStaticImage = `https://api.mapbox.com/styles/v1/shifuchen/cmtmopiqi00eo01sn25fq6efl/static/0,20,1.1/640x360?access_token=${mapboxToken}`;
 const deckglLightStyle = deckglLightMapStyleUrl;
 const deckglDataBase = "https://raw.githubusercontent.com/visgl/deck.gl-data/master";
 
@@ -153,12 +161,12 @@ const exampleViewStates: Record<string, ExampleViewState> = {
   ScatterplotLayer: { longitude: -74, latitude: 40.76, zoom: 11, maxZoom: 16, mapStyle: deckglLightStyle },
   ScreenGridLayer: { longitude: -119.3, latitude: 35.6, zoom: 6, maxZoom: 20, mapStyle: deckglLightStyle },
   SolidPolygonLayer: { longitude: -123.13, latitude: 49.254, zoom: 11, maxZoom: 16, pitch: 45, mapStyle: deckglLightStyle },
-  TerrainLayer: { longitude: -122.18, latitude: 46.2, zoom: 12.5, maxZoom: 20, pitch: 45, bearing: 120, mapStyle: deckglLightStyle },
+  TerrainLayer: { longitude: -122.4, latitude: 37.74, zoom: 11, maxZoom: 20, pitch: 45, bearing: 0, mapStyle: deckglLightStyle },
   TextLayer: { longitude: -122.4, latitude: 37.74, zoom: 11, maxZoom: 15, pitch: 30, bearing: 0, mapStyle: deckglLightStyle },
   TileLayer: { longitude: -122.45, latitude: 37.78, zoom: 11, maxZoom: 16, mapStyle: deckglLightStyle },
   TripsLayer: { longitude: -74, latitude: 40.72, zoom: 13, maxZoom: 16, pitch: 45, bearing: 0, mapStyle: deckglLightStyle },
   ScenegraphLayer: { longitude: -94.57, latitude: 39.1, zoom: 3.8, maxZoom: 16, mapStyle: deckglLightStyle },
-  SimpleMeshLayer: { longitude: 0, latitude: 0, zoom: 0, maxZoom: 20, pitch: 0, bearing: 0, mapStyle: deckglLightStyle },
+  SimpleMeshLayer: { longitude: -122.4, latitude: 37.74, zoom: 11, maxZoom: 20, pitch: 45, bearing: -30, mapStyle: deckglLightStyle },
 };
 
 const exampleDataUrls = {
@@ -197,6 +205,22 @@ const polygons = [
   { polygon: [[-5, 48], [8, 48], [8, 53], [-5, 53]], value: 2 },
   { polygon: [[135, 32], [145, 32], [145, 40], [135, 40]], value: 3 },
 ] as const;
+
+function paletteColor(index: number, alpha = 255): [number, number, number, number] {
+  const colors = globalPalette.categorical;
+  const normalizedIndex = ((index % colors.length) + colors.length) % colors.length;
+  return colorToRgba(colors[normalizedIndex], alpha);
+}
+
+function gradientColor(index: number, alpha = 255): [number, number, number, number] {
+  const colors = globalPalette.gradient;
+  const normalizedIndex = Math.max(0, Math.min(colors.length - 1, index));
+  return colorToRgba(colors[normalizedIndex], alpha);
+}
+
+const deckglColorRange = globalPalette.gradient.map((color) => colorToRgba(color).slice(0, 3));
+const paletteLight = colorToRgba(frontendPalette.lightest);
+const paletteDark = colorToRgba(frontendPalette.text.primary);
 const pointCloudExampleData = Array.from({ length: 20_000 }, (_, index) => {
   const side = Math.ceil(Math.sqrt(20_000));
   const u = (index % side) / Math.max(side - 1, 1);
@@ -207,16 +231,78 @@ const pointCloudExampleData = Array.from({ length: 20_000 }, (_, index) => {
   return {
     position: [x, y, z],
     normal: [0, 0, 1],
-    color: [u * 128, v * 128, Math.max(0, z * 255)],
+    color: gradientColor(Math.round((u + v) * 4.5)).slice(0, 3),
   };
 });
-const simpleMeshExampleData = Array.from({ length: 100 }, (_, index) => {
-  const x = index % 10;
-  const y = Math.floor(index / 10);
+const thumbnailAggregationData = (longitude: number, latitude: number) =>
+  Array.from({ length: 600 }, (_, index) => {
+    const column = index % 30;
+    const row = Math.floor(index / 30);
+    const wave = Math.sin(index * 1.7) * 0.12;
+    return [
+      longitude + (column - 14.5) * 0.018 + wave,
+      latitude + (row - 9.5) * 0.018 + Math.cos(index * 1.3) * 0.08,
+      1 + index % 9,
+    ];
+  });
+const thumbnailContourData = thumbnailAggregationData(-119.3, 35.6);
+const thumbnailGridData = thumbnailAggregationData(-1.4157, 52.2324);
+const thumbnailHeatmapData = thumbnailAggregationData(-73.75, 40.73);
+const thumbnailColumnData = thumbnailAggregationData(-122.4, 37.74).slice(0, 48).map((position, index) => ({
+  centroid: position,
+  value: 20 + index % 12,
+}));
+const thumbnailIconData = Array.from({ length: 12 }, (_, index) => {
+  const angle = index / 12 * Math.PI * 2;
+  return { position: [Math.cos(angle) * 0.22, Math.sin(angle) * 0.15] };
+});
+const thumbnailPointCloudData = thumbnailAggregationData(0, 0).map((position, index) => ({
+  position: [position[0], position[1], Math.sin(index * 0.4) * 2000],
+  normal: [0, 0, 1],
+}));
+const thumbnailSimpleMeshData = thumbnailAggregationData(0, 0).slice(0, 36).map((position, index) => ({
+  position,
+  color: paletteColor(index).slice(0, 3),
+  orientation: [index % 6 * 8 - 20, 0, -90],
+}));
+const thumbnailScenegraphData = thumbnailAggregationData(-94.57, 39.1).slice(0, 24).map((position, index) => {
+  const row = Array.from({ length: 11 }, () => 0);
+  row[5] = position[0];
+  row[6] = position[1];
+  row[7] = 0;
+  row[10] = index * 15;
+  return row;
+});
+const thumbnailContourPaths = [0.08, 0.14, 0.2, 0.27].map((radius, ringIndex) => ({
+  path: Array.from({ length: 49 }, (_, index) => {
+    const angle = index / 48 * Math.PI * 2;
+    const wobble = 1 + Math.sin(angle * 3 + ringIndex) * 0.14;
+    return [
+      -119.3 + Math.cos(angle) * radius * wobble,
+      35.6 + Math.sin(angle) * radius * wobble,
+    ];
+  }),
+  color: paletteColor(ringIndex % 2 === 0 ? 4 : 0).slice(0, 3),
+}));
+const thumbnailHexagons = thumbnailGridData.filter((_position, index) => index % 10 === 0).slice(0, 54).map((position, index) => {
+  const radius = 0.012 + index % 4 * 0.002;
   return {
-    position: [(x - 4.5) * 120, (y - 4.5) * 120],
-    color: [(x / 9) * 255, 128, (y / 9) * 255],
-    orientation: [(x / 9) * 60 - 30, 0, -90],
+    polygon: Array.from({ length: 6 }, (_, vertex) => {
+      const angle = vertex / 6 * Math.PI * 2;
+      return [position[0] + Math.cos(angle) * radius, position[1] + Math.sin(angle) * radius];
+    }),
+    color: gradientColor(2 + index % 7, 220),
+  };
+});
+const thumbnailTerrainPolygons = Array.from({ length: 18 }, (_, index) => {
+  const column = index % 6;
+  const row = Math.floor(index / 6);
+  const west = -122.51 + column * 0.026;
+  const south = 37.67 + row * 0.036;
+  return {
+    polygon: [[west, south], [west + 0.023, south], [west + 0.023, south + 0.032], [west, south + 0.032]],
+    elevation: 120 + Math.sin(column * 0.9) * 70 + Math.cos(row * 1.4) * 45 + index * 8,
+    color: gradientColor(2 + row * 2 + column % 3, 220),
   };
 });
 type Coordinate = [number, number];
@@ -334,7 +420,7 @@ function colorToRgba(color: string | undefined, alpha = 255): [number, number, n
     ? value.split("").map((part) => `${part}${part}`).join("")
     : value;
   const parsed = Number.parseInt(normalized, 16);
-  if (!Number.isFinite(parsed) || normalized.length !== 6) return [37, 99, 235, alpha];
+  if (!Number.isFinite(parsed) || normalized.length !== 6) return [153, 88, 42, alpha];
   return [(parsed >> 16) & 255, (parsed >> 8) & 255, parsed & 255, alpha];
 }
 
@@ -394,7 +480,7 @@ function normalizedValue(value: unknown, extent: readonly [number, number] | nul
 function mappedColor(value: unknown, extent: readonly [number, number] | null, config = props.config) {
   const target = colorToRgba(config.color, 230);
   const t = Math.max(0, Math.min(1, normalizedValue(value, extent)));
-  const start = [219, 234, 254];
+  const start = gradientColor(0);
   return [
     Math.round(start[0]! + (target[0] - start[0]!) * t),
     Math.round(start[1]! + (target[1] - start[1]!) * t),
@@ -418,32 +504,12 @@ function geometryCenter(feature: GeoJsonFeature): [number, number] {
   return [total[0] / rings.length, total[1] / rings.length];
 }
 
-function graphNodePositions(
-  dataset: Dataset | null | undefined,
-  binding: GeographicLayerBinding | undefined,
-  geometryFeatures: GeoJsonFeature[],
-) {
-  const graph = dataset?.graph;
-  if (!graph || !binding) return new Map<string, [number, number]>();
-  const idField = graph.nodes.columns
-    .find((column) => ["id", "node_id", "hex_id", "key"].includes(column.name.toLowerCase()))?.name;
-  if (!idField) return new Map<string, [number, number]>();
-  const positionsByGeometryId = new Map(
-    geometryFeatures.flatMap((feature) => geoJsonFeatureIds(feature).map((id) => [id, geometryCenter(feature)] as const)),
-  );
-  return new Map(graph.nodes.rows.flatMap((row) => {
-    const id = (row[idField] ?? "").trim();
-    const position = positionsByGeometryId.get((row[binding.idField] ?? "").trim());
-    return id && position ? [[id, position] as const] : [];
-  }));
-}
-
 function graphPointRecords(
   dataset: Dataset | null | undefined,
   binding: GeographicLayerBinding | undefined,
   geometryFeatures: GeoJsonFeature[],
 ) {
-  return Array.from(graphNodePositions(dataset, binding, geometryFeatures), ([rowKey, position]) => ({ rowKey, position }));
+  return geographicGraphNodeRecords(dataset, binding, geometryFeatures);
 }
 
 function pointTargetFromPick(info: any, layerId: string): DeckglPointTarget | null {
@@ -454,14 +520,14 @@ function pointTargetFromPick(info: any, layerId: string): DeckglPointTarget | nu
     ? [Number(object.position[0]), Number(object.position[1])] as [number, number]
     : null;
   if (!object || !position) return null;
-  const radius = Number(info.layer?.props?.getRadius?.(object));
+  const radius = resolveDeckglNumericAccessor(info.layer?.props?.getRadius, object, info);
   const point = info?.pixel ?? [info?.x, info?.y];
   const containerRect = mapContainer.value?.getBoundingClientRect();
   return {
     layerId,
     rowKey: typeof object.rowKey === "string" ? object.rowKey : String(info.index ?? ""),
     position,
-    radius: Number.isFinite(radius) ? Math.max(radius, 1) : 8,
+    radius: radius === null ? 8 : Math.max(radius, 1),
     clientX: (containerRect?.left ?? 0) + Number(point?.[0] ?? 0),
     clientY: (containerRect?.top ?? 0) + Number(point?.[1] ?? 0),
   };
@@ -516,6 +582,12 @@ function onMapDragOver(event: DragEvent) {
     emit("columnDragOver", event);
     return;
   }
+  if (isGraphLinkTemplateDrag(event.dataTransfer, props.passThroughCandidateDrop)) {
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    setHoveredPoint(null);
+    return;
+  }
   event.preventDefault();
   const target = pickScatterplotPoint(event);
   if (event.dataTransfer) event.dataTransfer.dropEffect = target ? "copy" : "none";
@@ -528,6 +600,10 @@ function onMapDrop(event: DragEvent) {
     emit("columnDrop", event);
     return;
   }
+  // Graph Link changes the complete Scatterplot layer. Do not reinterpret a
+  // drop over a picked point as a request to nest a chart into that point;
+  // leave the event for the canvas-level graph-link handler instead.
+  if (isGraphLinkTemplateDrag(event.dataTransfer, props.passThroughCandidateDrop)) return;
   event.preventDefault();
   const target = pickScatterplotPoint(event);
   if (!target) return;
@@ -588,20 +664,7 @@ function graphLineRecords(
   binding: GeographicLayerBinding | undefined,
   geometryFeatures: GeoJsonFeature[],
 ) {
-  const graph = dataset?.graph;
-  if (!graph) return [];
-  const sourceField = graph.edges.columns
-    .find((column) => ["source", "from", "source_id"].includes(column.name.toLowerCase()))?.name;
-  const targetField = graph.edges.columns
-    .find((column) => ["target", "to", "target_id"].includes(column.name.toLowerCase()))?.name;
-  if (!sourceField || !targetField) return [];
-  const positions = graphNodePositions(dataset, binding, geometryFeatures);
-  return graph.edges.rows.flatMap((row) => {
-    const start = positions.get((row[sourceField] ?? "").trim());
-    const end = positions.get((row[targetField] ?? "").trim());
-    const value = Number(row.value ?? 1);
-    return start && end ? [{ start, end, value: Number.isFinite(value) ? value : 1 }] : [];
-  });
+  return geographicGraphLineRecords(dataset, binding, geometryFeatures);
 }
 
 function layerOptions(layerType: string, layer?: NonNullable<typeof props.layers>[number]): any {
@@ -626,13 +689,16 @@ function layerOptions(layerType: string, layer?: NonNullable<typeof props.layers
     : configuredPointSize;
   switch (layerType) {
     case "ArcLayer":
-      return new ArcLayer({ ...common, data: loadedExampleData.value.ArcLayer ?? [], getSourcePosition: (d: { source: number[] }) => d.source, getTargetPosition: (d: { target: number[] }) => d.target, getSourceColor: [37, 99, 235], getTargetColor: [249, 115, 22], getWidth: 4 });
+      return new ArcLayer({ ...common, data: loadedExampleData.value.ArcLayer ?? [], getSourcePosition: (d: { source: number[] }) => d.source, getTargetPosition: (d: { target: number[] }) => d.target, getSourceColor: paletteColor(0), getTargetColor: paletteColor(4), getWidth: 4 });
     case "BitmapLayer":
       return new BitmapLayer({ ...common, image: "https://docs.mapbox.com/mapbox-gl-js/assets/radar.gif", bounds: [[-80.425, 37.936], [-80.425, 46.437], [-71.516, 46.437], [-71.516, 37.936]] });
     case "ColumnLayer":
-      return new ColumnLayer({ ...common, data: exampleDataUrls.columns, diskResolution: 12, radius: configuredPointSize * 25, elevationScale: 5000, extruded: true, getPosition: (d: { centroid: number[] }) => d.centroid, getElevation: (d: { value: number }) => d.value, getFillColor: configuredColor });
+      return new ColumnLayer({ ...common, data: props.thumbnailCapture ? thumbnailColumnData : exampleDataUrls.columns, diskResolution: 12, radius: props.thumbnailCapture ? 80 : configuredPointSize * 25, elevationScale: props.thumbnailCapture ? 60 : 5000, extruded: true, getPosition: (d: { centroid: number[] }) => d.centroid, getElevation: (d: { value: number }) => d.value, getFillColor: configuredColor });
     case "ContourLayer":
-      return new ContourLayer({ ...common, data: exampleDataUrls.contours, getPosition: (d: number[]) => d, contours: [{ threshold: 1, color: [255, 0, 0], strokeWidth: 4 }, { threshold: 5, color: [0, 255, 0], strokeWidth: 2 }] });
+      if (props.thumbnailCapture) {
+        return new PathLayer({ ...common, data: thumbnailContourPaths, getPath: (d: { path: number[][] }) => d.path, getColor: (d: { color: number[] }) => d.color, getWidth: 3, widthMinPixels: 2 });
+      }
+      return new ContourLayer({ ...common, data: props.thumbnailCapture ? thumbnailContourData : exampleDataUrls.contours, getPosition: (d: number[]) => d, contours: [{ threshold: 1, color: paletteColor(4), strokeWidth: 4 }, { threshold: 5, color: paletteColor(0), strokeWidth: 2 }] });
     case "GeoJsonLayer":
       return new GeoJsonLayer({
         ...common,
@@ -642,44 +708,58 @@ function layerOptions(layerType: string, layer?: NonNullable<typeof props.layers
         stroked: true,
         extruded: false,
         getFillColor: binding ? featureColor : configuredColor,
-        getLineColor: [255, 255, 255, 210],
+        getLineColor: colorToRgba(frontendPalette.lightest, 210),
         getLineWidth: 1,
         lineWidthMinPixels: 0.6,
         pickable: true,
       });
     case "GridCellLayer":
-      return new GridCellLayer({ ...common, data: exampleDataUrls.contours, cellSize: 2000, extruded: true, getPosition: (d: number[]) => d, getFillColor: configuredColor, getElevation: 300 });
+      return new GridCellLayer({ ...common, data: props.thumbnailCapture ? thumbnailGridData : exampleDataUrls.contours, cellSize: props.thumbnailCapture ? 1800 : 2000, extruded: true, getPosition: (d: number[]) => d, getFillColor: configuredColor, getElevation: 300 });
     case "GridLayer":
-      return new GridLayer({ ...common, data: loadedExampleData.value.GridLayer ?? [], cellSize: 2000, extruded: true, getPosition: (d: number[]) => d, getColorWeight: 1, getElevationWeight: 1, elevationScale: 50 });
+      if (props.thumbnailCapture) {
+        return new GridCellLayer({ ...common, data: thumbnailGridData, cellSize: 2200, extruded: true, getPosition: (d: number[]) => d, getFillColor: colorToRgba(frontendPalette.text.secondary, 210), getElevation: (d: number[]) => 100 + (d[2] ?? 1) * 60 });
+      }
+      return new GridLayer({ ...common, data: loadedExampleData.value.GridLayer ?? [], gpuAggregation: false, cellSize: 2000, extruded: true, getPosition: (d: number[]) => d, getColorWeight: 1, getElevationWeight: 1, elevationScale: 50, colorRange: deckglColorRange });
     case "HeatmapLayer":
-      return new HeatmapLayer({ ...common, data: exampleDataUrls.heatmap, getPosition: (d: number[]) => [d[0], d[1]], getWeight: (d: number[]) => d[2] ?? 1, intensity: 1, threshold: 0.03, radiusPixels: 30 });
+      if (props.thumbnailCapture) {
+        return new ScatterplotLayer({ ...common, data: thumbnailHeatmapData, radiusUnits: "pixels", getPosition: (d: number[]) => d, getRadius: (d: number[]) => 12 + (d[2] ?? 1) * 2.2, getFillColor: (d: number[]) => gradientColor(Math.min(9, 2 + (d[2] ?? 1)), 52) });
+      }
+      return new HeatmapLayer({ ...common, data: props.thumbnailCapture ? thumbnailHeatmapData : exampleDataUrls.heatmap, getPosition: (d: number[]) => [d[0], d[1]], getWeight: (d: number[]) => d[2] ?? 1, intensity: 1, threshold: 0.03, radiusPixels: 30, colorRange: deckglColorRange });
     case "HexagonLayer":
-      return new HexagonLayer({ ...common, data: loadedExampleData.value.HexagonLayer ?? [], radius: 1000, elevationRange: [0, 1000], elevationScale: 250, extruded: true, getPosition: (d: number[]) => d });
+      if (props.thumbnailCapture) {
+        return new PolygonLayer({ ...common, data: thumbnailHexagons, getPolygon: (d: { polygon: number[][] }) => d.polygon, getFillColor: (d: { color: number[] }) => d.color, getLineColor: colorToRgba(frontendPalette.lightest, 180), getLineWidth: 1, lineWidthMinPixels: 0.5, filled: true, stroked: true });
+      }
+      return new HexagonLayer({ ...common, data: loadedExampleData.value.HexagonLayer ?? [], gpuAggregation: false, radius: 1000, elevationRange: [0, 1000], elevationScale: 250, extruded: true, getPosition: (d: number[]) => d, colorRange: deckglColorRange });
     case "IconLayer":
+      if (props.thumbnailCapture) {
+        return new ScatterplotLayer({ ...common, data: thumbnailIconData, radiusUnits: "pixels", getPosition: (d: { position: number[] }) => d.position, getRadius: 8, getFillColor: configuredColor, getLineColor: colorToRgba(frontendPalette.lightest, 240), getLineWidth: 2, lineWidthMinPixels: 1.5, filled: true, stroked: true });
+      }
       return new IconLayer({
         ...common,
-        data: "https://api.github.com/repos/visgl/deck.gl/contributors?per_page=100",
-        getIcon: (d: { avatar_url: string }) => ({ url: d.avatar_url, width: 128, height: 128 }),
-        getPosition: (_d: { contributions: number }, info: { index: number }) => [
-          (info.index % 10 - 5) * 12,
-          (Math.floor(info.index / 10) - 5) * 12,
-        ],
-        getSize: (d: { contributions: number }) => Math.log(d.contributions + 1) * 1.4,
-        sizeUnits: "common",
+        data: props.thumbnailCapture ? thumbnailIconData : "https://api.github.com/repos/visgl/deck.gl/contributors?per_page=100",
+        getIcon: (d: { avatar_url?: string }) => ({ url: props.thumbnailCapture ? "/favicon.ico" : d.avatar_url, width: 128, height: 128 }),
+        getPosition: props.thumbnailCapture
+          ? (d: { position: number[] }) => d.position
+          : (_d: { contributions: number }, info: { index: number }) => [
+            (info.index % 10 - 5) * 12,
+            (Math.floor(info.index / 10) - 5) * 12,
+          ],
+        getSize: props.thumbnailCapture ? 20 : (d: { contributions: number }) => Math.log(d.contributions + 1) * 1.4,
+        sizeUnits: props.thumbnailCapture ? "pixels" : "common",
         pickable: true,
       });
     case "LineLayer":
       if (dataset?.graph) {
         const graphLines = graphLineRecords(dataset, binding, geometryFeatures);
-        return new LineLayer({ ...common, data: graphLines, opacity: 0.82, getSourcePosition: (d: { start: number[] }) => d.start, getTargetPosition: (d: { end: number[] }) => d.end, getColor: configuredColor, getWidth: (d: { value: number }) => Math.max(1, Math.min(12, d.value || 2)) });
+        return new PathLayer({ ...common, data: graphLines, opacity: 0.92, getPath: (d: { start: number[]; end: number[] }) => [d.start, d.end], getColor: configuredColor, getWidth: (d: { value: number }) => Math.max(3, Math.min(8, 2 + (d.value || 1))), widthUnits: "pixels", widthMinPixels: 3, capRounded: true, jointRounded: true });
       }
-      return new LineLayer({ ...common, data: exampleDataUrls.lineFlights, opacity: 0.8, getSourcePosition: (d: { start: number[] }) => d.start, getTargetPosition: (d: { end: number[] }) => d.end, getColor: [239, 68, 68], getWidth: 8 });
+      return new LineLayer({ ...common, data: exampleDataUrls.lineFlights, opacity: 0.8, getSourcePosition: (d: { start: number[] }) => d.start, getTargetPosition: (d: { end: number[] }) => d.end, getColor: paletteColor(5), getWidth: 8 });
     case "MVTLayer":
-      return new MVTLayer({ ...common, data: `https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/{z}/{x}/{y}.vector.pbf?access_token=${mapboxToken}`, getFillColor: configuredColor, getLineColor: [15, 53, 80], getLineWidth: 1 });
+      return new MVTLayer({ ...common, data: `https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/{z}/{x}/{y}.vector.pbf?access_token=${mapboxToken}`, getFillColor: configuredColor, getLineColor: paletteDark, getLineWidth: 1 });
     case "PathLayer":
-      return new PathLayer({ ...common, data: exampleDataUrls.lineFlights, getPath: (d: { start: number[]; end: number[] }) => [d.start, d.end], getColor: [124, 58, 237], getWidth: 6, widthMinPixels: 2 });
+      return new PathLayer({ ...common, data: exampleDataUrls.lineFlights, getPath: (d: { start: number[]; end: number[] }) => [d.start, d.end], getColor: paletteColor(1), getWidth: 6, widthMinPixels: 2 });
     case "PointCloudLayer":
-      return new PointCloudLayer({ ...common, data: pointCloudExampleData, coordinateSystem: "cartesian", getPosition: (d: { position: number[] }) => d.position, getNormal: (d: { normal: number[] }) => d.normal, getColor: configuredColor, pointSize: configuredPointSize });
+      return new PointCloudLayer({ ...common, data: props.thumbnailCapture ? thumbnailPointCloudData : pointCloudExampleData, coordinateSystem: props.thumbnailCapture ? undefined : "cartesian", getPosition: (d: { position: number[] }) => d.position, getNormal: (d: { normal: number[] }) => d.normal, getColor: configuredColor, pointSize: props.thumbnailCapture ? 3 : configuredPointSize });
     case "PolygonLayer":
     case "SolidPolygonLayer":
       return new (layerType === "PolygonLayer" ? PolygonLayer : SolidPolygonLayer)({
@@ -691,7 +771,7 @@ function layerOptions(layerType: string, layer?: NonNullable<typeof props.layers
         getFillColor: binding
           ? (datum: { feature: BoundGeoJsonFeature }) => featureColor(datum.feature)
           : configuredColor,
-        getLineColor: [255, 255, 255, 210],
+        getLineColor: colorToRgba(frontendPalette.lightest, 210),
         getLineWidth: 1,
         lineWidthMinPixels: 0.6,
         stroked: true,
@@ -734,8 +814,8 @@ function layerOptions(layerType: string, layer?: NonNullable<typeof props.layers
             : configuredColor,
         getLineColor: (point: { layerId: string; rowKey: string }) =>
           hoveredPoint.value?.layerId === point.layerId && hoveredPoint.value?.rowKey === point.rowKey
-            ? [15, 23, 42, 255]
-            : [255, 255, 255, 255],
+            ? paletteDark
+            : paletteLight,
         getLineWidth: (point: { layerId: string; rowKey: string }) =>
           hoveredPoint.value?.layerId === point.layerId && hoveredPoint.value?.rowKey === point.rowKey ? 3 : 1,
         lineWidthMinPixels: 1,
@@ -750,24 +830,39 @@ function layerOptions(layerType: string, layer?: NonNullable<typeof props.layers
       const graphLines = config.link ? graphLineRecords(dataset, binding, geometryFeatures) : [];
       return graphLines.length > 0
         ? [
-          new LineLayer({
+          new PathLayer({
             ...common,
             id: `${common.id}-links`,
             data: graphLines,
-            opacity: 0.82,
-            getSourcePosition: (line: typeof graphLines[number]) => line.start,
-            getTargetPosition: (line: typeof graphLines[number]) => line.end,
-            getColor: [100, 116, 139, 190],
-            getWidth: (line: typeof graphLines[number]) => Math.max(1, Math.min(12, line.value)),
-            widthMinPixels: 1,
+            opacity: 0.92,
+            getPath: (line: typeof graphLines[number]) => [line.start, line.end],
+            getColor: colorToRgba(frontendPalette.control.accentStrong, 235),
+            getWidth: (line: typeof graphLines[number]) => Math.max(3, Math.min(8, 2 + line.value)),
+            widthUnits: "pixels",
+            widthMinPixels: 3,
+            capRounded: true,
+            jointRounded: true,
           }),
           scatterplot,
         ]
         : scatterplot;
     case "ScreenGridLayer":
-      return new ScreenGridLayer({ ...common, data: exampleDataUrls.heatmap, getPosition: (d: number[]) => [d[0], d[1]], getWeight: (d: number[]) => d[2] ?? 1, cellSizePixels: 32 });
+      if (props.thumbnailCapture) {
+        return new GridCellLayer({ ...common, data: thumbnailContourData, cellSize: 5000, extruded: false, getPosition: (d: number[]) => d, getFillColor: (d: number[]) => colorToRgba(frontendPalette.text.secondary, 70 + (d[2] ?? 1) * 18) });
+      }
+      return new ScreenGridLayer({ ...common, data: exampleDataUrls.heatmap, gpuAggregation: false, getPosition: (d: number[]) => [d[0], d[1]], getWeight: (d: number[]) => d[2] ?? 1, cellSizePixels: 24, colorRange: deckglColorRange });
     case "TerrainLayer":
-      return new TerrainLayer({ ...common, elevationData: "https://s3.amazonaws.com/elevation-tiles-prod/skadi/N40/N40W075.hgt.gz", texture: mapboxStaticImage, bounds: [-75, 40, -74, 41], meshMaxError: 2 });
+      if (props.thumbnailCapture) {
+        return new PolygonLayer({ ...common, data: thumbnailTerrainPolygons, extruded: true, wireframe: true, getPolygon: (d: { polygon: number[][] }) => d.polygon, getElevation: (d: { elevation: number }) => d.elevation, getFillColor: (d: { color: number[] }) => d.color, getLineColor: colorToRgba(frontendPalette.text.primary, 180), lineWidthMinPixels: 0.6 });
+      }
+      return new TerrainLayer({
+        ...common,
+        elevationData: `${deckglDataBase}/website/terrain.png`,
+        texture: `${deckglDataBase}/website/terrain-mask.png`,
+        elevationDecoder: { rScaler: 2, gScaler: 0, bScaler: 0, offset: 0 },
+        bounds: [-122.5233, 37.6493, -122.3566, 37.8159],
+        meshMaxError: 2,
+      });
     case "TileLayer":
       return new TileLayer({
         ...common,
@@ -780,23 +875,38 @@ function layerOptions(layerType: string, layer?: NonNullable<typeof props.layers
           return new BitmapLayer({
             ...tile,
             id: `${tile.id}-bitmap`,
+            data: null,
             image: tile.data,
             bounds: [bounds[0][0], bounds[0][1], bounds[1][0], bounds[1][1]],
           });
         },
       });
     case "TripsLayer":
-      return new TripsLayer({ ...common, data: exampleDataUrls.trips, getPath: (d: { path: number[][] }) => d.path, getTimestamps: (d: { timestamps: number[] }) => d.timestamps, getColor: [249, 115, 22], widthMinPixels: 4, trailLength: 180, currentTime: 0 });
+      return new TripsLayer({ ...common, data: exampleDataUrls.trips, getPath: (d: { path: number[][] }) => d.path, getTimestamps: (d: { timestamps: number[] }) => d.timestamps, getColor: paletteColor(4), widthMinPixels: 4, trailLength: 180, currentTime: props.thumbnailCapture ? 1500 : 0 });
     case "GreatCircleLayer":
-      return new GreatCircleLayer({ ...common, data: exampleDataUrls.flights, getSourcePosition: (d: { from: { coordinates: number[] } }) => d.from.coordinates, getTargetPosition: (d: { to: { coordinates: number[] } }) => d.to.coordinates, getStrokeColor: [8, 145, 178], getWidth: 4 });
+      return new GreatCircleLayer({ ...common, data: exampleDataUrls.flights, getSourcePosition: (d: { from: { coordinates: number[] } }) => d.from.coordinates, getTargetPosition: (d: { to: { coordinates: number[] } }) => d.to.coordinates, getStrokeColor: paletteColor(8), getWidth: 4 });
     case "TextLayer":
-      return new TextLayer({ ...common, data: exampleDataUrls.stations, getPosition: (d: { coordinates: number[] }) => d.coordinates, getText: (d: { name: string }) => d.name, getSize: 14, getColor: [15, 23, 42], getPixelOffset: [0, -24] });
+      return new TextLayer({ ...common, data: exampleDataUrls.stations, getPosition: (d: { coordinates: number[] }) => d.coordinates, getText: (d: { name: string }) => d.name, getSize: 14, getColor: paletteDark, getPixelOffset: [0, -24] });
     case "SimpleMeshLayer":
-      return new SimpleMeshLayer({ ...common, data: simpleMeshExampleData, mesh: "https://raw.githubusercontent.com/visgl/deck.gl-data/master/examples/mesh/minicooper.obj", coordinateSystem: "cartesian", getPosition: (d: { position: number[] }) => d.position, getColor: (d: { color: number[] }) => d.color, getOrientation: (d: { orientation: number[] }) => d.orientation });
+      return new SimpleMeshLayer({
+        ...common,
+        data: props.thumbnailCapture ? thumbnailSimpleMeshData : exampleDataUrls.stations,
+        mesh: new CubeGeometry(),
+        sizeScale: props.thumbnailCapture ? 7_000 : 30,
+        getPosition: props.thumbnailCapture
+          ? (d: { position: number[] }) => d.position
+          : (d: { coordinates: number[] }) => d.coordinates,
+        getColor: props.thumbnailCapture
+          ? (d: { color: number[] }) => d.color
+          : configuredColor,
+        getOrientation: props.thumbnailCapture
+          ? (d: { orientation: number[] }) => d.orientation
+          : [0, 0, 0],
+      });
     case "ScenegraphLayer":
-      return new ScenegraphLayer({ ...common, data: loadedExampleData.value.ScenegraphLayer ?? [], scenegraph: "https://raw.githubusercontent.com/visgl/deck.gl-data/master/examples/scenegraph-layer/airplane.glb", getPosition: (d: number[]) => [d[5] ?? 0, d[6] ?? 0, d[7] ?? 0], getOrientation: (d: number[]) => [0, -(d[10] ?? 0), 90], sizeScale: 25, pickable: true });
+      return new ScenegraphLayer({ ...common, data: props.thumbnailCapture ? thumbnailScenegraphData : loadedExampleData.value.ScenegraphLayer ?? [], scenegraph: "https://raw.githubusercontent.com/visgl/deck.gl-data/master/examples/scenegraph-layer/airplane.glb", getPosition: (d: number[]) => [d[5] ?? 0, d[6] ?? 0, d[7] ?? 0], getOrientation: (d: number[]) => [0, -(d[10] ?? 0), 90], sizeScale: props.thumbnailCapture ? 3_000 : 25, pickable: true });
     default:
-      return new ScatterplotLayer({ ...common, data: points, getPosition: (d: typeof points[number]) => d.position, getRadius: 25000, getFillColor: [37, 99, 235, 190] });
+      return new ScatterplotLayer({ ...common, data: points, getPosition: (d: typeof points[number]) => d.position, getRadius: 25000, getFillColor: colorToRgba(frontendPalette.control.accentStrong, 190) });
   }
 }
 
@@ -809,11 +919,13 @@ function updateOverlay() {
     binding: props.binding,
     datasetRows: props.datasetRows,
     geometryFeatures: props.geometryFeatures,
+    dataset: props.dataset,
   }];
-  overlay.setProps({ layers: layers.flatMap((layer) => {
+  const renderedLayers = layers.flatMap((layer) => {
     const rendered = layerOptions(layer.layerType, layer);
     return Array.isArray(rendered) ? rendered : [rendered];
-  }) });
+  });
+  overlay.setProps({ layers: renderedLayers });
 }
 
 async function loadExampleData(layerType: string) {
@@ -978,6 +1090,15 @@ function componentInputSnapshot() {
     sizeField: props.binding?.sizeField,
     datasetRows: referenceId(props.datasetRows),
     geometryFeatures: referenceId(props.geometryFeatures),
+    mapViewState: props.mapViewState
+      ? [
+        props.mapViewState.longitude,
+        props.mapViewState.latitude,
+        props.mapViewState.zoom,
+        props.mapViewState.pitch,
+        props.mapViewState.bearing,
+      ].join("\u0000")
+      : "",
     width: props.width,
     height: props.height,
     nestedOverlays: nestedOverlayInputs(),
@@ -1014,8 +1135,9 @@ onMounted(() => {
     new mapboxgl.NavigationControl({ showCompass: true, visualizePitch: true }),
     "top-right",
   );
-  // Keep deck.gl in its own canvas/context. Sharing Mapbox's WebGL state can
-  // leave enabled attributes and aggregation textures bound inconsistently.
+  // Keep deck.gl in its own overlay canvas. This guarantees that graph links
+  // and points are composited above the basemap and isolates deck.gl shader
+  // state from Mapbox's shared WebGL context.
   overlay = new MapboxOverlay({ interleaved: false, layers: [] });
   map.addControl(overlay);
   const persistViewState = () => {
@@ -1069,6 +1191,25 @@ onUpdated(() => {
     loadAllExampleData();
   }
 
+  if (current.mapViewState !== prior.mapViewState && props.mapViewState && map) {
+    const center = map.getCenter();
+    const savedView = props.mapViewState;
+    const cameraChanged = Math.abs(center.lng - savedView.longitude) > 1e-7
+      || Math.abs(center.lat - savedView.latitude) > 1e-7
+      || Math.abs(map.getZoom() - savedView.zoom) > 1e-7
+      || Math.abs(map.getPitch() - savedView.pitch) > 1e-7
+      || Math.abs(map.getBearing() - savedView.bearing) > 1e-7;
+    if (cameraChanged) {
+      map.jumpTo({
+        center: [savedView.longitude, savedView.latitude],
+        zoom: savedView.zoom,
+        pitch: savedView.pitch,
+        bearing: savedView.bearing,
+      });
+    }
+    userViewState = true;
+  }
+
   if (joinChanged) {
     // A new ID join is an explicit request to show different geometry. It must
     // not inherit a stale camera lock from selecting or panning the empty map.
@@ -1097,6 +1238,7 @@ onUpdated(() => {
 });
 
 onBeforeUnmount(() => {
+  if (userViewState) emitCurrentViewState();
   if (viewStateCommitTimer !== null) window.clearTimeout(viewStateCommitTimer);
   viewStateCommitTimer = null;
   if (nestedProjectionFrame !== null) cancelAnimationFrame(nestedProjectionFrame);

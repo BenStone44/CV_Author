@@ -11,6 +11,7 @@ body,
   --frontend-surface-panel: #ffe6a7;
   --frontend-surface-raised: #ffe6a7;
   --frontend-surface-soft: #fff3d0;
+  --frontend-sidebar-background: #fefae0;
   --frontend-text-primary: #432818;
   --frontend-text-secondary: #99582a;
   --frontend-text-muted: #728196;
@@ -19,7 +20,9 @@ body,
   --frontend-control-hover: #fff3d0;
   --frontend-slider-track: #d9c7a3;
   --frontend-slider-thumb: #432818;
-  --frontend-control-border: #d9c7a3;
+  --frontend-border-subtle: rgb(67 40 24 / 24%);
+  --frontend-control-border: rgb(67 40 24 / 38%);
+  --frontend-border-strong: rgb(67 40 24 / 58%);
   --frontend-scrollbar-thumb: #c49a63;
   --frontend-scrollbar-thumb-hover: #99582a;
   --frontend-component-data: #ffe6a7;

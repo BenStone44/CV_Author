@@ -104,7 +104,7 @@ const emit = defineEmits<{
   height: 30px;
   flex: 0 0 30px;
   padding: 0;
-  border: 1px solid rgba(67, 40, 24, 0.1);
+  border: 1px solid var(--frontend-border-subtle);
   border-radius: 6px;
   background: rgb(var(--frontend-light-rgb) / 0.8);
   color: #432818;
@@ -120,7 +120,7 @@ const emit = defineEmits<{
   stroke-linejoin: round;
 }
 .icon-button:hover:not(:disabled) {
-  border-color: rgba(153, 88, 42, 0.35);
+  border-color: var(--frontend-border-strong);
   background: var(--frontend-surface-soft);
   color: #432818;
 }

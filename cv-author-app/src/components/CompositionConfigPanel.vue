@@ -178,14 +178,14 @@ function numericValue(event: Event) {
 
 <style scoped>
 .composition-config { width: min(330px, calc(100vw - 32px)); background: var(--frontend-component-composition); color: #432818; }
-.composition-config__header { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 12px; border-bottom: 1px solid rgba(67, 40, 24, 0.12); }
+.composition-config__header { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 12px; border-bottom: 1px solid var(--frontend-border-subtle); }
 .composition-config__header > div { display: flex; min-width: 0; align-items: baseline; gap: 7px; }
 .composition-config__header strong { font-size: calc(12px * var(--frontend-font-scale)); text-transform: capitalize; }
 .composition-config__header span { color: #718096; font-size: calc(10px * var(--frontend-font-scale)); }
 .composition-config__header button { display: inline-grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #99582a; cursor: pointer; }
 .composition-config__header button:hover { background: var(--frontend-control-hover); color: #432818; }
 .composition-config__body { display: grid; gap: 12px; max-height: min(620px, calc(100vh - 180px)); padding: 12px; overflow: auto; }
-.composition-config__section { display: grid; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid rgba(67, 40, 24, 0.1); }
+.composition-config__section { display: grid; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid var(--frontend-border-subtle); }
 .composition-config__section:last-child { padding-bottom: 0; border-bottom: 0; }
 .composition-config__section > header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .composition-config__section > header strong { font-size: calc(11px * var(--frontend-font-scale)); }
@@ -194,7 +194,7 @@ function numericValue(event: Event) {
 .composition-config__segments button { min-height: 30px; border: 0; border-radius: 4px; background: transparent; color: #5b6878; font: inherit; font-size: calc(10px * var(--frontend-font-scale)); cursor: pointer; }
 .composition-config__segments button.is-active { background: var(--frontend-surface-raised); color: #432818; box-shadow: 0 1px 2px rgba(67, 40, 24, 0.14); font-weight: 700; }
 .composition-config__field { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 8px; color: #99582a; font-size: calc(10px * var(--frontend-font-scale)); }
-.composition-config__field select { width: 100%; min-width: 0; height: 30px; padding: 0 7px; border: 1px solid rgba(67, 40, 24, 0.14); border-radius: 5px; background: var(--frontend-surface-raised); color: #432818; font: inherit; font-size: calc(10px * var(--frontend-font-scale)); }
+.composition-config__field select { width: 100%; min-width: 0; height: 30px; padding: 0 7px; border: 1px solid var(--frontend-control-border); border-radius: 5px; background: var(--frontend-surface-raised); color: #432818; font: inherit; font-size: calc(10px * var(--frontend-font-scale)); }
 .composition-config__slider { display: grid; grid-template-columns: 72px minmax(0, 1fr) 48px; align-items: center; gap: 7px; color: #99582a; font-size: calc(10px * var(--frontend-font-scale)); }
 .composition-config__slider input { width: 100%; min-width: 0; accent-color: var(--frontend-slider-thumb); }
 .composition-config__slider output { color: var(--frontend-text-secondary); font-variant-numeric: tabular-nums; text-align: right; }

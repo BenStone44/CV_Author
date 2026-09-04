@@ -4116,3 +4116,92 @@ describe("CSV column axis drag binding", () => {
     expect(chart.chartSpec?.encodings.y).toEqual({ field: "weight", type: "quantitative" });
   });
 });
+
+describe("Graph Link template drop", () => {
+  it("enables graph edges on a deck.gl Scatterplot instead of creating another node", async () => {
+    const dataset: Dataset = {
+      id: "geographic-graph-link-drop",
+      name: "nodes.csv + links.csv",
+      columns: [],
+      rows: [],
+      graph: {
+        nodes: {
+          columns: [
+            { name: "id", type: "nominal" },
+            { name: "place_id", type: "nominal" },
+          ],
+          rows: [
+            { id: "a", place_id: "place-a" },
+            { id: "b", place_id: "place-b" },
+          ],
+        },
+        edges: {
+          columns: [
+            { name: "source", type: "nominal" },
+            { name: "target", type: "nominal" },
+            { name: "value", type: "quantitative" },
+          ],
+          rows: [{ source: "a", target: "b", value: "2" }],
+        },
+      },
+    };
+    const scatterplot = lineChart("geographic-graph-link-target", 100, false);
+    scatterplot.layerKind = "deckgl";
+    scatterplot.deckglLayerType = "ScatterplotLayer";
+    scatterplot.deckglDatasetId = dataset.id;
+    scatterplot.deckglBinding = {
+      datasetId: dataset.id,
+      geometrySourceId: "geometry:places",
+      idField: "place_id",
+      aggregation: "sum",
+    };
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    useDatasetStore().geometrySources.value = [{
+      id: "geometry:places",
+      name: "places.geojson",
+      features: [
+        {
+          type: "Feature",
+          id: "place-a",
+          properties: {},
+          geometry: { type: "Point", coordinates: [120, 30] },
+        },
+        {
+          type: "Feature",
+          id: "place-b",
+          properties: {},
+          geometry: { type: "Point", coordinates: [121, 31] },
+        },
+      ],
+    }];
+    store.canvasNodes.value = [scatterplot];
+    const candidate = store.implementedTemplateCandidates.value.find((item) =>
+      item.graphLinkMode === "cartesian");
+    expect(candidate).toBeDefined();
+
+    const transferData = new Map<string, string>();
+    const dataTransfer = {
+      files: [],
+      types: ["application/x-svg-candidate", "text/plain"],
+      dropEffect: "none",
+      effectAllowed: "none",
+      getData: (format: string) => transferData.get(format) ?? "",
+      setData: (format: string, value: string) => transferData.set(format, value),
+    };
+    store.onCandidateDragStart(candidate!, {
+      dataTransfer,
+    } as unknown as DragEvent);
+    await store.onCanvasDrop({
+      clientX: 500,
+      clientY: 300,
+      dataTransfer,
+      preventDefault() {},
+    } as unknown as DragEvent);
+
+    expect(store.canvasNodes.value).toHaveLength(1);
+    expect(scatterplot.deckglConfig).toMatchObject({ link: true });
+    expect(store.selectedIds.value).toEqual([scatterplot.id]);
+  });
+});

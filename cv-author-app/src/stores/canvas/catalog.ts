@@ -13,14 +13,15 @@ import {
   supportsDefaultChartData,
   stripSvgTextElements,
 } from "../../utils/defaultChartData";
-import { withD3GalleryThumbnail } from "../../utils/d3GalleryThumbnails";
 import {
+  deckglExampleImageUrl,
   deckglLightMapStyleUrl,
   geographicLayerDefinitions,
   getGeographicLayerFamily,
 } from "../../utils/geographicLayerCards";
 import { getChartTemplateContract, normalizeChartTemplate } from "../../utils/chartTemplates";
 import { nestedContextFields } from "../../utils/chartContracts";
+import { withUniformTemplatePreview } from "../../utils/templatePreviews";
 
 const defaultDataTemplateDefinitions = [
   { id: "builtin-template:line", name: "Single Line", chartType: "LineGraph", coordinateSystem: "Cartesian" },
@@ -79,7 +80,7 @@ const graphLinkTemplateDefinitions: SvgCandidate[] = [
     renderMode: "static-layer",
     layerType: "LineLayer",
     mapStyleUrl: deckglLightMapStyleUrl,
-    src: "/deckgl-examples/line-layer.jpg",
+    src: deckglExampleImageUrl("LineLayer"),
     svgMarkup: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><rect width="320" height="180" fill="transparent"/></svg>',
   },
 ];
@@ -103,7 +104,7 @@ export const implementedTemplateDefinitions: SvgCandidate[] = ([
         src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgMarkup)}`,
       };
   })
-  .map(withD3GalleryThumbnail);
+  .map(withUniformTemplatePreview);
 
 export function createUnboundChartSpec(chartType: string, datasetId: string): ChartSpec {
   return { chartType, templateId: normalizeChartTemplate(chartType) ?? undefined, datasetId, encodings: {} };

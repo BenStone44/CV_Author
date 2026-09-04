@@ -23,7 +23,7 @@
   gap: 5px;
   margin: 4px 0 0;
   padding-top: 8px;
-  border-top: 1px solid rgba(67, 40, 24, 0.08);
+  border-top: 1px solid var(--frontend-border-subtle);
 }
 .recommendation-option-card dl div {
   display: flex;
@@ -72,7 +72,7 @@
   width: 100%;
   height: 34px;
   padding: 0 8px;
-  border: 1px solid rgba(67, 40, 24, 0.14);
+  border: 1px solid var(--frontend-control-border);
   border-radius: 6px;
   background: var(--frontend-surface-raised);
   color: #432818;
@@ -80,11 +80,11 @@
   cursor: pointer;
 }
 .encoding-inspector__field select:focus {
-  border-color: rgba(153, 88, 42, 0.7);
+  border-color: var(--frontend-border-strong);
   outline: 2px solid rgba(153, 88, 42, 0.12);
 }
 .encoding-inspector__secondary {
-  border: 1px solid rgba(67, 40, 24, 0.14);
+  border: 1px solid var(--frontend-control-border);
   background: var(--frontend-surface-raised);
   color: #99582a;
 }
@@ -150,7 +150,7 @@
   gap: 6px;
   min-width: 0;
   padding: 7px;
-  border: 1px solid rgba(67, 40, 24, 0.09);
+  border: 1px solid var(--frontend-border-subtle);
   border-radius: 8px;
   background: var(--frontend-surface-raised);
   cursor: grab;
@@ -159,7 +159,7 @@
     box-shadow 160ms ease;
 }
 .composition-candidate:hover {
-  border-color: rgba(153, 88, 42, 0.34);
+  border-color: var(--frontend-border-strong);
   box-shadow: 0 0 0 3px rgba(153, 88, 42, 0.1);
 }
 .composition-candidate:active {
@@ -170,7 +170,7 @@
   cursor: not-allowed;
 }
 .composition-candidate--unavailable:hover {
-  border-color: rgba(67, 40, 24, 0.09);
+  border-color: var(--frontend-border-subtle);
   box-shadow: none;
 }
 .composition-candidate__preview {
@@ -216,7 +216,7 @@
   display: grid;
   width: 196px;
   padding: 6px;
-  border: 1px solid rgba(67, 40, 24, 0.12);
+  border: 1px solid var(--frontend-border-subtle);
   border-radius: 8px;
   background: rgb(var(--frontend-light-rgb) / 0.98);
   box-shadow: 0 18px 40px rgba(67, 40, 24, 0.2);
@@ -255,7 +255,7 @@
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid rgba(67, 40, 24, 0.08);
+  border: 1px solid var(--frontend-border-subtle);
   border-radius: 28px;
   background-color: var(--frontend-component-chart);
   box-shadow: inset 0 0 0 1px rgb(var(--frontend-light-rgb) / 0.7);
@@ -349,7 +349,7 @@
   width: 11px;
   height: 11px;
   box-sizing: border-box;
-  border: 1px solid rgba(67, 40, 24, 0.38);
+  border: 1px solid var(--frontend-border-strong);
   border-radius: 2px;
   box-shadow: 0 0 0 1px rgb(var(--frontend-light-rgb) / 0.82);
 }
@@ -373,7 +373,7 @@
   align-items: center;
   gap: 5px;
   padding: 0 6px;
-  border-bottom: 1px solid rgba(67, 40, 24, 0.16);
+  border-bottom: 1px solid var(--frontend-control-border);
   background: var(--frontend-surface-soft);
 }
 .series-item-panel__header strong {
@@ -402,7 +402,7 @@
   align-items: center;
   gap: 2px;
   padding-left: 5px;
-  border: 1px solid rgba(67, 40, 24, 0.2);
+  border: 1px solid var(--frontend-control-border);
   border-radius: 4px;
   background: var(--frontend-surface-raised);
   color: #99582a;
@@ -422,7 +422,7 @@
   padding: 0;
   place-items: center;
   border: 0;
-  border-left: 1px solid rgba(67, 40, 24, 0.12);
+  border-left: 1px solid var(--frontend-border-subtle);
   background: transparent;
   color: #99582a;
   cursor: pointer;
@@ -439,7 +439,7 @@
   align-items: center;
   gap: 10px;
   padding: 2px 5px 2px 6px;
-  border-bottom: 1px solid rgba(67, 40, 24, 0.08);
+  border-bottom: 1px solid var(--frontend-border-subtle);
   background: var(--frontend-surface-raised);
   font-size: calc(9px * var(--frontend-font-scale));
 }
@@ -453,7 +453,7 @@
   height: 18px;
   box-sizing: border-box;
   overflow: hidden;
-  border: 1px solid rgba(67, 40, 24, 0.38);
+  border: 1px solid var(--frontend-border-strong);
   border-radius: 4px;
   box-shadow: inset 0 0 0 1px rgb(var(--frontend-light-rgb) / 0.72);
   cursor: pointer;
@@ -606,7 +606,7 @@
   bottom: 20px;
   max-width: min(420px, calc(100% - 40px));
   padding: 12px 14px;
-  border: 1px solid rgba(67, 40, 24, 0.08);
+  border: 1px solid var(--frontend-border-subtle);
   border-radius: 14px;
   background: rgb(var(--frontend-light-rgb) / 0.94);
   color: #304255;
@@ -641,6 +641,30 @@
 .deckgl-layer-node {
   position: absolute;
   transform-origin: 0 0;
+  pointer-events: none;
+  /* Keep the map, its hit frame, and its selection border on one stable
+     compositor layer while the drag path updates the element transform. */
+  will-change: transform;
+  backface-visibility: hidden;
+}
+.deckgl-layer-placeholder {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgba(15, 53, 80, 0.72);
+  border-radius: 7px;
+  background: var(--frontend-surface-canvas);
+  pointer-events: auto;
+  cursor: move;
+}
+.deckgl-layer-placeholder img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   pointer-events: none;
 }
 .deckgl-layer-selection-frame {
@@ -1185,7 +1209,7 @@
   align-items: center;
   gap: 6px;
   padding: 7px 9px;
-  border: 1px solid rgba(67, 40, 24, 0.1);
+  border: 1px solid var(--frontend-border-subtle);
   border-radius: 8px;
   background: rgb(var(--frontend-light-rgb) / 0.9);
   color: #99582a;
@@ -1198,7 +1222,7 @@
   width: 58px;
   height: 28px;
   padding: 3px 6px;
-  border: 1px solid rgba(67, 40, 24, 0.14);
+  border: 1px solid var(--frontend-control-border);
   border-radius: 5px;
   color: #432818;
   font: inherit;

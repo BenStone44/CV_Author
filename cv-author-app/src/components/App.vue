@@ -49,7 +49,7 @@ import {
   groupChartTemplateCandidates,
   type ChartTemplateCategory,
 } from "../utils/chartTemplateCategories";
-import { getGeographicLayerFamily } from "../utils/geographicLayerCards";
+import { deckglExampleImageUrl, getGeographicLayerFamily } from "../utils/geographicLayerCards";
 import { getChartTemplateContract } from "../utils/chartTemplates";
 import {
   cartesianTreeDirection,
@@ -238,6 +238,85 @@ const visibleCanvasNodes = computed(() =>
   ),
 );
 const deckglLayerNodes = computed(() => visibleCanvasNodes.value.filter((node) => node.layerKind === "deckgl"));
+const graphLinkDragActive = computed(() => {
+  const candidateId = draggedCandidateId.value;
+  return !!candidateId && implementedTemplateCandidates.value.some((candidate) =>
+    candidate.id === candidateId && !!candidate.graphLinkMode);
+});
+const MAX_LIVE_DECKGL_MAPS = 6;
+const deckglLayerElements = new Map<string, HTMLElement>();
+const deckglLayerRefCallbacks = new Map<string, (element: unknown) => void>();
+const deckglLayerVisibility = ref(new Map<string, { isIntersecting: boolean; ratio: number }>());
+let deckglVisibilityObserver: IntersectionObserver | null = null;
+
+const liveDeckglLayerIds = computed(() => {
+  const selected = new Set(selectedIds.value);
+  return new Set(Array.from(deckglLayerVisibility.value.entries())
+    .filter(([, visibility]) => visibility.isIntersecting)
+    .sort(([leftId, left], [rightId, right]) => {
+      const selectedDifference = Number(selected.has(rightId)) - Number(selected.has(leftId));
+      return selectedDifference || right.ratio - left.ratio;
+    })
+    .slice(0, MAX_LIVE_DECKGL_MAPS)
+    .map(([id]) => id));
+});
+
+function updateDeckglLayerVisibility(entries: IntersectionObserverEntry[]) {
+  const next = new Map(deckglLayerVisibility.value);
+  let changed = false;
+  entries.forEach((entry) => {
+    const id = (entry.target as HTMLElement).dataset.nodeId;
+    if (!id) return;
+    const previous = next.get(id);
+    if (previous?.isIntersecting === entry.isIntersecting
+      && previous.ratio === entry.intersectionRatio) return;
+    next.set(id, { isIntersecting: entry.isIntersecting, ratio: entry.intersectionRatio });
+    changed = true;
+  });
+  if (changed) deckglLayerVisibility.value = next;
+}
+
+function setDeckglLayerElement(nodeId: string, element: unknown) {
+  const previous = deckglLayerElements.get(nodeId);
+  // Vue invokes function refs again after parent updates. Re-observing the
+  // same element schedules another IntersectionObserver notification, which
+  // can form a render/observe loop while a map node is being dragged.
+  if (previous === element) return;
+  if (previous) deckglVisibilityObserver?.unobserve(previous);
+  if (!(element instanceof HTMLElement)) {
+    deckglLayerElements.delete(nodeId);
+    deckglLayerRefCallbacks.delete(nodeId);
+    const next = new Map(deckglLayerVisibility.value);
+    next.delete(nodeId);
+    deckglLayerVisibility.value = next;
+    return;
+  }
+  deckglLayerElements.set(nodeId, element);
+  deckglVisibilityObserver?.observe(element);
+}
+
+function deckglLayerRef(nodeId: string) {
+  let callback = deckglLayerRefCallbacks.get(nodeId);
+  if (!callback) {
+    callback = (element) => setDeckglLayerElement(nodeId, element);
+    deckglLayerRefCallbacks.set(nodeId, callback);
+  }
+  return callback;
+}
+
+function isDeckglLayerLive(nodeId: string) {
+  const activeInteraction = interaction.value;
+  // Do not replace a moving WebGL map with its placeholder when an
+  // IntersectionObserver threshold is crossed mid-drag.
+  if (activeInteraction?.type === "move" && activeInteraction.itemIds.includes(nodeId)) return true;
+  if (deckglVisibilityObserver) return liveDeckglLayerIds.value.has(nodeId);
+  const selected = new Set(selectedIds.value);
+  return deckglLayerNodes.value
+    .slice()
+    .sort((left, right) => Number(selected.has(right.id)) - Number(selected.has(left.id)))
+    .slice(0, MAX_LIVE_DECKGL_MAPS)
+    .some((node) => node.id === nodeId);
+}
 function deckglLayerRenderSpecs(node: CanvasNode) {
   const ids = node.deckglLayerStack?.length ? node.deckglLayerStack : [node.id];
   return ids
@@ -1525,6 +1604,14 @@ function removeSeriesCaptionItem(nodeId: string, field: string, event: Event) {
 }
 
 onMounted(() => {
+  if (typeof IntersectionObserver === "function" && canvasRef.value) {
+    deckglVisibilityObserver = new IntersectionObserver(updateDeckglLayerVisibility, {
+      root: canvasRef.value,
+      rootMargin: "160px",
+      threshold: [0, 0.01, 0.25, 0.5, 0.75, 1],
+    });
+    deckglLayerElements.forEach((element) => deckglVisibilityObserver?.observe(element));
+  }
   window.addEventListener("keydown", onCompositionKeyDown);
   window.addEventListener("click", closeCompositionCandidates);
   window.addEventListener("click", closeTemplateCategoryMenu);
@@ -1532,6 +1619,8 @@ onMounted(() => {
   window.addEventListener("resize", closeTemplateCategoryMenu);
 });
 onBeforeUnmount(() => {
+  deckglVisibilityObserver?.disconnect();
+  deckglVisibilityObserver = null;
   window.removeEventListener("keydown", onCompositionKeyDown);
   window.removeEventListener("click", closeCompositionCandidates);
   window.removeEventListener("click", closeTemplateCategoryMenu);

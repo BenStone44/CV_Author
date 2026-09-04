@@ -1021,11 +1021,13 @@
             <div
               v-for="node in deckglLayerNodes"
               :key="`deckgl-layer-${node.id}`"
+              :ref="deckglLayerRef(node.id)"
               class="deckgl-layer-node"
               :data-node-id="node.id"
               :style="deckglLayerStyle(node)"
             >
               <DeckglMapLayer
+                v-if="isDeckglLayerLive(node.id)"
                 :key="`${node.id}:${node.mapStyleUrl ?? 'example-default'}`"
                 :layer-type="deckglLayerType(node)"
                 :map-style-url="node.mapStyleUrl ?? ''"
@@ -1038,6 +1040,7 @@
                 :layers="deckglLayerRenderSpecs(node)"
                 :nested-overlays="deckglNestedOverlays(node)"
                 :nest-drag-source-id="compositionDragSourceId"
+                :pass-through-candidate-drop="graphLinkDragActive"
                 :width="deckglLayerWidth(node)"
                 :height="deckglLayerHeight(node)"
                 @view-state-change="onDeckglMapViewStateChange(node, $event)"
@@ -1046,6 +1049,15 @@
                 @column-drag-over="onCanvasDragOver($event)"
                 @column-drop="onCanvasDrop($event)"
               />
+              <button
+                v-else
+                class="deckgl-layer-placeholder"
+                type="button"
+                :aria-label="`Activate ${deckglLayerType(node)} map`"
+                @pointerdown.stop.prevent="onCanvasNodePointerDown(node, $event)"
+              >
+                <img :src="deckglExampleImageUrl(deckglLayerType(node))" alt="" draggable="false" />
+              </button>
               <div
                 v-if="selectedIds.includes(node.id)"
                 class="deckgl-layer-selection-frame"

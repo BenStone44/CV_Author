@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { Moon, Sun, X } from "@lucide/vue";
+import { frontendPalette } from "../config/global";
 import {
   deckglDarkMapStyleUrl,
   deckglLightMapStyleUrl,
@@ -33,7 +34,9 @@ const emit = defineEmits<{
 }>();
 
 const pointSize = computed(() => typeof props.config.size === "number" ? props.config.size : 8);
-const pointColor = computed(() => typeof props.config.color === "string" ? props.config.color : "#99582a");
+const pointColor = computed(() => typeof props.config.color === "string"
+  ? props.config.color
+  : frontendPalette.control.accentStrong);
 const quantitativeColumns = computed(() => props.columns.filter((column) => column.type === "quantitative"));
 type BindingDraft = {
   bindingKey: string;
@@ -264,27 +267,27 @@ function applyDataBinding() {
 .encoding-config { display: grid; gap: 14px; }
 .encoding-config__header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .encoding-config__header > div { display: grid; min-width: 0; gap: 2px; }
-.encoding-config__header strong { color: #432818; font-size: calc(12px * var(--frontend-font-scale)); letter-spacing: 0.08em; }
-.encoding-config__header span { overflow: hidden; color: #6b7889; font-size: calc(11px * var(--frontend-font-scale)); text-overflow: ellipsis; white-space: nowrap; }
-.encoding-config__header button { display: inline-grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 6px; background: transparent; color: #99582a; cursor: pointer; }
-.encoding-config__header button:hover { background: var(--frontend-surface-soft); color: #432818; }
-.encoding-config__column { display: grid; min-width: 0; align-content: start; gap: 12px; padding: 10px; border: 1px solid rgba(67, 40, 24, 0.1); border-radius: 6px; background: var(--frontend-surface-soft); }
-.encoding-config__column-heading { display: grid; gap: 2px; padding-bottom: 4px; border-bottom: 1px solid rgba(67, 40, 24, 0.09); }
-.encoding-config__column-heading strong { color: #263548; font-size: calc(10px * var(--frontend-font-scale)); letter-spacing: 0.08em; text-transform: uppercase; }
-.encoding-config__column-heading span { color: #718096; font-size: calc(10px * var(--frontend-font-scale)); line-height: 1.35; }
-.map-style-control { display: grid; gap: 8px; color: #99582a; font-size: calc(11px * var(--frontend-font-scale)); }
+.encoding-config__header strong { color: var(--frontend-text-primary); font-size: calc(12px * var(--frontend-font-scale)); letter-spacing: 0.08em; }
+.encoding-config__header span { overflow: hidden; color: var(--frontend-text-muted); font-size: calc(11px * var(--frontend-font-scale)); text-overflow: ellipsis; white-space: nowrap; }
+.encoding-config__header button { display: inline-grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--frontend-control-accent-strong); cursor: pointer; }
+.encoding-config__header button:hover { background: var(--frontend-surface-soft); color: var(--frontend-text-primary); }
+.encoding-config__column { display: grid; min-width: 0; align-content: start; gap: 12px; padding: 10px; border: 1px solid var(--frontend-border-subtle); border-radius: 6px; background: var(--frontend-surface-soft); }
+.encoding-config__column-heading { display: grid; gap: 2px; padding-bottom: 4px; border-bottom: 1px solid var(--frontend-border-subtle); }
+.encoding-config__column-heading strong { color: var(--frontend-text-primary); font-size: calc(10px * var(--frontend-font-scale)); letter-spacing: 0.08em; text-transform: uppercase; }
+.encoding-config__column-heading span { color: var(--frontend-text-muted); font-size: calc(10px * var(--frontend-font-scale)); line-height: 1.35; }
+.map-style-control { display: grid; gap: 8px; color: var(--frontend-text-secondary); font-size: calc(11px * var(--frontend-font-scale)); }
 .map-style-control__segments { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 3px; border-radius: 6px; background: color-mix(in srgb, var(--frontend-surface-soft) 70%, var(--frontend-surface-raised)); }
-.map-style-control__segments button { display: inline-flex; min-height: 32px; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 4px; background: transparent; color: #5b6878; font: inherit; cursor: pointer; }
-.map-style-control__segments button.is-active { background: var(--frontend-surface-raised); color: #432818; box-shadow: 0 1px 2px rgba(67, 40, 24, 0.14); font-weight: 700; }
-.appearance-control { display: grid; grid-template-columns: minmax(0, 1fr) minmax(90px, 1.5fr) auto; align-items: center; gap: 10px; color: #99582a; font-size: calc(11px * var(--frontend-font-scale)); }
-.appearance-control input[type="color"] { width: 34px; height: 28px; padding: 2px; border: 1px solid rgba(67, 40, 24, 0.16); border-radius: 5px; background: var(--frontend-surface-raised); cursor: pointer; }
+.map-style-control__segments button { display: inline-flex; min-height: 32px; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 4px; background: transparent; color: var(--frontend-text-muted); font: inherit; cursor: pointer; }
+.map-style-control__segments button.is-active { background: var(--frontend-surface-raised); color: var(--frontend-text-primary); box-shadow: 0 1px 2px rgba(67, 40, 24, 0.14); font-weight: 700; }
+.appearance-control { display: grid; grid-template-columns: minmax(0, 1fr) minmax(90px, 1.5fr) auto; align-items: center; gap: 10px; color: var(--frontend-text-secondary); font-size: calc(11px * var(--frontend-font-scale)); }
+.appearance-control input[type="color"] { width: 34px; height: 28px; padding: 2px; border: 1px solid var(--frontend-control-border); border-radius: 5px; background: var(--frontend-surface-raised); cursor: pointer; }
 .appearance-control input[type="range"] { width: 100%; accent-color: var(--frontend-slider-thumb); }
 .appearance-control output { min-width: 42px; color: var(--frontend-text-secondary); font-size: calc(10px * var(--frontend-font-scale)); text-align: right; }
-.geometry-binding { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 3px 8px; padding: 7px 8px; border-left: 3px solid #99582a; background: #f3faf7; color: #99582a; font-size: calc(10px * var(--frontend-font-scale)); }
-.geometry-binding strong { overflow: hidden; color: #14532d; text-overflow: ellipsis; white-space: nowrap; }
-.geometry-binding small { grid-column: 2; color: #718096; }
-.encoding-field-control { display: grid; grid-template-columns: 54px minmax(0, 1fr); align-items: center; gap: 8px; color: #99582a; font-size: calc(11px * var(--frontend-font-scale)); }
-.encoding-field-control select { min-width: 0; height: 30px; padding: 0 24px 0 7px; border: 1px solid rgba(67, 40, 24, 0.14); border-radius: 5px; background: var(--frontend-surface-raised); color: #263548; font: inherit; }
-.data-binding-apply { min-height: 30px; border: 1px solid rgba(67, 40, 24, 0.18); border-radius: 5px; background: #99582a; color: #fff; font: inherit; cursor: pointer; }
+.geometry-binding { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 3px 8px; padding: 7px 8px; border-left: 3px solid var(--frontend-control-accent-strong); background: var(--frontend-component-composition); color: var(--frontend-text-secondary); font-size: calc(10px * var(--frontend-font-scale)); }
+.geometry-binding strong { overflow: hidden; color: var(--frontend-slider-thumb); text-overflow: ellipsis; white-space: nowrap; }
+.geometry-binding small { grid-column: 2; color: var(--frontend-text-muted); }
+.encoding-field-control { display: grid; grid-template-columns: 54px minmax(0, 1fr); align-items: center; gap: 8px; color: var(--frontend-text-secondary); font-size: calc(11px * var(--frontend-font-scale)); }
+.encoding-field-control select { min-width: 0; height: 30px; padding: 0 24px 0 7px; border: 1px solid var(--frontend-control-border); border-radius: 5px; background: var(--frontend-surface-raised); color: var(--frontend-text-primary); font: inherit; }
+.data-binding-apply { min-height: 30px; border: 1px solid var(--frontend-control-border); border-radius: 5px; background: var(--frontend-control-accent-strong); color: var(--frontend-surface-raised); font: inherit; cursor: pointer; }
 .data-binding-apply:disabled { cursor: not-allowed; opacity: 0.45; }
 </style>

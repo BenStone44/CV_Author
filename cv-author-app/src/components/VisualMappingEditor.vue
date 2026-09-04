@@ -213,7 +213,7 @@ function toggleSizeStop(index: number) {
   gap: 14px;
   margin-top: 4px;
   padding-top: 12px;
-  border-top: 1px solid #e6ebf0;
+  border-top: 1px solid var(--frontend-border-subtle);
 }
 
 .mapping-section {
@@ -244,7 +244,7 @@ button {
   height: 26px;
   padding: 0;
   place-items: center;
-  border: 1px solid #dce3ea;
+  border: 1px solid var(--frontend-control-border);
   border-radius: 5px;
   background: var(--frontend-surface-raised);
   color: #536273;
@@ -252,7 +252,7 @@ button {
 }
 
 button:hover:not(:disabled) {
-  border-color: #9ab4ca;
+  border-color: var(--frontend-border-strong);
   color: #99582a;
 }
 
@@ -263,7 +263,7 @@ button:disabled {
 
 .color-gradient {
   height: 14px;
-  border: 1px solid rgba(31, 41, 55, 0.16);
+  border: 1px solid var(--frontend-control-border);
   border-radius: 3px;
 }
 
@@ -287,7 +287,7 @@ button:disabled {
   width: 100%;
   height: 26px;
   padding: 2px;
-  border: 1px solid #dce3ea;
+  border: 1px solid var(--frontend-control-border);
   border-radius: 4px;
   background: var(--frontend-surface-raised);
 }
@@ -296,7 +296,7 @@ button:disabled {
   width: 58px;
   height: 26px;
   padding: 3px 6px;
-  border: 1px solid #dce3ea;
+  border: 1px solid var(--frontend-control-border);
   border-radius: 4px;
   font: inherit;
 }
@@ -307,7 +307,7 @@ button:disabled {
   min-width: 0;
   height: 26px;
   padding: 3px 6px;
-  border: 1px solid #dce3ea;
+  border: 1px solid var(--frontend-control-border);
   border-radius: 4px;
   font: inherit;
   font-variant-numeric: tabular-nums;
@@ -332,7 +332,7 @@ button:disabled {
 .slider-dot { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; place-items: center; }
 .slider-dot span { width: 10px; height: 10px; border: 2px solid #432818; border-radius: 50%; background: var(--frontend-surface-raised); }
 .slider-dot:hover span, .slider-dot[aria-expanded="true"] span { background: #432818; }
-.size-slider-popover { position: absolute; right: 26px; bottom: calc(100% + 5px); z-index: 3; display: flex; width: 150px; height: 34px; align-items: center; padding: 6px 9px; border: 1px solid rgba(67, 40, 24, 0.16); border-radius: 6px; background: var(--frontend-surface-raised); box-shadow: 0 8px 20px rgba(67, 40, 24, 0.16); }
+.size-slider-popover { position: absolute; right: 26px; bottom: calc(100% + 5px); z-index: 3; display: flex; width: 150px; height: 34px; align-items: center; padding: 6px 9px; border: 1px solid var(--frontend-control-border); border-radius: 6px; background: var(--frontend-surface-raised); box-shadow: 0 8px 20px rgba(67, 40, 24, 0.16); }
 .size-slider-popover input { width: 100%; accent-color: var(--frontend-control-accent); }
 
 .size-position,
