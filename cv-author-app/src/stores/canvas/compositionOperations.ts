@@ -3,6 +3,7 @@
 // @ts-nocheck
 import type {
   Bounds,
+  CanvasGroupNode,
   CanvasNode,
   ChartDropZone,
   ChartPlotArea,
@@ -16,12 +17,39 @@ import type {
   RelativeNestedParameters,
   SvgCandidate,
 } from "../../types";
-import { isCartesianTreeChart } from "../../utils/treeLayout";
+import { normalizeNestedCallout } from "../../utils/nestedCallout";
 
 // Nested children use an independent visual size scale. The parent mark only
 // supplies the anchor location; it must not determine the child's base size.
 const NESTED_DEFAULT_DIAMETER = 140;
 const NESTED_MAX_DIAMETER = 360;
+const COMPOSITION_DROP_ZONE_GAP_PX = 10;
+const LAYER_DROP_ZONE_INSET_PX = 16;
+
+function insetBounds(bounds: Bounds, insetX: number, insetY = insetX): Bounds {
+  const appliedX = Math.min(Math.max(insetX, 0), bounds.width * 0.12);
+  const appliedY = Math.min(Math.max(insetY, 0), bounds.height * 0.12);
+  return {
+    minX: bounds.minX + appliedX,
+    minY: bounds.minY + appliedY,
+    maxX: bounds.maxX - appliedX,
+    maxY: bounds.maxY - appliedY,
+    width: bounds.width - appliedX * 2,
+    height: bounds.height - appliedY * 2,
+  };
+}
+
+function insetPlotArea(area: ChartPlotArea, insetX: number, insetY: number): ChartPlotArea {
+  const bounds = insetBounds({
+    minX: area.x,
+    minY: area.y,
+    maxX: area.x + area.width,
+    maxY: area.y + area.height,
+    width: area.width,
+    height: area.height,
+  }, insetX, insetY);
+  return { x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height };
+}
 
 export function useCanvasCompositionOperations(context: any) {
   const {
@@ -35,9 +63,11 @@ export function useCanvasCompositionOperations(context: any) {
     chartRelationships,
     clamp,
     cloneCanvasNodeForPaste,
+    collectRenderedNodeSelectionBounds,
     collectNodeSelectionBounds,
     compositionCoordinateTargets,
     compositionDragSourceId,
+    concatCompositionForNode,
     concatEdgeNodesAreCompatible,
     concatGraphMembers,
     concatLinkId,
@@ -52,6 +82,8 @@ export function useCanvasCompositionOperations(context: any) {
     defaultRelativeParameters,
     dispatchRelationship,
     editingCompositionId,
+    editingGroupPath,
+    encodingForSharedChannel,
     findCanvasNode,
     firstChartNode,
     getCanvasNodeListBounds,
@@ -91,6 +123,7 @@ export function useCanvasCompositionOperations(context: any) {
     replaceSelectionScopeNodes,
     resolveNestedRelationship,
     resolveNestedFilterContexts,
+    renderedNodeLocalSelectionBounds,
     resolveSemanticMarkMatch,
     restoreRelationships,
     retainSharedFacetClues,
@@ -122,6 +155,121 @@ export function useCanvasCompositionOperations(context: any) {
     compatibleLayerChannels,
   } = context;
   let nestedRelationshipBaseSnapshot: ChartRelationshipState | null = null;
+
+  function cartesianLayerZone<T extends { minY: number; height: number }>(
+    _area: T,
+    _pointY: number,
+    channels: CoordinateChannel[],
+  ) {
+    return { channels, index: 0, count: 1 };
+  }
+
+  function renderedInteractionArea(node: CanvasNode): ChartPlotArea {
+    const bounds = renderedNodeLocalSelectionBounds(node) ?? getNodeSelectionBounds(node);
+    return {
+      x: bounds.minX,
+      y: bounds.minY,
+      width: bounds.width,
+      height: bounds.height,
+    };
+  }
+
+  function attachParentCompositionContext(
+    root: CanvasNode,
+    compositionSpec: NonNullable<CanvasNode["compositionSpec"]>,
+    coordinateSystem: CanvasNode["coordinateSystem"],
+  ) {
+    walkCanvasNodes([root]).forEach((node) => {
+      const ancestors = (node.compositionAncestors ?? [])
+        .filter((context) => context.compositionSpec.id !== compositionSpec.id);
+      node.compositionAncestors = [...ancestors, { compositionSpec, coordinateSystem: coordinateSystem ?? null }];
+      node.parentCompositionSpec = compositionSpec;
+      node.parentCoordinateSystem = coordinateSystem;
+    });
+  }
+
+  function restoreClosedCompositionClone(source: CanvasNode, clone: CanvasNode) {
+    if (source.kind !== "group" || source.compositionSpec?.type === "concat") return;
+    const sourceNodes = walkCanvasNodes([source]);
+    const cloneNodes = walkCanvasNodes([clone]);
+    if (sourceNodes.length !== cloneNodes.length) return;
+    const idMap = new Map(sourceNodes.map((node, index) => [node.id, cloneNodes[index]!.id]));
+    const compositionIds = new Map<string, string>();
+    const compositionCache = new Map<string, NonNullable<CanvasNode["compositionSpec"]>>();
+    const coordinateIds = new Map<string, string>();
+    const coordinateCache = new Map<string, CoordinateSystemSpec>();
+    const cloneComposition = (spec: NonNullable<CanvasNode["compositionSpec"]>) => {
+      if (!spec.members.every((member) => idMap.has(member.nodeId))) return null;
+      const cached = compositionCache.get(spec.id);
+      if (cached) return cached;
+      const id = compositionIds.get(spec.id) ?? `composition:${crypto.randomUUID()}`;
+      compositionIds.set(spec.id, id);
+      const next: NonNullable<CanvasNode["compositionSpec"]> = {
+        ...spec,
+        id,
+        members: spec.members.map((member) => ({
+          ...member,
+          nodeId: idMap.get(member.nodeId)!,
+          sourceNodeId: idMap.get(member.sourceNodeId) ?? member.sourceNodeId,
+          sharedChannels: [...member.sharedChannels],
+        })),
+        sharedChannels: [...spec.sharedChannels],
+        concatLinks: spec.concatLinks?.map((link) => ({
+          ...link,
+          targetNodeId: idMap.get(link.targetNodeId) ?? link.targetNodeId,
+          sourceNodeId: idMap.get(link.sourceNodeId) ?? link.sourceNodeId,
+          sharedChannels: [...link.sharedChannels],
+        })),
+        facetValues: spec.facetValues ? [...spec.facetValues] : undefined,
+        facetGrid: spec.facetGrid
+          ? { ...spec.facetGrid, rowValues: [...spec.facetGrid.rowValues], columnValues: [...spec.facetGrid.columnValues] }
+          : undefined,
+      };
+      compositionCache.set(spec.id, next);
+      return next;
+    };
+    const cloneCoordinateSystem = (system: CoordinateSystemSpec | null | undefined) => {
+      if (!system
+        || !idMap.has(system.ownerNodeId)
+        || !system.members.every((member) => idMap.has(member.nodeId))) return null;
+      const cached = coordinateCache.get(system.id);
+      if (cached) return cached;
+      const id = coordinateIds.get(system.id) ?? `coordinate:${crypto.randomUUID()}`;
+      coordinateIds.set(system.id, id);
+      const next: CoordinateSystemSpec = {
+        ...system,
+        id,
+        ownerNodeId: idMap.get(system.ownerNodeId)!,
+        members: system.members.map((member) => ({
+          ...member,
+          nodeId: idMap.get(member.nodeId)!,
+          channels: [...member.channels],
+        })),
+        sharedChannels: [...system.sharedChannels],
+        axisLabelDomains: system.axisLabelDomains
+          ? {
+            ...(system.axisLabelDomains.x ? { x: [...system.axisLabelDomains.x] } : {}),
+            ...(system.axisLabelDomains.y ? { y: [...system.axisLabelDomains.y] } : {}),
+            ...(system.axisLabelDomains.angle ? { angle: [...system.axisLabelDomains.angle] } : {}),
+            ...(system.axisLabelDomains.radius ? { radius: [...system.axisLabelDomains.radius] } : {}),
+          }
+          : undefined,
+      };
+      coordinateCache.set(system.id, next);
+      return next;
+    };
+    sourceNodes.forEach((sourceNode, index) => {
+      const cloneNode = cloneNodes[index]!;
+      cloneNode.compositionSpec = sourceNode.compositionSpec
+        ? cloneComposition(sourceNode.compositionSpec)
+        : null;
+      cloneNode.coordinateSystem = cloneCoordinateSystem(sourceNode.coordinateSystem)
+        ?? cloneNode.coordinateSystem;
+      cloneNode.parentCompositionSpec = null;
+      cloneNode.parentCoordinateSystem = null;
+      cloneNode.compositionAncestors = [];
+    });
+  }
 
   function createDeckglLayer(
     targetNodeId: string,
@@ -177,12 +325,13 @@ export function useCanvasCompositionOperations(context: any) {
     const inputNodes = targetNode && sourceNode
       ? repeatableCompositionPairNodes(sourceNode, targetNode, "layer")
       : repeatableCompositionNodes(selectedNodes.value, "layer");
-    const nodes = inputNodes
-      ?.filter((node) => node.chartSpec && node.coordinateGuide) ?? [];
+    const nodes = inputNodes?.filter(isAtomicChartReady) ?? [];
     if (nodes.length === 0 || !nodes.every(isAtomicChartReady)) return false;
     const compatibleChannels = compatibleLayerChannels(nodes);
     if (!compatibleChannels) return false;
-    const coordinateType = nodes[0]!.coordinateGuide!.type;
+    const coordinateType = (firstChartNode(nodes[0]!)?.coordinateGuide?.type
+      ?? nodes[0]!.coordinateGuide?.type);
+    if (!coordinateType) return false;
     const sharedChannels = requestedChannels ?? compatibleChannels;
     const existingCompositions = existingFlatCompositions(nodes);
     const existingLayerCompositions = existingCompositions.filter((composition) => composition.type === "layer");
@@ -200,12 +349,16 @@ export function useCanvasCompositionOperations(context: any) {
       ?? nodes.find((node) => node.id === retainedOwnerId)
       ?? [...nodes].sort((left, right) => {
         const score = (node: CanvasNode) => sharedChannels.reduce(
-          (count, channel) => count + (node.chartSpec?.encodings[channel] ? 1 : 0),
+          (count, channel) => count + (encodingForSharedChannel(node, channel) ? 1 : 0),
           0,
         );
         return score(right) - score(left);
       })[0]!;
     const layerNodes = [owner, ...nodes.filter((node) => node.id !== owner.id)];
+    const layerCharts = layerNodes.flatMap((node) =>
+      node.chartSpec ? [node] : walkCanvasNodes([node]).filter((member) => !!member.chartSpec));
+    const ownerChart = firstChartNode(owner) ?? layerCharts[0];
+    if (!ownerChart?.coordinateGuide) return false;
     const layerId = crypto.randomUUID();
     const compositionId = retainedComposition?.id ?? `composition:${layerId}`;
     const coordinateSystemId = nodes.find((node) => node.compositionSpec?.id === retainedComposition?.id)
@@ -213,9 +366,9 @@ export function useCanvasCompositionOperations(context: any) {
     const system: CoordinateSystemSpec = {
       id: coordinateSystemId,
       type: coordinateType,
-      ownerNodeId: owner.id,
+      ownerNodeId: ownerChart.id,
       sharedChannels,
-      members: layerNodes.map((node) => ({ nodeId: node.id, channels: [...sharedChannels] })),
+      members: layerCharts.map((node) => ({ nodeId: node.id, channels: [...sharedChannels] })),
     };
     const compositionSpec: NonNullable<CanvasNode["compositionSpec"]> = {
       id: compositionId,
@@ -239,7 +392,7 @@ export function useCanvasCompositionOperations(context: any) {
       scaleX: owner.scaleX,
       scaleY: owner.scaleY,
       rotation: owner.rotation,
-      coordinateGuide: { ...owner.coordinateGuide!, origin: { ...owner.coordinateGuide!.origin } },
+      coordinateGuide: { ...ownerChart.coordinateGuide, origin: { ...ownerChart.coordinateGuide.origin } },
     };
     layerNodes.forEach((node) => {
       node.x = frame.x;
@@ -249,19 +402,46 @@ export function useCanvasCompositionOperations(context: any) {
       node.scaleX = frame.scaleX;
       node.scaleY = frame.scaleY;
       node.rotation = frame.rotation;
-      node.coordinateGuide = { ...frame.coordinateGuide, origin: { ...frame.coordinateGuide.origin } };
-      node.coordinateSystem = system;
-      node.compositionSpec = compositionSpec;
+      if (node.chartSpec) {
+        node.coordinateGuide = { ...frame.coordinateGuide, origin: { ...frame.coordinateGuide.origin } };
+      }
+      if (node.compositionSpec && node.compositionSpec.type !== "concat") {
+        attachParentCompositionContext(node, compositionSpec, system);
+      } else {
+        node.coordinateSystem = system;
+        node.compositionSpec = compositionSpec;
+      }
       node.layerSpec = null;
     });
-    renderSharedCoordinateComposition(owner);
     const layerNodeIds = new Set(layerNodes.map((node) => node.id));
+    const layerBounds = getCanvasNodeListBounds(layerNodes);
+    if (!layerBounds) return false;
+    layerNodes.forEach((node) => {
+      node.x -= layerBounds.minX;
+      node.y -= layerBounds.minY;
+    });
+    const root: CanvasGroupNode = {
+      kind: "group",
+      id: `composition-root:${layerId}`,
+      name: "Layer",
+      x: layerBounds.minX,
+      y: layerBounds.minY,
+      width: Math.max(layerBounds.width, 1),
+      height: Math.max(layerBounds.height, 1),
+      scaleX: 1,
+      scaleY: 1,
+      rotation: 0,
+      coordinateSystem: system,
+      compositionSpec,
+      children: layerNodes,
+    };
     replaceSelectionScopeNodes([
       ...getSelectionScopeNodes().filter((node) => !layerNodeIds.has(node.id)),
-      ...layerNodes,
+      root,
     ]);
     reconcileCoordinateSystems();
-    setSelection([owner.id]);
+    renderSharedCoordinateComposition(root);
+    setSelection([root.id]);
     axisBindingTarget.value = null;
     return true;
   }
@@ -285,11 +465,8 @@ export function useCanvasCompositionOperations(context: any) {
       ? repeatableCompositionMembers(anchoredSource, "concat", direction)
       : null;
     const anchoredConcatSpec = type === "concat"
-      ? (anchoredTarget?.compositionSpec?.type === "concat"
-        ? anchoredTarget.compositionSpec
-        : anchoredSource?.compositionSpec?.type === "concat"
-          ? anchoredSource.compositionSpec
-          : null)
+      ? (concatCompositionForNode(anchoredTarget)
+        ?? concatCompositionForNode(anchoredSource))
       : null;
     const sourceNodes = type === "concat"
       ? targetNodeId && sourceNodeId
@@ -353,13 +530,18 @@ export function useCanvasCompositionOperations(context: any) {
     const facetSourceNodeIds: string[] = [];
     let facetCompositeMemberCount = 1;
     if (type !== "concat") {
-      const source = sourceNodes[0]!;
-      const recommendation = source.chartSpec?.dimensionRecommendations?.find((item) => item.strategy === "facet");
+      const selectedSource = sourceNodes[0]!;
+      const source = selectedSource.kind === "group"
+        && selectedSource.compositionSpec?.type === "facet"
+        ? selectedSource.children[0] ?? selectedSource
+        : selectedSource;
+      const sourceChart = firstChartNode(source);
+      const recommendation = sourceChart?.chartSpec?.dimensionRecommendations?.find((item) => item.strategy === "facet");
       facetDirection = recommendation?.facetDirection;
       facetCoordinateSystem = recommendation?.facetCoordinateSystem ?? "Cartesian";
       facetThetaField = recommendation?.facetThetaField;
       facetRadiusField = recommendation?.facetRadiusField;
-      const dataset = source.chartSpec ? getDataset(source.chartSpec.datasetId) : null;
+      const dataset = sourceChart?.chartSpec ? getDataset(sourceChart.chartSpec.datasetId) : null;
       facetGrid = recommendation?.facetGrid
         ? {
           ...recommendation.facetGrid,
@@ -382,6 +564,7 @@ export function useCanvasCompositionOperations(context: any) {
         columnIndex: number,
       ) => {
         const clone = cloneCanvasNodeForPaste(member);
+        restoreClosedCompositionClone(member, clone);
         facetSourceNodeIds.push(member.id);
         const baseX = type === "facet" ? bounds.minX : 0;
         const baseY = type === "facet" ? bounds.minY : 0;
@@ -390,20 +573,18 @@ export function useCanvasCompositionOperations(context: any) {
         clone.name = rowValue !== undefined && columnValue !== undefined
           ? `${member.name} - ${rowValue} / ${columnValue}`
           : `${member.name} - ${rowValue ?? columnValue ?? ""}`;
-        if (clone.chartSpec) {
-          const filters = { ...clone.chartSpec.filters };
+        walkCanvasNodes([clone]).forEach((chart) => {
+          if (!chart.chartSpec) return;
+          const filters = { ...chart.chartSpec.filters };
           if (facetGrid && rowValue !== undefined && columnValue !== undefined) {
             filters[facetGrid.rowField] = rowValue;
             filters[facetGrid.columnField] = columnValue;
           } else if (facetField && (rowValue ?? columnValue) !== undefined) {
             filters[facetField] = (rowValue ?? columnValue)!;
           }
-          clone.chartSpec = {
-            ...clone.chartSpec,
-            filters,
-          };
-        }
-        renderChartNode(clone);
+          chart.chartSpec = { ...chart.chartSpec, filters };
+          renderChartNode(chart);
+        });
         if (facetCoordinateSystem === "Polar") {
           const thetaCount = facetGrid?.columnValues.length
             ?? (facetThetaField && dataset
@@ -620,7 +801,9 @@ export function useCanvasCompositionOperations(context: any) {
         ]
       : [...(getChartTemplateContract(children[0]?.chartSpec?.chartType ?? "")?.shareableChannels ?? [])];
     const retainedCoordinateSystem = sourceNodes.find((node) =>
-      node.compositionSpec?.id === retainedConcatComposition?.id,
+      concatCompositionForNode(node)?.id === retainedConcatComposition?.id,
+    )?.parentCoordinateSystem ?? sourceNodes.find((node) =>
+      concatCompositionForNode(node)?.id === retainedConcatComposition?.id,
     )?.coordinateSystem;
     const facetSharedChannels: CoordinateChannel[] = facetCoordinateSystem === "Polar"
       ? [facetDirection === "row" ? "radius" : "angle"]
@@ -628,6 +811,9 @@ export function useCanvasCompositionOperations(context: any) {
     const parentCoordinateSystem = type === "nested"
       ? sourceNodes[0]?.coordinateSystem ?? null
       : null;
+    const coordinateMembers = children.flatMap((node) =>
+      node.chartSpec ? [node] : walkCanvasNodes([node]).filter((member) => !!member.chartSpec));
+    const coordinateOwner = firstChartNode(sourceNodes[0]) ?? coordinateMembers[0];
     const coordinateSystem: CoordinateSystemSpec | null = type === "nested"
       ? parentCoordinateSystem
         ? {
@@ -648,11 +834,11 @@ export function useCanvasCompositionOperations(context: any) {
         id: retainedCoordinateSystem?.id ?? `coordinate:${compositionId}`,
         type: type === "facet"
           ? facetCoordinateSystem ?? "Cartesian"
-          : children[0]?.coordinateGuide?.type ?? "CoordinateFree",
+          : coordinateOwner?.coordinateGuide?.type ?? "CoordinateFree",
         ownerNodeId: type === "concat"
-          ? retainedCoordinateSystem?.ownerNodeId ?? sourceNodes[0]!.id
+          ? retainedCoordinateSystem?.ownerNodeId ?? coordinateOwner?.id ?? sourceNodes[0]!.id
           : children[0]!.id,
-        members: children.map((node) => ({
+        members: (type === "concat" ? coordinateMembers : children).map((node) => ({
           nodeId: node.id,
           channels: type === "facet"
             ? [...facetSharedChannels]
@@ -667,6 +853,13 @@ export function useCanvasCompositionOperations(context: any) {
           : sharedChannels,
       } : null;
     children.forEach((node) => {
+      const preservesClosedChild = node.kind === "group"
+        && !node.chartSpec
+        && !!node.compositionSpec
+        && node.compositionSpec.type !== "concat";
+      if ((type === "concat" || type === "facet") && preservesClosedChild) {
+        return;
+      }
       node.coordinateSystem = type === "facet"
         ? standaloneCoordinateSystem(node)
         : coordinateSystem;
@@ -709,15 +902,50 @@ export function useCanvasCompositionOperations(context: any) {
       })),
     };
     if (type !== "nested") {
-      children.forEach((node) => { node.compositionSpec = compositionSpec; });
+      children.forEach((node) => {
+        const preservesClosedChild = node.kind === "group"
+          && !node.chartSpec
+          && !!node.compositionSpec
+          && node.compositionSpec.type !== "concat";
+        if ((type === "concat" || type === "facet") && preservesClosedChild) {
+          attachParentCompositionContext(node, compositionSpec, coordinateSystem);
+        } else {
+          node.compositionSpec = compositionSpec;
+        }
+      });
       if (type === "concat") renderSharedCoordinateComposition(children[0]!, true);
       const replacedIds = new Set(type === "concat"
         ? children.map((node) => node.id)
         : selectedIds.value);
-      replaceSelectionScopeNodes([
-        ...getSelectionScopeNodes().filter((node) => !replacedIds.has(node.id)),
-        ...children,
-      ]);
+      const remaining = getSelectionScopeNodes().filter((node) => !replacedIds.has(node.id));
+      let selectedRootId = children[0]?.id;
+      if (type === "facet") {
+        const rootBounds = getCanvasNodeListBounds(children);
+        if (!rootBounds) return false;
+        children.forEach((node) => {
+          node.x -= rootBounds.minX;
+          node.y -= rootBounds.minY;
+        });
+        const root: CanvasGroupNode = {
+          kind: "group",
+          id: `composition-root:${compositionId}`,
+          name: "Facet",
+          x: rootBounds.minX,
+          y: rootBounds.minY,
+          width: Math.max(rootBounds.width, 1),
+          height: Math.max(rootBounds.height, 1),
+          scaleX: 1,
+          scaleY: 1,
+          rotation: 0,
+          coordinateSystem,
+          compositionSpec,
+          children,
+        };
+        replaceSelectionScopeNodes([...remaining, root]);
+        selectedRootId = root.id;
+      } else {
+        replaceSelectionScopeNodes([...remaining, ...children]);
+      }
       reconcileCoordinateSystems();
       if (type === "facet" && facetCompositeMemberCount > 1) {
         children.forEach((cell) => {
@@ -728,7 +956,8 @@ export function useCanvasCompositionOperations(context: any) {
           if (member) renderSharedCoordinateComposition(member);
         });
       }
-      setSelection(children[0] ? [children[0].id] : []);
+      setSelection(selectedRootId ? [selectedRootId] : []);
+      if (type === "concat") scheduleNestedChildrenForParents(children);
       return true;
     }
     const group: CanvasGroupNode = {
@@ -752,6 +981,16 @@ export function useCanvasCompositionOperations(context: any) {
     ]);
     setSelection([group.id]);
     return true;
+  }
+
+  function scheduleNestedChildrenForParents(parents: CanvasNode[]) {
+    const parentIds = new Set(parents.flatMap((parent) =>
+      walkCanvasNodes([parent]).map((node) => node.id)));
+    const relationshipIds = Object.values(chartRelationships.value.nestedRelationships)
+      .filter((relationship) => relationship.status === "active"
+        && parentIds.has(relationship.parentChartId))
+      .map((relationship) => relationship.id);
+    if (relationshipIds.length > 0) scheduleNestedChildLayout(relationshipIds);
   }
 
   function executeComposition(
@@ -1062,6 +1301,43 @@ export function useCanvasCompositionOperations(context: any) {
     scheduleNestedChildLayout(targets.map((relationship) => relationship.id));
   }
 
+  function updateNestedCallout(config: { enabled?: boolean; scale?: number }) {
+    const relationships = nestedPositionRelationshipIds.value
+      .map((relationshipId) => chartRelationships.value.nestedRelationships[relationshipId])
+      .filter((relationship): relationship is NestedRelationship => !!relationship);
+    if (relationships.length === 0) return false;
+    const changes = relationships.map((relationship) => {
+      const parameters = relationship.parameters as Partial<RelativeNestedParameters>;
+      const current = normalizeNestedCallout(parameters.callout);
+      const next = normalizeNestedCallout({ ...current, ...config });
+      return { relationship, parameters, current, next };
+    });
+    if (changes.every(({ current, next }) => current.enabled === next.enabled && current.scale === next.scale)) {
+      return false;
+    }
+    pushCanvasHistory();
+    const parentIds = new Set<string>();
+    changes.forEach(({ relationship, parameters, next }) => {
+      parentIds.add(relationship.parentChartId);
+      dispatchRelationship({
+        type: "update-nested",
+        relationshipId: relationship.id,
+        changes: {
+          parameters: {
+            ...parameters,
+            callout: next,
+          } as RelativeNestedParameters,
+        },
+      });
+    });
+    parentIds.forEach((parentId) => {
+      const parent = findCanvasNode(parentId);
+      if (parent?.renderedContent) renderChartNode(parent);
+    });
+    scheduleNestedChildLayout(changes.map(({ relationship }) => relationship.id));
+    return true;
+  }
+
   function resetNestedPosition() {
     updateNestedPosition({
       parentAnchor: { x: 0.5, y: 0.5 },
@@ -1222,20 +1498,6 @@ export function useCanvasCompositionOperations(context: any) {
     const itemBounds = directMarkNesting
       ? hit.bounds
       : semanticSelectionBounds(itemElements) ?? hit.bounds;
-    const canEnter = !!compositeHit || (drilldownLevel === "item" && match.canEnter);
-    const enterDiameter = canEnter
-      ? Math.min(itemBounds.width, itemBounds.height, 72 / Math.max(viewZoom.value, 0.25))
-      : 0;
-    const enterBounds = canEnter && enterDiameter >= 18 / Math.max(viewZoom.value, 0.25)
-      ? {
-        minX: itemBounds.minX + (itemBounds.width - enterDiameter) / 2,
-        minY: itemBounds.minY + (itemBounds.height - enterDiameter) / 2,
-        maxX: itemBounds.minX + (itemBounds.width + enterDiameter) / 2,
-        maxY: itemBounds.minY + (itemBounds.height + enterDiameter) / 2,
-        width: enterDiameter,
-        height: enterDiameter,
-      }
-      : undefined;
     const siblingUnits = structuralHit
       ? structuralUnits.filter(({ element }) =>
         element.getAttribute("data-mark-role") === structuralHit.element.getAttribute("data-mark-role")
@@ -1281,11 +1543,7 @@ export function useCanvasCompositionOperations(context: any) {
       targetElementId: hoveredTarget.elementId,
       targetMarkGroupId: hoveredTarget.markGroupId ?? markGroupId,
       targetDataKey: hoveredTarget.dataKey,
-      nestedAction: enterBounds && pointInBounds(point, enterBounds) ? "enter" : "embed",
-      enterBounds,
-      targetChildMarkIndexes: canEnter
-        ? itemElements.map((element) => allMarks.indexOf(element as SVGGraphicsElement)).filter((index) => index >= 0)
-        : undefined,
+      nestedAction: "embed",
       nestedTargets,
     };
   }
@@ -1312,7 +1570,11 @@ export function useCanvasCompositionOperations(context: any) {
     if (!zone.enterCompositionId) return false;
     const member = getSelectionScopeNodes().find((node) =>
       node.compositionSpec?.id === zone.enterCompositionId);
-    return !!member?.compositionSpec && beginCompositionEditing(member.compositionSpec);
+    if (!member?.compositionSpec) return false;
+    if (member.kind === "group") {
+      editingGroupPath.value = [...editingGroupPath.value, member.id];
+    }
+    return beginCompositionEditing(member.compositionSpec);
   }
 
   function localRectDropGeometry(node: CanvasNode, rect: ChartPlotArea) {
@@ -1389,15 +1651,17 @@ export function useCanvasCompositionOperations(context: any) {
       20 / renderedScale,
       Math.min(chartOuterRadius * 0.2, 56 / renderedScale),
     );
+    const radialGap = COMPOSITION_DROP_ZONE_GAP_PX / renderedScale;
     const outerZone = {
-      innerRadius: chartOuterRadius,
-      outerRadius: chartOuterRadius + radialThickness,
+      innerRadius: chartOuterRadius + radialGap,
+      outerRadius: chartOuterRadius + radialGap + radialThickness,
       position: "after" as const,
     };
-    const innerZone = chartInnerRadius > 0
+    const innerConcatOuterRadius = Math.max(0, chartInnerRadius - radialGap);
+    const innerZone = innerConcatOuterRadius > 0
       ? {
-        innerRadius: Math.max(0, chartInnerRadius - radialThickness),
-        outerRadius: chartInnerRadius,
+        innerRadius: Math.max(0, innerConcatOuterRadius - radialThickness),
+        outerRadius: innerConcatOuterRadius,
         position: "before" as const,
       }
       : null;
@@ -1405,10 +1669,18 @@ export function useCanvasCompositionOperations(context: any) {
       && distance >= zone.innerRadius
       && distance <= zone.outerRadius
       && (angleSpan >= 359.999 || degrees <= angleSpan));
-    const before = degrees <= edgeAngle;
-    const after = angleSpan >= 359.999
-      ? degrees >= 360 - edgeAngle
-      : degrees >= Math.max(0, angleSpan - edgeAngle) && degrees <= angleSpan;
+    const angularGap = Math.min(
+      6,
+      Math.max(2, radialGap / Math.max(chartOuterRadius, 1) * 180 / Math.PI),
+    );
+    const angularInnerRadius = chartOuterRadius + radialGap + radialThickness + radialGap;
+    const angularOuterRadius = angularInnerRadius + radialThickness;
+    const angleInWrappedRange = (value: number, start: number, span: number) => {
+      const normalizedStart = ((start % 360) + 360) % 360;
+      return (value - normalizedStart + 360) % 360 <= span;
+    };
+    const before = angleInWrappedRange(degrees, -angularGap - edgeAngle, edgeAngle);
+    const after = angleInWrappedRange(degrees, angleSpan + angularGap, edgeAngle);
     const polarNodesFor = (type: RepeatableCompositionType, direction?: "radial" | "angular") => {
       if (type === "concat" && target.compositionSpec?.type === "concat" && direction) {
         const channel: CoordinateChannel = direction === "radial" ? "angle" : "radius";
@@ -1449,16 +1721,16 @@ export function useCanvasCompositionOperations(context: any) {
         concatPosition: radialZone.position,
       };
     }
-    if (distance >= chartInnerRadius && distance <= chartOuterRadius && inAngle && (before || after)) {
+    if (distance >= angularInnerRadius && distance <= angularOuterRadius && (before || after)) {
       const nodes = polarNodesFor("concat", "angular");
       const isBefore = before && !after;
       const start = isBefore
-        ? -startAngle
-        : -(startAngle + Math.max(0, angleSpan - edgeAngle));
+        ? -(startAngle - angularGap - edgeAngle)
+        : -(startAngle + angleSpan + angularGap);
       const end = isBefore
-        ? -(startAngle + edgeAngle)
-        : -(startAngle + angleSpan);
-      const geometry = polarSectorGeometry(target, model, chartInnerRadius, chartOuterRadius, start, end);
+        ? -(startAngle - angularGap)
+        : -(startAngle + angleSpan + angularGap + edgeAngle);
+      const geometry = polarSectorGeometry(target, model, angularInnerRadius, angularOuterRadius, start, end);
       if (!geometry) return null;
       return {
         targetNodeId: target.id,
@@ -1472,13 +1744,28 @@ export function useCanvasCompositionOperations(context: any) {
     }
     if (distance >= chartInnerRadius && distance <= chartOuterRadius && inAngle) {
       const nodes = polarNodesFor("layer");
+      const layerInset = Math.min(
+        LAYER_DROP_ZONE_INSET_PX / renderedScale,
+        (chartOuterRadius - chartInnerRadius) * 0.12,
+      );
+      const layerInnerRadius = chartInnerRadius + layerInset;
+      const layerOuterRadius = chartOuterRadius - layerInset;
+      const angularInset = angleSpan >= 359.999
+        ? 0
+        : Math.min(
+          angleSpan * 0.12,
+          layerInset / Math.max(layerOuterRadius, 1) * 180 / Math.PI,
+        );
+      const insideLayerAngle = angleSpan >= 359.999
+        || (degrees >= angularInset && degrees <= angleSpan - angularInset);
+      if (distance < layerInnerRadius || distance > layerOuterRadius || !insideLayerAngle) return null;
       const geometry = polarSectorGeometry(
         target,
         model,
-        chartInnerRadius,
-        chartOuterRadius,
-        -startAngle,
-        -(startAngle + angleSpan),
+        layerInnerRadius,
+        layerOuterRadius,
+        -(startAngle + angularInset),
+        -(startAngle + angleSpan - angularInset),
       );
       if (!geometry) return null;
       const sharedChannels = nodes ? compatibleLayerChannels(nodes) ?? [] : [];
@@ -1500,10 +1787,16 @@ export function useCanvasCompositionOperations(context: any) {
         node.id !== sourceNodeId
         && node.layerKind === "deckgl"
         && (!node.deckglLayerStack || node.deckglLayerStack[0] === node.id)
-        && pointInBounds(point, collectNodeSelectionBounds(node)),
+        && pointInBounds(point, insetBounds(
+          collectRenderedNodeSelectionBounds(node),
+          LAYER_DROP_ZONE_INSET_PX / Math.max(viewZoom.value, 0.25),
+        )),
       );
       if (!target) return null;
-      const bounds = collectNodeSelectionBounds(target);
+      const bounds = insetBounds(
+        collectRenderedNodeSelectionBounds(target),
+        LAYER_DROP_ZONE_INSET_PX / Math.max(viewZoom.value, 0.25),
+      );
       return {
         targetNodeId: target.id,
         type: "layer",
@@ -1512,7 +1805,16 @@ export function useCanvasCompositionOperations(context: any) {
         compatible: true,
       };
     }
-    if (!source?.chartSpec) return null;
+    const sourceChart = source?.chartSpec ? source : firstChartNode(source);
+    if (!source || !sourceChart?.chartSpec) return null;
+    const pointInEnterCircle = (candidate: Point, bounds: Bounds) => {
+      const radiusX = bounds.width / 2;
+      const radiusY = bounds.height / 2;
+      if (radiusX <= 0 || radiusY <= 0) return false;
+      const dx = (candidate.x - (bounds.minX + radiusX)) / radiusX;
+      const dy = (candidate.y - (bounds.minY + radiusY)) / radiusY;
+      return dx * dx + dy * dy <= 1;
+    };
     const nodeElementCache = new Map<string, SVGGraphicsElement | null>();
     const nodeElementFor = (nodeId: string) => {
       if (nodeElementCache.has(nodeId)) return nodeElementCache.get(nodeId) ?? null;
@@ -1524,19 +1826,43 @@ export function useCanvasCompositionOperations(context: any) {
     const sourceCompositionMemberIds = new Set(
       source.compositionSpec?.members.map((member) => member.nodeId) ?? [sourceNodeId],
     );
+    sourceCompositionMemberIds.add(sourceNodeId);
     // Drop-zone hit testing is scoped to the current level. Nested children
     // are rendered inside their parent and must not compete as canvas targets.
     const chartTargets = currentDropZoneScopeNodes().filter((node) =>
       !sourceCompositionMemberIds.has(node.id)
       && (!!node.chartSpec || (node.kind === "group" && !!node.compositionSpec))
     );
-    // Existing layer/concat compositions expose one outer drop target. Their
-    // member charts remain hidden from hit testing until enterCompositionLevel.
-      const outerCompositionTarget = chartTargets.find((node) =>
-      !!node.compositionSpec,
-    );
+    // A closed composition exposes one outer drop target. Its member charts
+    // remain hidden from hit testing until the author enters that composition.
+    const outerCompositionTarget = [...chartTargets].reverse().find((node) => {
+      const composition = node.compositionSpec;
+      if (!composition
+        || composition.type === "concat"
+        || editingCompositionId.value === composition.id) return false;
+      const members = composition.members
+        .map((member) => findCanvasNode(member.nodeId))
+        .filter((member): member is CanvasNode => !!member);
+      const bounds = node.kind === "group"
+        ? collectRenderedNodeSelectionBounds(node)
+        : getCanvasNodeListBounds(members.length > 0 ? members : [node]);
+      if (!bounds) return false;
+      const cartesian = (composition.type === "facet"
+        ? composition.facetCoordinateSystem ?? firstChartNode(node)?.coordinateGuide?.type
+        : firstChartNode(node)?.coordinateGuide?.type) === "Cartesian";
+      const gap = cartesian
+        ? COMPOSITION_DROP_ZONE_GAP_PX / Math.max(viewZoom.value, 0.25)
+        : 0;
+      const edgeX = cartesian ? bounds.width * 0.22 + gap : 0;
+      const edgeY = cartesian ? bounds.height * 0.22 + gap : 0;
+      return point.x >= bounds.minX - edgeX
+        && point.x <= bounds.maxX + edgeX
+        && point.y >= bounds.minY - edgeY
+        && point.y <= bounds.maxY + edgeY;
+    });
     if (outerCompositionTarget?.compositionSpec
-      && outerCompositionTarget.compositionSpec.type !== "concat") {
+      && outerCompositionTarget.compositionSpec.type !== "concat"
+      && editingCompositionId.value !== outerCompositionTarget.compositionSpec.id) {
       const composition = outerCompositionTarget.compositionSpec;
       const members = composition.members
         .map((member) => findCanvasNode(member.nodeId))
@@ -1544,13 +1870,16 @@ export function useCanvasCompositionOperations(context: any) {
       const targetChart = members.find((member) => !!member.chartSpec)
         ?? firstChartNode(outerCompositionTarget);
       if (!targetChart?.chartSpec) return null;
-      const bounds = getCanvasNodeListBounds(members.length > 0 ? members : [outerCompositionTarget]);
-      if (bounds && composition.type === "facet"
-        && (composition.facetCoordinateSystem ?? targetChart.coordinateGuide?.type ?? "Cartesian") === "Cartesian") {
-        // A facet is an external two-axis chart: the facet field supplies one
-        // nominal/ordinal axis and every cell shares the other axis. Expose
-        // concat portals around the complete facet frame instead of treating
-        // the whole composition as an interior layer target only.
+      const bounds = outerCompositionTarget.kind === "group"
+        ? collectRenderedNodeSelectionBounds(outerCompositionTarget)
+        : getCanvasNodeListBounds(members.length > 0 ? members : [outerCompositionTarget]);
+      const outerCoordinateType = composition.type === "facet"
+        ? composition.facetCoordinateSystem ?? targetChart.coordinateGuide?.type ?? "Cartesian"
+        : targetChart.coordinateGuide?.type ?? "Cartesian";
+      if (bounds && outerCoordinateType === "Cartesian") {
+        // Every closed Cartesian composite exposes concat portals around its
+        // complete frame. The direct target remains the root; its member
+        // charts are used only to resolve the external axis signature.
         const renderedScale = Math.max(
           Math.abs(targetChart.scaleX),
           Math.abs(targetChart.scaleY),
@@ -1564,20 +1893,21 @@ export function useCanvasCompositionOperations(context: any) {
           bounds.height * 0.22,
           Math.max(18 / renderedScale, 12),
         );
-        const onLeft = point.x >= bounds.minX - edgeSizeX
-          && point.x <= bounds.minX
+        const gap = COMPOSITION_DROP_ZONE_GAP_PX / Math.max(viewZoom.value, 0.25);
+        const onLeft = point.x >= bounds.minX - gap - edgeSizeX
+          && point.x <= bounds.minX - gap
           && point.y >= bounds.minY
           && point.y <= bounds.maxY;
-        const onRight = point.x >= bounds.maxX
-          && point.x <= bounds.maxX + edgeSizeX
+        const onRight = point.x >= bounds.maxX + gap
+          && point.x <= bounds.maxX + gap + edgeSizeX
           && point.y >= bounds.minY
           && point.y <= bounds.maxY;
-        const onTop = point.y >= bounds.minY - edgeSizeY
-          && point.y <= bounds.minY
+        const onTop = point.y >= bounds.minY - gap - edgeSizeY
+          && point.y <= bounds.minY - gap
           && point.x >= bounds.minX
           && point.x <= bounds.maxX;
-        const onBottom = point.y >= bounds.maxY
-          && point.y <= bounds.maxY + edgeSizeY
+        const onBottom = point.y >= bounds.maxY + gap
+          && point.y <= bounds.maxY + gap + edgeSizeY
           && point.x >= bounds.minX
           && point.x <= bounds.maxX;
         if (onLeft || onRight || onTop || onBottom) {
@@ -1585,30 +1915,30 @@ export function useCanvasCompositionOperations(context: any) {
           const direction: "horizontal" | "vertical" = horizontal ? "horizontal" : "vertical";
           const sharedChannel: CoordinateChannel = horizontal ? "y" : "x";
           const compatible = concatEdgeNodesAreCompatible(
-            targetChart,
+            outerCompositionTarget,
             source,
             direction,
             sharedChannel,
           );
           const zoneBounds = horizontal
             ? {
-              minX: onLeft ? bounds.minX - edgeSizeX : bounds.maxX,
+              minX: onLeft ? bounds.minX - gap - edgeSizeX : bounds.maxX + gap,
               minY: bounds.minY,
-              maxX: onLeft ? bounds.minX : bounds.maxX + edgeSizeX,
+              maxX: onLeft ? bounds.minX - gap : bounds.maxX + gap + edgeSizeX,
               maxY: bounds.maxY,
               width: edgeSizeX,
               height: bounds.height,
             }
             : {
               minX: bounds.minX,
-              minY: onTop ? bounds.minY - edgeSizeY : bounds.maxY,
+              minY: onTop ? bounds.minY - gap - edgeSizeY : bounds.maxY + gap,
               maxX: bounds.maxX,
-              maxY: onTop ? bounds.minY : bounds.maxY + edgeSizeY,
+              maxY: onTop ? bounds.minY - gap : bounds.maxY + gap + edgeSizeY,
               width: bounds.width,
               height: edgeSizeY,
             };
           return {
-            targetNodeId: targetChart.id,
+            targetNodeId: outerCompositionTarget.id,
             type: "concat",
             sharedChannels: [sharedChannel],
             bounds: zoneBounds,
@@ -1626,9 +1956,40 @@ export function useCanvasCompositionOperations(context: any) {
           };
         }
       }
-      if (bounds && pointInBounds(point, bounds)) {
+      const layerBodyBounds = bounds
+        ? insetBounds(
+          bounds,
+          LAYER_DROP_ZONE_INSET_PX / Math.max(viewZoom.value, 0.25),
+        )
+        : null;
+      const center = bounds
+        ? {
+          x: (bounds.minX + bounds.maxX) / 2,
+          y: (bounds.minY + bounds.maxY) / 2,
+        }
+        : null;
+      const enterDiameter = bounds
+        ? Math.min(
+          bounds.width,
+          bounds.height,
+          72 / Math.max(viewZoom.value, 0.25),
+        )
+        : 0;
+      const enterBounds = center
+        ? {
+          minX: center.x - enterDiameter / 2,
+          minY: center.y - enterDiameter / 2,
+          maxX: center.x + enterDiameter / 2,
+          maxY: center.y + enterDiameter / 2,
+          width: enterDiameter,
+          height: enterDiameter,
+        }
+        : null;
+      const entering = !!enterBounds && pointInEnterCircle(point, enterBounds);
+      if (bounds && layerBodyBounds && enterBounds
+        && (entering || pointInBounds(point, layerBodyBounds))) {
         const outerType: "layer" | "concat" = composition.type === "concat" ? "concat" : "layer";
-        const pair = repeatableCompositionPairNodes(source, targetChart, outerType);
+        const pair = repeatableCompositionPairNodes(source, outerCompositionTarget, outerType);
         const compatible = composition.type === "layer"
           ? (pair ? (compatibleLayerChannels(pair) ?? []).length > 0 : false)
           : composition.type === "concat"
@@ -1638,40 +1999,38 @@ export function useCanvasCompositionOperations(context: any) {
             composition.sharedChannels[0] ?? (composition.direction === "vertical" ? "x" : "y"),
             )
             : (pair ? (compatibleLayerChannels(pair) ?? []).length > 0 : false);
-        const outerSharedChannels = composition.type === "concat"
+        const compatibleOuterChannels = composition.type === "concat"
           ? [...composition.sharedChannels]
           : (pair ? compatibleLayerChannels(pair) ?? [] : []);
+        const layerChoice = outerType === "layer"
+          ? cartesianLayerZone(layerBodyBounds, point.y, compatibleOuterChannels)
+          : { channels: compatibleOuterChannels, index: 0, count: 1 };
+        const layerBounds = layerChoice.count > 1
+          ? {
+            ...layerBodyBounds,
+            minY: layerBodyBounds.minY + layerBodyBounds.height * layerChoice.index / layerChoice.count,
+            maxY: layerBodyBounds.minY + layerBodyBounds.height * (layerChoice.index + 1) / layerChoice.count,
+            height: layerBodyBounds.height / layerChoice.count,
+          }
+          : layerBodyBounds;
         const outline = [
-          { x: bounds.minX, y: bounds.minY },
-          { x: bounds.maxX, y: bounds.minY },
-          { x: bounds.maxX, y: bounds.maxY },
-          { x: bounds.minX, y: bounds.maxY },
+          { x: layerBounds.minX, y: layerBounds.minY },
+          { x: layerBounds.maxX, y: layerBounds.minY },
+          { x: layerBounds.maxX, y: layerBounds.maxY },
+          { x: layerBounds.minX, y: layerBounds.maxY },
         ];
-        const center = {
-          x: (bounds.minX + bounds.maxX) / 2,
-          y: (bounds.minY + bounds.maxY) / 2,
-        };
-        const enterDiameter = Math.min(
-          bounds.width,
-          bounds.height,
-          72 / Math.max(viewZoom.value, 0.25),
-        );
-        const enterBounds = {
-          minX: center.x - enterDiameter / 2,
-          minY: center.y - enterDiameter / 2,
-          maxX: center.x + enterDiameter / 2,
-          maxY: center.y + enterDiameter / 2,
-          width: enterDiameter,
-          height: enterDiameter,
-        };
         return {
-          targetNodeId: targetChart.id,
+          targetNodeId: outerCompositionTarget.id,
           type: outerType,
-          sharedChannels: outerSharedChannels,
-          bounds,
+          sharedChannels: layerChoice.channels,
+          bounds: layerBounds,
           outline,
           compatible,
           direction: composition.direction,
+          enterCompositionId: (composition.type === "layer" || composition.type === "facet")
+            && entering
+            ? composition.id
+            : undefined,
           enterBounds,
         };
       }
@@ -1715,7 +2074,7 @@ export function useCanvasCompositionOperations(context: any) {
         height: diameter,
       };
       const composition = target.compositionSpec;
-      if (pointInBounds(point, enterBounds)
+      if (pointInEnterCircle(point, enterBounds)
         && (composition?.type === "layer" || composition?.type === "concat")
         && editingCompositionId.value !== composition.id) {
         return {
@@ -1740,7 +2099,7 @@ export function useCanvasCompositionOperations(context: any) {
         sharedChannels: [],
         ...geometry,
         compatible: true,
-        nestedAction: pointInBounds(point, enterBounds) ? "enter" : "embed",
+        nestedAction: pointInEnterCircle(point, enterBounds) ? "enter" : "embed",
         enterBounds,
         targetChildMarkIndexes: markIndexes,
       };
@@ -1751,18 +2110,6 @@ export function useCanvasCompositionOperations(context: any) {
         if (nestedItem) return nestedItem;
         continue;
       }
-      // Hierarchy charts expose node marks directly and have no chart-level
-      // layer or enter portal. A drop must touch a concrete node.
-      const targetContract = target.chartSpec
-        ? getChartTemplateContract(target.chartSpec.chartType)
-        : null;
-      const directMarkNesting = targetContract?.family === "hierarchy";
-      if (directMarkNesting
-        || target.chartSpec?.chartType.replace(/[\s_-]/g, "").toLowerCase().includes("forcedirected")) {
-        const nestedItem = semanticItemDropZone(target, point, sourceNodeId);
-        if (nestedItem) return nestedItem;
-      }
-      if (directMarkNesting) continue;
       const enterZone = chartEnterZone(target);
       if (!enterZone) continue;
       if (enterZone.enterCompositionId
@@ -1799,12 +2146,10 @@ export function useCanvasCompositionOperations(context: any) {
         width: target.width,
         height: target.height,
       };
-      // Dendrograms render labels and node radii outside their plot area.
-      // Composition portals must sit outside that complete visual footprint;
-      // other Cartesian charts continue to use their plot rectangle.
-      const interactionArea = isCartesianTreeChart(target.chartSpec.chartType)
-        ? getNodeSelectionBounds(target)
-        : plotArea;
+      // Portals follow the same live occupancy rectangle as selection. This
+      // includes hierarchy labels and any other rendered marks that extend
+      // beyond a chart's declared plot area.
+      const interactionArea = renderedInteractionArea(target);
       const inside = localPoint.x >= plotArea.x
         && localPoint.x <= plotArea.x + plotArea.width
         && localPoint.y >= plotArea.y
@@ -1812,7 +2157,7 @@ export function useCanvasCompositionOperations(context: any) {
 
       const nestedPoint = nestedLevelEntered && inside ? scatterPointDropZone(target, point) : null;
       if (nestedPoint) {
-        const sourceTemplate = normalizeChartTemplate(source.chartSpec.chartType);
+        const sourceTemplate = normalizeChartTemplate(sourceChart.chartSpec.chartType);
         const nestedCompatible = sourceTemplate === "pie" || sourceTemplate === "donut";
         return {
           targetNodeId: target.id,
@@ -1827,22 +2172,24 @@ export function useCanvasCompositionOperations(context: any) {
 
       const edgeSizeX = Math.min(interactionArea.width * 0.22, Math.max(18 / Math.max(viewZoom.value * Math.abs(target.scaleX), 0.25), 12));
       const edgeSizeY = Math.min(interactionArea.height * 0.22, Math.max(18 / Math.max(viewZoom.value * Math.abs(target.scaleY), 0.25), 12));
+      const gapX = COMPOSITION_DROP_ZONE_GAP_PX / Math.max(viewZoom.value * Math.abs(target.scaleX), 0.25);
+      const gapY = COMPOSITION_DROP_ZONE_GAP_PX / Math.max(viewZoom.value * Math.abs(target.scaleY), 0.25);
       const plotRight = interactionArea.x + interactionArea.width;
       const plotBottom = interactionArea.y + interactionArea.height;
       const inVerticalSpan = localPoint.y >= interactionArea.y && localPoint.y <= plotBottom;
       const inHorizontalSpan = localPoint.x >= interactionArea.x && localPoint.x <= plotRight;
       const onLeft = inVerticalSpan
-        && localPoint.x >= interactionArea.x - edgeSizeX
-        && localPoint.x <= interactionArea.x;
+        && localPoint.x >= interactionArea.x - gapX - edgeSizeX
+        && localPoint.x <= interactionArea.x - gapX;
       const onRight = inVerticalSpan
-        && localPoint.x >= plotRight
-        && localPoint.x <= plotRight + edgeSizeX;
+        && localPoint.x >= plotRight + gapX
+        && localPoint.x <= plotRight + gapX + edgeSizeX;
       const onTop = inHorizontalSpan
-        && localPoint.y >= interactionArea.y - edgeSizeY
-        && localPoint.y <= interactionArea.y;
+        && localPoint.y >= interactionArea.y - gapY - edgeSizeY
+        && localPoint.y <= interactionArea.y - gapY;
       const onBottom = inHorizontalSpan
-        && localPoint.y >= plotBottom
-        && localPoint.y <= plotBottom + edgeSizeY;
+        && localPoint.y >= plotBottom + gapY
+        && localPoint.y <= plotBottom + gapY + edgeSizeY;
       if (target.compositionSpec?.type === "concat") {
         const links = concatLinksFor(target.compositionSpec);
         const horizontalNeighbors = links.flatMap((link) => {
@@ -1857,10 +2204,10 @@ export function useCanvasCompositionOperations(context: any) {
           const other = findCanvasNode(otherId);
           return other ? [{ link, node: other }] : [];
         });
-        const cornerLeft = localPoint.x >= interactionArea.x - edgeSizeX && localPoint.x <= interactionArea.x;
-        const cornerRight = localPoint.x >= plotRight && localPoint.x <= plotRight + edgeSizeX;
-        const cornerTop = localPoint.y >= interactionArea.y - edgeSizeY && localPoint.y <= interactionArea.y;
-        const cornerBottom = localPoint.y >= plotBottom && localPoint.y <= plotBottom + edgeSizeY;
+        const cornerLeft = localPoint.x >= interactionArea.x - gapX - edgeSizeX && localPoint.x <= interactionArea.x - gapX;
+        const cornerRight = localPoint.x >= plotRight + gapX && localPoint.x <= plotRight + gapX + edgeSizeX;
+        const cornerTop = localPoint.y >= interactionArea.y - gapY - edgeSizeY && localPoint.y <= interactionArea.y - gapY;
+        const cornerBottom = localPoint.y >= plotBottom + gapY && localPoint.y <= plotBottom + gapY + edgeSizeY;
         const horizontalNeighbor = cornerLeft
           ? horizontalNeighbors.find(({ node }) => collectNodeSelectionBounds(node).maxX <= collectNodeSelectionBounds(target).minX + 1)
           : cornerRight
@@ -1877,8 +2224,8 @@ export function useCanvasCompositionOperations(context: any) {
           && concatEdgeNodesAreCompatible(verticalNeighbor.node, source, "horizontal", "y")
           && concatEdgeNodesAreCompatible(horizontalNeighbor.node, source, "vertical", "x")) {
           const cornerRect = {
-            x: cornerLeft ? interactionArea.x - edgeSizeX : plotRight,
-            y: cornerTop ? interactionArea.y - edgeSizeY : plotBottom,
+            x: cornerLeft ? interactionArea.x - gapX - edgeSizeX : plotRight + gapX,
+            y: cornerTop ? interactionArea.y - gapY - edgeSizeY : plotBottom + gapY,
             width: edgeSizeX,
             height: edgeSizeY,
           };
@@ -1922,14 +2269,14 @@ export function useCanvasCompositionOperations(context: any) {
             && concatNodesAreCompatible(compositionNodes, direction, sharedChannel);
         const localZone: ChartPlotArea = horizontal
           ? {
-            x: onLeft ? interactionArea.x - edgeSizeX : plotRight,
+            x: onLeft ? interactionArea.x - gapX - edgeSizeX : plotRight + gapX,
             y: interactionArea.y,
             width: edgeSizeX,
             height: interactionArea.height,
           }
           : {
             x: interactionArea.x,
-            y: onTop ? interactionArea.y - edgeSizeY : plotBottom,
+            y: onTop ? interactionArea.y - gapY - edgeSizeY : plotBottom + gapY,
             width: interactionArea.width,
             height: edgeSizeY,
           };
@@ -1952,21 +2299,184 @@ export function useCanvasCompositionOperations(context: any) {
       const compositionNodes = repeatableCompositionPairNodes(source, target, "layer");
       const sharedChannels = compositionNodes ? compatibleLayerChannels(compositionNodes) ?? [] : [];
       const compatible = sharedChannels.length > 0;
-      const layerArea = {
+      const completeLayerArea = insetPlotArea({
         x: plotArea.x,
         y: plotArea.y,
         width: plotArea.width,
         height: plotArea.height,
-      };
+      },
+        LAYER_DROP_ZONE_INSET_PX / Math.max(viewZoom.value * Math.abs(target.scaleX), 0.25),
+        LAYER_DROP_ZONE_INSET_PX / Math.max(viewZoom.value * Math.abs(target.scaleY), 0.25),
+      );
+      const insideLayer = localPoint.x >= completeLayerArea.x
+        && localPoint.x <= completeLayerArea.x + completeLayerArea.width
+        && localPoint.y >= completeLayerArea.y
+        && localPoint.y <= completeLayerArea.y + completeLayerArea.height;
+      if (!insideLayer) continue;
+      const choice = cartesianLayerZone(
+        { minY: completeLayerArea.y, height: completeLayerArea.height },
+        localPoint.y,
+        sharedChannels,
+      );
+      const layerArea = choice.count > 1
+        ? {
+          ...completeLayerArea,
+          y: completeLayerArea.y + completeLayerArea.height * choice.index / choice.count,
+          height: completeLayerArea.height / choice.count,
+        }
+        : completeLayerArea;
       return withNestedEnter({
         targetNodeId: target.id,
         type: "layer",
-        sharedChannels,
+        sharedChannels: choice.channels,
         ...localRectDropGeometry(target, layerArea),
         compatible,
       });
     }
     return null;
+  }
+
+  /**
+   * Enumerate the structural portals for every direct target in the current
+   * editing scope. Hit testing still chooses one active portal at the pointer,
+   * while this list lets the canvas reveal all legal destinations as soon as
+   * a composition drag starts.
+   */
+  function compositionDropZones(sourceNodeId: string): ChartDropZone[] {
+    const source = findCanvasNode(sourceNodeId);
+    if (!source) return [];
+    const sourceMemberIds = new Set(source.compositionSpec?.members.map((member) => member.nodeId) ?? [source.id]);
+    sourceMemberIds.add(source.id);
+    const probes: Point[] = [];
+    currentDropZoneScopeNodes().forEach((target) => {
+      if (sourceMemberIds.has(target.id)) return;
+      const composition = target.compositionSpec;
+      if (composition && composition.type !== "concat" && editingCompositionId.value !== composition.id) {
+        const members = composition.members
+          .map((member) => findCanvasNode(member.nodeId))
+          .filter((member): member is CanvasNode => !!member);
+        const bounds = target.kind === "group"
+          ? collectRenderedNodeSelectionBounds(target)
+          : getCanvasNodeListBounds(members.length > 0 ? members : [target]);
+        if (!bounds) return;
+        const edgeX = Math.min(bounds.width * 0.22, Math.max(18 / Math.max(viewZoom.value, 0.25), 12));
+        const edgeY = Math.min(bounds.height * 0.22, Math.max(18 / Math.max(viewZoom.value, 0.25), 12));
+        const gap = COMPOSITION_DROP_ZONE_GAP_PX / Math.max(viewZoom.value, 0.25);
+        const centerX = bounds.minX + bounds.width / 2;
+        const centerY = bounds.minY + bounds.height / 2;
+        probes.push(
+          { x: bounds.minX - gap - edgeX / 2, y: centerY },
+          { x: bounds.maxX + gap + edgeX / 2, y: centerY },
+          { x: centerX, y: bounds.minY - gap - edgeY / 2 },
+          { x: centerX, y: bounds.maxY + gap + edgeY / 2 },
+          { x: bounds.minX + bounds.width * 0.28, y: bounds.minY + bounds.height / 6 },
+          { x: bounds.minX + bounds.width * 0.28, y: bounds.minY + bounds.height / 2 },
+          { x: bounds.minX + bounds.width * 0.28, y: bounds.minY + bounds.height * 5 / 6 },
+          { x: centerX, y: centerY },
+        );
+        return;
+      }
+      const chart = target.chartSpec ? target : firstChartNode(target);
+      if (!chart?.chartSpec || !chart.coordinateGuide) return;
+      const localMinX = chart.kind === "leaf" ? chart.contentMinX : 0;
+      const localMinY = chart.kind === "leaf" ? chart.contentMinY : 0;
+      const plotArea = chart.chartSpec.plotArea ?? {
+        x: localMinX,
+        y: localMinY,
+        width: chart.width,
+        height: chart.height,
+      };
+      if (chart.coordinateGuide.type === "Polar") {
+        const model = createPolarCoordinateSystemModel(chart, viewZoom.value);
+        const occupied = getPolarOccupiedGeometry(chart);
+        if (!model || !occupied) return;
+        const startAngle = chart.compositionSpec?.type === "concat"
+          && chart.compositionSpec.direction === "angular"
+          ? chart.compositionSpec.polarAngleOffset ?? occupied.startAngle
+          : occupied.startAngle;
+        const angleSpan = chart.compositionSpec?.type === "concat"
+          && chart.compositionSpec.direction === "angular"
+          ? chart.compositionSpec.polarAngleSpan ?? model.angleSpan
+          : model.angleSpan;
+        const renderedScale = Math.max(
+          Math.abs(chart.scaleX),
+          Math.abs(chart.scaleY),
+          0.0001,
+        ) * Math.max(viewZoom.value, 0.0001);
+        const radialThickness = Math.max(
+          20 / renderedScale,
+          Math.min(occupied.outerRadius * 0.2, 56 / renderedScale),
+        );
+        const radialGap = COMPOSITION_DROP_ZONE_GAP_PX / renderedScale;
+        const middleRadius = (occupied.innerRadius + occupied.outerRadius) / 2;
+        const edgeAngle = Math.min(30, Math.max(8, angleSpan * 0.22));
+        const angularGap = Math.min(
+          6,
+          Math.max(2, radialGap / Math.max(occupied.outerRadius, 1) * 180 / Math.PI),
+        );
+        const angularMiddleRadius = occupied.outerRadius
+          + radialGap
+          + radialThickness
+          + radialGap
+          + radialThickness / 2;
+        const probeAt = (radius: number, clockwiseDegrees: number) => {
+          const local = polarPointAtAngle(model.origin, radius, -clockwiseDegrees);
+          probes.push(nodeLocalToSelectionScopePoint(chart, local));
+        };
+        // Body Layer, separated outer/inner radial Concat, then angular
+        // Concat beyond the radial band. Every probe lies strictly inside one
+        // mutually exclusive zone, with a fixed-screen gap around the body.
+        probeAt(middleRadius, startAngle + angleSpan / 2);
+        probeAt(occupied.outerRadius + radialGap + radialThickness / 2, startAngle + angleSpan / 2);
+        if (occupied.innerRadius > radialGap) {
+          probeAt(Math.max(0, occupied.innerRadius - radialGap - radialThickness / 2), startAngle + angleSpan / 2);
+        }
+        probeAt(angularMiddleRadius, startAngle - angularGap - edgeAngle / 2);
+        probeAt(angularMiddleRadius, startAngle + angleSpan + angularGap + edgeAngle / 2);
+        return;
+      }
+      if (chart.coordinateGuide.type !== "Cartesian") {
+        return;
+      }
+      const interactionArea = renderedInteractionArea(chart);
+      const edgeX = Math.min(interactionArea.width * 0.22, Math.max(18 / Math.max(viewZoom.value * Math.abs(chart.scaleX), 0.25), 12));
+      const edgeY = Math.min(interactionArea.height * 0.22, Math.max(18 / Math.max(viewZoom.value * Math.abs(chart.scaleY), 0.25), 12));
+      const gapX = COMPOSITION_DROP_ZONE_GAP_PX / Math.max(viewZoom.value * Math.abs(chart.scaleX), 0.25);
+      const gapY = COMPOSITION_DROP_ZONE_GAP_PX / Math.max(viewZoom.value * Math.abs(chart.scaleY), 0.25);
+      const centerX = interactionArea.x + interactionArea.width / 2;
+      const centerY = interactionArea.y + interactionArea.height / 2;
+      [
+        { x: interactionArea.x - gapX - edgeX / 2, y: centerY },
+        { x: interactionArea.x + interactionArea.width + gapX + edgeX / 2, y: centerY },
+        { x: centerX, y: interactionArea.y - gapY - edgeY / 2 },
+        { x: centerX, y: interactionArea.y + interactionArea.height + gapY + edgeY / 2 },
+        { x: plotArea.x + plotArea.width * 0.28, y: plotArea.y + plotArea.height / 6 },
+        { x: plotArea.x + plotArea.width * 0.28, y: plotArea.y + plotArea.height / 2 },
+        { x: plotArea.x + plotArea.width * 0.28, y: plotArea.y + plotArea.height * 5 / 6 },
+        { x: plotArea.x + plotArea.width / 2, y: plotArea.y + plotArea.height / 2 },
+      ].forEach((probe) => probes.push(nodeLocalToSelectionScopePoint(chart, probe)));
+    });
+
+    const zones = probes
+      .map((probe) => compositionDropZoneAtPoint(probe, sourceNodeId))
+      .filter((zone): zone is ChartDropZone => !!zone && (zone.compatible || !!zone.enterCompositionId || zone.nestedAction === "enter"))
+      .map((zone) => (zone.enterCompositionId || zone.nestedAction === "enter") && zone.enterBounds
+        ? { ...zone, bounds: zone.enterBounds, outline: undefined }
+        : zone);
+    const unique = new Map<string, ChartDropZone>();
+    zones.forEach((zone) => {
+      const key = [
+        zone.targetNodeId,
+        zone.type,
+        zone.direction ?? "",
+        zone.concatPosition ?? "",
+        zone.enterCompositionId ?? "",
+        zone.nestedAction ?? "",
+        zone.sharedChannels.join(","),
+      ].join("|");
+      if (!unique.has(key)) unique.set(key, zone);
+    });
+    return Array.from(unique.values());
   }
 
   function nestedCompositionFromBlock(parent: CanvasNode, child: CanvasNode, rowKey: string) {
@@ -2030,6 +2540,7 @@ export function useCanvasCompositionOperations(context: any) {
       const owner = findCanvasNode(composition.members[0]?.nodeId ?? target.id);
       if (owner) renderSharedCoordinateComposition(owner, true);
     }
+    scheduleNestedChildrenForParents([target, source]);
     return true;
   }
 
@@ -2043,7 +2554,9 @@ export function useCanvasCompositionOperations(context: any) {
         && zone.type === "layer"
         && createDeckglLayer(target.id, source.id, false);
     }
-    if (!source.chartSpec || !target.chartSpec) return false;
+    const sourceChart = source.chartSpec ? source : firstChartNode(source);
+    const targetChart = target.chartSpec ? target : firstChartNode(target);
+    if (!sourceChart?.chartSpec || !targetChart?.chartSpec) return false;
     if (zone.enterCompositionId) {
       const entered = enterCompositionDropLevel(zone);
       if (entered) selectedIds.value = [];
@@ -2084,11 +2597,11 @@ export function useCanvasCompositionOperations(context: any) {
         selectedIds.value = [];
         return true;
       }
-      const directMarkNesting = getChartTemplateContract(target.chartSpec.chartType)?.family === "hierarchy";
+      const directMarkNesting = getChartTemplateContract(targetChart.chartSpec.chartType)?.family === "hierarchy";
       if (!directMarkNesting
         && (chartDrilldown.value?.nodeId !== target.id || chartDrilldown.value.level !== "part")) return false;
       const rowKey = zone.targetRowKey;
-      if (rowKey && nestedCompositionFromBlock(target, source, rowKey)) {
+      if (rowKey && nestedCompositionFromBlock(targetChart, sourceChart, rowKey)) {
         const scopeNodes = getSelectionScopeNodes();
         source.chartSpec && dispatchRelationship({ type: "unregister-chart", chartId: source.id, keepAxes: true });
         replaceSelectionScopeNodes(scopeNodes.filter((node) => node.id !== source.id));
@@ -2107,10 +2620,10 @@ export function useCanvasCompositionOperations(context: any) {
             bounds: zone.bounds,
           }]
           : [];
-      if (nestedTargets.length === 0 || !source.chartSpec || !target.chartSpec) return false;
-      const parentDataset = getDataset(target.chartSpec.datasetId);
+      if (nestedTargets.length === 0) return false;
+      const parentDataset = getDataset(targetChart.chartSpec.datasetId);
       if (!parentDataset) return false;
-      const materializedParent = prepareChartData(target.id, parentDataset, target.chartSpec).dataset;
+      const materializedParent = prepareChartData(targetChart.id, parentDataset, targetChart.chartSpec).dataset;
       const parentRowsByKey = nestedTargets.length > 1 ? new Map<string, DataRow>() : null;
       if (parentRowsByKey) {
         materializedParent.rows.forEach((row, index) => {
@@ -2236,6 +2749,7 @@ export function useCanvasCompositionOperations(context: any) {
     openNestedPositionEditor,
     updateNestedPosition,
     updateNestedChildScale,
+    updateNestedCallout,
     resetNestedPosition,
     closeNestedPositionEditor,
     scatterPointDropZone,
@@ -2247,6 +2761,7 @@ export function useCanvasCompositionOperations(context: any) {
     polarSectorGeometry,
     polarCompositionDropZoneAtPoint,
     compositionDropZoneAtPoint,
+    compositionDropZones,
     nestedCompositionFromBlock,
     appendConcatLink,
     commitCompositionDrop,

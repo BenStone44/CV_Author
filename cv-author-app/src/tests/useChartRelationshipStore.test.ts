@@ -7,6 +7,7 @@ describe("Chart relationship snapshots", () => {
     const store = useChartRelationshipStore();
 
     expect(store.defaultRelativeParameters().retainParent).toBe(false);
+    expect(store.defaultRelativeParameters().callout).toEqual({ enabled: false, scale: 1.2 });
   });
 
   it("migrates legacy None axes to CoordinateFree when restoring a project", () => {

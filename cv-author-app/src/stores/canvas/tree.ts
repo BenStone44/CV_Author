@@ -99,6 +99,16 @@ export function useCanvasTree(options: CanvasTreeOptions) {
       if (!parent) break;
       current = parent;
     }
+    const scopeNodes = getSelectionScopeNodes();
+    if (scopeNodes.some((node) => node.id === current)) return current;
+    const groupSeen = new Set<string>();
+    while (!groupSeen.has(current)) {
+      groupSeen.add(current);
+      const parentGroupId = parentGroupIdForNode(current);
+      if (!parentGroupId) break;
+      current = parentGroupId;
+      if (scopeNodes.some((node) => node.id === current)) return current;
+    }
     return current;
   }
 

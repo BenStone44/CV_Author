@@ -341,6 +341,91 @@ export function getCanvasObjectHitTargetBounds(node: CanvasNode): Bounds {
 }
 
 /**
+ * Transforms a node-local occupied rectangle with the exact transform used by
+ * CanvasNodeView. Unlike boundsFromNodeFrame, the rotation center remains the
+ * node frame center when the occupied rectangle is offset within (or extends
+ * beyond) that frame.
+ */
+export function nodeLocalBoundsInCanvas(
+  node: CanvasNode,
+  localBounds: Bounds,
+  parentX = 0,
+  parentY = 0,
+  parentScaleX = 1,
+  parentScaleY = 1,
+): Bounds {
+  const x = parentX + node.x * parentScaleX;
+  const y = parentY + node.y * parentScaleY;
+  const scaleX = parentScaleX * node.scaleX;
+  const scaleY = parentScaleY * node.scaleY;
+  const localMinX = node.kind === "leaf" ? node.contentMinX : 0;
+  const localMinY = node.kind === "leaf" ? node.contentMinY : 0;
+  const center = {
+    x: x + node.width * scaleX / 2,
+    y: y + node.height * scaleY / 2,
+  };
+  const radians = node.rotation * Math.PI / 180;
+  const transformPoint = (point: Point): Point => {
+    const px = x + (point.x - localMinX) * scaleX;
+    const py = y + (point.y - localMinY) * scaleY;
+    if (node.rotation === 0) return { x: px, y: py };
+    const dx = px - center.x;
+    const dy = py - center.y;
+    return {
+      x: center.x + dx * Math.cos(radians) - dy * Math.sin(radians),
+      y: center.y + dx * Math.sin(radians) + dy * Math.cos(radians),
+    };
+  };
+  const points = [
+    transformPoint({ x: localBounds.minX, y: localBounds.minY }),
+    transformPoint({ x: localBounds.maxX, y: localBounds.minY }),
+    transformPoint({ x: localBounds.minX, y: localBounds.maxY }),
+    transformPoint({ x: localBounds.maxX, y: localBounds.maxY }),
+  ];
+  const minX = Math.min(...points.map((point) => point.x));
+  const minY = Math.min(...points.map((point) => point.y));
+  const maxX = Math.max(...points.map((point) => point.x));
+  const maxY = Math.max(...points.map((point) => point.y));
+  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
+}
+
+export function nodeLocalBoundsFrame(node: CanvasNode, localBounds: Bounds) {
+  const localMinX = node.kind === "leaf" ? node.contentMinX : 0;
+  const localMinY = node.kind === "leaf" ? node.contentMinY : 0;
+  const localCenter = {
+    x: (localBounds.minX + localBounds.maxX) / 2,
+    y: (localBounds.minY + localBounds.maxY) / 2,
+  };
+  const frameCenter = { x: node.width / 2, y: node.height / 2 };
+  const unrotatedCenter = {
+    x: node.x + (localCenter.x - localMinX) * node.scaleX,
+    y: node.y + (localCenter.y - localMinY) * node.scaleY,
+  };
+  const nodeCenter = {
+    x: node.x + frameCenter.x * node.scaleX,
+    y: node.y + frameCenter.y * node.scaleY,
+  };
+  const radians = node.rotation * Math.PI / 180;
+  const dx = unrotatedCenter.x - nodeCenter.x;
+  const dy = unrotatedCenter.y - nodeCenter.y;
+  const center = node.rotation === 0
+    ? unrotatedCenter
+    : {
+      x: nodeCenter.x + dx * Math.cos(radians) - dy * Math.sin(radians),
+      y: nodeCenter.y + dx * Math.sin(radians) + dy * Math.cos(radians),
+    };
+  const width = localBounds.width * Math.abs(node.scaleX);
+  const height = localBounds.height * Math.abs(node.scaleY);
+  return {
+    x: center.x - width / 2,
+    y: center.y - height / 2,
+    width,
+    height,
+    rotation: node.rotation,
+  };
+}
+
+/**
  * Resolves the hit-target bounds into canvas coordinates using the same
  * ancestor transform convention as collectNodeSelectionBounds.
  */
@@ -360,15 +445,7 @@ export function getCanvasObjectHitTargetBoundsInCanvas(
   const polar = getPolarOccupiedGeometry(node);
   if (!polar) {
     const hitTarget = getCanvasObjectHitTargetBounds(node);
-    return boundsFromNodeFrame(
-      x + (hitTarget.minX - localMinX) * scaleX,
-      y + (hitTarget.minY - localMinY) * scaleY,
-      hitTarget.width,
-      hitTarget.height,
-      scaleX,
-      scaleY,
-      node.rotation,
-    );
+    return nodeLocalBoundsInCanvas(node, hitTarget, parentX, parentY, parentScaleX, parentScaleY);
   }
   const transformPoint = (point: Point): Point => {
     const px = x + (point.x - localMinX) * scaleX;
@@ -496,6 +573,8 @@ export function cloneCanvasNode(node: CanvasNode): CanvasNode {
         ? {
           ...(node.coordinateSystem.axisLabelDomains.x ? { x: [...node.coordinateSystem.axisLabelDomains.x] } : {}),
           ...(node.coordinateSystem.axisLabelDomains.y ? { y: [...node.coordinateSystem.axisLabelDomains.y] } : {}),
+          ...(node.coordinateSystem.axisLabelDomains.angle ? { angle: [...node.coordinateSystem.axisLabelDomains.angle] } : {}),
+          ...(node.coordinateSystem.axisLabelDomains.radius ? { radius: [...node.coordinateSystem.axisLabelDomains.radius] } : {}),
         }
         : undefined,
     }
@@ -528,11 +607,71 @@ export function cloneCanvasNode(node: CanvasNode): CanvasNode {
         : undefined,
     }
     : node.compositionSpec;
+  const parentCompositionSpec = node.parentCompositionSpec
+    ? {
+      ...node.parentCompositionSpec,
+      members: node.parentCompositionSpec.members.map((member) => ({ ...member, sharedChannels: [...member.sharedChannels] })),
+      sharedChannels: [...node.parentCompositionSpec.sharedChannels],
+      concatLinks: node.parentCompositionSpec.concatLinks?.map((link) => ({
+        ...link,
+        sharedChannels: [...link.sharedChannels],
+      })),
+      facetValues: node.parentCompositionSpec.facetValues ? [...node.parentCompositionSpec.facetValues] : undefined,
+      facetGrid: node.parentCompositionSpec.facetGrid
+        ? { ...node.parentCompositionSpec.facetGrid, rowValues: [...node.parentCompositionSpec.facetGrid.rowValues], columnValues: [...node.parentCompositionSpec.facetGrid.columnValues] }
+        : undefined,
+    }
+    : node.parentCompositionSpec;
+  const parentCoordinateSystem = node.parentCoordinateSystem
+    ? {
+      ...node.parentCoordinateSystem,
+      members: node.parentCoordinateSystem.members.map((member) => ({ ...member, channels: [...member.channels] })),
+      sharedChannels: [...node.parentCoordinateSystem.sharedChannels],
+      axisLabelDomains: node.parentCoordinateSystem.axisLabelDomains
+        ? {
+          ...(node.parentCoordinateSystem.axisLabelDomains.x ? { x: [...node.parentCoordinateSystem.axisLabelDomains.x] } : {}),
+          ...(node.parentCoordinateSystem.axisLabelDomains.y ? { y: [...node.parentCoordinateSystem.axisLabelDomains.y] } : {}),
+          ...(node.parentCoordinateSystem.axisLabelDomains.angle ? { angle: [...node.parentCoordinateSystem.axisLabelDomains.angle] } : {}),
+          ...(node.parentCoordinateSystem.axisLabelDomains.radius ? { radius: [...node.parentCoordinateSystem.axisLabelDomains.radius] } : {}),
+        }
+        : undefined,
+    }
+    : node.parentCoordinateSystem;
+  const compositionAncestors = node.compositionAncestors?.map((context) => ({
+    compositionSpec: {
+      ...context.compositionSpec,
+      members: context.compositionSpec.members.map((member) => ({ ...member, sharedChannels: [...member.sharedChannels] })),
+      sharedChannels: [...context.compositionSpec.sharedChannels],
+      concatLinks: context.compositionSpec.concatLinks?.map((link) => ({
+        ...link,
+        sharedChannels: [...link.sharedChannels],
+      })),
+      facetValues: context.compositionSpec.facetValues ? [...context.compositionSpec.facetValues] : undefined,
+      facetGrid: context.compositionSpec.facetGrid
+        ? { ...context.compositionSpec.facetGrid, rowValues: [...context.compositionSpec.facetGrid.rowValues], columnValues: [...context.compositionSpec.facetGrid.columnValues] }
+        : undefined,
+    },
+    coordinateSystem: context.coordinateSystem
+      ? {
+        ...context.coordinateSystem,
+        members: context.coordinateSystem.members.map((member) => ({ ...member, channels: [...member.channels] })),
+        sharedChannels: [...context.coordinateSystem.sharedChannels],
+        axisLabelDomains: context.coordinateSystem.axisLabelDomains
+          ? {
+            ...(context.coordinateSystem.axisLabelDomains.x ? { x: [...context.coordinateSystem.axisLabelDomains.x] } : {}),
+            ...(context.coordinateSystem.axisLabelDomains.y ? { y: [...context.coordinateSystem.axisLabelDomains.y] } : {}),
+            ...(context.coordinateSystem.axisLabelDomains.angle ? { angle: [...context.coordinateSystem.axisLabelDomains.angle] } : {}),
+            ...(context.coordinateSystem.axisLabelDomains.radius ? { radius: [...context.coordinateSystem.axisLabelDomains.radius] } : {}),
+          }
+          : undefined,
+      }
+      : null,
+  }));
   const deckglConfig = node.deckglConfig ? { ...node.deckglConfig } : node.deckglConfig;
   const deckglBinding = node.deckglBinding ? { ...node.deckglBinding } : node.deckglBinding;
   const mapViewState = node.mapViewState ? { ...node.mapViewState } : node.mapViewState;
   const deckglLayerStack = node.deckglLayerStack ? [...node.deckglLayerStack] : node.deckglLayerStack;
-  if (node.kind === "leaf") return { ...node, coordinateGuide, coordinateSystem, chartSpec, layerSpec, nestedSpec, compositionSpec, llmRenderer, deckglConfig, deckglBinding, deckglLayerStack, mapViewState };
+  if (node.kind === "leaf") return { ...node, coordinateGuide, coordinateSystem, chartSpec, layerSpec, nestedSpec, compositionSpec, parentCompositionSpec, parentCoordinateSystem, compositionAncestors, llmRenderer, deckglConfig, deckglBinding, deckglLayerStack, mapViewState };
   return {
     ...node,
     coordinateGuide,
@@ -542,6 +681,9 @@ export function cloneCanvasNode(node: CanvasNode): CanvasNode {
     layerSpec,
     nestedSpec,
     compositionSpec,
+    parentCompositionSpec,
+    parentCoordinateSystem,
+    compositionAncestors,
     deckglConfig,
     deckglBinding,
     deckglLayerStack,
@@ -589,19 +731,23 @@ export function collectNodeSelectionBounds(
   parentY = 0,
   parentScaleX = 1,
   parentScaleY = 1,
+  resolveLocalBounds?: (node: CanvasNode) => Bounds | null | undefined,
 ): Bounds {
   const x = parentX + node.x * parentScaleX;
   const y = parentY + node.y * parentScaleY;
   const scaleX = parentScaleX * node.scaleX;
   const scaleY = parentScaleY * node.scaleY;
-  let bounds = getCanvasObjectHitTargetBoundsInCanvas(node, parentX, parentY, parentScaleX, parentScaleY);
+  const renderedBounds = resolveLocalBounds?.(node);
+  let bounds = renderedBounds
+    ? nodeLocalBoundsInCanvas(node, renderedBounds, parentX, parentY, parentScaleX, parentScaleY)
+    : getCanvasObjectHitTargetBoundsInCanvas(node, parentX, parentY, parentScaleX, parentScaleY);
   // Configured charts can retain their original template children after the
   // deterministic renderer takes over. Their selection is the live plotArea;
   // stale template geometry must not replace it during multi-selection.
-  if (node.kind === "group" && !node.chartSpec) {
+  if (!renderedBounds && node.kind === "group" && !node.chartSpec) {
     let merged: Bounds | null = null;
     node.children.forEach((child) => {
-      merged = mergeBounds(merged, collectNodeSelectionBounds(child, x, y, scaleX, scaleY));
+      merged = mergeBounds(merged, collectNodeSelectionBounds(child, x, y, scaleX, scaleY, resolveLocalBounds));
     });
     if (merged) bounds = merged;
   }

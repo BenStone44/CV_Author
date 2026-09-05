@@ -21,6 +21,7 @@ import { deckglPointNestHoverEvent } from "../../types";
 export function useCanvasInteraction(context: any) {
   const {
     activeDropZone,
+    availableDropZones,
     axisBindingTarget,
     beginCompositionEditing,
     bindingForChartChannel,
@@ -35,6 +36,7 @@ export function useCanvasInteraction(context: any) {
     commitCompositionDrop,
     collectNodeSelectionBounds,
     compositionDropZoneAtPoint,
+    compositionDropZones,
     compositionDragSourceId,
     captureCanvasHistory,
     deckglPointDropTarget,
@@ -61,6 +63,7 @@ export function useCanvasInteraction(context: any) {
     getSelectionNode,
     getSelectionScopeNodes,
     interaction,
+    liftCompositionChild,
     nestedDropPath,
     nestedPositionEditor,
     nestedSelectionRelationships,
@@ -95,6 +98,7 @@ export function useCanvasInteraction(context: any) {
     scheduleNestedChildLayout,
     scheduleCompositionDropZone,
     selectionTestOnly,
+    showCompositionEnterTransition,
     standaloneCoordinateSystem,
     toCanvasPoint,
     toNodeLocalPoint,
@@ -113,6 +117,9 @@ export function useCanvasInteraction(context: any) {
   let pendingMoveUpdate: { point: Point; interaction: MoveInteraction } | null = null;
   let moveUpdateFrame: number | null = null;
   let transformOnlyElements: Element[] | null = null;
+  function revealCompositionDropZones(sourceNodeId: string) {
+    availableDropZones.value = compositionDropZones(sourceNodeId);
+  }
 
   function attachPointerListeners() {
     window.addEventListener("pointermove", onWindowPointerMove);
@@ -238,7 +245,12 @@ export function useCanvasInteraction(context: any) {
       ? [node.id]
       : [...editingGroupPath.value, node.id];
     editingGroupPath.value = nextPath;
-    editingCompositionId.value = node.compositionSpec?.id ?? null;
+    editingCompositionId.value = null;
+    if (node.compositionSpec?.type === "layer") {
+      beginCompositionEditing(node.compositionSpec);
+    } else {
+      editingCompositionId.value = node.compositionSpec?.id ?? null;
+    }
     selectedIds.value = [];
     semanticSelection.value = null;
     chartDrilldown.value = null;
@@ -363,6 +375,49 @@ export function useCanvasInteraction(context: any) {
     if (nestedRelationship && removeNestedComposition(nestedRelationship)) return true;
     const composition = selectedNodes.value[0]?.compositionSpec;
     if (!composition) return false;
+    const selected = selectedNodes.value[0]!;
+    if (selected.kind === "group" && composition.type !== "concat") {
+      pushCanvasHistory();
+      dispatchRelationship({
+        type: "remove-composition",
+        compositionId: composition.id,
+        keepSharedAxes: false,
+      });
+      const detached = selected.children.map((child) => liftCompositionChild(selected, child));
+      detached.forEach((child) => {
+        walkCanvasNodes([child]).forEach((member) => {
+          if (member.compositionSpec?.id === composition.id) {
+            member.compositionSpec = null;
+            member.coordinateSystem = standaloneCoordinateSystem(member);
+          }
+          member.compositionAncestors = member.compositionAncestors
+            ?.filter((context) => context.compositionSpec.id !== composition.id);
+          const parent = member.compositionAncestors?.at(-1) ?? null;
+          member.parentCompositionSpec = parent?.compositionSpec ?? null;
+          member.parentCoordinateSystem = parent?.coordinateSystem ?? null;
+        });
+      });
+      replaceSelectionScopeNodes([
+        ...getSelectionScopeNodes().filter((node) => node.id !== selected.id),
+        ...detached,
+      ]);
+      reconcileCoordinateSystems();
+      detached.forEach((child) => {
+        if (child.compositionSpec?.type === "layer" || child.compositionSpec?.type === "concat") {
+          renderSharedCoordinateComposition(child, true);
+        } else {
+          walkCanvasNodes([child]).filter((member) => !!member.chartSpec).forEach((member) => renderChartNode(member));
+        }
+      });
+      editingCompositionId.value = null;
+      setSelection(detached.map((child) => child.id));
+      axisBindingTarget.value = null;
+      semanticSelection.value = null;
+      chartDrilldown.value = null;
+      contextMenu.value = null;
+      setImportNotice("Composition removed.");
+      return true;
+    }
     const memberIds = new Set(scopedCompositionMemberIds(selectedNodes.value[0]!));
     const members = getSelectionScopeNodes().filter((node) => memberIds.has(node.id));
     if (members.length < 2) return false;
@@ -594,6 +649,7 @@ export function useCanvasInteraction(context: any) {
     contextMenu.value = null;
     compositionDragSourceId.value = null;
     activeDropZone.value = null;
+    availableDropZones.value = [];
   }
   function clearSelectionDrilldown(node: CanvasNode) {
     if (chartDrilldown.value && chartDrilldown.value.nodeId !== node.id) {
@@ -640,6 +696,7 @@ export function useCanvasInteraction(context: any) {
       event.stopPropagation();
       startMove([node.id], event);
       compositionDragSourceId.value = node.id;
+      revealCompositionDropZones(node.id);
       return;
     }
     const composition = node.compositionSpec;
@@ -661,6 +718,7 @@ export function useCanvasInteraction(context: any) {
         axisBindingTarget.value = null;
         contextMenu.value = null;
         compositionDragSourceId.value = node.id;
+        revealCompositionDropZones(node.id);
         activeDropZone.value = null;
         return;
       }
@@ -678,7 +736,8 @@ export function useCanvasInteraction(context: any) {
       chartDrilldown.value = null;
       axisBindingTarget.value = null;
       contextMenu.value = null;
-      compositionDragSourceId.value = null;
+      compositionDragSourceId.value = node.id;
+      revealCompositionDropZones(node.id);
       activeDropZone.value = null;
       return;
     }
@@ -798,6 +857,7 @@ export function useCanvasInteraction(context: any) {
         && repeatableComposition.members.every((member) => nextSelection.includes(member.nodeId));
       if (!draggingNestedUnit && (node.chartSpec || node.layerKind === "deckgl") && (nextSelection.length === 1 || draggingWholeComposition)) {
         compositionDragSourceId.value = node.id;
+        revealCompositionDropZones(node.id);
       }
     });
   }
@@ -1438,6 +1498,7 @@ export function useCanvasInteraction(context: any) {
     interaction.value = null;
     if (nestedLayoutIds.length > 0) scheduleNestedChildLayout(nestedLayoutIds);
     compositionDragSourceId.value = null;
+    availableDropZones.value = [];
     deckglPointDropTarget.value = null;
     clearCompositionDropZoneSchedule();
     activeDropZone.value = null;
@@ -1485,10 +1546,14 @@ export function useCanvasInteraction(context: any) {
       const enteringComposition = !!dropZone?.enterCompositionId;
       const enteringNested = dropZone?.type === "nested" && dropZone.nestedAction === "enter";
       if (dropZone && (enteringComposition || enteringNested)) {
+        showCompositionEnterTransition(dropZone);
         const sourceNodeId = compositionDragSourceId.value;
         if (sourceNodeId) {
           if (dropZone.enterCompositionId) enterCompositionDropLevel(dropZone);
           else enterNestedDropLevel(dropZone);
+          // Enter changes the editing scope. Enumerate portals only after that
+          // scope transition so the canvas never presents stale outer zones.
+          availableDropZones.value = compositionDropZones(sourceNodeId);
           activeDropZone.value = compositionDropZoneAtPoint(movePoint, sourceNodeId);
         }
       }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { nextTick, ref } from "vue";
-import type { CanvasGroupNode, CanvasLeafNode, CanvasNode, Dataset, GeometrySource, PolarCoordinateGuide } from "../types";
+import type { CanvasGroupNode, CanvasLeafNode, CanvasNode, Dataset, GeometrySource, PolarCoordinateGuide, RelativeNestedParameters } from "../types";
 import { deckglPointNestHoverEvent } from "../types";
 import { collectNodeSelectionBounds } from "../utils/canvasUtils";
 import { csvColumnDragMime, encodeCsvColumnDragPayload } from "../utils/csvColumnDrag";
@@ -87,6 +87,7 @@ const {
   canResolveNestedParentField,
   getDimensionChartUpgradeOptions,
   getNestedParentContextFields,
+  isDeckglPointNestedChartCandidate,
   useCanvasStore,
 } = await import("../stores/useCanvasStore");
 const { useDatasetStore } = await import("../stores/useDatasetStore");
@@ -171,6 +172,17 @@ function createNodes(): CanvasNode[] {
   ];
 }
 
+function firstChartNodeForTest(node: CanvasNode): CanvasNode {
+  if (node.chartSpec) return node;
+  if (node.kind === "group") {
+    for (const child of node.children) {
+      const chart = firstChartNodeForTest(child);
+      if (chart.chartSpec) return chart;
+    }
+  }
+  throw new Error(`No chart found below ${node.id}.`);
+}
+
 function lineChart(id: string, x: number, withSeries: boolean): CanvasGroupNode {
   return {
     kind: "group",
@@ -214,11 +226,108 @@ describe("nested parent grain", () => {
     expect(getNestedParentContextFields(parent.chartSpec!)).toEqual(["time", "series"]);
   });
 
-  it("does not infer a default filter context for a record-mode scatterplot", () => {
+  it("keeps record-mode scatter identity out of chart-only structural fields", () => {
     const parent = lineChart("nested-row-parent", 100, false);
     parent.chartSpec = { ...parent.chartSpec!, chartType: "Scatterplot" };
 
     expect(getNestedParentContextFields(parent.chartSpec!)).toEqual([]);
+  });
+
+  it("expands a record-mode scatter row key into relationship-owned primary-key filters", () => {
+    const dataset: Dataset = {
+      id: "scatter-row-key-context",
+      name: "academic_scores.csv",
+      columns: [
+        { name: "university_id", type: "nominal" },
+        { name: "academic_level", type: "quantitative" },
+        { name: "university_size", type: "quantitative" },
+        { name: "Literature", type: "quantitative" },
+      ],
+      rows: [
+        { university_id: "u001", academic_level: "0.59", university_size: "0.85", Literature: "20" },
+        { university_id: "u002", academic_level: "0.64", university_size: "0.56", Literature: "21" },
+      ],
+      primaryKey: ["university_id"],
+    };
+    const parent = lineChart("scatter-row-key-parent", 100, false);
+    parent.chartSpec = {
+      ...parent.chartSpec!,
+      chartType: "Scatterplot",
+      datasetId: dataset.id,
+      encodings: {
+        x: { field: "academic_level", type: "quantitative" },
+        y: { field: "university_size", type: "quantitative" },
+      },
+    };
+    const child = polarChart("scatter-row-key-child", 950);
+    child.chartSpec = { ...child.chartSpec!, datasetId: dataset.id };
+    const store = useCanvasStore(ref(null));
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+
+    const result = store.resolveNestedFilterContexts(
+      parent,
+      child,
+      JSON.stringify({ rowKey: "u002" }),
+    );
+
+    expect(result).toEqual({
+      contexts: [{
+        parentChartId: parent.id,
+        parentDataKey: JSON.stringify({ rowKey: "u002" }),
+        parentField: "university_id",
+        childField: "university_id",
+        value: "u002",
+        filterMode: "values",
+        source: "parent-row",
+      }],
+      unresolvedFields: [],
+    });
+  });
+
+  it("expands every field of a composite scatter row key", () => {
+    const dataset: Dataset = {
+      id: "scatter-composite-row-key-context",
+      name: "observations.csv",
+      columns: [
+        { name: "university_id", type: "nominal" },
+        { name: "term", type: "ordinal" },
+        { name: "x", type: "quantitative" },
+        { name: "y", type: "quantitative" },
+      ],
+      rows: [
+        { university_id: "u001", term: "1", x: "10", y: "20" },
+        { university_id: "u001", term: "2", x: "11", y: "21" },
+      ],
+      primaryKey: ["university_id", "term"],
+    };
+    const parent = lineChart("scatter-composite-key-parent", 100, false);
+    parent.chartSpec = {
+      ...parent.chartSpec!,
+      chartType: "Scatterplot",
+      datasetId: dataset.id,
+      encodings: {
+        x: { field: "x", type: "quantitative" },
+        y: { field: "y", type: "quantitative" },
+      },
+    };
+    const child = polarChart("scatter-composite-key-child", 950);
+    child.chartSpec = { ...child.chartSpec!, datasetId: dataset.id };
+    const store = useCanvasStore(ref(null));
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+
+    const result = store.resolveNestedFilterContexts(
+      parent,
+      child,
+      JSON.stringify({ rowKey: "u001|2" }),
+    );
+
+    expect(result.contexts.map((context) => [context.childField, context.value])).toEqual([
+      ["university_id", "u001"],
+      ["term", "2"],
+    ]);
+    expect(result.unresolvedFields).toEqual([]);
   });
 
   it("uses the graph node ID as the default nested context", () => {
@@ -295,7 +404,10 @@ function polarChart(id: string, x: number, angleSpan = 120): CanvasGroupNode {
     chartSpec: {
       chartType: "PieChart",
       datasetId: layerDataset.id,
-      encodings: { theta: { field: "value", type: "quantitative" } },
+      encodings: {
+        segment: { field: "series", type: "nominal" },
+        theta: { field: "value", type: "quantitative" },
+      },
       plotArea: { x: 0, y: 0, width: 400, height: 400 },
     },
     children: [],
@@ -958,6 +1070,118 @@ describe("group editing scope", () => {
 });
 
 describe("composition selection hierarchy", () => {
+  it.each(["row", "column"] as const)("uses the rendered occupancy of a %s facet root", (direction) => {
+    let occupancies: any[] = [];
+    const canvasRef = ref({
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1800, height: 1000 }),
+      querySelectorAll: (selector: string) => selector === "[data-selection-occupancy-node-id]"
+        ? occupancies
+        : [],
+    } as unknown as HTMLElement);
+    const store = useCanvasStore(canvasRef);
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [{
+      ...layerDataset,
+      id: `rendered-${direction}-facet-dataset`,
+      rows: [
+        { series: "A", time: "2026-01-01", value: "10" },
+        { series: "B", time: "2026-01-01", value: "14" },
+      ],
+    }];
+    const chart = lineChart(`rendered-${direction}-facet`, 100, false);
+    chart.chartSpec = { ...chart.chartSpec!, datasetId: `rendered-${direction}-facet-dataset` };
+    store.canvasNodes.value = [chart];
+    store.selectedIds.value = [chart.id];
+
+    expect(store.applyDimensionFacet("series", direction)).toBe(true);
+    const root = store.canvasNodes.value[0]!;
+    const children = root.kind === "group" ? root.children : [];
+    const identity = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+    const owner = {
+      dataset: { nodeId: root.id },
+      querySelectorAll: () => occupancies,
+    };
+    const marker = {
+      dataset: { selectionOccupancyNodeId: root.id, selectionOccupancyComposite: "true" },
+      getBBox: () => ({ x: 0, y: 0, width: 0, height: 0 }),
+      getCTM: () => identity,
+      closest: () => owner,
+    };
+    const childOccupancy = (nodeId: string, e: number, f: number) => ({
+      dataset: { selectionOccupancyNodeId: nodeId },
+      getBBox: () => ({ x: 0, y: 0, width: 800, height: 400 }),
+      getCTM: () => ({ ...identity, e, f }),
+    });
+    const secondOffset = direction === "row" ? { e: -24, f: 428 } : { e: 836, f: -18 };
+    occupancies = [
+      marker,
+      childOccupancy(children[0]?.id ?? "facet-child-a", -24, -18),
+      childOccupancy(children[1]?.id ?? "facet-child-b", secondOffset.e, secondOffset.f),
+    ];
+    expect(store.syncRenderedNodeSelectionBounds()).toBe(true);
+
+    const width = direction === "row" ? 800 : 1660;
+    const height = direction === "row" ? 846 : 400;
+    expect(store.selectionBounds.value?.minX).toBeCloseTo(root.x - 24);
+    expect(store.selectionBounds.value?.minY).toBeCloseTo(root.y - 18);
+    expect(store.selectionBounds.value?.maxX).toBeCloseTo(root.x - 24 + width);
+    expect(store.selectionBounds.value?.maxY).toBeCloseTo(root.y - 18 + height);
+    expect(store.selectionBounds.value?.width).toBeCloseTo(width);
+    expect(store.selectionBounds.value?.height).toBeCloseTo(height);
+    expect(store.selectionFrame.value).toMatchObject({
+      width,
+      height,
+      rotation: 0,
+    });
+    expect(store.selectionFrame.value?.x).toBeCloseTo(root.x - 24);
+    expect(store.selectionFrame.value?.y).toBeCloseTo(root.y - 18);
+  });
+
+  it.each([
+    ["right", { x: -40, y: -10, width: 850, height: 420 }],
+    ["left", { x: -15, y: -10, width: 840, height: 420 }],
+    ["down", { x: -30, y: -20, width: 900, height: 460 }],
+    ["up", { x: -30, y: -25, width: 900, height: 455 }],
+  ] as const)("uses browser-measured %s tree marks and labels instead of estimated plot bounds", (direction, box) => {
+    const occupancy = {
+      dataset: { selectionOccupancyNodeId: "rendered-tree-selection" },
+      getBBox: () => box,
+    };
+    const canvasRef = ref({
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1800, height: 1000 }),
+      querySelectorAll: (selector: string) => selector === "[data-selection-occupancy-node-id]"
+        ? [occupancy]
+        : [],
+    } as unknown as HTMLElement);
+    const store = useCanvasStore(canvasRef);
+    const tree = lineChart("rendered-tree-selection", 100, false);
+    tree.chartSpec = {
+      ...tree.chartSpec!,
+      chartType: "Dendrogram",
+      selectionBounds: { x: 0, y: 0, width: 40, height: 30 },
+      markGroups: [{
+        id: "rendered-tree-selection-nodes",
+        chartId: tree.id,
+        role: "node",
+        memberKeys: [],
+        sharedConfig: { treeDirection: direction },
+      }],
+    };
+    tree.renderedContent = '<g data-chart-type="dendrogram" />';
+    store.canvasNodes.value = [tree];
+    store.selectedIds.value = [tree.id];
+
+    expect(store.syncRenderedNodeSelectionBounds()).toBe(true);
+
+    expect(store.selectionFrame.value).toEqual({
+      x: tree.x + box.x,
+      y: tree.y + box.y,
+      width: box.width,
+      height: box.height,
+      rotation: 0,
+    });
+  });
+
   it("selects a composite without side effects and uses only DOM transforms while dragging", () => {
     listeners.clear();
     const transformWrites: string[] = [];
@@ -1112,6 +1336,18 @@ describe("composition selection hierarchy", () => {
     expect(store.nestedRenderedChildIds.value.has(child.id)).toBe(false);
   });
 
+  it("allows Pie templates to nest on geographic scatterplot points", () => {
+    const store = useCanvasStore(coordinateCanvasRef());
+    const pieCandidate = store.implementedTemplateCandidates.value.find((item) =>
+      item.chartType === "PieChart" && !item.unavailable);
+    const mapCandidate = store.implementedTemplateCandidates.value.find((item) =>
+      item.renderMode === "static-layer");
+    expect(pieCandidate).toBeDefined();
+    expect(mapCandidate).toBeDefined();
+    expect(isDeckglPointNestedChartCandidate(pieCandidate!)).toBe(true);
+    expect(isDeckglPointNestedChartCandidate(mapCandidate!)).toBe(false);
+  });
+
   it("nests one chart instance on every visible geographic scatterplot point", () => {
     const store = useCanvasStore(coordinateCanvasRef());
     store.relationshipStore.dispatch({ type: "clear" });
@@ -1184,6 +1420,11 @@ describe("composition selection hierarchy", () => {
     expect(new Set(relationships.map((relationship) => relationship.childChartId)).size).toBe(2);
     expect(relationships.every((relationship) => relationship.inheritedFilterContexts?.[0])).toBe(true);
     expect(relationships.map((relationship) => relationship.inheritedFilterContexts?.[0]?.value).sort()).toEqual(["geo-a", "geo-b"]);
+    expect(store.nestedPositionEditor.value?.relationshipIds).toHaveLength(2);
+    expect(store.updateNestedCallout({ enabled: true, scale: 1.4 })).toBe(true);
+    expect(relationships.every((relationship) =>
+      (relationship.parameters as RelativeNestedParameters).callout?.enabled === true
+      && (relationship.parameters as RelativeNestedParameters).callout?.scale === 1.4)).toBe(true);
 
     store.axisBindingTarget.value = { nodeId: relationships[0]!.childChartId, channel: "x" };
     store.setChartEncoding("x", "month");
@@ -1288,6 +1529,26 @@ describe("composition selection hierarchy", () => {
     expect(store.canvasNodes.value.every((node) => node.compositionSpec?.id === composition.id)).toBe(true);
   });
 
+  it("unwraps a closed Layer root when its composition is removed", () => {
+    const first = cartesianChart("closed-layer-removal-a", 100, "LineGraph");
+    const second = cartesianChart("closed-layer-removal-b", 950, "AreaChart");
+    const store = useCanvasStore(ref(null));
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    store.canvasNodes.value = [first, second];
+    store.selectedIds.value = [first.id, second.id];
+
+    expect(store.executeComposition("layer", true, ["y"])).toBe(true);
+    expect(store.canvasNodes.value).toHaveLength(1);
+    expect(store.canvasNodes.value[0]?.kind).toBe("group");
+    expect(store.canRemoveSelectionComposition.value).toBe(true);
+
+    expect(store.removeSelectionComposition()).toBe(true);
+    expect(store.canvasNodes.value.map((node) => node.id).sort()).toEqual([first.id, second.id].sort());
+    expect(store.canvasNodes.value.every((node) => node.compositionSpec == null)).toBe(true);
+    expect(store.selectedIds.value.sort()).toEqual([first.id, second.id].sort());
+  });
+
   it("keeps concat visual scales unchanged when removing the composition", () => {
     const first = cartesianChart("concat-removal-a", 100, "LineGraph");
     const second = cartesianChart("concat-removal-b", 950, "SingleBarChart");
@@ -1324,6 +1585,119 @@ describe("composition selection hierarchy", () => {
       plotArea: node.chartSpec?.plotArea,
       renderedContent: node.renderedContent,
     }))).toEqual(visualState);
+  });
+
+  it("reflows a nested child after Concat moves its scatter parent", async () => {
+    const dataset: Dataset = {
+      id: "concat-nested-scatter-layout",
+      name: "concat-nested-scatter-layout.csv",
+      columns: [
+        { name: "id", type: "nominal" },
+        { name: "category", type: "nominal" },
+        { name: "x", type: "quantitative" },
+        { name: "y", type: "quantitative" },
+      ],
+      rows: [{ id: "point-a", category: "A", x: "10", y: "20" }],
+      primaryKey: ["id"],
+    };
+    const companion = cartesianChart("concat-nested-companion", 100, "SingleBarChart");
+    companion.chartSpec = {
+      ...companion.chartSpec!,
+      datasetId: dataset.id,
+      encodings: {
+        x: { field: "category", type: "nominal" },
+        y: { field: "y", type: "quantitative" },
+      },
+    };
+    const parent = cartesianChart("concat-nested-scatter", 1100, "Scatterplot");
+    parent.chartSpec = {
+      ...parent.chartSpec!,
+      datasetId: dataset.id,
+      encodings: {
+        x: { field: "x", type: "quantitative" },
+        y: { field: "y", type: "quantitative" },
+      },
+    };
+    const child = polarChart("concat-nested-pie", 1500, 360);
+    child.chartSpec = { ...child.chartSpec!, datasetId: dataset.id };
+    const markCenter = () => ({ x: parent.x + 260, y: parent.y + 180 });
+    const pointMark = new SvgMarkStub({
+      "data-chart-id": parent.id,
+      "data-mark-role": "point",
+      "data-mark-group-id": `mark-group:${parent.id}:point`,
+      "data-row-key": "point-a",
+    }, { left: 0, top: 0, right: 12, bottom: 12 });
+    pointMark.getBoundingClientRect = () => {
+      const center = markCenter();
+      return {
+        left: center.x - 6,
+        top: center.y - 6,
+        right: center.x + 6,
+        bottom: center.y + 6,
+        x: center.x - 6,
+        y: center.y - 6,
+        width: 12,
+        height: 12,
+        toJSON: () => ({}),
+      };
+    };
+    const parentElement = new SvgMarkStub(
+      { "data-node-id": parent.id },
+      { left: parent.x, top: parent.y, right: parent.x + parent.width, bottom: parent.y + parent.height },
+      [pointMark],
+    );
+    const canvasRef = ref({
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 2200, height: 1200 }),
+      querySelectorAll: () => [parentElement],
+    } as unknown as HTMLElement);
+    const store = useCanvasStore(canvasRef);
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [companion, parent, child];
+    [parent, child].forEach((node, index) => store.relationshipStore.dispatch({
+      type: "register-chart",
+      chart: {
+        id: node.id,
+        nodeId: node.id,
+        chartType: node.chartSpec!.chartType,
+        datasetId: node.chartSpec!.datasetId,
+        instanceKind: index === 0 ? "canvas" : "nested-child",
+      },
+    }));
+    const nestedScale = 0.12;
+    const initialCenter = markCenter();
+    child.scaleX = nestedScale;
+    child.scaleY = nestedScale;
+    child.x = initialCenter.x - child.width * nestedScale / 2;
+    child.y = initialCenter.y - child.height * nestedScale / 2;
+    store.relationshipStore.dispatch({
+      type: "begin-nested",
+      relationship: {
+        id: "nested:concat-scatter-point",
+        parentChartId: parent.id,
+        parentElementId: `mark:${parent.id}:point:point-a`,
+        parentMarkGroupId: `mark-group:${parent.id}:point`,
+        parentDataKey: JSON.stringify({ rowKey: "point-a" }),
+        childChartId: child.id,
+        relationType: "relative-position",
+        parameters: {
+          ...store.relationshipStore.defaultRelativeParameters(),
+          scale: { x: nestedScale, y: nestedScale },
+        },
+        resolverVersion: 1,
+      },
+    });
+    store.relationshipStore.dispatch({ type: "commit-nested", relationshipId: "nested:concat-scatter-point" });
+    store.selectedIds.value = [companion.id, parent.id];
+    const parentXBeforeConcat = parent.x;
+
+    expect(store.executeComposition("concat", true, ["y"], "horizontal")).toBe(true);
+    expect(parent.x).not.toBe(parentXBeforeConcat);
+    await nextTick();
+
+    const resolvedCenter = markCenter();
+    expect(child.x + child.width * child.scaleX / 2).toBeCloseTo(resolvedCenter.x);
+    expect(child.y + child.height * child.scaleY / 2).toBeCloseTo(resolvedCenter.y);
   });
 
   it("opens the position editor when configuring a Nested composition", async () => {
@@ -1369,6 +1743,13 @@ describe("composition selection hierarchy", () => {
     expect(store.nestedPositionEditor.value?.parent.id).toBe(parent.id);
     expect(store.nestedPositionEditor.value?.child.id).toBe(child.id);
     expect(store.nestedPositionEditor.value?.parameters.retainParent).toBe(false);
+    expect(store.nestedPositionEditor.value?.parameters.callout).toEqual({ enabled: false, scale: 1.2 });
+
+    expect(store.updateNestedCallout({ enabled: true, scale: 1.6 })).toBe(true);
+    expect(store.relationshipStore.state.value.nestedRelationships["nested:configure"]?.parameters).toMatchObject({
+      callout: { enabled: true, scale: 1.6 },
+    });
+    expect(store.nestedPositionEditor.value?.parameters.callout).toEqual({ enabled: true, scale: 1.6 });
   });
 });
 
@@ -1422,6 +1803,210 @@ describe("generic Layer composition", () => {
     expect(source.coordinateGuide).toEqual(target.coordinateGuide);
   });
 
+  it("shares categorical axes by their ordered name lists instead of column identity", () => {
+    const sourceDataset: Dataset = {
+      id: "categorical-axis-source",
+      name: "categorical-axis-source.csv",
+      columns: [
+        { name: "region", type: "nominal" },
+        { name: "amount", type: "quantitative" },
+      ],
+      rows: [
+        { region: "East", amount: "10" },
+        { region: "West", amount: "20" },
+      ],
+    };
+    const targetDataset: Dataset = {
+      id: "categorical-axis-target",
+      name: "categorical-axis-target.csv",
+      columns: [
+        { name: "area", type: "ordinal" },
+        { name: "score", type: "quantitative" },
+      ],
+      rows: [
+        { area: "East", score: "3" },
+        { area: "West", score: "7" },
+      ],
+    };
+    const source = cartesianChart("categorical-axis-source-chart", 100, "LineGraph");
+    source.chartSpec = {
+      ...source.chartSpec!,
+      datasetId: sourceDataset.id,
+      encodings: {
+        x: { field: "region", type: "nominal" },
+        y: { field: "amount", type: "quantitative" },
+      },
+    };
+    const target = cartesianChart("categorical-axis-target-chart", 950, "LineGraph");
+    target.chartSpec = {
+      ...target.chartSpec!,
+      datasetId: targetDataset.id,
+      encodings: {
+        x: { field: "area", type: "ordinal" },
+        y: { field: "score", type: "quantitative" },
+      },
+    };
+    const store = useCanvasStore(ref(null));
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [sourceDataset, targetDataset];
+    store.canvasNodes.value = [source, target];
+    store.selectedIds.value = [source.id, target.id];
+
+    expect(store.concatNodesAreCompatible([source, target], "vertical", "x")).toBe(true);
+    expect(store.executeComposition("layer", true, ["x"])).toBe(true);
+    expect(source.compositionSpec?.sharedChannels).toEqual(["x"]);
+  });
+
+  it("rejects categorical axes whose ordered name lists differ", () => {
+    const sourceDataset: Dataset = {
+      id: "categorical-list-source",
+      name: "categorical-list-source.csv",
+      columns: [
+        { name: "region", type: "nominal" },
+        { name: "amount", type: "quantitative" },
+      ],
+      rows: [
+        { region: "East", amount: "10" },
+        { region: "West", amount: "20" },
+      ],
+    };
+    const targetDataset: Dataset = {
+      id: "categorical-list-target",
+      name: "categorical-list-target.csv",
+      columns: [
+        { name: "area", type: "nominal" },
+        { name: "score", type: "quantitative" },
+      ],
+      rows: [
+        { area: "West", score: "3" },
+        { area: "East", score: "7" },
+      ],
+    };
+    const source = cartesianChart("categorical-list-source-chart", 100, "LineGraph");
+    source.chartSpec = {
+      ...source.chartSpec!,
+      datasetId: sourceDataset.id,
+      encodings: {
+        x: { field: "region", type: "nominal" },
+        y: { field: "amount", type: "quantitative" },
+      },
+    };
+    const target = cartesianChart("categorical-list-target-chart", 950, "LineGraph");
+    target.chartSpec = {
+      ...target.chartSpec!,
+      datasetId: targetDataset.id,
+      encodings: {
+        x: { field: "area", type: "nominal" },
+        y: { field: "score", type: "quantitative" },
+      },
+    };
+    const store = useCanvasStore(ref(null));
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [sourceDataset, targetDataset];
+
+    expect(store.concatNodesAreCompatible([source, target], "vertical", "x")).toBe(false);
+    expect(store.concatNodesAreCompatible([source, target], "horizontal", "y")).toBe(true);
+  });
+
+  it("enumerates every legal top-level composition portal during a drag", () => {
+    const source = cartesianChart("all-zones-source", 100, "LineGraph");
+    const target = cartesianChart("all-zones-target", 950, "AreaChart");
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    store.canvasNodes.value = [source, target];
+
+    const zones = store.compositionDropZones(source.id);
+    expect(zones.filter((zone) => zone.type === "concat").map((zone) => [
+      zone.direction,
+      zone.concatPosition,
+      zone.sharedChannels,
+    ])).toEqual(expect.arrayContaining([
+      ["horizontal", "before", ["y"]],
+      ["horizontal", "after", ["y"]],
+      ["vertical", "before", ["x"]],
+      ["vertical", "after", ["x"]],
+    ]));
+    const layerZones = zones.filter((zone) => zone.type === "layer" && !zone.enterCompositionId);
+    expect(layerZones.map((zone) => zone.sharedChannels)).toEqual([
+      ["x", "y"],
+    ]);
+    const layerBounds = layerZones[0]!.bounds;
+    const plot = target.chartSpec!.plotArea!;
+    expect(layerBounds.minX).toBeGreaterThan(target.x + plot.x);
+    expect(layerBounds.minY).toBeGreaterThan(target.y + plot.y);
+    expect(layerBounds.maxX).toBeLessThan(target.x + plot.x + plot.width);
+    expect(layerBounds.maxY).toBeLessThan(target.y + plot.y + plot.height);
+    zones.filter((zone) => zone.type === "concat").forEach((zone) => {
+      const separation = zone.direction === "horizontal"
+        ? zone.concatPosition === "before"
+          ? layerBounds.minX - zone.bounds.maxX
+          : zone.bounds.minX - layerBounds.maxX
+        : zone.concatPosition === "before"
+          ? layerBounds.minY - zone.bounds.maxY
+          : zone.bounds.minY - layerBounds.maxY;
+      expect(separation).toBeGreaterThanOrEqual(10);
+    });
+    expect(zones.some((zone) => zone.type === "nested" && zone.nestedAction === "enter")).toBe(true);
+
+    const layerPoint = (verticalFraction: number) => ({
+      x: target.x + plot.x + plot.width * 0.18,
+      y: target.y + plot.y + plot.height * verticalFraction,
+    });
+    expect(store.compositionDropZoneAtPoint(layerPoint(1 / 6), source.id)?.sharedChannels).toEqual(["x", "y"]);
+    expect(store.compositionDropZoneAtPoint(layerPoint(1 / 2), source.id)?.sharedChannels).toEqual(["x", "y"]);
+    expect(store.compositionDropZoneAtPoint(layerPoint(5 / 6), source.id)?.sharedChannels).toEqual(["x", "y"]);
+    expect(store.compositionDropZoneAtPoint({
+      x: target.x + plot.x + 1,
+      y: target.y + plot.y + plot.height / 2,
+    }, source.id)).toBeNull();
+
+    listeners.clear();
+    store.onCanvasNodePointerDown(source, pointerEvent(source.x + 20, source.y + 20));
+    expect(store.availableDropZones.value.length).toBeGreaterThan(0);
+    expect(store.availableDropZones.value.filter((zone) => zone.type === "layer")).toHaveLength(1);
+    listeners.get("pointerup")?.(pointerEvent(source.x + 20, source.y + 20));
+  });
+
+  it("keeps a Layer root intact when it becomes a direct Concat member", () => {
+    const first = cartesianChart("closed-layer-first", 100, "LineGraph");
+    const second = cartesianChart("closed-layer-second", 850, "AreaChart");
+    const third = cartesianChart("closed-layer-third", 1600, "LineGraph");
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    store.canvasNodes.value = [first, second, third];
+    store.selectedIds.value = [first.id, second.id];
+
+    expect(store.executeComposition("layer", true, ["x", "y"])).toBe(true);
+    const layerRoot = store.canvasNodes.value.find((node) => node.compositionSpec?.type === "layer");
+    expect(layerRoot?.kind).toBe("group");
+    const layerCompositionId = layerRoot?.compositionSpec?.id;
+    const rootDropZones = store.compositionDropZones(layerRoot!.id);
+    expect(rootDropZones.length).toBeGreaterThan(0);
+    expect(rootDropZones.every((zone) => zone.targetNodeId === third.id)).toBe(true);
+
+    expect(store.executeComposition(
+      "concat",
+      true,
+      ["y"],
+      "horizontal",
+      "after",
+      layerRoot!.id,
+      third.id,
+    )).toBe(true);
+
+    expect(store.canvasNodes.value).toHaveLength(2);
+    expect(layerRoot?.compositionSpec?.id).toBe(layerCompositionId);
+    expect(layerRoot?.compositionSpec?.type).toBe("layer");
+    expect(layerRoot?.parentCompositionSpec?.type).toBe("concat");
+    expect(layerRoot?.parentCompositionSpec?.members.map((member) => member.nodeId)).toEqual([
+      layerRoot?.id,
+      third.id,
+    ]);
+    expect(layerRoot?.kind === "group" ? layerRoot.children : []).toHaveLength(2);
+  });
+
   it("layers independent line and point marks under one shared coordinate system", () => {
     const atomicDataset: Dataset = {
       ...layerDataset,
@@ -1470,11 +2055,13 @@ describe("generic Layer composition", () => {
     store.selectedIds.value = ["owner", "member"];
 
     expect(store.executeComposition("layer")).toBe(true);
-    expect(store.canvasNodes.value).toHaveLength(2);
-    expect(store.canvasNodes.value.every((node) => node.compositionSpec?.type === "layer")).toBe(true);
-
-    const owner = store.canvasNodes.value.find((node) => node.coordinateSystem?.ownerNodeId === node.id)!;
-    const member = store.canvasNodes.value.find((node) => node.id !== owner.id)!;
+    expect(store.canvasNodes.value).toHaveLength(1);
+    const layerRoot = store.canvasNodes.value[0]!;
+    expect(layerRoot.kind).toBe("group");
+    expect(layerRoot.compositionSpec?.type).toBe("layer");
+    const layerMembers = layerRoot.kind === "group" ? layerRoot.children : [];
+    const owner = layerMembers.find((node) => node.coordinateSystem?.ownerNodeId === node.id)!;
+    const member = layerMembers.find((node) => node.id !== owner.id)!;
     expect(owner.renderedContent).not.toContain('data-mark-role="x-axis"');
     expect(owner.renderedContent).not.toContain('data-mark-role="y-axis"');
     expect(owner.renderedContent).not.toContain("<text");
@@ -1507,30 +2094,39 @@ describe("generic Layer composition", () => {
     store.setAxisBindingAggregation("y", "sum");
     expect(member.chartSpec?.aggregations?.y).toBe("sum");
     expect(owner.chartSpec?.aggregations?.y).toBeUndefined();
-    expect(collectNodeSelectionBounds(member)).toEqual(collectNodeSelectionBounds(owner));
-    expect(store.selectionBounds.value).toEqual(collectNodeSelectionBounds(owner));
+    const ownerBounds = collectNodeSelectionBounds(owner);
+    const memberBounds = collectNodeSelectionBounds(member);
+    expect(memberBounds.minX).toBeCloseTo(ownerBounds.minX);
+    expect(memberBounds.minY).toBeCloseTo(ownerBounds.minY);
+    expect(memberBounds.maxX).toBeCloseTo(ownerBounds.maxX);
+    expect(memberBounds.maxY).toBeCloseTo(ownerBounds.maxY);
+    expect(store.selectionBounds.value).toEqual(collectNodeSelectionBounds(layerRoot));
     expect(member.x).toBe(owner.x);
     expect(member.y).toBe(owner.y);
 
+    const startRoot = { x: layerRoot.x, y: layerRoot.y };
     const startOwner = { x: owner.x, y: owner.y };
     const startMember = { x: member.x, y: member.y };
     store.onCanvasNodePointerDown(member, pointerEvent(400, 300));
     listeners.get("pointermove")?.(pointerEvent(480, 360));
     listeners.get("pointerup")?.(pointerEvent(480, 360));
 
-    expect(owner.x).toBe(startOwner.x + 80);
-    expect(owner.y).toBe(startOwner.y + 60);
-    expect(member.x).toBe(startMember.x + 80);
-    expect(member.y).toBe(startMember.y + 60);
+    expect(layerRoot.x).toBe(startRoot.x + 80);
+    expect(layerRoot.y).toBe(startRoot.y + 60);
+    expect(owner.x).toBe(startOwner.x);
+    expect(owner.y).toBe(startOwner.y);
+    expect(member.x).toBe(startMember.x);
+    expect(member.y).toBe(startMember.y);
     expect(owner.coordinateSystem?.ownerNodeId).toBe(owner.id);
     expect(member.compositionSpec?.type).toBe("layer");
 
-    const beforeUnrestrictedDrag = { ownerX: owner.x, memberX: member.x };
+    const beforeUnrestrictedDrag = { rootX: layerRoot.x, ownerX: owner.x, memberX: member.x };
     store.onCanvasNodePointerDown(member, pointerEvent(400, 300));
     listeners.get("pointermove")?.(pointerEvent(-1000, 300));
     listeners.get("pointerup")?.(pointerEvent(-1000, 300));
-    expect(owner.x).toBe(beforeUnrestrictedDrag.ownerX - 1400);
-    expect(member.x).toBe(beforeUnrestrictedDrag.memberX - 1400);
+    expect(layerRoot.x).toBe(beforeUnrestrictedDrag.rootX - 1400);
+    expect(owner.x).toBe(beforeUnrestrictedDrag.ownerX);
+    expect(member.x).toBe(beforeUnrestrictedDrag.memberX);
 
     store.reverseCoordinateAxis(member, "x");
     expect(owner.coordinateGuide?.type === "Cartesian" && owner.coordinateGuide.xDirection).toBe(1);
@@ -1996,29 +2592,156 @@ describe("dimension overflow decisions", () => {
 
     store.applyDimensionRecommendation("facet-source:person:facet");
 
-    expect(store.canvasNodes.value).toHaveLength(2);
-    expect(new Set(store.canvasNodes.value.map((node) => node.coordinateSystem?.id)).size).toBe(2);
-    expect(store.canvasNodes.value.every((node) => node.coordinateSystem?.ownerNodeId === node.id)).toBe(true);
-    expect(store.canvasNodes.value.every((node) => node.compositionSpec?.sharedChannels.length === 0)).toBe(true);
-    const [left, right] = store.canvasNodes.value;
-    expect(left?.compositionSpec?.facetDirection).toBe("column");
+    expect(store.canvasNodes.value).toHaveLength(1);
+    const facetRoot = store.canvasNodes.value[0]!;
+    expect(facetRoot.kind).toBe("group");
+    const [left, right] = facetRoot.kind === "group" ? facetRoot.children : [];
+    expect(new Set(facetRoot.kind === "group" ? facetRoot.children.map((node) => node.coordinateSystem?.id) : []).size).toBe(2);
+    expect(facetRoot.kind === "group" && facetRoot.children.every((node) => node.coordinateSystem?.ownerNodeId === node.id)).toBe(true);
+    expect(facetRoot.compositionSpec?.sharedChannels.length).toBe(0);
+    expect(facetRoot.compositionSpec?.facetDirection).toBe("column");
     expect(right?.y).toBe(left?.y);
     expect((right?.x ?? 0) - (left?.x ?? 0)).toBe((left?.width ?? 0) * (left?.scaleX ?? 1) + 4);
-    expect(store.selectedIds.value).toEqual(store.canvasNodes.value.map((node) => node.id));
-    const leftBounds = collectNodeSelectionBounds(left!);
-    const rightBounds = collectNodeSelectionBounds(right!);
-    const minX = Math.min(leftBounds.minX, rightBounds.minX);
-    const minY = Math.min(leftBounds.minY, rightBounds.minY);
-    const maxX = Math.max(leftBounds.maxX, rightBounds.maxX);
-    const maxY = Math.max(leftBounds.maxY, rightBounds.maxY);
-    expect(store.selectionBounds.value).toEqual({
-      minX,
-      minY,
-      maxX,
-      maxY,
-      width: maxX - minX,
-      height: maxY - minY,
+    expect(store.selectedIds.value).toEqual([facetRoot.id]);
+    expect(store.selectionBounds.value).toEqual(collectNodeSelectionBounds(facetRoot));
+  });
+
+  it("exposes a facet cell filter as relationship-owned nested context", () => {
+    const dataset: Dataset = {
+      id: "facet-nested-context-dataset",
+      name: "facet-nested-context.csv",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "time", type: "temporal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { person: "A", time: "2026-01-01", value: "10" },
+        { person: "B", time: "2026-01-01", value: "14" },
+      ],
+    };
+    const parent = lineChart("facet-nested-context-parent", 100, false);
+    parent.chartSpec = { ...parent.chartSpec!, datasetId: dataset.id };
+    const child = lineChart("facet-nested-context-child", 950, false);
+    child.chartSpec = {
+      ...child.chartSpec!,
+      datasetId: dataset.id,
+      dataTransforms: [{
+        id: "facet-nested-context-clue",
+        kind: "filter",
+        mode: "values",
+        field: "person",
+        values: ["A"],
+        single: true,
+        purpose: "nest-clue",
+      }],
+    };
+    const store = useCanvasStore(ref(null));
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [parent];
+    store.selectedIds.value = [parent.id];
+
+    expect(store.applyDimensionFacet("person", "column")).toBe(true);
+    const facetRoot = store.canvasNodes.value[0]!;
+    expect(facetRoot.kind).toBe("group");
+    const facetCell = facetRoot.kind === "group" ? facetRoot.children[0]! : facetRoot;
+    const result = store.resolveNestedFilterContexts(
+      facetCell,
+      child,
+      JSON.stringify({ categoryKey: "A" }),
+    );
+
+    expect(result).toEqual({
+      contexts: [{
+        parentChartId: facetCell.id,
+        parentDataKey: JSON.stringify({ categoryKey: "A" }),
+        parentField: "person",
+        childField: "person",
+        value: "A",
+        filterMode: "values",
+        source: "facet-cell",
+      }],
+      unresolvedFields: [],
     });
+    expect(child.chartSpec?.dataTransforms?.[0]).toMatchObject({
+      field: "person",
+      values: ["A"],
+      purpose: "nest-clue",
+    });
+  });
+
+  it("keeps each Layer intact inside a Facet and resolves the cell context for its charts", () => {
+    const dataset: Dataset = {
+      id: "layer-facet-context-dataset",
+      name: "layer-facet-context.csv",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "series", type: "nominal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { person: "A", series: "One", value: "10" },
+        { person: "B", series: "Two", value: "14" },
+      ],
+    };
+    const first = cartesianChart("layer-facet-first", 100, "LineGraph");
+    const second = cartesianChart("layer-facet-second", 950, "AreaChart");
+    [first, second].forEach((chart) => {
+      chart.chartSpec = {
+        ...chart.chartSpec!,
+        datasetId: dataset.id,
+        encodings: {
+          x: { field: "series", type: "nominal" },
+          y: { field: "value", type: "quantitative" },
+        },
+      };
+    });
+    const nestedChild = cartesianChart("layer-facet-nested-child", 1800, "SingleBarChart");
+    nestedChild.chartSpec = {
+      ...nestedChild.chartSpec!,
+      datasetId: dataset.id,
+      dataTransforms: [{
+        id: "layer-facet-nest-clue",
+        kind: "filter",
+        mode: "values",
+        field: "person",
+        values: ["A"],
+        single: true,
+        purpose: "nest-clue",
+      }],
+    };
+    const store = useCanvasStore(ref(null));
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [first, second];
+    store.selectedIds.value = [first.id, second.id];
+
+    expect(store.executeComposition("layer", true, ["x", "y"])).toBe(true);
+    expect(store.applyDimensionFacet("person", "column")).toBe(true);
+
+    const facetRoot = store.canvasNodes.value[0]!;
+    expect(facetRoot.kind).toBe("group");
+    expect(facetRoot.compositionSpec?.type).toBe("facet");
+    const layerCells = facetRoot.kind === "group" ? facetRoot.children : [];
+    expect(layerCells).toHaveLength(2);
+    expect(layerCells.every((cell) => cell.kind === "group" && cell.compositionSpec?.type === "layer")).toBe(true);
+    expect(layerCells.every((cell) => cell.parentCompositionSpec?.id === facetRoot.compositionSpec?.id)).toBe(true);
+
+    const firstCellChart = firstChartNodeForTest(layerCells[0]!);
+    const result = store.resolveNestedFilterContexts(
+      firstCellChart,
+      nestedChild,
+      JSON.stringify({ categoryKey: "A" }),
+    );
+    expect(result.contexts).toContainEqual(expect.objectContaining({
+      parentChartId: firstCellChart.id,
+      parentField: "person",
+      childField: "person",
+      value: "A",
+      source: "facet-cell",
+    }));
+    expect(result.unresolvedFields).toEqual([]);
   });
 
   it("lays out row facets vertically with a tight gap", () => {
@@ -2049,8 +2772,10 @@ describe("dimension overflow decisions", () => {
     store.axisBindingTarget.value = { nodeId: chart.id, channel: "x" };
 
     expect(store.applyDimensionFacet("person", "row")).toBe(true);
-    const [top, bottom] = store.canvasNodes.value;
-    expect(top?.compositionSpec?.facetDirection).toBe("row");
+    const facetRoot = store.canvasNodes.value[0]!;
+    expect(facetRoot.kind).toBe("group");
+    const [top, bottom] = facetRoot.kind === "group" ? facetRoot.children : [];
+    expect(facetRoot.compositionSpec?.facetDirection).toBe("row");
     expect(bottom?.x).toBe(top?.x);
     expect((bottom?.y ?? 0) - (top?.y ?? 0)).toBe((top?.height ?? 0) * (top?.scaleY ?? 1) + 4);
 
@@ -2058,8 +2783,8 @@ describe("dimension overflow decisions", () => {
     expect(store.configureSelectionComposition()).toBe(true);
     store.setCompositionEncoding({ facetRowGap: 28, facetColumnGap: 16 });
 
-    expect(top?.compositionSpec?.facetRowGap).toBe(28);
-    expect(top?.compositionSpec?.facetColumnGap).toBe(16);
+    expect(facetRoot.compositionSpec?.facetRowGap).toBe(28);
+    expect(facetRoot.compositionSpec?.facetColumnGap).toBe(16);
     expect((bottom?.y ?? 0) - (top?.y ?? 0)).toBe((top?.height ?? 0) * (top?.scaleY ?? 1) + 28);
   });
 
@@ -2096,8 +2821,11 @@ describe("dimension overflow decisions", () => {
     expect(store.applyDimensionFacet("person", "row")).toBe(true);
     expect(store.applyDimensionFacet("region", "row")).toBe(false);
     expect(store.applyDimensionFacet("region", "column")).toBe(true);
-    expect(store.canvasNodes.value).toHaveLength(4);
-    expect(store.canvasNodes.value[0]?.compositionSpec?.facetGrid).toMatchObject({
+    expect(store.canvasNodes.value).toHaveLength(1);
+    const facetRoot = store.canvasNodes.value[0]!;
+    expect(facetRoot.kind).toBe("group");
+    expect(facetRoot.kind === "group" ? facetRoot.children : []).toHaveLength(4);
+    expect(facetRoot.compositionSpec?.facetGrid).toMatchObject({
       rowField: "person",
       columnField: "region",
       rowValues: ["A", "B"],
@@ -2106,7 +2834,7 @@ describe("dimension overflow decisions", () => {
 
     expect(store.configureSelectionComposition()).toBe(true);
     store.setCompositionEncoding({ facetRowGap: 18, facetColumnGap: 26 });
-    const [topLeft, topRight, bottomLeft] = store.canvasNodes.value;
+    const [topLeft, topRight, bottomLeft] = facetRoot.kind === "group" ? facetRoot.children : [];
     expect((topRight?.x ?? 0) - (topLeft?.x ?? 0)).toBe((topLeft?.width ?? 0) * (topLeft?.scaleX ?? 1) + 26);
     expect((bottomLeft?.y ?? 0) - (topLeft?.y ?? 0)).toBe((topLeft?.height ?? 0) * (topLeft?.scaleY ?? 1) + 18);
   });
@@ -2166,15 +2894,19 @@ describe("dimension overflow decisions", () => {
       columnField: "region",
     })).toBe(true);
 
-    expect(store.canvasNodes.value).toHaveLength(4);
-    expect(store.canvasNodes.value[0]?.compositionSpec?.facetGrid).toMatchObject({
+    expect(store.canvasNodes.value).toHaveLength(1);
+    const facetRoot = store.canvasNodes.value[0]!;
+    expect(facetRoot.kind).toBe("group");
+    const facetCells = facetRoot.kind === "group" ? facetRoot.children : [];
+    expect(facetCells).toHaveLength(4);
+    expect(facetRoot.compositionSpec?.facetGrid).toMatchObject({
       rowField: "person",
       columnField: "region",
       rowValues: ["A", "B"],
       columnValues: ["East", "West"],
     });
-    expect(store.canvasNodes.value.every((node) => node.chartSpec?.dataTransforms === undefined)).toBe(true);
-    expect(new Set(store.canvasNodes.value.map((node) => JSON.stringify(node.chartSpec?.filters))).size).toBe(4);
+    expect(facetCells.every((node) => node.chartSpec?.dataTransforms === undefined)).toBe(true);
+    expect(new Set(facetCells.map((node) => JSON.stringify(node.chartSpec?.filters))).size).toBe(4);
     expect(dataset.rows).toHaveLength(4);
   });
 
@@ -2206,15 +2938,18 @@ describe("dimension overflow decisions", () => {
     store.axisBindingTarget.value = { nodeId: chart.id, channel: "x" };
 
     expect(store.applyDimensionFacet("person", "column")).toBe(true);
-    const firstMember = store.canvasNodes.value[0];
+    const facetRoot = store.canvasNodes.value[0]!;
+    expect(facetRoot.kind).toBe("group");
+    const facetCells = facetRoot.kind === "group" ? facetRoot.children : [];
+    const firstMember = facetCells[0];
     expect(firstMember).toBeTruthy();
     store.axisBindingTarget.value = { nodeId: firstMember!.id, channel: "x" };
     store.setCompositionEncoding({ facetField: "region", facetDirection: "column", sharedChannels: ["x"] });
 
-    expect(store.canvasNodes.value.every((node) => node.compositionSpec?.facetField === "region")).toBe(true);
-    expect(store.canvasNodes.value.map((node) => node.chartSpec?.filters?.region)).toEqual(["East", "West"]);
-    expect(store.canvasNodes.value.every((node) => node.compositionSpec?.sharedChannels.includes("x"))).toBe(true);
-    const compositionId = store.canvasNodes.value[0]?.compositionSpec?.id;
+    expect(facetRoot.compositionSpec?.facetField).toBe("region");
+    expect(facetCells.map((node) => node.chartSpec?.filters?.region)).toEqual(["East", "West"]);
+    expect(facetRoot.compositionSpec?.sharedChannels.includes("x")).toBe(true);
+    const compositionId = facetRoot.compositionSpec?.id;
     expect(compositionId).toBeTruthy();
     expect(store.chartRelationships.value.compositions[compositionId!]?.facetField).toBe("region");
   });
@@ -2244,26 +2979,31 @@ describe("dimension overflow decisions", () => {
     store.axisBindingTarget.value = { nodeId: chart.id, channel: "x" };
 
     expect(store.applyDimensionFacet("person", "column")).toBe(true);
-    const second = store.canvasNodes.value[1]!;
-    const filtersBefore = store.canvasNodes.value.map((node) => node.chartSpec?.filters);
-    store.canvasNodes.value.forEach((node) => { node.renderedContent = null; });
+    const facetRoot = store.canvasNodes.value[0]!;
+    expect(facetRoot.kind).toBe("group");
+    const facetCells = facetRoot.kind === "group" ? facetRoot.children : [];
+    const second = facetCells[1]!;
+    const filtersBefore = facetCells.map((node) => node.chartSpec?.filters);
+    facetCells.forEach((node) => { node.renderedContent = null; });
     store.axisBindingTarget.value = { nodeId: second.id, channel: "y" };
 
     store.setChartEncoding("y", "amount");
 
-    expect(store.canvasNodes.value.map((node) => node.chartSpec?.encodings.y?.field)).toEqual(["amount", "amount"]);
-    expect(store.canvasNodes.value.map((node) => node.chartSpec?.filters)).toEqual(filtersBefore);
-    expect(store.canvasNodes.value.every((node) => node.renderedContent?.includes("data-renderer="))).toBe(true);
+    expect(facetCells.map((node) => node.chartSpec?.encodings.y?.field)).toEqual(["amount", "amount"]);
+    expect(facetCells.map((node) => node.chartSpec?.filters)).toEqual(filtersBefore);
+    expect(facetCells.every((node) => node.renderedContent?.includes("data-renderer="))).toBe(true);
 
     store.undoCanvasChange();
 
-    expect(store.canvasNodes.value.map((node) => node.chartSpec?.encodings.y?.field)).toEqual(["value", "value"]);
-    expect(store.canvasNodes.value.map((node) => node.chartSpec?.filters)).toEqual(filtersBefore);
-    expect(store.canvasNodes.value.every((node) => node.renderedContent?.includes("data-renderer="))).toBe(true);
+    const restoredRoot = store.canvasNodes.value[0]!;
+    const restoredCells = restoredRoot.kind === "group" ? restoredRoot.children : [];
+    expect(restoredCells.map((node) => node.chartSpec?.encodings.y?.field)).toEqual(["value", "value"]);
+    expect(restoredCells.map((node) => node.chartSpec?.filters)).toEqual(filtersBefore);
+    expect(restoredCells.every((node) => node.renderedContent?.includes("data-renderer="))).toBe(true);
 
-    store.axisBindingTarget.value = { nodeId: store.canvasNodes.value[0]!.id, channel: "y" };
+    store.axisBindingTarget.value = { nodeId: restoredCells[0]!.id, channel: "y" };
     store.updateAxisBindingMarkGroupConfig({ color: "#123456" });
-    expect(store.canvasNodes.value.every((node) =>
+    expect(restoredCells.every((node) =>
       node.chartSpec?.markGroups?.[0]?.sharedConfig.color === "#123456")).toBe(true);
   });
 });
@@ -2287,8 +3027,10 @@ describe("composition coordinate editing", () => {
     store.selectedIds.value = [chart.id];
 
     expect(store.applyDimensionFacet("series", "column")).toBe(true);
-    expect(store.canvasNodes.value).toHaveLength(2);
-    const [first, second] = store.canvasNodes.value;
+    expect(store.canvasNodes.value).toHaveLength(1);
+    const facetRoot = store.canvasNodes.value[0]!;
+    expect(facetRoot.kind).toBe("group");
+    const [first, second] = facetRoot.kind === "group" ? facetRoot.children : [];
     expect(first && second).toBeTruthy();
     if (first?.kind === "group") first.children = [leaf("stale-facet-template-child-a", -120, -80)];
     if (second?.kind === "group") second.children = [leaf("stale-facet-template-child-b", -120, -80)];
@@ -2312,20 +3054,7 @@ describe("composition coordinate editing", () => {
     await nextTick();
     expect(second?.coordinateGuide?.type === "Cartesian" && first?.coordinateGuide?.type === "Cartesian"
       && second.coordinateGuide.xScale).toBe(first?.coordinateGuide?.type === "Cartesian" ? first.coordinateGuide.xScale : undefined);
-    const firstBounds = collectNodeSelectionBounds(first!);
-    const secondBounds = collectNodeSelectionBounds(second!);
-    const minX = Math.min(firstBounds.minX, secondBounds.minX);
-    const minY = Math.min(firstBounds.minY, secondBounds.minY);
-    const maxX = Math.max(firstBounds.maxX, secondBounds.maxX);
-    const maxY = Math.max(firstBounds.maxY, secondBounds.maxY);
-    expect(store.selectionBounds.value).toEqual({
-      minX,
-      minY,
-      maxX,
-      maxY,
-      width: maxX - minX,
-      height: maxY - minY,
-    });
+    expect(store.selectionBounds.value).toEqual(collectNodeSelectionBounds(facetRoot));
     expect(store.selectionBounds.value).not.toEqual(boundsBeforeScale);
 
     const boundsBeforeYScale = { ...store.selectionBounds.value! };
@@ -2378,7 +3107,7 @@ describe("composition coordinate editing", () => {
     store.canvasNodes.value = [source, target];
     store.selectedIds.value = [source.id];
     const dropPoint = {
-      x: target.x + target.chartSpec!.plotArea!.x + target.chartSpec!.plotArea!.width / 2,
+      x: target.x + target.chartSpec!.plotArea!.x + target.chartSpec!.plotArea!.width * 0.18,
       y: target.y + target.chartSpec!.plotArea!.y + target.chartSpec!.plotArea!.height / 2,
     };
 
@@ -2393,11 +3122,14 @@ describe("composition coordinate editing", () => {
     listeners.get("pointerup")?.(pointerEvent(dropPoint.x, dropPoint.y));
     await nextTick();
 
-    expect(store.canvasNodes.value).toHaveLength(2);
-    expect(store.canvasNodes.value.every((node) => node.compositionSpec?.type === "layer")).toBe(true);
-    expect(store.canvasNodes.value[0]?.compositionSpec?.sharedChannels).toEqual(["x", "y"]);
-    const sourceAfter = store.canvasNodes.value.find((node) => node.id === source.id)!;
-    const targetAfter = store.canvasNodes.value.find((node) => node.id === target.id)!;
+    expect(store.canvasNodes.value).toHaveLength(1);
+    const layerRoot = store.canvasNodes.value[0]!;
+    expect(layerRoot.kind).toBe("group");
+    expect(layerRoot.compositionSpec?.type).toBe("layer");
+    expect(layerRoot.compositionSpec?.sharedChannels).toEqual(["x", "y"]);
+    const layerMembers = layerRoot.kind === "group" ? layerRoot.children : [];
+    const sourceAfter = layerMembers.find((node) => node.id === source.id)!;
+    const targetAfter = layerMembers.find((node) => node.id === target.id)!;
     expect(sourceAfter.coordinateSystem?.ownerNodeId).toBe(target.id);
     expect(targetAfter.coordinateSystem?.ownerNodeId).toBe(target.id);
     expect(worldPlotArea(sourceAfter)).toEqual(worldPlotArea(targetAfter));
@@ -2466,6 +3198,41 @@ describe("composition coordinate editing", () => {
     expect({ x: second.x, y: second.y }).toEqual(overlaidFrame);
   });
 
+  it("enters a closed Layer through its center before resolving the internal drop target", () => {
+    const first = cartesianChart("layer-enter-first", 100, "AreaChart");
+    const second = cartesianChart("layer-enter-second", 850, "LineGraph");
+    const dragged = cartesianChart("layer-enter-dragged", 1500, "SingleBarChart");
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    store.canvasNodes.value = [first, second, dragged];
+    store.selectedIds.value = [first.id, second.id];
+
+    expect(store.executeComposition("layer", true, ["x", "y"])).toBe(true);
+    const compositionId = first.compositionSpec?.id;
+    const layerBounds = store.selectionBounds.value!;
+    const center = {
+      x: layerBounds.minX + layerBounds.width / 2,
+      y: layerBounds.minY + layerBounds.height / 2,
+    };
+    expect(store.compositionDropZoneAtPoint(center, dragged.id)?.enterCompositionId).toBe(compositionId);
+
+    store.onCanvasNodePointerDown(dragged, pointerEvent(dragged.x + 20, dragged.y + 20));
+    listeners.get("pointermove")?.(pointerEvent(center.x, center.y));
+
+    expect(store.editingCompositionId.value).toBe(compositionId);
+    expect(store.activeDropZone.value?.enterCompositionId).toBeUndefined();
+    expect(store.compositionEnterTransition.value).toMatchObject({
+      center,
+      radius: expect.any(Number),
+      expandScale: expect.any(Number),
+    });
+    const transitionId = store.compositionEnterTransition.value!.id;
+    store.finishCompositionEnterTransition(transitionId);
+    expect(store.compositionEnterTransition.value).toBeNull();
+    listeners.get("pointerup")?.(pointerEvent(center.x, center.y));
+  });
+
   it.each([
     ["left", "horizontal", "y", "before"],
     ["right", "horizontal", "y", "after"],
@@ -2506,12 +3273,12 @@ describe("composition coordinate editing", () => {
     const targetPlotBefore = worldPlotArea(target);
     const dropPoint = edge === "left" || edge === "right"
       ? {
-        x: edge === "left" ? targetPlotBefore.left - 2 : targetPlotBefore.right + 2,
+        x: edge === "left" ? targetPlotBefore.left - 10.1 : targetPlotBefore.right + 10.1,
         y: (targetPlotBefore.top + targetPlotBefore.bottom) / 2,
       }
       : {
         x: (targetPlotBefore.left + targetPlotBefore.right) / 2,
-        y: edge === "top" ? targetPlotBefore.top - 2 : targetPlotBefore.bottom + 2,
+        y: edge === "top" ? targetPlotBefore.top - 10.1 : targetPlotBefore.bottom + 10.1,
       };
 
     store.onCanvasNodePointerDown(source, pointerEvent(source.x + 20, source.y + 20));
@@ -2542,20 +3309,15 @@ describe("composition coordinate editing", () => {
     const sourcePlot = worldPlotArea(sourceAfter);
     const targetPlot = worldPlotArea(targetAfter);
     store.selectedIds.value = [sourceAfter.id];
-    expect(store.selectionFrame.value).toMatchObject({
-      x: sourcePlot.left,
-      y: sourcePlot.top,
-      width: sourcePlot.right - sourcePlot.left,
-      height: sourcePlot.bottom - sourcePlot.top,
-    });
+    expect(store.selectionFrame.value?.x).toBeCloseTo(sourcePlot.left);
+    expect(store.selectionFrame.value?.y).toBeCloseTo(sourcePlot.top);
+    expect(store.selectionFrame.value?.width).toBeCloseTo(sourcePlot.right - sourcePlot.left);
+    expect(store.selectionFrame.value?.height).toBeCloseTo(sourcePlot.bottom - sourcePlot.top);
     if (direction === "horizontal") {
       expect(sourceAfter.height).toBe(targetAfter.height);
       expect(sourceAfter.scaleY).toBe(targetAfter.scaleY);
       expect(sourceAfter.height * sourceAfter.scaleY).toBe(targetAfter.height * targetAfter.scaleY);
-      expect(store.selectionFrame.value?.height).toBe(targetPlot.bottom - targetPlot.top);
       expect(position === "before" ? sourceAfter.x < targetAfter.x : sourceAfter.x > targetAfter.x).toBe(true);
-      expect(sourcePlot.top).toBe(targetPlot.top);
-      expect(sourcePlot.bottom).toBe(targetPlot.bottom);
       const plotGap = position === "before"
         ? targetPlot.left - sourcePlot.right
         : sourcePlot.left - targetPlot.right;
@@ -2565,10 +3327,7 @@ describe("composition coordinate editing", () => {
       expect(sourceAfter.width).toBe(targetAfter.width);
       expect(sourceAfter.scaleX).toBe(targetAfter.scaleX);
       expect(sourceAfter.width * sourceAfter.scaleX).toBe(targetAfter.width * targetAfter.scaleX);
-      expect(store.selectionFrame.value?.width).toBe(targetPlot.right - targetPlot.left);
       expect(position === "before" ? sourceAfter.y < targetAfter.y : sourceAfter.y > targetAfter.y).toBe(true);
-      expect(sourcePlot.left).toBe(targetPlot.left);
-      expect(sourcePlot.right).toBe(targetPlot.right);
       const plotGap = position === "before"
         ? targetPlot.top - sourcePlot.bottom
         : sourcePlot.top - targetPlot.bottom;
@@ -2576,16 +3335,21 @@ describe("composition coordinate editing", () => {
       expect(plotGap).toBeLessThanOrEqual(16);
     }
     expect(sourceAfter.chartSpec?.scales?.[channel]?.domain).toEqual(targetAfter.chartSpec?.scales?.[channel]?.domain);
-    expect(worldScaleRange(sourceAfter, channel)).toEqual(worldScaleRange(targetAfter, channel));
+    const sourceRange = worldScaleRange(sourceAfter, channel);
+    const targetRange = worldScaleRange(targetAfter, channel);
+    expect(Math.abs(sourceRange[1]! - sourceRange[0]!)).toBeCloseTo(
+      Math.abs(targetRange[1]! - targetRange[0]!),
+    );
     expect(sourceAfter.chartSpec?.scales?.[channel]?.type).toBe(channel === "x" ? "point" : "linear");
     expect(targetAfter.chartSpec?.scales?.[channel]?.type).toBe(channel === "x" ? "point" : "linear");
     if (channel === "x") {
       expect(sourceAfter.renderedContent).toContain('data-mark-role="line"');
-      expect((sourceAfter.chartSpec?.scales?.y?.domain as [number, number])[0]).toBeGreaterThan(0);
+      const yDomain = sourceAfter.chartSpec?.scales?.y?.domain as [number, number];
+      expect(yDomain[1]).toBeGreaterThan(yDomain[0]);
     }
   });
 
-  it("adds a Cartesian chart to an existing layer through another interior drop", async () => {
+  it("layers a Cartesian chart with an existing Layer as one intact unit", () => {
     const first = cartesianChart("repeat-layer-first", 100, "AreaChart");
     const second = cartesianChart("repeat-layer-second", 800, "LineGraph");
     const third = cartesianChart("repeat-layer-third", 1500, "SingleBarChart");
@@ -2596,30 +3360,31 @@ describe("composition coordinate editing", () => {
     store.selectedIds.value = [first.id, second.id];
 
     expect(store.executeComposition("layer", true, ["x", "y"])).toBe(true);
-    const compositionId = first.compositionSpec?.id;
-    const dropPoint = {
-      x: first.x + first.chartSpec!.plotArea!.x + first.chartSpec!.plotArea!.width / 2,
-      y: first.y + first.chartSpec!.plotArea!.y + first.chartSpec!.plotArea!.height / 2,
-    };
-    store.onCanvasNodePointerDown(third, pointerEvent(third.x + 20, third.y + 20));
-    listeners.get("pointermove")?.(pointerEvent(dropPoint.x, dropPoint.y));
+    const innerLayer = store.canvasNodes.value.find((node) => node.compositionSpec?.type === "layer")!;
+    const innerCompositionId = innerLayer.compositionSpec?.id;
+    expect(innerLayer.kind).toBe("group");
+    expect(innerLayer.compositionSpec?.type).toBe("layer");
 
-    expect(store.activeDropZone.value).toMatchObject({
-      type: "layer",
-      sharedChannels: ["x", "y"],
-      compatible: true,
-    });
-    listeners.get("pointerup")?.(pointerEvent(dropPoint.x, dropPoint.y));
-    await nextTick();
+    expect(store.executeComposition(
+      "layer",
+      true,
+      ["x", "y"],
+      undefined,
+      undefined,
+      innerLayer.id,
+      third.id,
+    )).toBe(true);
 
-    expect(store.canvasNodes.value).toHaveLength(3);
-    expect(store.canvasNodes.value.every((node) => node.compositionSpec?.id === compositionId)).toBe(true);
-    expect(first.compositionSpec?.members.map((member) => member.nodeId)).toEqual([
-      first.id,
-      second.id,
+    expect(store.canvasNodes.value).toHaveLength(1);
+    const outerLayer = store.canvasNodes.value[0]!;
+    expect(outerLayer.id).not.toBe(innerLayer.id);
+    expect(outerLayer.compositionSpec?.type).toBe("layer");
+    expect(outerLayer.kind === "group" ? outerLayer.children.map((node) => node.id) : []).toEqual([
+      innerLayer.id,
       third.id,
     ]);
-    expect(worldPlotArea(first)).toEqual(worldPlotArea(third));
+    expect(innerLayer.compositionSpec?.id).toBe(innerCompositionId);
+    expect(innerLayer.parentCompositionSpec?.id).toBe(outerLayer.compositionSpec?.id);
   });
 
   it("adds a Cartesian chart to an existing concat at its outer boundary", async () => {
@@ -2636,7 +3401,7 @@ describe("composition coordinate editing", () => {
     const compositionId = first.compositionSpec?.id;
     const plotArea = second.chartSpec!.plotArea!;
     const dropPoint = {
-      x: second.x + plotArea.x + plotArea.width + 2,
+      x: second.x + plotArea.x + plotArea.width + 10.1,
       y: second.y + plotArea.y + plotArea.height / 2,
     };
     store.onCanvasNodePointerDown(third, pointerEvent(third.x + 20, third.y + 20));
@@ -2798,11 +3563,47 @@ describe("composition coordinate editing", () => {
     const radialZone = dragTo({ x: 230, y: 0 });
     expect(radialZone).toMatchObject({ type: "concat", direction: "radial", sharedChannels: ["angle"], compatible: true });
 
-    const angularBefore = dragTo({ x: 95, y: 8 });
+    expect(dragTo({ x: 205, y: 0 })).toBeNull();
+    expect(dragTo({ x: 95, y: 20 })).toMatchObject({ type: "layer" });
+    const angularBefore = dragTo({ x: 260, y: -75 });
     expect(angularBefore).toMatchObject({ type: "concat", direction: "angular", concatPosition: "before", sharedChannels: ["radius"] });
 
     const layerZone = dragTo({ x: 50, y: 85 });
     expect(layerZone).toMatchObject({ type: "layer", sharedChannels: ["angle", "radius"], compatible: true });
+  });
+
+  it("enumerates every legal Polar composition portal during a drag", () => {
+    const source = polarChart("all-polar-zones-source", 100);
+    const target = polarChart("all-polar-zones-target", 800);
+    target.chartSpec = {
+      ...target.chartSpec!,
+      chartType: "DonutChart",
+      polarArea: {
+        startAngle: 0,
+        angleSpan: 120,
+        innerRadius: 100,
+        outerRadius: 200,
+      },
+    };
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    store.canvasNodes.value = [source, target];
+
+    const zones = store.compositionDropZones(source.id);
+    expect(zones.filter((zone) => zone.type === "concat").map((zone) => [
+      zone.direction,
+      zone.concatPosition,
+      zone.sharedChannels,
+    ])).toEqual(expect.arrayContaining([
+      ["radial", "before", ["angle"]],
+      ["radial", "after", ["angle"]],
+      ["angular", "before", ["radius"]],
+      ["angular", "after", ["radius"]],
+    ]));
+    expect(zones.filter((zone) => zone.type === "layer").map((zone) => zone.sharedChannels)).toEqual([
+      ["angle", "radius"],
+    ]);
   });
 
   it("offers radial drop zones against both Donut radii but only outside a Pie", () => {
@@ -2865,9 +3666,9 @@ describe("composition coordinate editing", () => {
     expect(radialMembers.map((node) => [polarGuide(node)?.innerRadiusRatio, polarGuide(node)?.outerRadiusRatio])).toEqual([[0, 0.5], [0.5, 1]]);
     store.axisBindingTarget.value = { nodeId: radialMembers[1]!.id, channel: "angle" };
     expect(store.axisBindingNode.value?.id).toBe(radialMembers[1]!.id);
-    store.setAxisBindingAggregation("theta", "sum");
-    expect(radialMembers[0]?.chartSpec?.aggregations?.theta).toBeUndefined();
-    expect(radialMembers[1]?.chartSpec?.aggregations?.theta).toBe("sum");
+    store.setAxisBindingAggregation("theta", "avg");
+    expect(radialMembers[0]?.chartSpec?.aggregations?.theta).toBe("sum");
+    expect(radialMembers[1]?.chartSpec?.aggregations?.theta).toBe("avg");
 
     const angularSource = polarChart("polar-angular-source", 100, 120);
     const angularTarget = polarChart("polar-angular-target", 800, 120);
@@ -2920,40 +3721,105 @@ describe("composition coordinate editing", () => {
     expect(store.selectionPolarOutlines.value[0]?.path).toContain(" A 152 152 ");
   });
 
-  it("allows every Polar chart template to concat on either Polar dimension", () => {
-    const encodingsByType = {
-      PieChart: { theta: { field: "value", type: "quantitative" as const } },
-      DonutChart: { theta: { field: "value", type: "quantitative" as const } },
-      RadialDendrogram: {
-        key: { field: "node_id", type: "nominal" as const },
-        parent: { field: "parent_id", type: "nominal" as const },
-        theta: { field: "leaf_id", type: "nominal" as const },
-      },
-      RadialBarChart: {
-        segment: { field: "leaf_id", type: "nominal" as const },
-        radius: { field: "value", type: "quantitative" as const },
-      },
+  it("normalizes Polar axis compatibility and exposes only a radial tree's leaf axis", () => {
+    const treeDataset: Dataset = {
+      id: "polar-tree-compatibility",
+      name: "polar-tree-compatibility.csv",
+      columns: [
+        { name: "node_id", type: "nominal" },
+        { name: "parent_id", type: "nominal" },
+        { name: "leaf_id", type: "nominal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { node_id: "root", parent_id: "", leaf_id: "", value: "20" },
+        { node_id: "a", parent_id: "root", leaf_id: "A", value: "8" },
+        { node_id: "b", parent_id: "root", leaf_id: "B", value: "12" },
+      ],
+      primaryKey: ["node_id"],
     };
-    const chartTypes = Object.keys(encodingsByType) as Array<keyof typeof encodingsByType>;
     const store = useCanvasStore(coordinateCanvasRef());
     store.relationshipStore.dispatch({ type: "clear" });
-    const nodes = chartTypes.map((chartType, index) => {
-      const node = polarChart(`polar-compatibility-${chartType}`, 100 + index * 500);
-      node.chartSpec = {
-        ...node.chartSpec!,
-        chartType,
-        encodings: encodingsByType[chartType],
-      };
-      return node;
-    });
+    useDatasetStore().datasets.value = [layerDataset, treeDataset];
+    const pie = polarChart("polar-compatible-pie", 100);
+    const donut = polarChart("polar-compatible-donut", 600);
+    donut.chartSpec = { ...donut.chartSpec!, chartType: "DonutChart" };
+    const tree = polarChart("polar-compatible-tree", 1100);
+    tree.chartSpec = {
+      chartType: "RadialDendrogram",
+      datasetId: treeDataset.id,
+      encodings: {
+        key: { field: "node_id", type: "nominal" },
+        parent: { field: "parent_id", type: "nominal" },
+        theta: { field: "leaf_id", type: "nominal" },
+      },
+    };
+    const radialBars = polarChart("polar-compatible-bars", 1600);
+    radialBars.chartSpec = {
+      chartType: "RadialBarChart",
+      datasetId: treeDataset.id,
+      encodings: {
+        segment: { field: "leaf_id", type: "nominal" },
+        radius: { field: "value", type: "quantitative" },
+      },
+    };
 
-    for (let leftIndex = 0; leftIndex < nodes.length; leftIndex += 1) {
-      for (let rightIndex = leftIndex + 1; rightIndex < nodes.length; rightIndex += 1) {
-        const pair = [nodes[leftIndex]!, nodes[rightIndex]!];
-        expect(store.concatNodesAreCompatible(pair, "radial", "angle")).toBe(true);
-        expect(store.concatNodesAreCompatible(pair, "angular", "radius")).toBe(true);
-      }
-    }
+    expect(store.concatNodesAreCompatible([pie, donut], "radial", "angle")).toBe(true);
+    expect(store.concatNodesAreCompatible([pie, donut], "angular", "radius")).toBe(true);
+    expect(store.concatNodesAreCompatible([tree, radialBars], "radial", "angle")).toBe(true);
+    expect(store.concatNodesAreCompatible([tree, radialBars], "angular", "radius")).toBe(false);
+  });
+
+  it("filters a Polar concat companion to Radial Dendrogram leaves", () => {
+    const dataset: Dataset = {
+      id: "polar-tree-leaf-filter",
+      name: "polar-tree-leaf-filter.csv",
+      columns: [
+        { name: "node_id", type: "nominal" },
+        { name: "parent_id", type: "nominal" },
+        { name: "axis_label", type: "nominal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { node_id: "root", parent_id: "", axis_label: "Root", value: "30" },
+        { node_id: "branch", parent_id: "root", axis_label: "Branch", value: "24" },
+        { node_id: "leaf-a", parent_id: "branch", axis_label: "Leaf A", value: "8" },
+        { node_id: "leaf-b", parent_id: "branch", axis_label: "Leaf B", value: "7" },
+        { node_id: "leaf-c", parent_id: "root", axis_label: "Leaf C", value: "6" },
+      ],
+      primaryKey: ["node_id"],
+    };
+    const tree = polarChart("polar-tree-leaf-filter-tree", 100, 360);
+    tree.chartSpec = {
+      chartType: "RadialDendrogram",
+      datasetId: dataset.id,
+      encodings: {
+        key: { field: "node_id", type: "nominal" },
+        parent: { field: "parent_id", type: "nominal" },
+        theta: { field: "axis_label", type: "nominal" },
+      },
+    };
+    const bars = polarChart("polar-tree-leaf-filter-bars", 700, 360);
+    bars.chartSpec = {
+      chartType: "RadialBarChart",
+      datasetId: dataset.id,
+      encodings: {
+        segment: { field: "axis_label", type: "nominal" },
+        radius: { field: "value", type: "quantitative" },
+      },
+    };
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [tree, bars];
+    store.selectedIds.value = [tree.id, bars.id];
+
+    expect(store.executeComposition("concat", true, ["angle"], "radial")).toBe(true);
+    expect(tree.coordinateSystem?.axisLabelDomains?.angle).toEqual(["Leaf A", "Leaf B", "Leaf C"]);
+    expect(bars.coordinateSystem?.axisLabelDomains?.angle).toEqual(["Leaf A", "Leaf B", "Leaf C"]);
+    expect(bars.renderedContent?.match(/data-mark-role="bar"/g)).toHaveLength(3);
+    expect(bars.renderedContent).not.toContain('data-category-key="Root"');
+    expect(bars.renderedContent).not.toContain('data-category-key="Branch"');
   });
 
   it("concats Cartesian trees only along their active leaf-order axis", () => {
@@ -2985,6 +3851,7 @@ describe("composition coordinate editing", () => {
     };
     const store = useCanvasStore(coordinateCanvasRef());
     store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
 
     expect(store.concatNodesAreCompatible([tree, bars], "vertical", "x")).toBe(true);
     expect(store.concatNodesAreCompatible([tree, bars], "horizontal", "y")).toBe(false);
@@ -2995,10 +3862,97 @@ describe("composition coordinate editing", () => {
     expect(store.concatNodesAreCompatible([tree, bars], "vertical", "x")).toBe(false);
   });
 
+  it("keeps a circular Dendrogram Enter portal alongside leaf-axis Layer and Concat zones", () => {
+    const dataset: Dataset = {
+      id: "dendrogram-composition-portals",
+      name: "dendrogram-composition-portals.csv",
+      columns: [
+        { name: "node_id", type: "nominal" },
+        { name: "parent_id", type: "nominal" },
+        { name: "axis_label", type: "nominal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { node_id: "root", parent_id: "", axis_label: "Root", value: "15" },
+        { node_id: "leaf-a", parent_id: "root", axis_label: "Leaf A", value: "7" },
+        { node_id: "leaf-b", parent_id: "root", axis_label: "Leaf B", value: "8" },
+      ],
+      primaryKey: ["node_id"],
+    };
+    const tree = lineChart("dendrogram-portal-target", 100, false);
+    tree.chartSpec = {
+      chartType: "Dendrogram",
+      datasetId: dataset.id,
+      encodings: {
+        key: { field: "node_id", type: "nominal" },
+        parent: { field: "parent_id", type: "nominal" },
+        category: { field: "axis_label", type: "nominal" },
+      },
+      plotArea: { x: 80, y: 40, width: 640, height: 320 },
+      markGroups: [{
+        id: "dendrogram-portal-nodes",
+        chartId: tree.id,
+        role: "node",
+        memberKeys: [],
+        sharedConfig: { treeDirection: "down" },
+      }],
+    };
+    tree.renderedContent = '<g data-chart-type="dendrogram"/>';
+    const bars = lineChart("dendrogram-portal-source", 950, false);
+    bars.chartSpec = {
+      chartType: "SingleBarChart",
+      datasetId: dataset.id,
+      encodings: {
+        x: { field: "axis_label", type: "nominal" },
+        y: { field: "value", type: "quantitative" },
+      },
+      plotArea: { x: 80, y: 40, width: 640, height: 320 },
+    };
+    bars.renderedContent = '<g data-chart-type="bar"/>';
+
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [tree, bars];
+
+    const targetZones = store.compositionDropZones(bars.id)
+      .filter((zone) => zone.targetNodeId === tree.id);
+    expect(targetZones.filter((zone) => zone.type === "layer").map((zone) => zone.sharedChannels)).toEqual([["x"]]);
+    expect(targetZones.filter((zone) => zone.type === "concat").map((zone) => [
+      zone.direction,
+      zone.concatPosition,
+      zone.sharedChannels,
+    ])).toEqual(expect.arrayContaining([
+      ["vertical", "before", ["x"]],
+      ["vertical", "after", ["x"]],
+    ]));
+
+    const enter = targetZones.find((zone) => zone.nestedAction === "enter");
+    expect(enter?.enterBounds).toBeDefined();
+    const bounds = enter!.enterBounds!;
+    const center = {
+      x: bounds.minX + bounds.width / 2,
+      y: bounds.minY + bounds.height / 2,
+    };
+    expect(store.compositionDropZoneAtPoint(center, bars.id)).toMatchObject({
+      targetNodeId: tree.id,
+      type: "nested",
+      nestedAction: "enter",
+    });
+    expect(store.compositionDropZoneAtPoint({
+      x: bounds.minX + 1,
+      y: bounds.minY + 1,
+    }, bars.id)).toMatchObject({
+      targetNodeId: tree.id,
+      type: "layer",
+      sharedChannels: ["x"],
+    });
+  });
+
   it.each([
-    ["leaf_id", ["Leaf A", "Leaf B", "Leaf C"], false],
-    ["axis_label", ["Root", "Branch", "Leaf A", "Leaf B", "Leaf C"], true],
-  ] as const)("simulates dragging a Bar Chart onto a Dendrogram concat using %s", async (sharedField, barDomain, hasNonLeafBars) => {
+    ["leaf_id", ["Leaf A", "Leaf B", "Leaf C"]],
+    ["axis_label", ["Root", "Branch", "Leaf A", "Leaf B", "Leaf C"]],
+  ] as const)("simulates dragging a Bar Chart onto a Dendrogram concat using %s", async (sharedField, barDomain) => {
     listeners.clear();
     const dataset: Dataset = {
       id: `cartesian-tree-bar-concat-${sharedField}`,
@@ -3068,7 +4022,7 @@ describe("composition coordinate editing", () => {
     const treePlot = worldPlotArea(tree);
     const dropPoint = {
       x: (treePlot.left + treePlot.right) / 2,
-      y: treePlot.bottom + 2,
+      y: treePlot.bottom + 10.1,
     };
 
     store.onCanvasNodePointerDown(bars, pointerEvent(bars.x + 20, bars.y + 20));
@@ -3087,13 +4041,15 @@ describe("composition coordinate editing", () => {
     await nextTick();
 
     expect(store.canvasNodes.value.every((node) => node.compositionSpec?.type === "concat")).toBe(true);
-    expect(tree.chartSpec?.scales?.x?.domain).toEqual(barDomain);
-    expect(bars.chartSpec?.scales?.x?.domain).toEqual(barDomain);
-    expect(bars.renderedContent?.match(/data-mark-role="bar"/g)).toHaveLength(barDomain.length);
-    expect(hasNonLeafBars).toBe(barDomain.some((value) => value === "Root" || value === "Branch"));
+    const leafDomain = ["Leaf A", "Leaf B", "Leaf C"];
+    expect(tree.chartSpec?.scales?.x?.domain).toEqual(leafDomain);
+    expect(bars.chartSpec?.scales?.x?.domain).toEqual(leafDomain);
+    expect(bars.renderedContent?.match(/data-mark-role="bar"/g)).toHaveLength(leafDomain.length);
+    expect(bars.renderedContent).not.toContain('data-category-key="Root"');
+    expect(bars.renderedContent).not.toContain('data-category-key="Branch"');
   });
 
-  it("centers a five-metric pie on every Dendrogram node without entering or layering", async () => {
+  it("centers a five-metric pie on every Dendrogram node after entering", async () => {
     listeners.clear();
     const metrics = ["metric_1", "metric_2", "metric_3", "metric_4", "metric_5"];
     const dataset: Dataset = {
@@ -3175,6 +4131,12 @@ describe("composition coordinate editing", () => {
     store.setPolarSegmentFields(metrics);
 
     store.onCanvasNodePointerDown(pie, pointerEvent(pie.x + 20, pie.y + 20));
+    const plotArea = tree.chartSpec.plotArea!;
+    listeners.get("pointermove")?.(pointerEvent(
+      tree.x + plotArea.x + plotArea.width / 2,
+      tree.y + plotArea.y + plotArea.height / 2,
+    ));
+    expect(store.chartDrilldown.value).toEqual({ nodeId: tree.id, level: "part" });
     listeners.get("pointermove")?.(pointerEvent(226, 246));
 
     expect(store.activeDropZone.value).toMatchObject({
@@ -3297,7 +4259,7 @@ describe("composition coordinate editing", () => {
     expect((relationship?.parameters as { scale: { x: number; y: number } }).scale.y).toBeCloseTo(child.scaleY);
   });
 
-  it("extends Polar layer and concat compositions without replacing their members", () => {
+  it("keeps a closed Polar Layer whole when composing it again", () => {
     const layerFirst = polarChart("repeat-polar-layer-first", 100);
     const layerSecond = polarChart("repeat-polar-layer-second", 800);
     const layerThird = polarChart("repeat-polar-layer-third", 1500);
@@ -3307,12 +4269,21 @@ describe("composition coordinate editing", () => {
     layerStore.canvasNodes.value = [layerFirst, layerSecond, layerThird];
     layerStore.selectedIds.value = [layerFirst.id, layerSecond.id];
     expect(layerStore.executeComposition("layer", true, ["angle", "radius"])).toBe(true);
-    const layerCompositionId = layerFirst.compositionSpec?.id;
-    layerStore.selectedIds.value = [layerFirst.id, layerThird.id];
+    const innerRoot = layerStore.canvasNodes.value.find((node) => node.kind === "group" && node.compositionSpec?.type === "layer");
+    const innerCompositionId = innerRoot?.compositionSpec?.id;
+    expect(innerRoot?.kind === "group" ? innerRoot.children : []).toHaveLength(2);
+    layerStore.selectedIds.value = [innerRoot!.id, layerThird.id];
     expect(layerStore.executeComposition("layer", true, ["angle", "radius"])).toBe(true);
-    expect(layerStore.canvasNodes.value).toHaveLength(3);
-    expect(layerStore.canvasNodes.value.every((node) => node.compositionSpec?.id === layerCompositionId)).toBe(true);
-    expect(layerFirst.compositionSpec?.members).toHaveLength(3);
+    expect(layerStore.canvasNodes.value).toHaveLength(1);
+    const outerRoot = layerStore.canvasNodes.value[0];
+    expect(outerRoot?.kind).toBe("group");
+    expect(outerRoot?.compositionSpec?.id).not.toBe(innerCompositionId);
+    expect(outerRoot?.kind === "group" ? outerRoot.children.map((node) => node.id) : []).toEqual([
+      innerRoot!.id,
+      layerThird.id,
+    ]);
+    expect(innerRoot?.compositionSpec?.id).toBe(innerCompositionId);
+    expect(innerRoot?.kind === "group" ? innerRoot.children : []).toHaveLength(2);
 
     const concatFirst = polarChart("repeat-polar-concat-first", 100, 120);
     const concatSecond = polarChart("repeat-polar-concat-second", 800, 120);

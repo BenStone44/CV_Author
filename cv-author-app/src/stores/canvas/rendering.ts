@@ -1,13 +1,16 @@
 // @ts-nocheck See compositionOperations.ts for the dynamic context boundary.
-import type { CanvasNode, ChartScaleSpec, ChartSpec, Dataset, NestedChildFrame, NestedRelationship, Point, RelativeNestedParameters } from "../../types";
+import type { CanvasNode, ChartScaleSpec, ChartSpec, CoordinateChannel, Dataset, NestedChildFrame, NestedRelationship, Point, RelativeNestedParameters } from "../../types";
 import {
   cartesianTreeDirection,
   cartesianTreeLeafAxis,
-  cartesianTreeLeafValues,
+  coordinateTreeLeafAxis,
+  coordinateTreeLeafValues,
   isCartesianTreeChart,
+  isCoordinateTreeChart,
 } from "../../utils/treeLayout";
 import { getCanvasObjectHitTargetBounds } from "../../utils/canvasUtils";
 import { chartDataPreparationKey, mergeSharedScale } from "./renderingData";
+import { normalizeNestedCallout } from "../../utils/nestedCallout";
 
 export function useCanvasRendering(context: any) {
   const {
@@ -15,6 +18,7 @@ export function useCanvasRendering(context: any) {
     concatLinksFor,
     defaultChartDataset,
     defaultChartSpecWithAppearance,
+    editingCompositionId,
     encodingForSharedChannel,
     findCanvasNode,
     getChartTemplateContract,
@@ -33,15 +37,49 @@ export function useCanvasRendering(context: any) {
     transformsWithNestedContext,
     collectNodeSelectionBounds,
   } = context;
+  function renderingAncestor(node: CanvasNode) {
+    const contexts = node.compositionAncestors ?? [];
+    if (editingCompositionId.value) {
+      const active = [...contexts].reverse().find((context) =>
+        context.compositionSpec.id === editingCompositionId.value);
+      if (active) return active;
+    }
+    return contexts.at(-1) ?? (node.parentCompositionSpec
+      ? {
+        compositionSpec: node.parentCompositionSpec,
+        coordinateSystem: node.parentCoordinateSystem ?? null,
+      }
+      : null);
+  }
+
+  function renderingComposition(node: CanvasNode) {
+    if (editingCompositionId.value === node.compositionSpec?.id) return node.compositionSpec;
+    return renderingAncestor(node)?.compositionSpec ?? node.compositionSpec;
+  }
+
+  function renderingCoordinateSystem(node: CanvasNode) {
+    if (editingCompositionId.value === node.compositionSpec?.id) return node.coordinateSystem;
+    return renderingAncestor(node)?.coordinateSystem ?? node.coordinateSystem;
+  }
+
   function sharedCoordinateMembers(node: CanvasNode) {
-    if (node.compositionSpec?.type !== "layer" && node.compositionSpec?.type !== "concat") return [node];
-    return node.compositionSpec.members
+    const composition = renderingComposition(node);
+    if (composition?.type !== "layer" && composition?.type !== "concat") return node.chartSpec
+      ? [node]
+      : node.kind === "group" ? node.children.flatMap(sharedCoordinateMembers) : [];
+    return composition.members
       .map((member) => findCanvasNode(member.nodeId))
-      .filter((member): member is CanvasNode => !!member?.chartSpec);
+      .filter((member): member is CanvasNode => !!member)
+      .flatMap((member) => member.chartSpec
+        ? [member]
+        : member.kind === "group"
+          ? member.children.flatMap((child) => child.chartSpec ? [child] : sharedCoordinateMembers(child))
+          : []);
   }
 
   function mergedCompositionScales(owner: CanvasNode) {
-    const channels = owner.coordinateSystem?.sharedChannels
+    const ownerSystem = renderingCoordinateSystem(owner);
+    const channels = ownerSystem?.sharedChannels
       .filter((channel): channel is "x" | "y" => channel === "x" || channel === "y") ?? [];
     const members = sharedCoordinateMembers(owner);
     const result: Partial<Record<"x" | "y", ChartScaleSpec>> = {};
@@ -62,7 +100,7 @@ export function useCanvasRendering(context: any) {
         return;
       }
       const availableScales = members
-        .filter((member) => member.coordinateSystem?.members
+        .filter((member) => renderingCoordinateSystem(member)?.members
           .find((item) => item.nodeId === member.id)
           ?.channels.includes(channel) ?? true)
         .map((member) => member.chartSpec?.scales?.[channel])
@@ -76,7 +114,7 @@ export function useCanvasRendering(context: any) {
     // reintroducing internal hierarchy categories when the bar/line member is
     // the coordinate owner.
     (['x', 'y'] as const).forEach((channel) => {
-      const allowed = owner.coordinateSystem?.axisLabelDomains?.[channel];
+      const allowed = ownerSystem?.axisLabelDomains?.[channel];
       const scale = result[channel];
       if (!allowed?.length || scale?.type !== "point") return;
       result[channel] = {
@@ -138,37 +176,40 @@ export function useCanvasRendering(context: any) {
     // keep their endpoints aligned so radial and angular concats can combine.
     const positionsFor = (direction: "radial" | "angular") => {
       const links = concatLinksFor(owner.compositionSpec!).filter((link) =>
-        memberIds.has(link.targetNodeId)
+        link.direction === direction
+        && memberIds.has(link.targetNodeId)
         && memberIds.has(link.sourceNodeId),
       );
       const adjacency = new Map<string, Array<{ nodeId: string; delta: number }>>();
       orderedMembers.forEach((member) => adjacency.set(member.id, []));
       links.forEach((link) => {
-        const delta = link.direction === direction
-          ? (link.position === "after" ? 1 : -1)
-          : 0;
+        const delta = link.position === "after" ? 1 : -1;
         adjacency.get(link.targetNodeId)?.push({ nodeId: link.sourceNodeId, delta });
         adjacency.get(link.sourceNodeId)?.push({ nodeId: link.targetNodeId, delta: -delta });
       });
       const positions = new Map<string, number>();
+      let maximumComponentSize = 1;
       orderedMembers.forEach((member) => {
         if (positions.has(member.id)) return;
-        positions.set(member.id, 0);
+        const rawPositions = new Map<string, number>([[member.id, 0]]);
         const queue = [member.id];
         while (queue.length > 0) {
           const currentId = queue.shift()!;
-          const currentPosition = positions.get(currentId)!;
+          const currentPosition = rawPositions.get(currentId)!;
           adjacency.get(currentId)?.forEach(({ nodeId, delta }) => {
-            if (positions.has(nodeId)) return;
-            positions.set(nodeId, currentPosition + delta);
+            if (rawPositions.has(nodeId)) return;
+            rawPositions.set(nodeId, currentPosition + delta);
             queue.push(nodeId);
           });
         }
+        const component = orderedMembers
+          .filter((candidate) => rawPositions.has(candidate.id))
+          .sort((left, right) => (rawPositions.get(left.id)! - rawPositions.get(right.id)!)
+            || orderedMembers.indexOf(left) - orderedMembers.indexOf(right));
+        component.forEach((candidate, index) => positions.set(candidate.id, index));
+        maximumComponentSize = Math.max(maximumComponentSize, component.length);
       });
-      const values = Array.from(positions.values());
-      const minimum = Math.min(...values);
-      const count = Math.max(1, Math.max(...values) - minimum + 1);
-      return { positions, minimum, count };
+      return { positions, count: maximumComponentSize };
     };
     const radial = positionsFor("radial");
     const angular = positionsFor("angular");
@@ -190,8 +231,8 @@ export function useCanvasRendering(context: any) {
       guide.radiusScale = owner.coordinateGuide?.radiusScale;
       guide.ringScale = owner.coordinateGuide?.ringScale;
       setPolarNodeOrigin(member, ownerOrigin, owner.rotation);
-      const radialIndex = radial.positions.get(member.id)! - radial.minimum;
-      const angularIndex = angular.positions.get(member.id)! - angular.minimum;
+      const radialIndex = radial.positions.get(member.id)!;
+      const angularIndex = angular.positions.get(member.id)!;
       guide.angleSpan = angularSpan;
       guide.angleOffset = baseAngleOffset + angularSpan * angularIndex;
       guide.innerRadiusRatio = radialIndex / radial.count;
@@ -248,21 +289,23 @@ export function useCanvasRendering(context: any) {
   }
 
   function syncConcatLeafAxisDomains(owner: CanvasNode, members: CanvasNode[]) {
-    const composition = owner.compositionSpec;
+    const composition = renderingComposition(owner);
     if (composition?.type !== "concat") return;
     const links = concatLinksFor(composition);
-    const domains = new Map<"x" | "y", Set<string>>();
-    members.filter((member) => isCartesianTreeChart(member.chartSpec?.chartType)).forEach((tree) => {
-      const direction = cartesianTreeDirection(tree.chartSpec);
-      const axis = cartesianTreeLeafAxis(direction);
+    const domains = new Map<CoordinateChannel, Set<string>>();
+    members.filter((member) => isCoordinateTreeChart(member.chartSpec?.chartType)).forEach((tree) => {
+      const axis = coordinateTreeLeafAxis(tree.chartSpec);
+      if (!axis) return;
       const shared = links.some((link) => link.sharedChannels.includes(axis)
         && (link.targetNodeId === tree.id || link.sourceNodeId === tree.id));
       if (!shared) return;
       const dataset = tree.chartSpec?.datasetId ? getDataset(tree.chartSpec.datasetId) : undefined;
-      const renderedDomain = tree.chartSpec?.scales?.[axis]?.domain;
+      const renderedDomain = axis === "x" || axis === "y"
+        ? tree.chartSpec?.scales?.[axis]?.domain
+        : undefined;
       const values = renderedDomain
         ? renderedDomain.map(String)
-        : cartesianTreeLeafValues(tree.chartSpec, dataset?.rows ?? []);
+        : coordinateTreeLeafValues(tree.chartSpec, dataset?.rows ?? []);
       if (values.length === 0) return;
       const domain = domains.get(axis) ?? new Set<string>();
       values.forEach((value) => domain.add(value));
@@ -272,7 +315,7 @@ export function useCanvasRendering(context: any) {
       const system = member.coordinateSystem;
       if (!system) return;
       const next = { ...(system.axisLabelDomains ?? {}) };
-      (['x', 'y'] as const).forEach((axis) => {
+      (["x", "y", "angle", "radius"] as const).forEach((axis) => {
         const domain = domains.get(axis);
         if (domain && domain.size > 0) next[axis] = Array.from(domain);
         else delete next[axis];
@@ -284,17 +327,23 @@ export function useCanvasRendering(context: any) {
   function leafDomainsForNode(node: CanvasNode, owner?: CanvasNode | null) {
     const current = node.coordinateSystem?.axisLabelDomains;
     if (current && Object.keys(current).length > 0) return current;
-    const composition = owner?.compositionSpec;
+    const composition = owner ? renderingComposition(owner) : null;
     if (composition?.type !== "concat") return undefined;
     const members = composition.members
       .map((member) => findCanvasNode(member.nodeId))
       .filter((member): member is CanvasNode => !!member);
-    const domains: Partial<Record<"x" | "y", string[]>> = {};
-    members.filter((member) => isCartesianTreeChart(member.chartSpec?.chartType)).forEach((tree) => {
-      const axis = cartesianTreeLeafAxis(cartesianTreeDirection(tree.chartSpec));
-      if (!composition.sharedChannels.includes(axis)) return;
-      const renderedDomain = tree.chartSpec?.scales?.[axis]?.domain;
-      if (renderedDomain) domains[axis] = renderedDomain.map(String);
+    const domains: Partial<Record<"x" | "y" | "angle" | "radius", string[]>> = {};
+    members.filter((member) => isCoordinateTreeChart(member.chartSpec?.chartType)).forEach((tree) => {
+      const axis = coordinateTreeLeafAxis(tree.chartSpec);
+      if (!axis || !concatLinksFor(composition).some((link) => link.sharedChannels.includes(axis)
+        && (link.targetNodeId === tree.id || link.sourceNodeId === tree.id))) return;
+      const renderedDomain = axis === "x" || axis === "y"
+        ? tree.chartSpec?.scales?.[axis]?.domain
+        : undefined;
+      const dataset = tree.chartSpec?.datasetId ? getDataset(tree.chartSpec.datasetId) : undefined;
+      const values = renderedDomain?.map(String)
+        ?? coordinateTreeLeafValues(tree.chartSpec, dataset?.rows ?? []);
+      if (values.length > 0) domains[axis] = values;
     });
     return Object.keys(domains).length > 0 ? domains : undefined;
   }
@@ -407,14 +456,16 @@ export function useCanvasRendering(context: any) {
   }
 
   function renderSharedCoordinateComposition(node: CanvasNode, applyAxisVisibility = false) {
-    const type = node.compositionSpec?.type;
+    const composition = renderingComposition(node);
+    const type = composition?.type;
     const members = sharedCoordinateMembers(node);
     if (members.length <= 1 || (type !== "layer" && type !== "concat")) {
       if (applyAxisVisibility) resetCartesianAxisVisibility(node);
       renderChartNode(node);
       return;
     }
-    const owner = members.find((member) => member.id === node.coordinateSystem?.ownerNodeId) ?? members[0]!;
+    const system = renderingCoordinateSystem(node);
+    const owner = members.find((member) => member.id === system?.ownerNodeId) ?? members[0]!;
     // First obtain every unit's native domain. The second pass merges only the
     // declared shared channels and preserves independent concat dimensions.
     members.forEach((member) => renderChartNode(member, false));
@@ -434,7 +485,7 @@ export function useCanvasRendering(context: any) {
       alignCartesianConcatFrames(owner, members);
       if (applyAxisVisibility) syncCartesianConcatAxisVisibility(owner, members);
     }
-    if (owner.coordinateSystem?.type === "Polar") {
+    if (renderingCoordinateSystem(owner)?.type === "Polar") {
       const outerRadius = Math.max(
         0,
         ...members.map((member) => getPolarOccupiedGeometry(member)?.outerRadius ?? 0),
@@ -511,11 +562,15 @@ export function useCanvasRendering(context: any) {
         const width = Math.abs(scaledWidth * Math.cos(rotation)) + Math.abs(scaledHeight * Math.sin(rotation));
         const height = Math.abs(scaledWidth * Math.sin(rotation)) + Math.abs(scaledHeight * Math.cos(rotation));
         if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return [];
+        const callout = normalizeNestedCallout(parameters.callout);
+        const framedWidth = callout.enabled ? width * callout.scale : width;
+        const framedHeight = callout.enabled ? height * callout.scale : height;
         const childType = child.chartSpec?.chartType?.replace(/[\s_-]/g, "").toLowerCase() ?? "";
         // Cartesian tree links use the child's actual bounding box so their
         // endpoints are the left/right (or top/bottom) center of that box.
         // Polar parents retain circular routing around their occupied radius.
-        const circular = !isCartesianTreeChart(parent.chartSpec?.chartType)
+        const circular = !callout.enabled
+          && !isCartesianTreeChart(parent.chartSpec?.chartType)
           && (
             !!polarBounds
             || childType.includes("radial")
@@ -529,8 +584,8 @@ export function useCanvasRendering(context: any) {
           ...(circular
             ? { radius: Math.abs((polarBounds?.outerRadius ?? Math.max(hitBounds.width, hitBounds.height) / 2) * Math.max(Math.abs(scaleX), Math.abs(scaleY))) }
             : {}),
-          width,
-          height,
+          width: framedWidth,
+          height: framedHeight,
         }];
       });
   }
@@ -548,9 +603,11 @@ export function useCanvasRendering(context: any) {
   }
 
   function renderChartNode(node: CanvasNode, useLayerScales = true) {
+    const composition = renderingComposition(node);
+    const coordinateSystem = renderingCoordinateSystem(node);
     const coordinateOwner = useLayerScales
-      && (node.compositionSpec?.type === "layer" || node.compositionSpec?.type === "concat")
-      ? findCanvasNode(node.coordinateSystem?.ownerNodeId ?? "")
+      && (composition?.type === "layer" || composition?.type === "concat")
+      ? findCanvasNode(coordinateSystem?.ownerNodeId ?? "")
       : null;
     const storedChartSpec = node.chartSpec
       ? {
@@ -566,8 +623,8 @@ export function useCanvasRendering(context: any) {
     if (template === "line"
       && storedChartSpec.renderer?.version !== 3
       && !node.layerSpec
-      && node.compositionSpec?.type !== "layer"
-      && node.compositionSpec?.type !== "concat") {
+      && composition?.type !== "layer"
+      && composition?.type !== "concat") {
       const targetWidth = node.height * (380 / 180);
       if (targetWidth > node.width) {
         const scaleCorrection = node.width / targetWidth;
@@ -669,39 +726,33 @@ export function useCanvasRendering(context: any) {
     );
     let dataset = prepared.dataset;
     let syncedChartSpec = prepared.chartSpec;
-    const nestedBarDataset = chartRelationships.value.charts[node.id]?.instanceKind === "nested-child"
-      && template === "bar"
-      ? { ...dataset, graph: undefined }
-      : dataset;
-    // When a Cartesian concat contains a dendrogram, its leaf domain is the
-    // shared structural key. Restrict every non-tree Cartesian member to the
-    // rows represented by those leaves so bars/marks stay aligned with the
-    // tree instead of rendering internal hierarchy nodes.
-    if (!isCartesianTreeChart(syncedChartSpec.chartType)
-      && node.coordinateGuide?.type === "Cartesian"
-      && leafDomainsForNode(node, coordinateOwner ?? findCanvasNode(node.coordinateSystem?.ownerNodeId ?? ""))) {
-      const axisLabelDomains = leafDomainsForNode(node, coordinateOwner ?? findCanvasNode(node.coordinateSystem?.ownerNodeId ?? ""));
-      const allowedDomains = (Object.entries(axisLabelDomains ?? {}) as Array<["x" | "y", string[] | undefined]>)
+    // A tree leaf axis is the shared structural key for both Cartesian and
+    // Polar concat. Restrict each non-tree companion's materialized view to
+    // terminal-node values without mutating its local transforms.
+    const treeLeafDomains = leafDomainsForNode(
+      node,
+      coordinateOwner ?? findCanvasNode(coordinateSystem?.ownerNodeId ?? ""),
+    );
+    if (!isCoordinateTreeChart(syncedChartSpec.chartType) && treeLeafDomains) {
+      const allowedDomains = (Object.entries(treeLeafDomains) as Array<["x" | "y" | "angle" | "radius", string[] | undefined]>)
         .flatMap(([channel, values]) => {
-          // axisSwapped keeps bar/line category/value encodings semantic while
-          // exchanging their physical Cartesian axes. Leaf domains are
-          // physical, so resolve the corresponding semantic encoding first.
-          const semanticChannel = syncedChartSpec.axisSwapped
-            ? channel === "x" ? "y" : "x"
-            : channel;
-          const encoding = syncedChartSpec.encodings[semanticChannel];
+          const encoding = encodingForSharedChannel(node, channel);
           if (!values?.length || !encoding) return [];
           return [{ field: encoding.field, values: new Set(values.map(String)) }];
         });
       if (allowedDomains.length > 0) {
         const matches = dataset.rows.filter((row: Dataset["rows"][number]) => allowedDomains.every(({ field, values }) =>
           values.has(String(row[field] ?? ""))));
-        if (matches.length > 0 && matches.length < dataset.rows.length) {
+        if (matches.length < dataset.rows.length) {
           dataset = { ...dataset, rows: matches };
         }
       }
     }
     const usesDerivedValueSeries = (renderingInputSpec.valueFields?.length ?? 0) > 1;
+    const renderableDataset = chartRelationships.value.charts[node.id]?.instanceKind === "nested-child"
+      && template === "bar"
+      ? { ...dataset, graph: undefined }
+      : dataset;
     const persistedSyncedChartSpec = usesDerivedValueSeries
       ? {
         ...syncedChartSpec,
@@ -728,8 +779,8 @@ export function useCanvasRendering(context: any) {
     };
     const nativePlotArea = renderingInputSpec.plotArea;
     const sharedChannels = new Set(
-      (coordinateOwner?.coordinateSystem?.sharedChannels ?? []).filter((channel) =>
-        node.coordinateSystem?.members.find((member) => member.nodeId === node.id)?.channels.includes(channel)
+      (renderingCoordinateSystem(coordinateOwner ?? node)?.sharedChannels ?? []).filter((channel) =>
+        coordinateSystem?.members.find((member) => member.nodeId === node.id)?.channels.includes(channel)
         ?? true),
     );
     const sharedPlotArea = ownerPlotArea && nativePlotArea
@@ -770,10 +821,10 @@ export function useCanvasRendering(context: any) {
         minY: node.kind === "leaf" ? node.contentMinY : 0,
         coordinateGuide: node.coordinateGuide,
         chartSpec: syncedChartSpec,
-        dataset: nestedBarDataset,
-        polarConcatDirection: node.compositionSpec?.type === "concat"
-          && (node.compositionSpec.direction === "radial" || node.compositionSpec.direction === "angular")
-          ? node.compositionSpec.direction
+        dataset: renderableDataset,
+        polarConcatDirection: composition?.type === "concat"
+          && (composition.direction === "radial" || composition.direction === "angular")
+          ? composition.direction
           : undefined,
         sharedPlotArea,
         sharedScales,

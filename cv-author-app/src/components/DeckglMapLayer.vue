@@ -62,6 +62,7 @@ import {
 import { isCsvColumnDrag } from "../utils/csvColumnDrag";
 import { resolveDeckglNumericAccessor } from "../utils/deckglAccessors";
 import { isGraphLinkTemplateDrag } from "../utils/deckglDropRouting";
+import { nestedCalloutGeometry } from "../utils/nestedCallout";
 import { frontendPalette, globalPalette } from "../config/global";
 import { deckglLightMapStyleUrl } from "../utils/geographicLayerCards";
 
@@ -624,6 +625,53 @@ function nestedOverlayTransform(nested: DeckglNestedOverlay) {
   return `translate(${childX} ${childY}) rotate(${parameters.rotation} ${nested.width * scaleX / 2} ${nested.height * scaleY / 2}) scale(${scaleX} ${scaleY})`;
 }
 
+function deckglNestedCalloutGeometry(nested: DeckglNestedOverlay) {
+  const point = map?.project(nestedPointPosition(nested));
+  if (!point || !nested.parameters.callout?.enabled) return null;
+  const parameters = nested.parameters;
+  const anchorX = point.x + (parameters.parentAnchor.x - 0.5) * nested.parentRadius * 2 + parameters.offset.x;
+  const anchorY = point.y + (parameters.parentAnchor.y - 0.5) * nested.parentRadius * 2 + parameters.offset.y;
+  const childX = anchorX - parameters.childAnchor.x * nested.width * parameters.scale.x;
+  const childY = anchorY - parameters.childAnchor.y * nested.height * parameters.scale.y;
+  return nestedCalloutGeometry({
+    x: childX,
+    y: childY,
+    width: nested.width,
+    height: nested.height,
+    scaleX: parameters.scale.x,
+    scaleY: parameters.scale.y,
+    rotation: parameters.rotation,
+  }, parameters);
+}
+
+function deckglNestedCalloutFrame(nested: DeckglNestedOverlay) {
+  return deckglNestedCalloutGeometry(nested)?.frame ?? {
+    x: -10000,
+    y: -10000,
+    width: 0,
+    height: 0,
+    center: { x: -10000, y: -10000 },
+    rotation: 0,
+  };
+}
+
+function deckglNestedCalloutArrowPath(nested: DeckglNestedOverlay) {
+  return deckglNestedCalloutGeometry(nested)?.arrowPath ?? "";
+}
+
+function updateDeckglNestedCallout(element: SVGGElement, nested: DeckglNestedOverlay) {
+  const geometry = deckglNestedCalloutGeometry(nested);
+  const rect = element.querySelector<SVGRectElement>(".deckgl-nested-callout__frame");
+  const arrow = element.querySelector<SVGPathElement>(".deckgl-nested-callout__arrow");
+  if (!geometry || !rect || !arrow) return;
+  rect.setAttribute("x", String(geometry.frame.x));
+  rect.setAttribute("y", String(geometry.frame.y));
+  rect.setAttribute("width", String(geometry.frame.width));
+  rect.setAttribute("height", String(geometry.frame.height));
+  rect.setAttribute("transform", `rotate(${geometry.frame.rotation} ${geometry.frame.center.x} ${geometry.frame.center.y})`);
+  arrow.setAttribute("d", geometry.arrowPath);
+}
+
 function updateNestedOverlayProjection() {
   nestedProjectionFrame = null;
   const shell = mapShell.value;
@@ -634,6 +682,10 @@ function updateNestedOverlayProjection() {
   shell.querySelectorAll<SVGGElement>("[data-nested-relationship-id]").forEach((element) => {
     const nested = overlays.get(element.dataset.nestedRelationshipId ?? "");
     if (nested) element.setAttribute("transform", nestedOverlayTransform(nested));
+  });
+  shell.querySelectorAll<SVGGElement>("[data-nested-callout-id]").forEach((element) => {
+    const nested = overlays.get(element.dataset.nestedCalloutId ?? "");
+    if (nested) updateDeckglNestedCallout(element, nested);
   });
 }
 
@@ -1062,6 +1114,8 @@ function nestedOverlayInputs() {
     nested.parameters.scale.y,
     nested.parameters.rotation,
     nested.parameters.retainParent,
+    nested.parameters.callout?.enabled ?? false,
+    nested.parameters.callout?.scale ?? null,
   ]);
 }
 
@@ -1286,14 +1340,35 @@ onBeforeUnmount(() => {
       :height="height"
       aria-hidden="true"
     >
-      <g
-        v-for="nested in nestedOverlays"
-        :key="nested.relationshipId"
-        class="deckgl-nested-overlay__child"
-        :data-nested-relationship-id="nested.relationshipId"
-        :transform="nestedOverlayTransform(nested)"
-        v-html="nested.content"
-      />
+      <template v-for="nested in nestedOverlays" :key="nested.relationshipId">
+        <g
+          v-if="nested.parameters.callout?.enabled"
+          class="deckgl-nested-callout"
+          :data-nested-callout-id="nested.relationshipId"
+        >
+          <path
+            class="deckgl-nested-callout__arrow"
+            :d="deckglNestedCalloutArrowPath(nested)"
+            vector-effect="non-scaling-stroke"
+          />
+          <rect
+            class="deckgl-nested-callout__frame"
+            :x="deckglNestedCalloutFrame(nested).x"
+            :y="deckglNestedCalloutFrame(nested).y"
+            :width="deckglNestedCalloutFrame(nested).width"
+            :height="deckglNestedCalloutFrame(nested).height"
+            :transform="`rotate(${deckglNestedCalloutFrame(nested).rotation} ${deckglNestedCalloutFrame(nested).center.x} ${deckglNestedCalloutFrame(nested).center.y})`"
+            rx="8"
+            vector-effect="non-scaling-stroke"
+          />
+        </g>
+        <g
+          class="deckgl-nested-overlay__child"
+          :data-nested-relationship-id="nested.relationshipId"
+          :transform="nestedOverlayTransform(nested)"
+          v-html="nested.content"
+        />
+      </template>
     </svg>
   </div>
 </template>
@@ -1345,5 +1420,17 @@ onBeforeUnmount(() => {
 
 .deckgl-nested-overlay__child {
   pointer-events: none;
+}
+
+.deckgl-nested-callout {
+  pointer-events: none;
+}
+
+.deckgl-nested-callout__frame,
+.deckgl-nested-callout__arrow {
+  fill: rgba(255, 255, 255, 0.94);
+  stroke: #99582a;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
 }
 </style>

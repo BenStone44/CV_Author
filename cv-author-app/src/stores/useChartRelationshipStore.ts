@@ -18,6 +18,7 @@ import type {
   RelativeNestedParameters,
   ResolvedNestedTransform,
 } from "../types";
+import { defaultNestedCallout } from "../utils/nestedCallout";
 
 type NestedResolver = (
   relationship: NestedRelationship,
@@ -608,6 +609,7 @@ function defaultRelativeParameters(): RelativeNestedParameters {
     scale: { x: 1, y: 1 },
     rotation: 0,
     retainParent: false,
+    callout: { ...defaultNestedCallout },
   };
 }
 
@@ -701,12 +703,29 @@ function reconcileCanvasNodes(nodes: CanvasNode[]) {
     });
   });
 
-  const seenCompositions = new Set<string>();
-  chartNodes.forEach((node) => {
-    const spec = node.compositionSpec;
-    if (!spec || seenCompositions.has(spec.id)) return;
-    seenCompositions.add(spec.id);
-    const memberChartIds = spec.members.map((member) => member.nodeId).filter((id) => !!relationshipState.value.charts[id]);
+  const compositions = new Map<string, NonNullable<CanvasNode["compositionSpec"]>>();
+  all.forEach((node) => {
+    [
+      node.compositionSpec,
+      node.parentCompositionSpec,
+      ...(node.compositionAncestors ?? []).map((context) => context.compositionSpec),
+    ].forEach((spec) => {
+      if (spec && !compositions.has(spec.id)) compositions.set(spec.id, spec);
+    });
+  });
+  compositions.forEach((spec) => {
+    const resolvedMembers = spec.members.flatMap((member, memberIndex) => {
+      if (relationshipState.value.charts[member.nodeId]) {
+        return [{ chartId: member.nodeId, memberIndex }];
+      }
+      const unit = all.find((node) => node.id === member.nodeId);
+      return unit
+        ? walkNodes([unit])
+          .filter((node) => !!node.chartSpec && !!relationshipState.value.charts[node.id])
+          .map((node) => ({ chartId: node.id, memberIndex }))
+        : [];
+    });
+    const memberChartIds = unique(resolvedMembers.map((member) => member.chartId));
     if (memberChartIds.length === 0) return;
     if (spec.type === "layer" && spec.sharedChannels.length === 0) return;
     createComposition({
@@ -720,13 +739,13 @@ function reconcileCanvasNodes(nodes: CanvasNode[]) {
       facetRowField: spec.facetGrid?.rowField,
       facetColumnField: spec.facetGrid?.columnField,
       facetCells: spec.type === "facet"
-        ? memberChartIds.map((chartId, index) => {
+        ? resolvedMembers.map(({ chartId, memberIndex }) => {
           const columnCount = spec.facetGrid?.columnValues.length ?? 0;
-          const rowIndex = columnCount > 0 ? Math.floor(index / columnCount) : -1;
-          const columnIndex = columnCount > 0 ? index % columnCount : -1;
+          const rowIndex = columnCount > 0 ? Math.floor(memberIndex / columnCount) : -1;
+          const columnIndex = columnCount > 0 ? memberIndex % columnCount : -1;
           return {
             chartId,
-            facetKey: spec.facetValues?.[index] ?? String(index),
+            facetKey: spec.facetValues?.[memberIndex] ?? String(memberIndex),
             rowValue: rowIndex >= 0 ? spec.facetGrid?.rowValues[rowIndex] : undefined,
             columnValue: columnIndex >= 0 ? spec.facetGrid?.columnValues[columnIndex] : undefined,
           };

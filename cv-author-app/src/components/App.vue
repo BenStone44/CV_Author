@@ -4,9 +4,10 @@ import {
   nextTick,
   onBeforeUnmount,
   onMounted,
+  onUpdated,
   ref,
 } from "vue";
-import { ArrowLeftRight, ArrowUp, Check, ChevronDown, Move, RotateCcw, SlidersHorizontal, Split as SplitIcon, X } from "@lucide/vue";
+import { ArrowLeftRight, ArrowUp, Check, ChevronDown, Move, RotateCcw, SlidersHorizontal, X } from "@lucide/vue";
 import { CanvasNodeView } from "./CanvasNodeView";
 import DeckglMapLayer from "./DeckglMapLayer.vue";
 import DeckglEncodingConfigPanel from "./DeckglEncodingConfigPanel.vue";
@@ -51,6 +52,8 @@ import {
 } from "../utils/chartTemplateCategories";
 import { deckglExampleImageUrl, getGeographicLayerFamily } from "../utils/geographicLayerCards";
 import { getChartTemplateContract } from "../utils/chartTemplates";
+import { nestedCalloutGeometry, normalizeNestedCallout } from "../utils/nestedCallout";
+import { selectionActionPositionsAbove } from "../utils/selectionControls";
 import {
   cartesianTreeDirection,
   cartesianTreeLeafAxis,
@@ -112,6 +115,9 @@ const {
   draggedCandidateId,
   compositionDragSourceId,
   activeDropZone,
+  availableDropZones,
+  compositionEnterTransition,
+  finishCompositionEnterTransition,
   activeDataBindingDropZone,
   dimensionDropTarget,
   interaction,
@@ -146,11 +152,11 @@ const {
   canTransformSelection,
   canRemoveSelectionComposition,
   canConfigureSelectionComposition,
-  canEnterSelection,
   canMoveSelectionForward,
   canMoveSelectionBackward,
   scaleHandles,
   rotateHandle,
+  syncRenderedNodeSelectionBounds,
   onCanvasPointerDown,
   onCanvasDragOver,
   onCanvasDragLeave,
@@ -159,7 +165,6 @@ const {
   onCanvasWheel,
   onCanvasContextMenu,
   onCanvasNodePointerDown,
-  enterSelection,
   configureSelectionComposition,
   exitSelectionHierarchy,
   removeSelectionComposition,
@@ -219,6 +224,7 @@ const {
   closeNestedBinding: closeNestedBindingInStore,
   updateNestedPosition,
   updateNestedChildScale,
+  updateNestedCallout,
   resetNestedPosition,
   closeNestedPositionEditor,
   applyInputColumnIntent,
@@ -237,6 +243,42 @@ const visibleCanvasNodes = computed(() =>
     && (node.layerKind !== "deckgl" || deckglLayerOwner(node) === node.id),
   ),
 );
+function compositionDropZoneKey(zone: {
+  targetNodeId: string;
+  type: string;
+  direction?: string;
+  concatPosition?: string;
+  enterCompositionId?: string;
+  nestedAction?: string;
+  sharedChannels: string[];
+}) {
+  return [
+    zone.targetNodeId,
+    zone.type,
+    zone.direction ?? "",
+    zone.concatPosition ?? "",
+    zone.enterCompositionId ?? "",
+    zone.nestedAction ?? "",
+    zone.sharedChannels.join(","),
+  ].join("|");
+}
+const visibleCompositionDropZones = computed(() => {
+  // Nested embed destinations are pointer-resolved and remain the sole
+  // active-zone exception. Their Enter navigation portals must still be
+  // visible before the pointer reaches the small central target.
+  const visible = availableDropZones.value.filter((zone) =>
+    zone.type !== "nested" || zone.nestedAction === "enter");
+  const active = activeDropZone.value;
+  if (!active) return visible;
+  if (active.type === "nested") return [...visible, active];
+  return visible.some((zone) => compositionDropZoneKey(zone) === compositionDropZoneKey(active))
+    ? visible
+    : [...visible, active];
+});
+function compositionDropZoneIsActive(zone: (typeof visibleCompositionDropZones.value)[number]) {
+  return !!activeDropZone.value
+    && compositionDropZoneKey(zone) === compositionDropZoneKey(activeDropZone.value);
+}
 const deckglLayerNodes = computed(() => visibleCanvasNodes.value.filter((node) => node.layerKind === "deckgl"));
 const graphLinkDragActive = computed(() => {
   const candidateId = draggedCandidateId.value;
@@ -357,6 +399,7 @@ function deckglNestedOverlays(node: CanvasNode): DeckglNestedOverlay[] {
         scale: { ...parameters.scale },
         rotation: parameters.rotation ?? 0,
         retainParent: parameters.retainParent,
+        callout: normalizeNestedCallout(parameters.callout),
       },
     }];
   });
@@ -379,12 +422,11 @@ const selectedCompositionSpec = computed(() => {
   const selectedNode = selectedNodes.value[0];
   const composition = selectedNode?.compositionSpec;
   if (!composition) return null;
-  // Facets are materialized as a group container. The container is the
-  // active composite selection even though its member chart ids are nested
-  // below it and therefore cannot appear in selectedIds.
+  // Closed compositions are represented by a group root. Selecting that root
+  // is sufficient even though its direct members live in the child scope.
   if (selectedNodes.value.length === 1
     && selectedNode?.kind === "group"
-    && composition.type === "facet") return composition;
+    && composition.type !== "concat") return composition;
   const selected = new Set(selectedIds.value);
   return composition.members.every((member) => selected.has(member.nodeId))
     ? composition
@@ -487,30 +529,16 @@ function deckglLayerHeight(node: CanvasNode) {
   return Math.max(node.height * Math.abs(node.scaleY), 1);
 }
 
-function selectionActionPath(radius: number, position: "top" | "bottom" | "left") {
-  const innerRadius = radius / 2;
-  const outerOffset = radius * Math.SQRT1_2;
-  const innerOffset = innerRadius * Math.SQRT1_2;
-  if (position === "left") {
-    return [
-      `M ${-outerOffset} ${outerOffset}`,
-      `A ${radius} ${radius} 0 0 1 ${-outerOffset} ${-outerOffset}`,
-      `L ${-innerOffset} ${-innerOffset}`,
-      `A ${innerRadius} ${innerRadius} 0 0 0 ${-innerOffset} ${innerOffset}`,
-      "Z",
-    ].join(" ");
-  }
-  const direction = position === "top" ? -1 : 1;
-  const outerSweep = position === "top" ? 1 : 0;
-  const innerSweep = position === "top" ? 0 : 1;
-  return [
-    `M ${-outerOffset} ${direction * outerOffset}`,
-    `A ${radius} ${radius} 0 0 ${outerSweep} ${outerOffset} ${direction * outerOffset}`,
-    `L ${innerOffset} ${direction * innerOffset}`,
-    `A ${innerRadius} ${innerRadius} 0 0 ${innerSweep} ${-innerOffset} ${direction * innerOffset}`,
-    "Z",
-  ].join(" ");
-}
+const selectionConfigurePosition = computed(() => {
+  const frame = selectionFrame.value;
+  if (!frame) return { x: 0, y: 0 };
+  return selectionActionPositionsAbove(frame, selectionOverlayZoom.value).configure;
+});
+const selectionSplitPosition = computed(() => {
+  const frame = selectionFrame.value;
+  if (!frame) return { x: 0, y: 0 };
+  return selectionActionPositionsAbove(frame, selectionOverlayZoom.value).split;
+});
 
 function closeTemplateCategoryMenu() {
   activeTemplateCategoryId.value = null;
@@ -1042,6 +1070,30 @@ const nestedChildPreviewStyle = computed(() => {
     height: `${childSize.height}px`,
   };
 });
+const nestedCalloutPreviewGeometry = computed(() => {
+  const editor = nestedPositionEditor.value;
+  if (!editor?.parameters.callout.enabled) return null;
+  const childSize = nestedChildPreviewSize.value;
+  return nestedCalloutGeometry({
+    x: 0,
+    y: 0,
+    width: childSize.width,
+    height: childSize.height,
+    scaleX: 1,
+    scaleY: 1,
+    rotation: 0,
+  }, {
+    ...editor.parameters,
+    parentAnchor: { ...editor.parameters.parentAnchor },
+    childAnchor: { ...editor.parameters.childAnchor },
+    offset: {
+      x: editor.parameters.offset.x * nestedPreviewGeometry.offsetScale,
+      y: editor.parameters.offset.y * nestedPreviewGeometry.offsetScale,
+    },
+    scale: { x: 1, y: 1 },
+    rotation: 0,
+  });
+});
 const nestedOffsetGuideStyle = computed(() => {
   const parameters = nestedPositionEditor.value?.parameters;
   if (!parameters) return undefined;
@@ -1099,6 +1151,18 @@ function setNestedChildScale(event: Event) {
   const ratio = Number((event.currentTarget as HTMLInputElement).value);
   if (!editor || !Number.isFinite(ratio)) return;
   updateNestedChildScale(editor.child.id, ratio);
+}
+
+function toggleNestedCallout() {
+  const callout = nestedPositionEditor.value?.parameters.callout;
+  if (!callout) return;
+  updateNestedCallout({ enabled: !callout.enabled });
+}
+
+function setNestedCalloutScale(event: Event) {
+  const scale = Number((event.currentTarget as HTMLInputElement).value);
+  if (!Number.isFinite(scale)) return;
+  updateNestedCallout({ scale });
 }
 
 function isNestedAnchorSelected(side: NestedAnchorSide, anchor: { x: number; y: number }) {
@@ -1604,6 +1668,7 @@ function removeSeriesCaptionItem(nodeId: string, field: string, event: Event) {
 }
 
 onMounted(() => {
+  syncRenderedNodeSelectionBounds();
   if (typeof IntersectionObserver === "function" && canvasRef.value) {
     deckglVisibilityObserver = new IntersectionObserver(updateDeckglLayerVisibility, {
       root: canvasRef.value,
@@ -1617,6 +1682,13 @@ onMounted(() => {
   window.addEventListener("click", closeTemplateCategoryMenu);
   window.addEventListener("resize", positionNestedBindingPopup);
   window.addEventListener("resize", closeTemplateCategoryMenu);
+});
+onUpdated(() => {
+  // CanvasNodeView emits actual SVG occupancy groups for visible content. The store
+  // compares the resulting small bounds map and mutates reactive state only
+  // when browser layout changed, so this post-render bridge settles in at
+  // most one additional component update.
+  syncRenderedNodeSelectionBounds();
 });
 onBeforeUnmount(() => {
   deckglVisibilityObserver?.disconnect();

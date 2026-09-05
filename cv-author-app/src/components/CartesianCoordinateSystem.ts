@@ -491,7 +491,27 @@ export const CanvasCoordinateSystemLayer: any = defineComponent({
   },
   setup(props) {
     return () => {
-      const node = props.node;
+      const sourceNode = props.node;
+      const useOwnedComposition = props.editingCompositionId === sourceNode.compositionSpec?.id;
+      const ancestor = props.editingCompositionId
+        ? [...(sourceNode.compositionAncestors ?? [])].reverse().find((context) =>
+          context.compositionSpec.id === props.editingCompositionId)
+          ?? sourceNode.compositionAncestors?.at(-1)
+        : sourceNode.compositionAncestors?.at(-1);
+      const effectiveComposition = useOwnedComposition
+        ? sourceNode.compositionSpec
+        : ancestor?.compositionSpec ?? sourceNode.parentCompositionSpec ?? sourceNode.compositionSpec;
+      const effectiveCoordinateSystem = useOwnedComposition
+        ? sourceNode.coordinateSystem
+        : ancestor?.coordinateSystem ?? sourceNode.parentCoordinateSystem ?? sourceNode.coordinateSystem;
+      const node = effectiveComposition === sourceNode.compositionSpec
+        && effectiveCoordinateSystem === sourceNode.coordinateSystem
+        ? sourceNode
+        : {
+          ...sourceNode,
+          compositionSpec: effectiveComposition,
+          coordinateSystem: effectiveCoordinateSystem,
+        } as CanvasNode;
       if (props.hiddenNodeIds?.has(node.id) && props.allowHiddenNodeId !== node.id) return null;
       const editingLayer = node.compositionSpec?.type === "layer"
         && props.editingCompositionId === node.compositionSpec.id;
@@ -506,8 +526,8 @@ export const CanvasCoordinateSystemLayer: any = defineComponent({
       if (node.coordinateGuide?.type === "Cartesian"
         && node.compositionSpec?.type === "layer"
         && channels.length === 0) return null;
-      const children = node.kind === "group"
-        ? node.children.map((child) => h(CanvasCoordinateSystemLayer, {
+      const children = sourceNode.kind === "group"
+        ? sourceNode.children.map((child) => h(CanvasCoordinateSystemLayer, {
           key: child.id,
           node: child,
           draggingNodeId: props.draggingNodeId,
@@ -540,7 +560,7 @@ export const CanvasCoordinateSystemLayer: any = defineComponent({
           props.draggingNodeId === node.id ? "canvas-coordinate-system-node--drag-source" : "",
         ],
         "data-coordinate-node-id": node.id,
-        transform: node.kind === "leaf" ? getLeafNodeTransform(node) : getNodeTransform(node),
+        transform: sourceNode.kind === "leaf" ? getLeafNodeTransform(sourceNode) : getNodeTransform(sourceNode),
         "pointer-events": "none",
       }, [...(axis ? [axis] : []), ...children]);
     };

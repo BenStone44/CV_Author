@@ -121,6 +121,119 @@ rows remain the source of truth. Legacy `filters`, `valueFilters`, and
 behavior must not create a third competing transform representation. Migrate or
 adapt legacy state through explicit boundaries.
 
+### Composite Units, Editing Scopes, and Drop Zones
+
+Treat composition as a hierarchy of complete visualization units, not as a
+flat collection of leaf charts or SVG marks. An atomic Chart owns its data,
+encodings, transforms, marks, and coordinate contract. A completed Layer,
+Facet, or Nested composition is a closed Composite root in its parent editing
+scope. Selection, movement, transforms, compatibility checks, and any outer
+composition must treat that root as one whole unit. An outer composition must
+reference the child root, preserve the child's own `compositionSpec`, and use
+the child's resolved external axis signatures; it must not flatten, select,
+move, or compose the child's hidden leaf members independently.
+
+Concat is an open spatial container whose direct members keep their boundaries
+for append and crossing-link operations. A direct Concat member may itself be a
+closed Composite root, and that member still remains indivisible until Enter.
+When the Concat root itself is selected or dragged from its parent scope, use it
+as the complete source unit; openness does not authorize flattening its
+descendants. Facet cells and Nested render/layout children likewise remain
+internal records rather than independent parent-scope selections.
+
+Enter is scope navigation, not a composition operation. In a parent scope, the
+internals of a closed Composite must not participate in selection or drop-zone
+hit testing. Entering the Composite switches hit testing to its internal scope,
+where only direct top-level Chart/Composite children become targets; deeper
+descendants remain hidden until another Enter. Exiting restores the parent
+scope and once again treats the Composite as a whole.
+
+Keep the drag-time Enter portal separate from selection controls. During a
+composition drag, preserve the circular Enter region and its visual mask on a
+Chart or closed Composite when navigation is required. Enter has priority over
+an overlapping Layer body and must complete before any destination is resolved
+inside that target. The normal selection overlay must never render an Enter
+button for a Chart, Composite, Cartesian or Polar coordinate system, Tree, or
+map. Enter is available only as drag-time scope navigation; store-level scope
+navigation APIs may remain for that workflow but must not be exposed as a
+selected-chart action.
+
+Render selection Config and overall composition Split controls centered above
+the selected unit's outer frame, at fixed screen size and spacing. This applies
+uniformly to Cartesian, Polar, Tree, coordinate-free, Composite, and deck.gl
+map units; neither control may be placed inside the chart or map interaction
+surface. A Concat link-boundary split control is a different link operation and
+remains at its owning boundary rather than being moved above the chart.
+
+Layer and Concat drop zones are mutually exclusive for a given target point.
+One hit test and one committed drop must resolve to exactly one composition
+type: Layer occupies the target body, while Concat occupies the exterior
+perimeter edges or eligible corners. Keep a 10-screen-pixel neutral gap between
+the body and every exterior Concat zone; this gap is visual separation and must
+not commit either operation. Apply the same separation to Cartesian, Polar,
+Tree, and closed Composite targets. These geometries must not overlap or
+compete, and chart-name patches or precedence accidents must not choose between
+them. This does not prevent all legal Layer and Concat zones from being visible
+simultaneously when they occupy distinct regions. The central Enter portal is
+also not a Layer destination; where it intersects the body, Enter wins and no
+composition is committed.
+
+At composition-drag start and after every editing-scope transition, enumerate
+drop zones from only the current scope and follow these rendering rules:
+
+1. Render every structurally legal non-Nested zone in `availableDropZones`;
+   inactive zones may be subdued, while the pointer-resolved zone is active.
+2. Nested is the sole exception to full enumeration in the overlay. Render at
+   most one Nested zone: the currently resolved Nested target, and only after
+   the required Chart/Composite Enter transition has completed.
+3. Do not rank, truncate, or silently discard distinct legal non-Nested zones.
+   Preserve separate direction, position, shared-channel, and target bindings.
+4. When the pointer hits Enter, first update the editing scope, then immediately
+   recompute both `availableDropZones` and `activeDropZone` at the same pointer
+   location. Never render or commit stale parent-scope destinations after
+   entering.
+5. Clearing or completing the drag must clear both available and active zones.
+
+Compatibility and commit logic must consume the same direct source and target
+units that produced the visible zones. A closed Composite therefore validates
+through its external contract as a whole, while an entered Composite validates
+its direct children. Keep the scope change, composition creation, movement,
+relationship updates, and undo history ownership explicit so that undoing an
+outer composition never dismantles an inner one.
+
+### Polar Composition and Coordinate Trees
+
+Normalize Polar composition through the same external-axis contract used by
+Cartesian composition. Polar units expose `angle` and `radius`; compare
+nominal/ordinal axes by their complete ordered visible name lists, and treat
+two quantitative axes as structurally eligible without inferring semantic or
+unit equivalence. Radial Concat shares `angle` and occupies adjacent annuli;
+Angular Concat shares `radius` and occupies adjacent angular sectors. Layer
+occupies the chart body and shares only the explicitly confirmed compatible
+channel set. Its body zone must remain mutually exclusive with the inner/outer
+radial and start/end angular Concat zones. Enumerate every legal Polar zone at
+drag start and after Enter just as for Cartesian zones.
+
+Treat `Dendrogram` as a Cartesian coordinate tree and `RadialDendrogram` as a
+Polar coordinate tree, not as coordinate-free hierarchies. A tree has one
+special external leaf axis and one internal depth axis. For a Cartesian tree,
+left/right growth exposes Y and up/down growth exposes X. A radial tree exposes
+Angle. The orthogonal Cartesian channel or Polar Radius is the depth axis and
+must not be shared by Layer or Concat. Determine terminal nodes from the
+`key`/`parent` relation. Order the leaf domain by `category` then `key` for a
+Cartesian tree, and by `theta`/`angle` then `key` for a radial tree. Treat that
+domain as categorical even when leaf keys are numeric.
+
+When a tree is concatenated with another chart on its leaf axis, use the
+tree's complete ordered terminal-leaf list as the shared structural domain and
+automatically restrict the companion's rendered chart-local view to those leaf
+values. This relationship-owned restriction must not mutate the companion's
+local filters, transforms, or encodings, and detaching the Concat must remove
+it. The companion may contain branch/root values in addition to all leaves,
+but missing leaves, different leaf order, unresolved lineage, or an attempted
+depth-axis share makes the composition incompatible/`UNRESOLVABLE`; do not
+union domains, substitute columns, or add fixture-specific exceptions.
+
 ### D3 and Canvas Polar Conventions
 
 D3 `pie`/`arc` angles and the canvas polar coordinate system use different
@@ -182,6 +295,50 @@ endpoints from the same ID-to-feature mapping. Invalid or unmatched IDs are
 reported and skipped. Geographic columns are not ordinary coordinate encoding
 inputs, and the Encoding Config panel exposes the selected GeoJSON ID join plus
 optional color and size fields only.
+
+### deck.gl Canvas Nodes and Layer Stacks
+
+Treat a Mapbox/deck.gl node as one complete visualization unit that owns its
+HTML/WebGL viewport, map view state, GeoJSON ID join, deck.gl layer config,
+selection frame, and relationships. Do not model deck.gl layers or picked map
+features as ordinary SVG children. Canvas move/resize/rotate acts on the outer
+viewport; Mapbox pan/zoom/rotate, feature picking, data drops, and point-nested
+targeting remain internal map interactions.
+
+Keep structural Canvas controls off the interactive map surface. As for every
+other chart type, Config and overall composition Split controls for a selected
+deck.gl node render centered above its viewport at fixed screen size/spacing so
+they do not intercept map navigation or picking. The thin external frame edges
+may initiate Canvas movement, while the interior remains owned by Mapbox/deck.gl.
+
+A deck.gl Layer stack shares one Mapbox viewport while preserving each
+member's layer type, config, dataset binding, GeoJSON join, z-order, and real
+layer ID. The stack owner is `deckglLayerStack[0]`; hidden members render inside
+that owner's map instance. Treat the owner/stack as a whole unit in its parent
+scope, but preserve the picked member `layerId` for encoding and Nested
+relationships.
+
+Splitting a deck.gl Layer stack back into independent map viewports is not yet
+implemented. Do not expose or describe the ordinary composition Split action
+as deck.gl Layer split. The future operation must preserve every member's
+config, binding, nested relationships, and order; clear the shared stack;
+assign deterministic non-overlapping frames; and be one undoable transaction
+with undo/redo and nested-child coverage.
+
+### Nested Message Frames
+
+Store an optional scalable message frame on the Nested relationship, not in
+the child ChartSpec or local transforms. The frame expands around the child's
+geometric center so the child remains horizontally and vertically centered.
+Frame scale is independent of child scale. Its message arrow must terminate at
+the resolved parent anchor, not at the offset child-placement point.
+
+Use the same relationship-owned callout model for SVG and deck.gl parents. For
+deck.gl points, reproject the child, frame, and arrow whenever the map view
+changes. Toggling or resizing a callout must update all instances in the
+selected Nested batch and remain undoable. Detaching the relationship removes
+the frame and arrow without changing the child's filters, encodings, or local
+transforms.
 
 ### Filter Intent and Facet Clues
 
@@ -332,6 +489,9 @@ The following issues remain to be solved before the workflow is fully unified:
 - `src/utils/chartDataPipeline.ts`: materializes selected wide `valueFields` into `__csv_measure__` / `__csv_value__` long rows.
 - `src/utils/encodingConfig.ts`, `src/components/EncodingConfigPanel.vue`, and `src/stores/useCanvasStore.ts`: direct CSV bindings while preserving templates and encodings.
 - `src/stores/useCanvasStore.ts` and `src/components/App.vue`: pass the dropped column and drop context to the engine, present every legal intent, and apply only the user's confirmed choice.
+- `src/stores/canvas/compositionOperations.ts`: current-scope composition hit testing, complete available-zone enumeration, Composite-root boundaries, and Enter targets.
+- `src/stores/canvas/interaction.ts`: drag lifecycle and the Enter-before-recompute scope transition.
+- `src/components/App.vue`, `src/components/App.template.html`, and `src/components/App.controls.css`: available-zone filtering and rendering, the single active Nested exception, and drag-time Enter visuals.
 
 ## Testing
 

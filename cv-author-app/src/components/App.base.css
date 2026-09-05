@@ -937,6 +937,33 @@
 .nested-position-child:active {
   cursor: grabbing;
 }
+.nested-position-child--callout {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+.nested-position-callout {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.nested-callout__frame,
+.nested-position-callout__frame {
+  fill: rgb(var(--frontend-light-rgb) / 0.94);
+  stroke: #99582a;
+  stroke-width: 1.5;
+}
+.nested-callout__arrow,
+.nested-position-callout__arrow {
+  fill: rgb(var(--frontend-light-rgb) / 0.94);
+  stroke: #99582a;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
 .nested-position-sample--child {
   inset: 7px;
   gap: 3px;
@@ -967,6 +994,46 @@
 }
 .nested-position-scale-control output {
   color: #9f1239;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.nested-position-callout-control {
+  display: grid;
+  gap: 8px;
+}
+.nested-position-callout-control > button {
+  justify-self: start;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--frontend-control-border);
+  border-radius: 6px;
+  background: var(--frontend-surface-raised);
+  color: #432818;
+  font: inherit;
+  font-size: calc(11px * var(--frontend-font-scale));
+  font-weight: 650;
+  cursor: pointer;
+}
+.nested-position-callout-control > button.is-active {
+  border-color: #99582a;
+  background: var(--frontend-surface-soft);
+}
+.nested-position-callout-control > label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 42px;
+  align-items: center;
+  gap: 10px;
+  color: #475569;
+  font-size: calc(11px * var(--frontend-font-scale));
+  font-weight: 650;
+}
+.nested-position-callout-control input {
+  width: 100%;
+  margin: 0;
+  accent-color: #99582a;
+}
+.nested-position-callout-control output {
+  color: #99582a;
   font-variant-numeric: tabular-nums;
   text-align: right;
 }

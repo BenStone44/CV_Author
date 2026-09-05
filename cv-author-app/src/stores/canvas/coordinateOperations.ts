@@ -280,18 +280,32 @@ export function useCanvasCoordinateOperations(context: any) {
     const liveIds = new Set(all.map((node) => node.id));
     const systems = new Map<string, CoordinateSystemSpec>();
     all.forEach((node) => {
-      const system = node.coordinateSystem;
-      if (!system) return;
-      const canonical = systems.get(system.id) ?? system;
-      canonical.members = canonical.members.filter((member) => liveIds.has(member.nodeId));
-      if (!liveIds.has(canonical.ownerNodeId)) canonical.ownerNodeId = canonical.members[0]?.nodeId ?? node.id;
-      systems.set(system.id, canonical);
-      node.coordinateSystem = canonical;
+      const reconcileSystem = (system: CoordinateSystemSpec | null | undefined) => {
+        if (!system) return system;
+        const canonical = systems.get(system.id) ?? system;
+        canonical.members = canonical.members.filter((member) => liveIds.has(member.nodeId));
+        if (!liveIds.has(canonical.ownerNodeId)) canonical.ownerNodeId = canonical.members[0]?.nodeId ?? node.id;
+        systems.set(system.id, canonical);
+        return canonical;
+      };
+      node.coordinateSystem = reconcileSystem(node.coordinateSystem);
+      node.parentCoordinateSystem = reconcileSystem(node.parentCoordinateSystem);
+      node.compositionAncestors = node.compositionAncestors?.map((context) => ({
+        ...context,
+        coordinateSystem: reconcileSystem(context.coordinateSystem) ?? null,
+      }));
     });
     const compositions = new Map<string, NonNullable<CanvasNode["compositionSpec"]>>();
     all.forEach((node) => {
       const spec = node.compositionSpec;
       if (spec && !compositions.has(spec.id)) compositions.set(spec.id, spec);
+      const parentSpec = node.parentCompositionSpec;
+      if (parentSpec && !compositions.has(parentSpec.id)) compositions.set(parentSpec.id, parentSpec);
+      node.compositionAncestors?.forEach((context) => {
+        if (!compositions.has(context.compositionSpec.id)) {
+          compositions.set(context.compositionSpec.id, context.compositionSpec);
+        }
+      });
     });
     compositions.forEach((spec) => {
       spec.members = spec.members.filter((member) => liveIds.has(member.nodeId));
@@ -299,6 +313,14 @@ export function useCanvasCoordinateOperations(context: any) {
     all.forEach((node) => {
       const spec = node.compositionSpec ? compositions.get(node.compositionSpec.id) : null;
       node.compositionSpec = spec && spec.members.length > 1 ? spec : null;
+      const parentSpec = node.parentCompositionSpec ? compositions.get(node.parentCompositionSpec.id) : null;
+      node.parentCompositionSpec = parentSpec && parentSpec.members.length > 1 ? parentSpec : null;
+      node.compositionAncestors = node.compositionAncestors?.flatMap((context) => {
+        const ancestorSpec = compositions.get(context.compositionSpec.id);
+        return ancestorSpec && ancestorSpec.members.length > 1
+          ? [{ ...context, compositionSpec: ancestorSpec }]
+          : [];
+      });
     });
     reconcileRelationshipNodes(nodes);
   }
@@ -351,6 +373,11 @@ export function useCanvasCoordinateOperations(context: any) {
       if (node.kind !== "group") return [node];
       const sourceComposition = node.compositionSpec;
       const type = sourceComposition?.type;
+      if (sourceComposition
+        && (type === "layer" || type === "facet" || type === "nested")) {
+        node.children = migrateIndependentViewGroups(node.children);
+        return [node];
+      }
       const childIds = new Set(node.children.map((child) => child.id));
       const containsCompositionMembers = sourceComposition?.members.some((member) => childIds.has(member.nodeId)) ?? false;
       const isIndependentViewWrapper = (type === "facet" || type === "concat") && containsCompositionMembers;
@@ -437,7 +464,7 @@ export function useCanvasCoordinateOperations(context: any) {
         representatives.set(node.id, node);
         return;
       }
-      if (node.kind === "group" && (composition.type === "facet" || composition.type === "nested")) {
+      if (node.kind === "group" && composition.type !== "concat") {
         representatives.set(composition.id, node);
         return;
       }
@@ -624,6 +651,10 @@ export function useCanvasCoordinateOperations(context: any) {
       const composition = node?.compositionSpec;
       if (!node) return;
       if (composition && editingCompositionId.value !== composition.id) {
+        if (node.kind === "group" && composition.type !== "concat") {
+          expanded.add(node.id);
+          return;
+        }
         if (composition.type === "concat") {
           concatGraphMembers(composition).forEach((memberId) => {
             if (getSelectionNode(memberId)) expanded.add(memberId);
@@ -758,7 +789,7 @@ export function useCanvasCoordinateOperations(context: any) {
       y: node.y + (selection.minY - localMinY) * node.scaleY,
     };
     const selectionWidth = selection.width * node.scaleX;
-    const width = Math.min(160, Math.max(100, selectionWidth));
+    const width = Math.min(280, Math.max(180, selectionWidth));
     const memberRows = Math.max(seriesItemMemberCount(node), 1);
     const height = 26 + memberRows * 26;
     const center = {

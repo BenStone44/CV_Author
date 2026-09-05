@@ -2,6 +2,7 @@ import { defineComponent, h, type PropType } from "vue";
 import type { CanvasNode, EncodingChannel, NestedRenderPlacement, Point } from "../types";
 import { getCanvasObjectHitTargetBounds, getNodeTransform, getLeafNodeTransform, getPolarOccupiedGeometry } from "../utils/canvasUtils";
 import { CanvasCoordinateSystemLayer } from "./CartesianCoordinateSystem";
+import { nestedCalloutGeometry } from "../utils/nestedCallout";
 
 function arrowHead(end: Point, direction: Point, size: number) {
   const perpendicular = { x: -direction.y, y: direction.x };
@@ -324,6 +325,7 @@ export const CanvasNodeView: any = defineComponent({
   name: "CanvasNodeView",
   props: {
     node: { type: Object as PropType<CanvasNode>, required: true },
+    embedded: { type: Boolean, default: false },
     interactive: { type: Boolean, default: false },
     selected: { type: Boolean, default: false },
     editingGroupPath: { type: Array as PropType<string[]>, default: () => [] },
@@ -382,15 +384,47 @@ export const CanvasNodeView: any = defineComponent({
         const inverseParent = inverseMatrix(nodeTransformMatrix(props.node));
         if (!inverseAncestor || !inverseParent) return null;
         const child = placement.child;
+        const callout = nestedCalloutGeometry({
+          x: child.x,
+          y: child.y,
+          width: child.width,
+          height: child.height,
+          scaleX: child.scaleX,
+          scaleY: child.scaleY,
+          rotation: child.rotation,
+        }, placement.parameters);
+        const calloutNode = callout ? h("g", {
+          class: "nested-callout",
+          "data-nested-callout-relationship-id": placement.relationshipId,
+          "pointer-events": "none",
+        }, [
+          h("path", {
+            class: "nested-callout__arrow",
+            d: callout.arrowPath,
+            "vector-effect": "non-scaling-stroke",
+          }),
+          h("rect", {
+            class: "nested-callout__frame",
+            x: callout.frame.x,
+            y: callout.frame.y,
+            width: callout.frame.width,
+            height: callout.frame.height,
+            rx: 8,
+            transform: `rotate(${callout.frame.rotation} ${callout.frame.center.x} ${callout.frame.center.y})`,
+            "vector-effect": "non-scaling-stroke",
+          }),
+        ]) : null;
         // Paint inside the parent mark's layer while keeping the child's model-space frame.
         return h("g", {
           key: `nested-placement:${placement.relationshipId}`,
           class: "nested-render-placement",
           transform: matrixTransform(multiplyMatrix(inverseAncestor, inverseParent)),
         }, [
+          calloutNode,
           h(NodeView, {
             key: child.id,
             node: child,
+            embedded: true,
             interactive: props.interactive,
             // Nested children are edited/selected through their top-level
             // parent. Their own geometry remains reactive through `node`.
@@ -559,7 +593,8 @@ export const CanvasNodeView: any = defineComponent({
       };
       const renderContent = (content: string, hasInteractiveMarks: boolean) => {
         const contentProps = {
-          class: hasInteractiveMarks ? "semantic-rendered-content" : undefined,
+          class: ["canvas-object-occupancy", hasInteractiveMarks ? "semantic-rendered-content" : ""],
+          "data-selection-occupancy-node-id": props.node.id,
           style: { pointerEvents: hasInteractiveMarks ? "all" : "none" },
           onPointerdown: hasInteractiveMarks
             ? (event: PointerEvent) => markHandler!(props.node, event)
@@ -644,8 +679,12 @@ export const CanvasNodeView: any = defineComponent({
         const isDeckglLayer = props.node.layerKind === "deckgl";
         return h("g", { ...sharedProps }, [
           // Keep a stable hit area for thin strokes and hollow SVG shapes.
-          ...(!isDeckglLayer ? [hitTarget(hasInteractiveMarks)] : []),
-          ...(isChartPlaceholder ? [chartPlaceholderFrame()] : []),
+          ...(!isDeckglLayer && !props.embedded ? [hitTarget(hasInteractiveMarks)] : []),
+          ...(isChartPlaceholder ? [h("g", {
+            class: "canvas-object-occupancy",
+            "data-selection-occupancy-node-id": props.node.id,
+            "pointer-events": "none",
+          }, [chartPlaceholderFrame()])] : []),
           ...(props.node.layerKind === "deckgl"
             ? []
             : [renderContent(props.node.renderedContent ?? props.node.content, hasInteractiveMarks)]),
@@ -655,7 +694,7 @@ export const CanvasNodeView: any = defineComponent({
       if (props.node.renderedContent && !isEditingAncestor) {
         const hasInteractiveMarks = props.editingChartId === props.node.id && !!markHandler;
         return h("g", sharedProps, [
-          hitTarget(hasInteractiveMarks),
+          ...(!props.embedded ? [hitTarget(hasInteractiveMarks)] : []),
           renderContent(props.node.renderedContent, hasInteractiveMarks),
         ]);
       }
@@ -688,18 +727,26 @@ export const CanvasNodeView: any = defineComponent({
               "vector-effect": "non-scaling-stroke",
             })]
             : []),
-          ...(nodeInteractive
+          ...(nodeInteractive && !props.embedded
             ? [hitTarget()]
             : []),
-          ...(!props.node.renderedContent && props.node.chartSpec
-            ? [chartPlaceholderFrame()]
-            : []),
+          h("g", {
+            class: "canvas-object-occupancy",
+            "data-selection-occupancy-node-id": props.node.id,
+            "data-selection-occupancy-composite": props.node.chartSpec ? undefined : "true",
+            "pointer-events": "none",
+          }, [
+            ...(!props.node.renderedContent && props.node.chartSpec
+              ? [chartPlaceholderFrame()]
+              : []),
+          ]),
           ...props.node.children
             .filter((child) => !props.nestedRenderedChildIds.has(child.id))
             .map((child) =>
               h(NodeView, {
                 key: child.id,
                 node: child,
+                embedded: props.embedded,
                 interactive: isActiveEditingGroup,
                 selected: props.selectedIds.includes(child.id),
                 editingGroupPath: isEditingAncestor && editingPath[1] === child.id

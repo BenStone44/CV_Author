@@ -404,9 +404,11 @@ describe("independent Polar coordinate system component", () => {
       onEditingBackgroundPointerDown: null,
     });
 
-    const [hitTarget, placeholder] = render().children;
+    const [hitTarget, occupancy] = render().children;
+    const placeholder = occupancy.children[0];
     expect(hitTarget.type).toBe("path");
     expect(hitTarget.props["data-hit-target-shape"]).toBe("polar");
+    expect(occupancy.props["data-selection-occupancy-node-id"]).toBe(node.id);
     expect(placeholder.type).toBe("path");
     expect(placeholder.props.class).toBe("chart-placeholder-frame");
     expect(placeholder.props["fill-rule"]).toBe("evenodd");

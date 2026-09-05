@@ -172,6 +172,10 @@ function parseAxisValue(value: string, type: ChartEncoding["type"]): ParsedAxisV
     const number = Number(trimmed);
     return Number.isFinite(number) ? number : null;
   }
+  if (type === "temporal") {
+    const timestamp = Date.parse(trimmed);
+    return Number.isFinite(timestamp) ? trimmed : null;
+  }
   return null;
 }
 
@@ -365,6 +369,19 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
         position: (value: ParsedAxisValue) => scale(value as string) ?? 0,
         domain,
         type: "point" as const,
+      };
+    }
+    if (encoding.type === "temporal") {
+      const domain = finiteExtent(values.map((value) => Date.parse(String(value))));
+      if (!domain) throw new Error("Unable to calculate a temporal scale domain.");
+      const scale = scaleUtc()
+        .domain(domain.map((value) => new Date(value)) as [Date, Date])
+        .nice(5)
+        .range(range);
+      return {
+        position: (value: ParsedAxisValue) => scale(new Date(String(value))),
+        domain: scale.domain().map((value) => value.getTime()) as [number, number],
+        type: "utc" as const,
       };
     }
     const domain = finiteExtent(values as number[]);

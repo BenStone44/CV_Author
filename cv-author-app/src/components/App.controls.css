@@ -266,6 +266,10 @@
 }
 .composition-drop-zone-layer {
   pointer-events: none;
+  opacity: 0.5;
+}
+.composition-drop-zone-layer--active {
+  opacity: 1;
 }
 .composition-mode-veil {
   overflow: hidden;
@@ -307,6 +311,9 @@
   stroke: rgb(var(--frontend-light-rgb) / 0.96);
   stroke-linejoin: round;
   stroke-width: 4px;
+}
+.composition-mode-label--concat {
+  fill: #047857;
 }
 .composition-mode-label--nested {
   fill: #9a5200;
@@ -393,12 +400,19 @@
   display: flex;
   min-width: 0;
   flex: 1 1 auto;
+  justify-content: flex-end;
   gap: 4px;
-  overflow: hidden;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.series-item-panel__bindings::-webkit-scrollbar {
+  display: none;
 }
 .series-item-panel__binding {
   display: inline-flex;
   min-width: 0;
+  max-width: 100%;
+  flex: 0 0 auto;
   align-items: center;
   gap: 2px;
   padding-left: 5px;
@@ -434,8 +448,8 @@
 .series-item-panel__member {
   display: grid;
   min-width: 0;
-  grid-template-columns: fit-content(140px) 22px;
-  justify-content: start;
+  grid-template-columns: minmax(0, 1fr) 22px;
+  justify-content: stretch;
   align-items: center;
   gap: 10px;
   padding: 2px 5px 2px 6px;
@@ -558,6 +572,31 @@
 .composition-enter-zone--active text {
   fill: var(--frontend-surface-raised);
   animation: composition-nested-label 440ms ease both;
+}
+.composition-enter-transition-layer {
+  pointer-events: none;
+}
+.composition-enter-transition circle {
+  fill: #d97706;
+  stroke: #d97706;
+  stroke-width: 2;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: composition-enter-confirmation 680ms cubic-bezier(0.2, 0.72, 0.2, 1) both;
+}
+.composition-enter-transition text {
+  fill: var(--frontend-surface-raised);
+  font-weight: 700;
+  animation: composition-enter-confirmation-label 520ms ease-out both;
+}
+@keyframes composition-enter-confirmation {
+  0% { opacity: 0.96; transform: scale(1); }
+  28% { opacity: 0.78; }
+  100% { opacity: 0; transform: scale(var(--enter-expand-scale, 3)); }
+}
+@keyframes composition-enter-confirmation-label {
+  0%, 22% { opacity: 1; }
+  100% { opacity: 0; }
 }
 @keyframes composition-nested-label {
   0% { opacity: 0; transform: scale(0.88); }
@@ -1036,36 +1075,6 @@
   fill: rgba(67, 40, 24, 0.1);
   stroke-dasharray: none;
 }
-.selection-split {
-  color: #432818;
-  opacity: 0.82;
-  pointer-events: all;
-  cursor: pointer;
-  outline: none;
-  transition: opacity 120ms ease, transform 120ms ease;
-}
-.selection-split circle {
-  fill: rgb(var(--frontend-light-rgb) / 0.98);
-  stroke: #432818;
-  stroke-width: 1.5;
-  filter: drop-shadow(0 2px 5px rgba(67, 40, 24, 0.22));
-}
-.selection-split :deep(svg) {
-  overflow: visible;
-  pointer-events: none;
-}
-.selection-split:hover,
-.selection-split:focus {
-  opacity: 1;
-}
-.selection-split:hover circle,
-.selection-split:focus circle {
-  fill: #432818;
-}
-.selection-split:hover,
-.selection-split:focus {
-  color: var(--frontend-surface-raised);
-}
 .cartesian-axis-swap-control {
   color: #432818;
   pointer-events: all;
@@ -1100,8 +1109,8 @@
   outline: none;
   transition: opacity 140ms ease;
 }
-.selection-configure > path {
-  fill: #475569;
+.selection-configure > circle {
+  fill: #99582a;
   stroke: var(--frontend-surface-raised);
   stroke-width: 1.5;
   pointer-events: all;
@@ -1119,32 +1128,6 @@
 .selection-configure:focus {
   opacity: 0.86;
 }
-.selection-enter {
-  opacity: 0.32;
-  pointer-events: all;
-  cursor: pointer;
-  outline: none;
-  transition: opacity 140ms ease;
-}
-.selection-enter > path {
-  fill: #99582a;
-  stroke: var(--frontend-surface-raised);
-  stroke-width: 1.5;
-  pointer-events: all;
-  filter: drop-shadow(0 3px 7px rgba(67, 40, 24, 0.28));
-}
-.selection-enter text {
-  fill: var(--frontend-surface-raised);
-  font-family: inherit;
-  font-weight: 700;
-  letter-spacing: 0;
-  pointer-events: none;
-  user-select: none;
-}
-.selection-enter:hover,
-.selection-enter:focus {
-  opacity: 0.86;
-}
 .selection-uncompose {
   opacity: 0.32;
   pointer-events: all;
@@ -1152,7 +1135,7 @@
   outline: none;
   transition: opacity 140ms ease;
 }
-.selection-uncompose > path {
+.selection-uncompose > circle {
   fill: #8f1d14;
   stroke: var(--frontend-surface-raised);
   stroke-width: 1.5;

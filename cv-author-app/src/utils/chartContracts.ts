@@ -319,6 +319,7 @@ export const chartContracts = {
   ], {
     coordinateSystem: "Cartesian",
     rendererVersion: 3,
+    supportsLayerComposition: true,
     shareableChannels: ["x", "y"],
   }),
   RadialDendrogram: defineSchema("RadialDendrogram", "Radial Dendrogram", "hierarchy", [
@@ -332,7 +333,10 @@ export const chartContracts = {
   ], {
     coordinateSystem: "Polar",
     rendererVersion: 3,
-    shareableChannels: ["angle", "radius"],
+    supportsLayerComposition: true,
+    // Angle is the terminal-leaf axis. Radius represents hierarchy depth and
+    // remains internal to the tree rather than acting as a shared axis.
+    shareableChannels: ["angle"],
   }),
   RadialBarChart: defineSchema("RadialBarChart", "Radial Bar Chart", "bar", [
     { channel: "theta", label: "Theta", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Static" },

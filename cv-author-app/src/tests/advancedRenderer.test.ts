@@ -149,8 +149,8 @@ describe("advanced chart cards", () => {
       expect(card.svgMarkup).toContain("<svg");
     });
     const radialCluster = advancedTemplateDefinitions.find((card) => card.chartType === "RadialDendrogram");
-    expect(getChartTemplateContract("Dendrogram")?.supportsLayerComposition).toBe(false);
-    expect(getChartTemplateContract("RadialDendrogram")?.supportsLayerComposition).toBe(false);
+    expect(getChartTemplateContract("Dendrogram")?.supportsLayerComposition).toBe(true);
+    expect(getChartTemplateContract("RadialDendrogram")?.supportsLayerComposition).toBe(true);
     expect(radialCluster?.svgMarkup).toContain('data-renderer="observable-radial-cluster@3"');
     expect(radialCluster?.svgMarkup).toContain('data-leaf-radius="68"');
     expect(radialCluster?.svgMarkup).toContain('data-selection-radius="76"');

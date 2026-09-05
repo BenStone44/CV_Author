@@ -140,11 +140,18 @@ Main implementation modules:
 
 ## 6. Compatibility and Partial Sharing
 
-For each coordinate channel \(c\), compatibility is currently determined by:
+Cartesian and Polar compatibility are defined per axis rather than per field
+name. Their normative rules and interaction contracts are specified in
+[`cartesian-composition-contract.md`](./cartesian-composition-contract.md) and
+[`polar-composition-contract.md`](./polar-composition-contract.md).
+Mapbox/deck.gl units and their non-SVG interaction boundary are specified in
+[`deckgl-node-contract.md`](./deckgl-node-contract.md).
+
+For each coordinate channel \(c\), compatibility is determined by the resolved
+external axis signature of each participating Chart or Composite:
 
 \[
-compatible(c)=shareable(c)\land
-\forall i,j,\ type(E_i(c))=type(E_j(c))
+compatible(c)=shareable(c)\land AxisCompatible(A_1(c),\ldots,A_n(c))
 \]
 
 The shared-channel set is therefore:
@@ -161,6 +168,16 @@ X incompatible + Y compatible -> share only Y
 X compatible + Y incompatible -> share only X
 ```
 
+Categorical axes (`nominal` and `ordinal`) may originate from different column
+names or datasets, but their resolved, ordered visible name lists must be
+identical. A shared categorical domain is never created by taking the union of
+different lists.
+
+Quantitative axes may originate from different columns and may have different
+local numeric domains. This makes them structurally eligible for a shared
+numeric scale, but does not establish semantic or unit equivalence. The author
+must explicitly choose whether X, Y, or both axes are shared.
+
 For example:
 
 ```text
@@ -171,11 +188,15 @@ Point.X = time      : temporal
 Point.Y = water_kg  : quantitative
 ```
 
-Both X and Y are compatible, but the two Y fields remain independently owned by their respective Mark Encodings.
+Both X and Y are structurally compatible, but the two Y fields remain
+independently owned by their respective Mark Encodings and sharing Y remains an
+explicit author decision.
 
 If one X field is `time : temporal` and the other is `person : nominal`, X remains independent while the compatible quantitative Y channel may still be shared.
 
-Layer composition currently also requires the units to use the same dataset and equivalent filter state, ensuring a consistent data context.
+Layer composition does not require identical datasets, column names, or filter
+state. Those differences are reflected in the resolved axis signatures and
+validated by the rules above.
 
 ## 7. Shared Coordinate Resolution
 
@@ -188,10 +209,11 @@ D_c^*=
 [\min_i D_{i,c}^{min},\max_i D_{i,c}^{max}]
 \]
 
-For nominal channels, the shared domain is the union of categories:
+For categorical channels, compatibility has already established one identical
+ordered name list, so the shared domain is that list:
 
 \[
-D_c^*=\bigcup_i D_{i,c}
+D_c^*=D_{1,c}=D_{2,c}=\ldots=D_{n,c}
 \]
 
 For example:
@@ -343,15 +365,26 @@ Together, these features distinguish the framework from simple graphical concate
 
 > We model each chart as an atomic visualization unit with independently owned data encodings and mark specifications. Composite views are represented as relationships among units rather than as a merged monolithic specification. Composition is performed through a two-pass rendering procedure. Each unit is first rendered independently to derive its local plot geometry and scale domains. Compatible coordinate channels are then reconciled into shared domains, after which all participating units are re-rendered using the shared coordinate space while preserving their original encodings. The final visualization overlays marks-only renderings with a separately rendered coordinate-system layer.
 
-## 13. Current Limitation
+## 13. Recursive Composition Boundary
 
-Channel compatibility is currently based primarily on encoding data types. This is sufficient for fields such as `weight_kg` and `water_kg`, which are both quantitative and use the same unit. However, two quantitative fields are not necessarily semantically compatible.
+A completed Layer, Facet, or Nested composition is exposed to its parent scope
+as one Composite root. An outer composition references that root and must not
+flatten its member Charts or replace the inner composition specification.
+Facet roots expose the facet field as one external categorical axis and inherit
+the orthogonal external axis from the faceted unit. Facet cells retain explicit
+fixed field/value context so a Nested child placed in a cell can inherit that
+context through its parent-child relationship.
 
-A stricter extension could include:
+Concat is an open spatial container: its direct members keep individual
+boundaries for appending and crossing concat links. A direct member may itself
+be a closed Composite root, whose internals remain hidden until Enter.
 
-- physical units
-- semantic measure types
-- normalization policies
-- explicit user-defined compatibility constraints
+At any editing scope, closed Composite roots expose perimeter Concat zones, an
+interior Layer zone, and a central Enter portal. Enter changes the hit-testing
+scope without creating a composition. Only direct children of the entered
+scope become drop targets.
 
-Such metadata would distinguish representational compatibility from semantic compatibility.
+Physical units, semantic measure types, and normalization policies remain
+possible future metadata. Until such metadata exists, quantitative
+compatibility is representational only and always requires an explicit author
+choice.

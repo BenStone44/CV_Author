@@ -1572,9 +1572,10 @@ function updateSingleBarTopN(rawValue: string) {
 .encoding-config__option { display: grid; grid-template-columns: minmax(92px, 1fr) minmax(0, 1.25fr); align-items: center; gap: 8px; }
 .encoding-config__option select { width: 100%; height: 34px; padding: 0 8px; border: 1px solid var(--frontend-control-border); border-radius: 6px; background: var(--frontend-surface-raised); color: #432818; font: inherit; }
 .encoding-config__segment-style-layout { display: grid; gap: 8px; }
-.encoding-config__segment-style-layout--split { grid-template-columns: minmax(0, 1.25fr) minmax(150px, 0.75fr); align-items: center; padding: 6px; border: 1px dashed var(--frontend-border-strong); border-radius: 6px; }
+.encoding-config__segment-style-layout--split { grid-template-columns: minmax(0, 1fr); align-items: stretch; padding: 6px; border: 1px dashed var(--frontend-border-strong); border-radius: 6px; }
 .encoding-config__segment-style-layout--split > .encoding-config__series-drop,
 .encoding-config__segment-style-layout--split > .encoding-config__segment-drop { padding: 2px; border: 0; background: transparent; }
+.encoding-config__segment-style-layout--split > .encoding-config__member-styles { padding-top: 8px; border-top: 1px solid var(--frontend-border-subtle); }
 .encoding-config__member-styles { display: grid; width: 100%; min-width: 0; gap: 5px; justify-items: stretch; }
 .encoding-config__member-styles header { display: flex; width: 100%; min-height: 24px; align-items: center; }
 .encoding-config__member-styles-grid { display: grid; width: 100%; max-width: 100%; gap: 4px; }

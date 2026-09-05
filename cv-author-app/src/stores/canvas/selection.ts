@@ -35,6 +35,11 @@ export function useCanvasSelection(options: CanvasSelectionOptions) {
     ids.forEach((id) => {
       const node = nodes.find((candidate) => candidate.id === id);
       if (!node) {
+        const topLevelId = options.topLevelNodeId(id);
+        if (nodes.some((candidate) => candidate.id === topLevelId)) {
+          normalized.add(topLevelId);
+          return;
+        }
         const nestedRelationship = id.startsWith("nested-unit:")
           ? options.nestedRelationships(id)[0]
           : Object.values(options.relationships.value.nestedRelationships).find((relationship) =>

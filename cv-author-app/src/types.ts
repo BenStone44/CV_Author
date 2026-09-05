@@ -471,11 +471,11 @@ export type CoordinateSystemSpec = {
   /** Maximum rendered outer radius across a Polar composition's members. */
   polarOuterRadius?: number;
   /**
-   * Labels retained on a shared Cartesian axis.  Dendrogram concat uses the
-   * leaf domain here so the companion chart can keep its full mark domain
-   * while its axis labels stay aligned with the tree leaves.
+   * Ordered labels retained on a shared coordinate axis. Tree concat uses the
+   * leaf domain here so a companion view is materialized only from rows that
+   * correspond to terminal tree nodes.
    */
-  axisLabelDomains?: Partial<Record<"x" | "y", string[]>>;
+  axisLabelDomains?: Partial<Record<"x" | "y" | "angle" | "radius", string[]>>;
 };
 
 export type DimensionRecommendation = {
@@ -768,6 +768,12 @@ export type NestedAnchor = {
   y: number;
 };
 
+export type NestedCalloutSpec = {
+  enabled: boolean;
+  /** Rectangle scale around the child center; 1 is the child's own frame. */
+  scale: number;
+};
+
 export type RelativeNestedParameters = {
   parentAnchor: NestedAnchor;
   childAnchor: NestedAnchor;
@@ -775,6 +781,8 @@ export type RelativeNestedParameters = {
   scale: Point;
   rotation: number;
   retainParent?: boolean;
+  /** Relationship-owned message frame; never persisted into the child chart. */
+  callout?: NestedCalloutSpec;
   batchId?: string;
   sourceChildId?: string;
   sourceChildName?: string;
@@ -903,6 +911,11 @@ export type AxisBindingTarget = {
   clientY?: number;
 };
 
+export type CompositionAncestorContext = {
+  compositionSpec: CompositionSpec;
+  coordinateSystem: CoordinateSystemSpec | null;
+};
+
 export type CanvasBaseNode = {
   id: string;
   name: string;
@@ -921,6 +934,15 @@ export type CanvasBaseNode = {
   layerSpec?: LayerSpec | null;
   nestedSpec?: NestedSpec | null;
   compositionSpec?: CompositionSpec | null;
+  /**
+   * Open parent relationship for a closed Composite root. The owned
+   * compositionSpec remains untouched, so a Layer/Facet/Nested unit can be a
+   * direct member of Concat without flattening or overwriting its internals.
+   */
+  parentCompositionSpec?: CompositionSpec | null;
+  parentCoordinateSystem?: CoordinateSystemSpec | null;
+  /** Ordered nearest-to-farthest parent composition contexts. */
+  compositionAncestors?: CompositionAncestorContext[];
   /** Logical layer kind for non-semantic visual objects. */
   layerKind?: "deckgl";
   /** Concrete deck.gl layer constructor used by a geographic visual object. */
@@ -960,6 +982,7 @@ export type NestedRenderPlacement = {
   parentMarkGroupId?: string;
   parentDataKey?: string;
   retainParent: boolean;
+  parameters: RelativeNestedParameters;
   child: CanvasNode;
 };
 
