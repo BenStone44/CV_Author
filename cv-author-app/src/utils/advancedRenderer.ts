@@ -59,6 +59,7 @@ import type { GenericRenderInput } from "./semanticRenderer";
 import { renderLineChart } from "./lineRenderer";
 import { csvRowKey } from "./csvDataEngine";
 import { cartesianAxisEncoding, physicalCartesianAxisEncoding } from "./chartTemplates";
+import { chartAxisLabelsVisible, chartAxisVisible } from "./chartAxes";
 import {
   isCategoricalColorMapping,
   isLinearColorMapping,
@@ -78,11 +79,13 @@ import {
 import {
   cartesianTreeDirection,
   cartesianTreeLeafAxis,
+  uniqueHierarchyRows,
 } from "./treeLayout";
-import { adaptiveAxisFontSize, adaptiveLabel, measureLabelWidth, readableTextColor } from "./adaptiveLabels";
+import { adaptiveAxisFontSize, adaptiveLabel, measureLabelWidth } from "./adaptiveLabels";
 import { globalPalette } from "../config/global";
 
 const tableau = globalPalette.categorical;
+const DENDROGRAM_LINK_STROKE_WIDTH = 2.5;
 
 function esc(value: string) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
@@ -114,6 +117,7 @@ function rowKey(dataset: Dataset, row: Dataset["rows"][number], index: number) {
 
 type NestedMarkIdentity = {
   rowKey?: string;
+  nodeKey?: string;
   categoryKey?: string;
   seriesKey?: string;
   rowValue?: string;
@@ -152,6 +156,7 @@ function nestedChildFrame(
     return (identity.rowKey === undefined
       || identity.rowKey === values.rowKey
       || (legacyDirectKey && identity.rowKey === values.nodeKey))
+      && (identity.nodeKey === undefined || identity.nodeKey === values.nodeKey)
       && (identity.categoryKey === undefined || identity.categoryKey === values.categoryKey || identity.categoryKey === values.nodeKey)
       && (identity.seriesKey === undefined || identity.seriesKey === values.seriesKey)
       && (identity.rowValue === undefined || identity.rowValue === values.rowValue)
@@ -269,36 +274,19 @@ function areaPath(
   points: Array<{ x: number; y: number }>,
   axisSwapped: boolean,
   baseline: number,
-  progressionRange?: [number, number],
 ) {
   if (points.length === 0) return "";
-  // Area marks are visually cleaner when they enter and leave through the
-  // zero baseline. These synthetic points belong to the rendered geometry
-  // only; source rows and row-key metadata remain unchanged.
-  const extendedPoints = progressionRange
-    ? axisSwapped
-      ? [
-        { x: baseline, y: progressionRange[0] },
-        ...points,
-        { x: baseline, y: progressionRange[1] },
-      ]
-      : [
-        { x: progressionRange[0], y: baseline },
-        ...points,
-        { x: progressionRange[1], y: baseline },
-      ]
-    : points;
   return axisSwapped
     ? d3Area<{ x: number; y: number }>()
       .y((point) => point.y)
       .x0(baseline)
       .x1((point) => point.x)
-      .curve(curveBasis)(extendedPoints) ?? ""
+      .curve(curveBasis)(points) ?? ""
     : d3Area<{ x: number; y: number }>()
       .x((point) => point.x)
       .y0(baseline)
       .y1((point) => point.y)
-      .curve(curveBasis)(extendedPoints) ?? "";
+      .curve(curveBasis)(points) ?? "";
 }
 
 function formatTick(value: number) {
@@ -320,15 +308,14 @@ function renderArea(input: GenericRenderInput) {
     });
     const axisSwapped = input.chartSpec.axisSwapped === true;
     const valueScale = axisSwapped ? lineResult.scales.x : lineResult.scales.y;
-    const progressionScale = axisSwapped ? lineResult.scales.y : lineResult.scales.x;
     const baseline = areaValuePosition(valueScale, 0);
     const opacity = Number(sharedConfig(input, "area").opacity ?? 0.42);
     const marks = lineResult.series.map((series) => {
       const points = series.points.map(({ x, y }) => ({ x, y }));
-      const path = areaPath(points, axisSwapped, baseline, progressionScale.range);
+      const path = areaPath(points, axisSwapped, baseline);
       if (!path) return "";
       const rowKeys = series.points.flatMap((point) => point.rowKeys);
-      return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series.key)}" data-point-count="${points.length}" data-zero-endpoints="true" data-row-keys="${esc(rowKeys.join(","))}" d="${path}" fill="${esc(series.color)}" fill-opacity="${opacity}" stroke="${esc(series.color)}" stroke-width="${series.lineWidth}" stroke-linejoin="round" vector-effect="non-scaling-stroke"><title>${esc(series.key === "__single__" ? (cartesianAxisEncoding(input.chartSpec, "y")?.field ?? "") : series.key)}</title></path>`;
+      return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series.key)}" data-point-count="${points.length}" data-row-keys="${esc(rowKeys.join(","))}" d="${path}" fill="${esc(series.color)}" fill-opacity="${opacity}" stroke="${esc(series.color)}" stroke-width="${series.lineWidth}" stroke-linejoin="round" vector-effect="non-scaling-stroke"><title>${esc(series.key === "__single__" ? (cartesianAxisEncoding(input.chartSpec, "y")?.field ?? "") : series.key)}</title></path>`;
     }).join("");
     return {
       content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="area" data-axis-swapped="${axisSwapped}" data-area-curve="basis" data-renderer="deterministic-area@1">${marks}</g>`,
@@ -385,16 +372,33 @@ function renderArea(input: GenericRenderInput) {
     });
 
   if (isHorizon) {
-    const marginTop = 30;
-    const marginRight = 10;
-    const marginLeft = 10;
-    const availableHeight = Math.max(1, input.height - marginTop);
+    const guide = input.coordinateGuide;
+    const showXAxis = chartAxisVisible(input.chartSpec, guide, "x");
+    const showXLabels = chartAxisLabelsVisible(input.chartSpec, guide, "x");
+    const showYAxis = chartAxisVisible(input.chartSpec, guide, "y");
+    const showYLabels = chartAxisLabelsVisible(input.chartSpec, guide, "y");
+    const longestSeriesLabel = Math.max(
+      yEncoding.field.length,
+      ...seriesValues.map((series) => (series === "__single__" ? yEncoding.field : series).length),
+    );
+    const yLabelRoom = showYLabels
+      ? Math.min(110, input.width * 0.3, Math.max(42, longestSeriesLabel * 6.2 + 10))
+      : 0;
+    const marginTop = 6;
+    const marginRight = 8;
+    const marginBottom = showXAxis || showXLabels ? 26 : 6;
+    const marginLeft = 6 + yLabelRoom + (showYAxis ? 6 : 0);
+    const plotLeft = input.minX + marginLeft;
+    const plotRight = input.minX + input.width - marginRight;
+    const plotTop = input.minY + marginTop;
+    const plotBottom = input.minY + input.height - marginBottom;
+    const plotWidth = Math.max(1, plotRight - plotLeft);
+    const availableHeight = Math.max(1, plotBottom - plotTop);
     const size = availableHeight / Math.max(1, seriesValues.length);
     const padding = Math.min(1, size * 0.08);
-    const width = input.width;
     const bands = Math.max(1, Math.min(9, Math.round(Number(sharedConfig(input, "area").bands ?? 7))));
     const maximum = Math.max(1, ...table.flatMap((datum) => seriesValues.map((series) => Number(datum[series] ?? 0))));
-    const x = scaleForEncoding(rows, xEncoding, [input.minX, input.minX + width]);
+    const x = scaleForEncoding(rows, xEncoding, [plotLeft, plotRight]);
     const y = scaleLinear().domain([0, maximum]).range([size, size - bands * (size - padding)]);
     const area = d3Area<Record<string, string | number>>()
       .defined((datum) => Number.isFinite(Number(datum.value)))
@@ -404,26 +408,41 @@ function renderArea(input: GenericRenderInput) {
       .curve(curveBasis);
     const uid = `horizon-${input.chartId.replace(/[^a-z0-9_-]/gi, "-")}`;
     const seriesGroups = seriesValues.map((series, seriesIndex) => {
-      const top = input.minY + marginTop + seriesIndex * size;
+      const top = plotTop + seriesIndex * size;
       const pathId = `${uid}-path-${seriesIndex}`;
       const clipId = `${uid}-clip-${seriesIndex}`;
       const data = table.map((datum) => ({ x: datum.x ?? "", value: Number(datum[series] ?? 0) }));
       const uses = d3Range(bands).map((band) => `<use href="#${pathId}" fill="${globalGradientColor((band + 1) / bands, [0, 1])}" transform="translate(0 ${band * size})"/>`).join("");
-      const seriesLabel = series === "__single__" ? yEncoding.field : series;
-      const label = adaptiveText(seriesLabel, `x="${input.minX + 4}" y="${(size + padding) / 2}" dy="0.35em"`, width * 0.32, Math.max(8, size), "#ffffff");
-      return `<g transform="translate(0 ${top})"><defs><clipPath id="${clipId}"><rect x="${input.minX}" y="${padding}" width="${width}" height="${Math.max(0, size - padding)}"/></clipPath><path id="${pathId}" d="${area(data) ?? ""}"/></defs><g clip-path="url(#${clipId})" data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series)}">${uses}</g>${label}</g>`;
+      return `<g transform="translate(0 ${top})"><defs><clipPath id="${clipId}"><rect x="${plotLeft}" y="${padding}" width="${plotWidth}" height="${Math.max(0, size - padding)}"/></clipPath><path id="${pathId}" d="${area(data) ?? ""}"/></defs><g clip-path="url(#${clipId})" data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series)}">${uses}</g></g>`;
     }).join("");
-    const tickCount = Math.max(2, Math.floor(width / 80));
+    const tickCount = Math.max(2, Math.floor(plotWidth / 80));
     const axisTicks = x.spec.type === "point"
       ? (x.spec.domain as string[]).map((value) => ({ position: x.scale(value), label: value }))
       : ticks(Number((x.spec.domain as [number, number])[0]), Number((x.spec.domain as [number, number])[1]), tickCount)
         .map((value) => ({ position: x.scale(String(value)), label: formatTick(value) }));
-    const visibleTicks = axisTicks.filter((tick) => tick.position >= input.minX + marginLeft && tick.position < input.minX + width - marginRight);
+    const visibleTicks = axisTicks.filter((tick) => tick.position >= plotLeft && tick.position <= plotRight);
     const axisFontSize = adaptiveAxisFontSize(visibleTicks.map((tick) => tick.label), visibleTicks.map((tick) => tick.position), 10, 6, 10);
-    const axis = visibleTicks.map((tick) => `<g class="tick" transform="translate(${tick.position} ${input.minY + marginTop})"><line y2="-6" stroke="currentColor"/>${adaptiveText(tick.label, `y="-9" text-anchor="middle"`, Math.max(12, width / Math.max(visibleTicks.length, 1)), 16, "#ffffff", axisFontSize)}</g>`).join("");
+    const xTicks = visibleTicks.map((tick) => `<g class="tick" transform="translate(${tick.position} ${plotBottom})">${showXAxis ? '<line y2="5" stroke="currentColor"/>' : ""}${showXLabels ? adaptiveText(tick.label, `data-mark-role="horizon-axis-label" data-axis="x" y="8" dy="0.71em" text-anchor="middle"`, Math.max(12, plotWidth / Math.max(visibleTicks.length, 1)), 16, "#ffffff", axisFontSize) : ""}</g>`).join("");
+    const xAxis = showXAxis || showXLabels
+      ? `<g data-mark-role="horizon-axis" data-axis="x">${showXAxis ? `<line x1="${plotLeft}" x2="${plotRight}" y1="${plotBottom}" y2="${plotBottom}" stroke="currentColor"/>` : ""}${xTicks}</g>`
+      : "";
+    const yTicks = seriesValues.map((series, seriesIndex) => {
+      const center = plotTop + (seriesIndex + 0.5) * size;
+      const seriesLabel = series === "__single__" ? yEncoding.field : series;
+      const tick = showYAxis
+        ? `<line x1="${plotLeft - 5}" x2="${plotLeft}" y1="${center}" y2="${center}" stroke="currentColor"/>`
+        : "";
+      const label = showYLabels
+        ? adaptiveText(seriesLabel, `data-mark-role="horizon-axis-label" data-axis="y" x="${plotLeft - 8}" y="${center}" dominant-baseline="middle" text-anchor="end"`, yLabelRoom, Math.max(8, size - padding), "#ffffff")
+        : "";
+      return `${tick}${label}`;
+    }).join("");
+    const yAxis = showYAxis || showYLabels
+      ? `<g data-mark-role="horizon-axis" data-axis="y">${showYAxis ? `<line x1="${plotLeft}" x2="${plotLeft}" y1="${plotTop}" y2="${plotBottom}" stroke="currentColor"/>` : ""}${yTicks}</g>`
+      : "";
     return {
-      content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="horizon" data-area-curve="basis" data-bands="${bands}" data-renderer="observable-horizon@2" font-family="sans-serif">${seriesGroups}<g data-mark-role="horizon-axis">${axis}</g></g>`,
-      plotArea: { x: input.minX, y: input.minY + marginTop, width, height: availableHeight },
+      content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="horizon" data-area-curve="basis" data-bands="${bands}" data-renderer="observable-horizon@3" font-family="sans-serif">${seriesGroups}${xAxis}${yAxis}</g>`,
+      plotArea: { x: plotLeft, y: plotTop, width: plotWidth, height: availableHeight },
     };
   }
 
@@ -444,14 +463,13 @@ function renderArea(input: GenericRenderInput) {
   if (seriesValues.length === 1 && !isStream) {
     const axisSwapped = input.chartSpec.axisSwapped === true;
     const valueScale = axisSwapped ? lineResult.scales.x : lineResult.scales.y;
-    const progressionScale = axisSwapped ? lineResult.scales.y : lineResult.scales.x;
     const baseline = areaValuePosition(valueScale, 0);
     const series = lineResult.series[0];
     if (series) {
-      const path = areaPath(series.points.map(({ x, y }) => ({ x, y })), axisSwapped, baseline, progressionScale.range);
+      const path = areaPath(series.points.map(({ x, y }) => ({ x, y })), axisSwapped, baseline);
       const rowKeys = series.points.flatMap((point) => point.rowKeys);
       const opacity = Number(sharedConfig(input, "area").opacity ?? 0.42);
-      const mark = `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series.key)}" data-point-count="${series.points.length}" data-zero-endpoints="true" data-row-keys="${esc(rowKeys.join(","))}" d="${path}" fill="${esc(series.color)}" fill-opacity="${opacity}" stroke="${esc(series.color)}" stroke-width="${series.lineWidth}" stroke-linejoin="round" vector-effect="non-scaling-stroke"><title>${esc(series.key === "__single__" ? yEncoding.field : series.key)}</title></path>`;
+      const mark = `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series.key)}" data-point-count="${series.points.length}" data-row-keys="${esc(rowKeys.join(","))}" d="${path}" fill="${esc(series.color)}" fill-opacity="${opacity}" stroke="${esc(series.color)}" stroke-width="${series.lineWidth}" stroke-linejoin="round" vector-effect="non-scaling-stroke"><title>${esc(series.key === "__single__" ? yEncoding.field : series.key)}</title></path>`;
       return {
         content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="${isStream ? "streamgraph" : isStacked ? "stacked" : "area"}" data-axis-swapped="${axisSwapped}" data-stack-offset="${isStream ? "silhouette" : "zero"}" data-stack-order="${isStream ? "inside-out" : "none"}" data-area-curve="basis" data-renderer="observable-area@3">${mark}</g>`,
         plotArea: lineResult.plotArea,
@@ -501,12 +519,7 @@ function renderArea(input: GenericRenderInput) {
   area.curve(curveBasis);
   const marks = layers.map((layer, index) => {
     const color = !isStacked && seriesValues.length === 1 ? "steelblue" : tableau[index % tableau.length]!;
-    // Silhouette streams are centered around the numeric zero baseline. Keep
-    // the synthetic entry/exit points on that baseline even when the first
-    // or last source column has a zero value.
-    const endpointValue = 0;
-    const extendedLayer: Array<[number, number]> = [[endpointValue, endpointValue], ...(layer as Array<[number, number]>), [endpointValue, endpointValue]];
-    return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(seriesValues[index] ?? "")}" data-point-count="${layer.length}" data-zero-endpoints="true" d="${area(extendedLayer) ?? ""}" fill="${color}"><title>${esc(seriesValues[index] === "__single__" ? yEncoding.field : seriesValues[index] ?? "")}</title></path>`;
+    return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(seriesValues[index] ?? "")}" data-point-count="${layer.length}" d="${area(layer as unknown as Array<[number, number]>) ?? ""}" fill="${color}"><title>${esc(seriesValues[index] === "__single__" ? yEncoding.field : seriesValues[index] ?? "")}</title></path>`;
   }).join("");
   return {
     content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="${isStream ? "streamgraph" : isStacked ? "stacked" : "area"}" data-axis-swapped="${axisSwapped}" data-stack-offset="${isStream ? "silhouette" : "zero"}" data-stack-order="${isStream ? "inside-out" : "none"}" data-area-curve="basis" data-renderer="observable-area@3">${marks}</g>`,
@@ -608,7 +621,7 @@ function hierarchyRoot(input: GenericRenderInput) {
   const parentEncoding = input.chartSpec.encodings.parent;
   const valueEncoding = input.chartSpec.encodings.value ?? input.chartSpec.encodings.size;
   if (!keyEncoding || !parentEncoding) throw new Error("Hierarchy renderer requires Node ID and Parent ID encodings.");
-  const rows = input.dataset.rows.filter((row) => (row[keyEncoding.field] ?? "").trim());
+  const rows = uniqueHierarchyRows(input.dataset.rows, keyEncoding.field);
   const ids = new Set(rows.map((row) => row[keyEncoding.field] ?? ""));
   const roots = rows.filter((row) => !ids.has(row[parentEncoding.field] ?? ""));
   const normalized = roots.length === 1 ? rows : [
@@ -622,17 +635,11 @@ function hierarchyRoot(input: GenericRenderInput) {
   return { root, synthetic: roots.length !== 1 };
 }
 
-function topAncestorColor<T extends { depth: number; parent: T | null; id?: string }>(node: T, color: (name: string) => string) {
-  if (!node.depth) return "#ccc";
-  let ancestor = node;
-  while (ancestor.depth > 1 && ancestor.parent) ancestor = ancestor.parent;
-  return color(ancestor.id ?? "");
-}
-
 function renderHierarchy(input: GenericRenderInput) {
   const type = normalizedType(input.chartSpec.chartType);
   const area = plotArea(input, 4);
   const { root, synthetic } = hierarchyRoot(input);
+  const hierarchyValueEncoding = input.chartSpec.encodings.value ?? input.chartSpec.encodings.size;
   const nodeConfig = sharedConfig(input, "node");
   const colorEncoding = input.chartSpec.encodings.color;
   const sizeEncoding = input.chartSpec.encodings.size;
@@ -671,8 +678,17 @@ function renderHierarchy(input: GenericRenderInput) {
     return ordinalNodeColor?.(value) ?? fallback;
   };
   const nodeLabelsVisible = nodeConfig.nodeLabelsVisible !== false;
-  const topNames = root.children?.map((node) => node.id ?? "") ?? [];
-  const rainbow = scaleOrdinal<string, string>().domain(topNames).range(tableau);
+  const leafLabelsVisible = nodeConfig.leafLabelsVisible === undefined
+    ? nodeLabelsVisible
+    : nodeConfig.leafLabelsVisible !== false;
+  const hierarchyLabelVisible = (node: { children?: unknown[] }) => node.children?.length
+    ? nodeLabelsVisible
+    : leafLabelsVisible;
+  const hierarchyLabelKind = (node: { children?: unknown[] }) => node.children?.length ? "internal" : "leaf";
+  const hierarchyLabelColor = "#111111";
+  const hierarchyColor = scaleOrdinal<string, string>()
+    .domain(root.descendants().map((node) => node.id ?? "__root__"))
+    .range(tableau);
   const visible = <T extends { id?: string }>(node: T) => !(synthetic && node.id === "__root__");
   const direction = cartesianTreeDirection(input.chartSpec);
 
@@ -697,7 +713,10 @@ function renderHierarchy(input: GenericRenderInput) {
     const innerRatio = Math.max(0, Math.min(guide?.innerRadiusRatio ?? 0, 0.98));
     const outerRatio = Math.max(innerRatio + 0.01, Math.min(guide?.outerRadiusRatio ?? 1, 1));
     const innerRadius = baseLeafRadius * innerRatio;
-    const leafRadius = baseLeafRadius * outerRatio;
+    const sharedHierarchyOuterRadius = Number(input.sharedHierarchyOuterRadius);
+    const leafRadius = Number.isFinite(sharedHierarchyOuterRadius) && sharedHierarchyOuterRadius > innerRadius
+      ? sharedHierarchyOuterRadius
+      : baseLeafRadius * outerRatio;
     const selectionRadius = leafRadius + RADIAL_DENDROGRAM_SELECTION_PADDING;
     const angleSpan = Math.max(1, Math.min(guide?.angleSpan ?? 360, 360));
     let renderedAngleSpan = angleSpan;
@@ -714,6 +733,17 @@ function renderHierarchy(input: GenericRenderInput) {
       outerRadius: leafRadius,
     });
     const radialRoot = radial.root;
+    const hierarchyLevelCount = Math.max(1, radialRoot.height);
+    const sharedHierarchyLevelCount = Number(input.sharedHierarchyLevelCount);
+    if (Number.isFinite(sharedHierarchyLevelCount) && sharedHierarchyLevelCount >= hierarchyLevelCount) {
+      const levelCount = Math.max(1, Math.floor(sharedHierarchyLevelCount));
+      const levelStep = (leafRadius - innerRadius) / levelCount;
+      radialRoot.each((node) => {
+        node.y = node.depth === 0
+          ? innerRadius
+          : innerRadius + (node.depth - 0.5) * levelStep;
+      });
+    }
     const radialLeaves = radialRoot.leaves().filter(radial.visible) as RadialClusterNode[];
     const radialFrameFor = (node: RadialClusterNode) => nestedChildFrame(input, {
       rowKey: rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)),
@@ -768,7 +798,7 @@ function renderHierarchy(input: GenericRenderInput) {
           markGroupId: `mark-group:${input.chartId}:node`,
         });
         if (!sourceFrame && !targetFrame) {
-          return `<path data-mark-role="link" d="${radialLink(link as any) ?? ""}" fill="none" stroke="#555" stroke-opacity="0.4" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
+          return `<path data-mark-role="link" d="${radialLink(link as any) ?? ""}" fill="none" stroke="#555" stroke-opacity="0.4" stroke-width="${DENDROGRAM_LINK_STROKE_WIDTH}" vector-effect="non-scaling-stroke"/>`;
         }
         const radialPoint = (node: { x: number; y: number }) => ({
           x: Math.sin(node.x) * node.y,
@@ -796,7 +826,7 @@ function renderHierarchy(input: GenericRenderInput) {
         const controlSource = radialPoint({ x: sourceNode.x, y: midpointRadius });
         const controlTarget = radialPoint({ x: targetNode.x, y: midpointRadius });
         const path = `M${source.x},${source.y}C${controlSource.x},${controlSource.y} ${controlTarget.x},${controlTarget.y} ${target.x},${target.y}`;
-        return `<path data-mark-role="link" d="${path}" fill="none" stroke="#555" stroke-opacity="0.4" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
+        return `<path data-mark-role="link" d="${path}" fill="none" stroke="#555" stroke-opacity="0.4" stroke-width="${DENDROGRAM_LINK_STROKE_WIDTH}" vector-effect="non-scaling-stroke"/>`;
       })
       .join("");
     const marks = nodes.map((node) => {
@@ -804,29 +834,28 @@ function renderHierarchy(input: GenericRenderInput) {
         ? nodeConfig.color
         : node.children ? "#555" : "#999");
       const rotation = node.x * 180 / Math.PI - 90;
-      return `<circle data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-row-key="${esc(rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)))}" data-angle="${node.x}" transform="rotate(${rotation}) translate(${node.y},0)" r="${nodeRadius(node)}" fill="${color}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}</title></circle>`;
+      return `<circle data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-row-key="${esc(rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)))}" data-hierarchy-depth="${node.depth}" data-radius="${node.y}" data-angle="${node.x}" transform="rotate(${rotation}) translate(${node.y},0)" r="${nodeRadius(node)}" fill="${color}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}</title></circle>`;
     }).join("");
-    const labels = nodeLabelsVisible ? nodes.map((node) => {
+    const labels = nodes.filter(hierarchyLabelVisible).map((node) => {
       const onLeft = Math.sin(node.x) < 0;
       const rotation = node.x * 180 / Math.PI - 90;
       const label = node.id || "";
       const labelOnOutside = !onLeft === !node.children;
-      const style = adaptiveLabel({ text: label, width: Math.max(12, node.y * 0.35), height: 16, background: "#ffffff", fontSize: 10, minFontSize: 6, maxFontSize: 10, padding: 1 });
+      const style = adaptiveLabel({ text: label, width: Math.max(12, node.y * 0.35), height: 16, fontSize: 10, minFontSize: 6, maxFontSize: 10, padding: 1 });
       return style.text
-        ? `<text data-mark-role="node-label" transform="rotate(${rotation}) translate(${node.y},0) rotate(${onLeft ? 180 : 0})" dy="0.31em" x="${labelOnOutside ? 6 : -6}" text-anchor="${labelOnOutside ? "start" : "end"}" paint-order="stroke" stroke="white" stroke-width="3" stroke-linejoin="round" fill="${style.color}" font-size="${style.fontSize}">${esc(style.text)}</text>`
+        ? `<text data-mark-role="node-label" data-hierarchy-label-kind="${hierarchyLabelKind(node)}" transform="rotate(${rotation}) translate(${node.y},0) rotate(${onLeft ? 180 : 0})" dy="0.31em" x="${labelOnOutside ? 6 : -6}" text-anchor="${labelOnOutside ? "start" : "end"}" fill="${hierarchyLabelColor}" font-size="${style.fontSize}">${esc(style.text)}</text>`
         : "";
-    }).join("") : "";
+    }).join("");
     return {
       content: `<g transform="translate(${cx} ${cy})" data-chart-id="${esc(input.chartId)}" data-chart-type="radial-dendrogram" data-renderer="observable-radial-cluster@3" data-angle-span="${renderedAngleSpan}" data-leaf-radius="${leafRadius}" data-selection-radius="${selectionRadius}">${links}${marks}${labels}</g>`,
       plotArea: { x: cx - leafRadius, y: cy - leafRadius, width: leafRadius * 2, height: leafRadius * 2 },
-      polarArea: { startAngle: angleOffset, angleSpan: renderedAngleSpan, innerRadius, outerRadius: leafRadius },
+      polarArea: { startAngle: angleOffset, angleSpan: renderedAngleSpan, innerRadius, outerRadius: leafRadius, hierarchyLevelCount },
     };
   }
 
   if (type.includes("treemap")) {
     const tilers = { binary: treemapBinary, squarify: treemapSquarify, "slice-dice": treemapSliceDice, slice: treemapSlice, dice: treemapDice } as const;
     const tileName = String(sharedConfig(input, "node").tile ?? "binary") as keyof typeof tilers;
-    const color = scaleOrdinal<string, string>().domain(topNames).range(tableau);
     const vertical = direction === "down" || direction === "up";
     const layoutRoot = treemap<Dataset["rows"][number]>()
       .tile(tilers[tileName] ?? treemapBinary)
@@ -842,7 +871,7 @@ function renderHierarchy(input: GenericRenderInput) {
       const height = vertical ? rawWidth : rawHeight;
       const clipId = `treemap-${input.chartId.replace(/[^a-z0-9_-]/gi, "-")}-${index}`;
       const labelLines = (node.id ?? "").split(/(?=[A-Z][a-z])|\s+/g).filter(Boolean).concat(formatTick(node.value ?? 0));
-      const fill = nodeColor(node, topAncestorColor(node, color));
+      const fill = nodeColor(node, hierarchyColor(node.id ?? "__root__"));
       const labelPadding = 4;
       const lineHeight = 1.2;
       const availableWidth = Math.max(0, width - labelPadding * 2);
@@ -853,26 +882,29 @@ function renderHierarchy(input: GenericRenderInput) {
       const heightBound = labelLines.length > 0 ? availableHeight / (labelLines.length * lineHeight) : preferredFontSize;
       // Labels that cannot remain legible inside their own tile are omitted;
       // the clip path remains a final guard against font-rendering differences.
-      const fontSize = Math.floor(Math.min(preferredFontSize, widthBound, heightBound) * 10) / 10;
-      const labels = fontSize >= 5
-        ? labelLines.map((line, lineIndex) => {
+      const fontSize = Math.max(5, Math.floor(Math.min(preferredFontSize, widthBound, heightBound) * 10) / 10);
+      const labels = labelLines
+        .map((line, lineIndex) => {
           const lineCenter = height / 2 + (lineIndex - (labelLines.length - 1) / 2) * fontSize * lineHeight;
           return `<tspan x="${width / 2}" y="${lineCenter}" fill-opacity="${lineIndex === labelLines.length - 1 ? 0.7 : 1}">${esc(line)}</tspan>`;
-        }).join("")
-        : "";
+        }).join("");
       const label = labels
-        ? `<text data-mark-role="node-label" clip-path="url(#${clipId})" x="${width / 2}" y="${height / 2}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="${fontSize}" fill="${readableTextColor(fill)}">${labels}</text>`
+        ? `<text data-mark-role="node-label" data-hierarchy-label-kind="leaf" clip-path="url(#${clipId})" x="${width / 2}" y="${height / 2}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="${fontSize}" fill="${hierarchyLabelColor}">${labels}</text>`
         : "";
-      return `<g transform="translate(${x} ${y})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-row-key="${esc(rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)))}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("."))}\n${formatTick(node.value ?? 0)}</title><rect width="${width}" height="${height}" fill="${fill}" fill-opacity="0.6"/><clipPath id="${clipId}"><rect width="${width}" height="${height}"/></clipPath>${nodeLabelsVisible ? label : ""}</g>`;
+      return `<g transform="translate(${x} ${y})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-row-key="${esc(rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)))}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("."))}\n${formatTick(node.value ?? 0)}</title><rect width="${width}" height="${height}" fill="${fill}" fill-opacity="0.6"/><clipPath id="${clipId}"><rect width="${width}" height="${height}"/></clipPath>${leafLabelsVisible ? label : ""}</g>`;
     }).join("");
-    return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="treemap" data-tile="${esc(tileName)}" data-tree-direction="${direction}" data-renderer="observable-treemap@2">${leaves}</g>`, plotArea: area };
+    return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="treemap" data-tile="${esc(tileName)}" data-tree-direction="${direction}" data-palette="global" data-renderer="observable-treemap@3">${leaves}</g>`, plotArea: area };
   }
 
   if (type.includes("sunburst")) {
     const guide = input.coordinateGuide?.type === "Polar" ? input.coordinateGuide : null;
     const cx = guide?.origin.x ?? area.x + area.width / 2;
     const cy = guide?.origin.y ?? area.y + area.height / 2;
-    const radius = Math.max(1, Math.min(area.width, area.height) / 2 * (guide?.radiusScale ?? 1));
+    const nativeRadius = Math.max(1, Math.min(area.width, area.height) / 2 * (guide?.radiusScale ?? 1));
+    const sharedHierarchyOuterRadius = Number(input.sharedHierarchyOuterRadius);
+    const radius = Number.isFinite(sharedHierarchyOuterRadius) && sharedHierarchyOuterRadius > 0
+      ? sharedHierarchyOuterRadius
+      : nativeRadius;
     // Keep hierarchy charts in the same polar frame as radial dendrograms:
     // zero degrees is the rightward ray and the configured span is the only
     // angular space available to the chart.
@@ -880,35 +912,87 @@ function renderHierarchy(input: GenericRenderInput) {
     const angleOffset = guide?.angleOffset ?? 0;
     const startAngle = (-270 + angleOffset) * Math.PI / 180;
     const spanRadians = angleSpan * Math.PI / 180;
+    // A parent-linked tree commonly stores an aggregate value on every row.
+    // Counting those internal values again leaves an unrendered "self" share
+    // inside each parent sector. Sunburst has no mark for that self share, so
+    // derive every internal value exclusively from its children and let only
+    // leaves contribute source-row weight.
+    const sunburstRoot = root;
+    sunburstRoot.eachAfter((node) => {
+      const value = node.children?.length
+        ? node.children.reduce((sum, child) => sum + (child.value ?? 0), 0)
+        : hierarchyValueEncoding
+          ? Math.max(0, numeric(node.data, hierarchyValueEncoding, 0))
+          : 1;
+      (node as unknown as { value: number }).value = value;
+    });
     const layoutRoot = partition<Dataset["rows"][number]>()
-      .size([spanRadians, radius])(root.sort((a, b) => (b.value ?? 0) - (a.value ?? 0)));
+      .size([spanRadians, radius])(sunburstRoot.sort((a, b) => (b.value ?? 0) - (a.value ?? 0)));
+    const hierarchyLevelCount = Math.max(1, layoutRoot.height);
+    const sharedHierarchyLevelCount = Number(input.sharedHierarchyLevelCount);
+    const usesSharedHierarchyDepth = Number.isFinite(sharedHierarchyLevelCount)
+      && sharedHierarchyLevelCount >= hierarchyLevelCount;
+    const levelCount = usesSharedHierarchyDepth
+      ? Math.max(1, Math.floor(sharedHierarchyLevelCount))
+      : hierarchyLevelCount;
+    const sharedLevelRadii = (node: { depth: number; y0: number; y1: number }) => {
+      if (!usesSharedHierarchyDepth) {
+        return { inner: node.y0, outer: node.y1, center: (node.y0 + node.y1) / 2 };
+      }
+      const step = radius / levelCount;
+      const inner = Math.max(0, (node.depth - 1) * step);
+      const outer = Math.min(radius, node.depth * step);
+      return { inner, outer, center: (inner + outer) / 2 };
+    };
     type Node = ReturnType<typeof layoutRoot.descendants>[number];
     const arc = d3Arc<Node>()
       .startAngle((node) => startAngle + node.x0)
       .endAngle((node) => startAngle + node.x1)
       .padAngle((node) => Math.min((node.x1 - node.x0) / 2, 0.005))
       .padRadius(radius / 2)
-      .innerRadius((node) => node.y0)
-      .outerRadius((node) => Math.max(node.y0, node.y1 - 1));
+      .innerRadius((node) => sharedLevelRadii(node).inner)
+      .outerRadius((node) => {
+        const radii = sharedLevelRadii(node);
+        return Math.max(radii.inner, radii.outer - 1);
+      });
     const nodes = layoutRoot.descendants().filter((node) => node.depth && visible(node));
     const marks = nodes.map((node) => {
       const start = startAngle + node.x0;
       const end = startAngle + node.x1;
-      return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-row-key="${esc(rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)))}" data-angle-start="${start}" data-angle-end="${end}" d="${arc(node) ?? ""}" fill="${nodeColor(node, topAncestorColor(node, rainbow))}" fill-opacity="0.6"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}\n${formatTick(node.value ?? 0)}</title></path>`;
+      const levelRadii = sharedLevelRadii(node);
+      return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-row-key="${esc(rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)))}" data-hierarchy-depth="${node.depth}" data-radius-inner="${levelRadii.inner}" data-radius-outer="${levelRadii.outer}" data-radius-center="${levelRadii.center}" data-angle-start="${start}" data-angle-end="${end}" d="${arc(node) ?? ""}" fill="${nodeColor(node, hierarchyColor(node.id ?? "__root__"))}" fill-opacity="0.68"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}\n${formatTick(node.value ?? 0)}</title></path>`;
     }).join("");
-    const labels = nodeLabelsVisible ? nodes.filter((node) => ((node.y0 + node.y1) / 2) * (node.x1 - node.x0) > 10).map((node) => {
-      const angle = (startAngle + (node.x0 + node.x1) / 2) * 180 / Math.PI;
-      const radiusPosition = (node.y0 + node.y1) / 2;
+    const labels = nodes.filter((node) => hierarchyLabelVisible(node)
+      && (!node.children?.length || ((node.y0 + node.y1) / 2) * (node.x1 - node.x0) > 10)).map((node) => {
+      const midpointAngle = startAngle + (node.x0 + node.x1) / 2;
+      const angle = midpointAngle * 180 / Math.PI;
+      const radiusPosition = sharedLevelRadii(node).center;
       const label = node.id ?? "";
-      const style = adaptiveLabel({ text: label, width: Math.max(8, radiusPosition * (node.x1 - node.x0)), height: 16, background: nodeColor(node, topAncestorColor(node, rainbow)), fontSize: 10, minFontSize: 5, maxFontSize: 10, padding: 1 });
+      const isLeaf = !node.children?.length;
+      const style = adaptiveLabel({
+        text: label,
+        width: isLeaf ? Math.max(24, input.width * 0.25) : Math.max(8, radiusPosition * (node.x1 - node.x0)),
+        height: 16,
+        fontSize: 10,
+        minFontSize: 5,
+        maxFontSize: 10,
+        padding: 1,
+      });
+      if (isLeaf) {
+        const onLeft = Math.sin(midpointAngle) < 0;
+        const leafOuterRadius = sharedLevelRadii(node).outer;
+        return style.text
+          ? `<text data-mark-role="node-label" data-hierarchy-label-kind="leaf" data-label-position="outside" data-node-key="${esc(node.id ?? "")}" data-label-radius="${leafOuterRadius}" transform="rotate(${angle - 90}) translate(${leafOuterRadius} 0) rotate(${onLeft ? 180 : 0})" dy="0.35em" x="${onLeft ? -6 : 6}" text-anchor="${onLeft ? "end" : "start"}" font-size="${style.fontSize}" font-family="sans-serif" fill="${hierarchyLabelColor}">${esc(style.text)}</text>`
+          : "";
+      }
       return style.text
-        ? `<text transform="rotate(${angle - 90}) translate(${radiusPosition} 0) rotate(${angle < 180 ? 0 : 180})" dy="0.35em" text-anchor="middle" font-size="${style.fontSize}" font-family="sans-serif" fill="${style.color}">${esc(style.text)}</text>`
+        ? `<text data-mark-role="node-label" data-hierarchy-label-kind="internal" data-label-position="inside" transform="rotate(${angle - 90}) translate(${radiusPosition} 0)" dy="0.35em" text-anchor="middle" font-size="${style.fontSize}" font-family="sans-serif" fill="${hierarchyLabelColor}">${esc(style.text)}</text>`
         : "";
-    }).join("") : "";
+    }).join("");
     return {
-      content: `<g transform="translate(${cx} ${cy})" data-chart-id="${esc(input.chartId)}" data-chart-type="sunburst" data-renderer="observable-sunburst@2" data-angle-span="${angleSpan}" data-angle-offset="${angleOffset}">${marks}<g pointer-events="none">${labels}</g></g>`,
+      content: `<g transform="translate(${cx} ${cy})" data-chart-id="${esc(input.chartId)}" data-chart-type="sunburst" data-palette="global" data-renderer="observable-sunburst@3" data-angle-span="${angleSpan}" data-angle-offset="${angleOffset}">${marks}<g pointer-events="none">${labels}</g></g>`,
       plotArea: { x: cx - radius, y: cy - radius, width: radius * 2, height: radius * 2 },
-      polarArea: { startAngle: angleOffset, angleSpan, innerRadius: 0, outerRadius: radius },
+      polarArea: { startAngle: angleOffset, angleSpan, innerRadius: 0, outerRadius: radius, hierarchyLevelCount },
     };
   }
 
@@ -926,13 +1010,16 @@ function renderHierarchy(input: GenericRenderInput) {
       const y = vertical ? direction === "up" ? area.height - node.y1 : node.y0 : node.x0;
       const width = vertical ? rawHeight : rawWidth;
       const height = vertical ? rawWidth : rawHeight;
-      const fill = nodeColor(node, topAncestorColor(node, rainbow));
-      const label = nodeLabelsVisible && height > 16
-        ? adaptiveText(`${node.id ?? ""} ${formatTick(node.value ?? 0)}`, `x="4" y="13" font-family="sans-serif"`, width - 8, height - 4, fill, 10)
+      const fill = nodeColor(node, hierarchyColor(node.id ?? "__root__"));
+      const labelStyle = hierarchyLabelVisible(node) && (!node.children?.length || height > 16)
+        ? adaptiveLabel({ text: `${node.id ?? ""} ${formatTick(node.value ?? 0)}`, width: width - 8, height: height - 4, fontSize: 10, minFontSize: 6, maxFontSize: 10, padding: 1 })
+        : null;
+      const label = labelStyle?.text
+        ? `<text data-mark-role="node-label" data-hierarchy-label-kind="${hierarchyLabelKind(node)}" x="4" y="13" font-family="sans-serif" font-size="${labelStyle.fontSize}" fill="${hierarchyLabelColor}">${esc(labelStyle.text)}</text>`
         : "";
       return `<g transform="translate(${area.x + x} ${area.y + y})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-row-key="${esc(rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)))}"><title>${esc(node.ancestors().reverse().map((item) => item.id).join("/"))}\n${formatTick(node.value ?? 0)}</title><rect width="${width}" height="${height}" fill="${fill}" fill-opacity="0.6"/>${label}</g>`;
     }).join("");
-    return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="icicle" data-tree-direction="${direction}" data-renderer="observable-icicle@2">${cells}</g>`, plotArea: area };
+    return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="icicle" data-tree-direction="${direction}" data-palette="global" data-renderer="observable-icicle@3">${cells}</g>`, plotArea: area };
   }
 
   const leafAxis = cartesianTreeLeafAxis(direction);
@@ -1111,7 +1198,7 @@ function renderHierarchy(input: GenericRenderInput) {
     const path = horizontal
       ? `M${linkedSource.x},${linkedSource.y}C${(linkedSource.x + linkedTarget.x) / 2},${linkedSource.y} ${(linkedSource.x + linkedTarget.x) / 2},${linkedTarget.y} ${linkedTarget.x},${linkedTarget.y}`
       : `M${linkedSource.x},${linkedSource.y}C${linkedSource.x},${(linkedSource.y + linkedTarget.y) / 2} ${linkedTarget.x},${(linkedSource.y + linkedTarget.y) / 2} ${linkedTarget.x},${linkedTarget.y}`;
-    return `<path data-mark-role="link" d="${path}" fill="none" stroke="#555" stroke-opacity="0.4" stroke-width="1.5"/>`;
+    return `<path data-mark-role="link" d="${path}" fill="none" stroke="#555" stroke-opacity="0.4" stroke-width="${DENDROGRAM_LINK_STROKE_WIDTH}" vector-effect="non-scaling-stroke"/>`;
   }).join("");
     const marks = nodes.map((node) => {
       const { x, y } = point(node);
@@ -1119,11 +1206,11 @@ function renderHierarchy(input: GenericRenderInput) {
       const isLeaf = !node.children?.length;
       const labelText = node.id ?? "";
       const labelStyle = adaptiveLabel({ text: labelText, width: Math.max(12, horizontal ? treeArea.width / Math.max(2, nodes.length) : treeArea.width * 0.22), height: 18, background: fill, fontSize: 10, minFontSize: 6, maxFontSize: 10, padding: 1 });
-      const label = !nodeLabelsVisible
+      const label = !hierarchyLabelVisible(node)
         ? ""
         : horizontal
-        ? labelStyle.text ? `<text dy="0.31em" x="${(direction === "right") === isLeaf ? 6 : -6}" text-anchor="${(direction === "right") === isLeaf ? "start" : "end"}" font-size="${labelStyle.fontSize}" font-family="sans-serif" fill="#000000" stroke="white" paint-order="stroke">${esc(labelStyle.text)}</text>` : ""
-        : labelStyle.text ? `<text y="${(direction === "down") === isLeaf ? 8 : -8}" text-anchor="middle" dominant-baseline="${(direction === "down") === isLeaf ? "hanging" : "auto"}" font-size="${labelStyle.fontSize}" font-family="sans-serif" fill="#000000" stroke="white" paint-order="stroke">${esc(labelStyle.text)}</text>` : "";
+        ? labelStyle.text ? `<text data-mark-role="node-label" data-hierarchy-label-kind="${hierarchyLabelKind(node)}" dy="0.31em" x="${(direction === "right") === isLeaf ? 6 : -6}" text-anchor="${(direction === "right") === isLeaf ? "start" : "end"}" font-size="${labelStyle.fontSize}" font-family="sans-serif" fill="${hierarchyLabelColor}">${esc(labelStyle.text)}</text>` : ""
+        : labelStyle.text ? `<text data-mark-role="node-label" data-hierarchy-label-kind="${hierarchyLabelKind(node)}" y="${(direction === "down") === isLeaf ? 8 : -8}" text-anchor="middle" dominant-baseline="${(direction === "down") === isLeaf ? "hanging" : "auto"}" font-size="${labelStyle.fontSize}" font-family="sans-serif" fill="${hierarchyLabelColor}">${esc(labelStyle.text)}</text>` : "";
     return `<g transform="translate(${x} ${y})" data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id ?? "")}" data-row-key="${esc(rowKey(input.dataset, node.data, input.dataset.rows.indexOf(node.data)))}"><circle r="${nodeRadius(node)}" fill="${fill}"/>${label}</g>`;
   }).join("");
   // Selection must describe the rendered footprint, not only the layout
@@ -1144,7 +1231,7 @@ function renderHierarchy(input: GenericRenderInput) {
     const radius = nodeRadius(node);
     includeSelectionPoint(x - radius, y - radius);
     includeSelectionPoint(x + radius, y + radius);
-    if (!nodeLabelsVisible) return;
+    if (!hierarchyLabelVisible(node)) return;
     const isLeaf = !node.children?.length;
     const labelText = node.id ?? "";
     const labelStyle = adaptiveLabel({
@@ -1266,6 +1353,65 @@ function renderCalendar(input: GenericRenderInput) {
 }
 
 function renderBoxplot(input: GenericRenderInput) {
+  const type = normalizedType(input.chartSpec.chartType);
+  const discreteMode = type.includes("singleboxplot") || type.includes("multipleboxplot");
+  if (discreteMode) {
+    const multiple = type.includes("multipleboxplot");
+    const xEncoding = multiple ? physicalCartesianAxisEncoding(input.chartSpec, "x") : undefined;
+    const yEncoding = physicalCartesianAxisEncoding(input.chartSpec, "y") ?? input.chartSpec.encodings.y;
+    if (!yEncoding || (multiple && !xEncoding)) {
+      throw new Error(`${multiple ? "Multiple" : "Single"} Box Plot renderer requires ${multiple ? "Group and Value" : "Value"} encodings.`);
+    }
+    type Observation = { row: Dataset["rows"][number]; rowIndex: number; category: string; y: number };
+    const observations: Observation[] = input.dataset.rows.flatMap((row, rowIndex) => {
+      const y = numeric(row, yEncoding);
+      const category = multiple ? (row[xEncoding!.field] ?? "").trim() : "All";
+      return category && Number.isFinite(y) ? [{ row, rowIndex, category, y }] : [];
+    });
+    if (!observations.length) throw new Error("Box Plot renderer found no numeric values.");
+    const categories = Array.from(new Set(observations.map((observation) => observation.category)));
+    const groups = categories.map((category) => {
+      const sorted = observations.filter((observation) => observation.category === category).sort((left, right) => left.y - right.y);
+      const values = sorted.map((observation) => observation.y);
+      const q1 = quantileSorted(values, 0.25) ?? values[0]!;
+      const median = quantileSorted(values, 0.5) ?? values[0]!;
+      const q3 = quantileSorted(values, 0.75) ?? values.at(-1)!;
+      const iqr = q3 - q1;
+      const low = Math.max(values[0]!, q1 - iqr * 1.5);
+      const high = Math.min(values.at(-1)!, q3 + iqr * 1.5);
+      return {
+        category,
+        quartiles: [q1, median, q3] as const,
+        range: [low, high] as const,
+        outliers: sorted.filter((observation) => observation.y < low || observation.y > high),
+      };
+    });
+    const area = input.sharedPlotArea ?? plotArea(input, 30);
+    const yDomain = finiteDomain(groups.flatMap((group) => [group.range[0], group.range[1], ...group.outliers.map((item) => item.y)]));
+    const y = scaleLinear().domain(yDomain).nice().range([area.y + area.height, area.y]);
+    const x = scalePoint<string>().domain(categories).range([area.x, area.x + area.width]).padding(0.7);
+    const step = categories.length > 1 ? Math.abs((x(categories[1]!) ?? area.x) - (x(categories[0]!) ?? area.x)) : area.width;
+    const boxWidth = Math.max(12, Math.min(72, step * 0.56));
+    const marks = groups.map((group, groupIndex) => {
+      const center = x(group.category) ?? area.x + area.width / 2;
+      const left = center - boxWidth / 2;
+      const right = center + boxWidth / 2;
+      const color = tableau[groupIndex % tableau.length]!;
+      const outliers = group.outliers.map((observation, outlierIndex) => {
+        const jitter = (((observation.rowIndex * 17 + outlierIndex * 13) % 41) / 40 - 0.5) * Math.min(8, boxWidth * 0.35);
+        return `<circle data-row-key="${esc(rowKey(input.dataset, observation.row, observation.rowIndex))}" r="2.5" cx="${center + jitter}" cy="${y(observation.y)}" fill="${color}" fill-opacity="0.55"/>`;
+      }).join("");
+      return `<g data-chart-id="${esc(input.chartId)}" data-mark-role="box" data-mark-group-id="mark-group:${esc(input.chartId)}:box" data-category-key="${esc(group.category)}"><path stroke="${color}" stroke-width="1.5" d="M${center},${y(group.range[1])}V${y(group.range[0])}"/><path fill="${color}" fill-opacity="0.72" stroke="${color}" d="M${left},${y(group.quartiles[2])}H${right}V${y(group.quartiles[0])}H${left}Z"/><path stroke="${color}" stroke-width="2.5" d="M${left},${y(group.quartiles[1])}H${right}"/>${outliers}</g>`;
+    }).join("");
+    return {
+      content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="boxplot" data-boxplot-mode="${multiple ? "multiple" : "single"}" data-palette="global" data-renderer="observable-boxplot@3" text-anchor="middle">${marks}</g>`,
+      plotArea: area,
+      scales: {
+        x: { type: "point", domain: categories, range: [area.x, area.x + area.width] },
+        y: { type: "linear", domain: y.domain() as [number, number], range: [area.y + area.height, area.y] },
+      },
+    };
+  }
   const xEncoding = physicalCartesianAxisEncoding(input.chartSpec, "x");
   const yEncoding = physicalCartesianAxisEncoding(input.chartSpec, "y");
   if (!xEncoding || !yEncoding) throw new Error("Box Plot renderer requires X and Y encodings.");
@@ -1299,9 +1445,10 @@ function renderBoxplot(input: GenericRenderInput) {
       const jitter = (((datum.rowIndex * 17 + outlierIndex * 13) % 41) / 40 - 0.5) * 4;
       return `<circle data-row-key="${esc(rowKey(input.dataset, datum.row, datum.rowIndex))}" r="2" cx="${jitter}" cy="${y(datum.y)}"/>`;
     }).join("");
-    return `<g data-chart-id="${esc(input.chartId)}" data-mark-role="box" data-mark-group-id="mark-group:${esc(input.chartId)}:box" data-bin-index="${binIndex}" data-bin-x0="${bin.x0}" data-bin-x1="${bin.x1}"><path stroke="currentColor" d="M${center},${y(bin.range[1])}V${y(bin.range[0])}"/><path fill="#ddd" d="M${x(bin.x0) + 1},${y(bin.quartiles[2])}H${x(bin.x1)}V${y(bin.quartiles[0])}H${x(bin.x0) + 1}Z"/><path stroke="currentColor" stroke-width="2" d="M${x(bin.x0) + 1},${y(bin.quartiles[1])}H${x(bin.x1)}"/><g fill="currentColor" fill-opacity="0.2" stroke="none" transform="translate(${center} 0)">${outliers}</g></g>`;
+    const color = tableau[binIndex % tableau.length]!;
+    return `<g data-chart-id="${esc(input.chartId)}" data-mark-role="box" data-mark-group-id="mark-group:${esc(input.chartId)}:box" data-bin-index="${binIndex}" data-bin-x0="${bin.x0}" data-bin-x1="${bin.x1}"><path stroke="${color}" d="M${center},${y(bin.range[1])}V${y(bin.range[0])}"/><path fill="${color}" fill-opacity="0.72" d="M${x(bin.x0) + 1},${y(bin.quartiles[2])}H${x(bin.x1)}V${y(bin.quartiles[0])}H${x(bin.x0) + 1}Z"/><path stroke="${color}" stroke-width="2" d="M${x(bin.x0) + 1},${y(bin.quartiles[1])}H${x(bin.x1)}"/><g fill="${color}" fill-opacity="0.35" stroke="none" transform="translate(${center} 0)">${outliers}</g></g>`;
   }).join("");
-  return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="boxplot" data-binning="continuous" data-threshold-count="${thresholdCount}" data-renderer="observable-boxplot@2" text-anchor="middle">${marks}</g>`, plotArea: area, scales: { x: { type: "linear", domain: xDomain, range: [area.x, area.x + area.width] }, y: { type: "linear", domain: y.domain() as [number, number], range: [area.y + area.height, area.y] } } };
+  return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="boxplot" data-boxplot-mode="continuous" data-binning="continuous" data-threshold-count="${thresholdCount}" data-palette="global" data-renderer="observable-boxplot@3" text-anchor="middle">${marks}</g>`, plotArea: area, scales: { x: { type: "linear", domain: xDomain, range: [area.x, area.x + area.width] }, y: { type: "linear", domain: y.domain() as [number, number], range: [area.y + area.height, area.y] } } };
 }
 
 function isRegularGridAxis(values: number[]) {
@@ -1438,7 +1585,7 @@ function renderForceDirected(input: GenericRenderInput) {
     rows: graph.nodes.rows,
   } as Dataset;
 
-  const area = plotArea(input, 0);
+  const area = input.sharedPlotArea ?? plotArea(input, 0);
   const centerX = area.x + area.width / 2;
   const centerY = area.y + area.height / 2;
   const forceConfig = sharedConfig(input, "node");
@@ -1450,6 +1597,7 @@ function renderForceDirected(input: GenericRenderInput) {
   const linkDistance = Math.max(8, numberConfig("linkDistance", Math.min(area.width, area.height) * 0.18));
   const linkStrength = Math.max(0, numberConfig("linkStrength", 0.7));
   const centerStrength = Math.max(0, numberConfig("centerStrength", 0.08));
+  const communityStrength = Math.max(0, numberConfig("communityStrength", 0.2));
   const collisionRadius = Math.max(0, numberConfig("collisionRadius", 10));
   const nodeRows = graph.nodes.rows.flatMap((row, index) => {
     const id = (row[nodeIdField] ?? "").trim();
@@ -1485,10 +1633,28 @@ function renderForceDirected(input: GenericRenderInput) {
     });
     return frame ? nestedFrameExtent(frame) : 0;
   };
+  const configuredCommunityField = typeof forceConfig.communityField === "string"
+    ? forceConfig.communityField
+    : undefined;
+  const communityValues = configuredCommunityField
+    ? Array.from(new Set(nodeRows.map((node) => node.row[configuredCommunityField] ?? "").filter(Boolean)))
+    : [];
+  const communityAnchors = new Map(communityValues.map((community, index) => {
+    const angle = -Math.PI / 2 + index * Math.PI * 2 / Math.max(communityValues.length, 1);
+    const radius = Math.min(area.width, area.height) * (communityValues.length > 1 ? 0.27 : 0);
+    return [community, {
+      x: centerX + Math.cos(angle) * radius,
+      y: centerY + Math.sin(angle) * radius,
+    }] as const;
+  }));
+  const communityAnchorFor = (node: typeof nodeRows[number]) => configuredCommunityField
+    ? communityAnchors.get(node.row[configuredCommunityField] ?? "") ?? { x: centerX, y: centerY }
+    : { x: centerX, y: centerY };
   const seededNodes = nodeRows.map((node, index) => {
+    const anchor = communityAnchorFor(node);
     const angle = index * Math.PI * (3 - Math.sqrt(5));
-    const distance = Math.min(area.width, area.height) * 0.28 * Math.sqrt((index + 1) / Math.max(nodeRows.length, 1));
-    return { ...node, x: centerX + Math.cos(angle) * distance, y: centerY + Math.sin(angle) * distance };
+    const distance = Math.min(area.width, area.height) * 0.08 * Math.sqrt((index + 1) / Math.max(nodeRows.length, 1));
+    return { ...node, x: anchor.x + Math.cos(angle) * distance, y: anchor.y + Math.sin(angle) * distance };
   });
   // d3-force mutates link.source/link.target from ids into node objects. Keep
   // the original endpoint ids in `links` so the SVG data attributes remain
@@ -1501,8 +1667,10 @@ function renderForceDirected(input: GenericRenderInput) {
       .strength(linkStrength))
     .force("charge", forceManyBody().strength(chargeStrength))
     .force("center", forceCenter(centerX, centerY))
-    .force("x", forceX(centerX).strength(centerStrength))
-    .force("y", forceY(centerY).strength(centerStrength))
+    .force("x", forceX((node: any) => communityAnchorFor(node).x)
+      .strength(communityValues.length > 1 ? communityStrength : centerStrength))
+    .force("y", forceY((node: any) => communityAnchorFor(node).y)
+      .strength(communityValues.length > 1 ? communityStrength : centerStrength))
     .force("collide", forceCollide((node: any) => Math.max(collisionRadius, radiusFor(node) + nestedExtentFor(node) + 6)))
     .stop();
   const simulationTicks = input.nestedChildFrames?.length ? 300 : 180;
@@ -1515,6 +1683,8 @@ function renderForceDirected(input: GenericRenderInput) {
   const colors = scaleOrdinal<string, string>().domain(colorDomain).range(tableau);
   const numericColorDomain = visualDomain(nodeRows.map((node) => node.row), colorEncoding);
   const colorMapping = forceConfig.colorMapping;
+  const nodeLabelsVisible = forceConfig.nodeLabelsVisible !== false;
+  const linkConfig = sharedConfig(input, "link");
   const nodeById = new Map(seededNodes.map((node) => [node.id, node]));
   const linkMarks = links.map((link) => {
     const source = nodeById.get(link.source);
@@ -1542,7 +1712,7 @@ function renderForceDirected(input: GenericRenderInput) {
     const targetPoint = targetFrame
       ? nestedFrameLinkEndpoint(target, source, targetFrame)
       : target;
-    return `<line data-chart-id="${esc(input.chartId)}" data-mark-role="link" data-mark-group-id="mark-group:${esc(input.chartId)}:link" data-source="${esc(link.source)}" data-target="${esc(link.target)}" x1="${sourcePoint.x}" y1="${sourcePoint.y}" x2="${targetPoint.x}" y2="${targetPoint.y}" stroke="#94a3b8" stroke-opacity="0.55" stroke-width="${Math.max(1, Math.min(4, link.value || 1))}"/>`;
+    return `<line data-chart-id="${esc(input.chartId)}" data-mark-role="link" data-mark-group-id="mark-group:${esc(input.chartId)}:link" data-source="${esc(link.source)}" data-target="${esc(link.target)}" x1="${sourcePoint.x}" y1="${sourcePoint.y}" x2="${targetPoint.x}" y2="${targetPoint.y}" stroke="${esc(String(linkConfig.color ?? "#94a3b8"))}" stroke-opacity="${Number(linkConfig.opacity ?? 0.55)}" stroke-width="${Math.max(1, Math.min(4, link.value || 1))}"/>`;
   }).join("");
   const nodeMarks = seededNodes.map((node) => {
     const rawColor = colorEncoding ? node.row[colorEncoding.field] ?? "" : "";
@@ -1560,7 +1730,7 @@ function renderForceDirected(input: GenericRenderInput) {
     const radius = radiusFor(node);
     const label = node.row.label ?? node.id;
     const labelStyle = adaptiveLabel({ text: String(label), width: Math.max(18, area.width * 0.22), height: 18, background: "#ffffff", fontSize: 10, minFontSize: 6, maxFontSize: 10, padding: 1 });
-    const labelMarkup = labelStyle.text ? `<text data-mark-role="node-label" pointer-events="none" x="${node.x + radius + 3}" y="${node.y}" dy="0.35em" font-size="${labelStyle.fontSize}" fill="${labelStyle.color}">${esc(labelStyle.text)}</text>` : "";
+    const labelMarkup = nodeLabelsVisible && labelStyle.text ? `<text data-mark-role="node-label" pointer-events="none" x="${node.x + radius + 3}" y="${node.y}" dy="0.35em" font-size="${labelStyle.fontSize}" fill="${labelStyle.color}">${esc(labelStyle.text)}</text>` : "";
     return `<g data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id)}" data-row-key="${esc(rowKey(graphNodeDataset, node.row, node.index))}"><circle cx="${node.x}" cy="${node.y}" r="${radius}" fill="${color}" stroke="#fff" stroke-width="1.5"><title>${esc(String(label))}</title></circle>${labelMarkup}</g>`;
   }).join("");
   // Selection follows the rendered network footprint. Labels are positioned
@@ -1581,6 +1751,7 @@ function renderForceDirected(input: GenericRenderInput) {
     includeSelectionPoint(node.x - radius, node.y - radius);
     includeSelectionPoint(node.x + radius, node.y + radius);
 
+    if (!nodeLabelsVisible) return;
     const label = node.row.label ?? node.id;
     const labelStyle = adaptiveLabel({
       text: String(label),
@@ -1719,19 +1890,41 @@ function renderGraphLink(input: GenericRenderInput) {
 }
 
 function renderChord(input: GenericRenderInput) {
-  const links = flowLinks(input);
+  const rawLinks = flowLinks(input);
   const area = plotArea(input, 0);
-  const names = Array.from(new Set(links.flatMap((link) => [link.source, link.target])));
+  const guide = input.coordinateGuide?.type === "Polar" ? input.coordinateGuide : null;
+  const axisVisible = chartAxisVisible(input.chartSpec, guide, "theta");
+  const labelsVisible = chartAxisLabelsVisible(input.chartSpec, guide, "theta");
+  const cx = guide?.origin.x ?? area.x + area.width / 2;
+  const cy = guide?.origin.y ?? area.y + area.height / 2;
+  const keyField = input.chartSpec.encodings.key?.field;
+  const graphNodeNames = keyField && input.dataset.graph
+    ? Array.from(new Set(input.dataset.graph.nodes.rows
+      .map((row) => row[keyField] ?? "")
+      .filter(Boolean)))
+    : [];
+  const names = graphNodeNames.length > 0
+    ? graphNodeNames
+    : Array.from(new Set(rawLinks.flatMap((link) => [link.source, link.target])));
   const nameIndex = new Map(names.map((name, index) => [name, index]));
+  const links = rawLinks.filter((link) => nameIndex.has(link.source) && nameIndex.has(link.target));
   const matrix = Array.from({ length: names.length }, () => Array(names.length).fill(0) as number[]);
   links.forEach((link) => {
     const row = matrix[nameIndex.get(link.source)!]!;
     const target = nameIndex.get(link.target)!;
     row[target] = (row[target] ?? 0) + link.value;
   });
-  const outerRadius = Math.max(12, Math.min(area.width, area.height) * 0.5 - 30);
-  const innerRadius = Math.max(4, outerRadius - 20);
-  const chords = d3Chord().padAngle(20 / innerRadius).sortSubgroups(descending)(matrix);
+  const baseRadius = Math.max(12, Math.min(area.width, area.height) * 0.5 - 30);
+  const outerRatio = Math.max(0.01, Math.min(guide?.outerRadiusRatio ?? 1, 1));
+  const outerRadius = Math.max(12, baseRadius * outerRatio);
+  const chordBand = Math.max(7, Math.min(20, outerRadius * 0.22));
+  const innerRadius = Math.max(4, outerRadius - chordBand);
+  // Keep gaps legible without allowing a compact radial-concat frame to
+  // consume the complete angular band and collapse every Chord group to zero.
+  const maximumPadAngle = Math.PI * 2 / Math.max(names.length, 1) * 0.18;
+  const chords = d3Chord()
+    .padAngle(Math.min(20 / innerRadius, maximumPadAngle))
+    .sortSubgroups(descending)(matrix);
   const arc = d3Arc<typeof chords.groups[number]>().innerRadius(innerRadius).outerRadius(outerRadius);
   const ribbon = d3Ribbon<typeof chords[number], typeof chords[number]["source"]>().radius(innerRadius);
   const color = scaleOrdinal<number, string>().domain(d3Range(names.length)).range(tableau);
@@ -1740,18 +1933,41 @@ function renderChord(input: GenericRenderInput) {
   const majorStep = tickStep(0, total, 20);
   const groups = chords.groups.map((group) => {
     const k = group.value ? (group.endAngle - group.startAngle) / group.value : 0;
-    const tickValues = step > 0 ? d3Range(0, group.value, step) : [];
+    const tickValues = axisVisible && step > 0 ? d3Range(0, group.value, step) : [];
     const tickMarks = tickValues.map((value) => {
       const angle = value * k + group.startAngle;
       const major = majorStep > 0 && Math.abs(value / majorStep - Math.round(value / majorStep)) < 1e-6;
       const tickLabel = formatTick(value);
-      const label = major ? adaptiveText(tickLabel, `x="8" dy="0.35em" transform="${angle > Math.PI ? "rotate(180) translate(-16)" : ""}" text-anchor="${angle > Math.PI ? "end" : "start"}"`, Math.max(16, outerRadius * 0.22), 16, "#ffffff", 10) : "";
+      const label = labelsVisible && major && outerRadius >= 70 ? adaptiveText(tickLabel, `x="8" dy="0.35em" transform="${angle > Math.PI ? "rotate(180) translate(-16)" : ""}" text-anchor="${angle > Math.PI ? "end" : "start"}"`, Math.max(16, outerRadius * 0.22), 16, "#ffffff", 10) : "";
       return `<g transform="rotate(${angle * 180 / Math.PI - 90}) translate(${outerRadius} 0)"><line x2="6" stroke="currentColor"/>${label}</g>`;
     }).join("");
-    return `<g data-mark-role="node" data-node-key="${esc(names[group.index] ?? "")}"><path d="${arc(group) ?? ""}" fill="${color(group.index)}"><title>${formatTick(group.value)} ${esc(names[group.index] ?? "")}</title></path><g data-mark-role="group-ticks">${tickMarks}</g></g>`;
+    const angle = (group.startAngle + group.endAngle) / 2;
+    const degrees = angle * 180 / Math.PI - 90;
+    const flip = angle > Math.PI;
+    const groupLabel = labelsVisible && outerRadius >= 24
+      ? `<text data-mark-role="group-label" transform="rotate(${degrees}) translate(${outerRadius + 10} 0)${flip ? " rotate(180)" : ""}" dy="0.35em" text-anchor="${flip ? "end" : "start"}" font-size="9" font-weight="650" fill="#334155">${esc(names[group.index] ?? "")}</text>`
+      : "";
+    return `<g data-mark-role="node" data-node-key="${esc(names[group.index] ?? "")}" data-angle-start="${group.startAngle * 180 / Math.PI}" data-angle-end="${group.endAngle * 180 / Math.PI}"><path d="${arc(group) ?? ""}" fill="${color(group.index)}"><title>${formatTick(group.value)} ${esc(names[group.index] ?? "")}</title></path>${axisVisible ? `<g data-mark-role="group-ticks">${tickMarks}</g>` : ""}${groupLabel}</g>`;
   }).join("");
   const ribbons = chords.map((chord) => `<path data-chart-id="${esc(input.chartId)}" data-mark-role="link" data-mark-group-id="mark-group:${esc(input.chartId)}:link" data-source="${esc(names[chord.source.index] ?? "")}" data-target="${esc(names[chord.target.index] ?? "")}" d="${ribbon(chord) ?? ""}" fill="${color(chord.target.index)}" fill-opacity="0.7" stroke="white"><title>${formatTick(chord.source.value)} ${esc(names[chord.source.index] ?? "")} to ${esc(names[chord.target.index] ?? "")}</title></path>`).join("");
-  return { content: `<g transform="translate(${area.x + area.width / 2} ${area.y + area.height / 2})" data-chart-id="${esc(input.chartId)}" data-chart-type="chord" data-ribbon-color="target" data-renderer="observable-chord@2" font-family="sans-serif">${groups}${ribbons}</g>`, plotArea: area };
+  const angleOffset = guide?.angleOffset ?? 0;
+  return {
+    content: `<g transform="translate(${cx} ${cy}) rotate(${angleOffset})" data-chart-id="${esc(input.chartId)}" data-chart-type="chord" data-ribbon-color="target" data-renderer="observable-chord@3" font-family="sans-serif">${groups}${ribbons}</g>`,
+    plotArea: area,
+    polarArea: {
+      startAngle: angleOffset,
+      angleSpan: 360,
+      innerRadius: 0,
+      outerRadius,
+      angleBands: chords.groups.map((group) => ({
+        value: names[group.index] ?? "",
+        // Polar Facet stores screen angles from the rightward ray; Chord's
+        // d3.arc starts at twelve o'clock, hence the -90 degree conversion.
+        startAngle: angleOffset + group.startAngle * 180 / Math.PI - 90,
+        angleSpan: (group.endAngle - group.startAngle) * 180 / Math.PI,
+      })),
+    },
+  };
 }
 
 function renderSankey(input: GenericRenderInput) {
@@ -1774,7 +1990,8 @@ function renderSankey(input: GenericRenderInput) {
     .nodePadding(10)
     .extent([[area.x + 1, area.y + 5], [area.x + area.width - 1, area.y + area.height - 5]]);
   const result = layout(graph);
-  const color = scaleOrdinal<string, string>().range(globalPalette.categorical);
+  const categories = Array.from(new Set(result.nodes.map((node) => node.category)));
+  const color = scaleOrdinal<string, string>().domain(categories).range(globalPalette.categorical);
   const linkColor = String(config.linkColor ?? "source-target");
   const uid = `sankey-${input.chartId.replace(/[^a-z0-9_-]/gi, "-")}`;
   const path = sankeyLinkHorizontal<NodeData, LinkData>();
@@ -1791,7 +2008,7 @@ function renderSankey(input: GenericRenderInput) {
     const leftSide = (node.x0 ?? 0) < area.x + area.width / 2;
     return adaptiveText(node.name, `x="${leftSide ? (node.x1 ?? 0) + 6 : (node.x0 ?? 0) - 6}" y="${((node.y1 ?? 0) + (node.y0 ?? 0)) / 2}" dy="0.35em" text-anchor="${leftSide ? "start" : "end"}"`, Math.max(20, area.width * 0.25), Math.max(12, (node.y1 ?? 0) - (node.y0 ?? 0)), "#ffffff", 10);
   }).join("");
-  return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="sankey" data-node-align="${esc(alignmentName)}" data-link-color="${esc(linkColor)}" data-renderer="observable-sankey@2" font-family="sans-serif"><g fill="none">${linkMarks}</g><g>${nodes}</g><g>${labels}</g></g>`, plotArea: area };
+  return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="sankey" data-node-align="${esc(alignmentName)}" data-link-color="${esc(linkColor)}" data-palette="global" data-renderer="observable-sankey@3" font-family="sans-serif"><g fill="none">${linkMarks}</g><g>${nodes}</g><g>${labels}</g></g>`, plotArea: area };
 }
 
 export function renderAdvancedChart(input: GenericRenderInput) {

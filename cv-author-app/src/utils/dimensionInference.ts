@@ -621,19 +621,23 @@ export function materializeChartStructure(chartId: string, dataset: Dataset, inp
   const spec = { ...input, templateId };
   const role = contract.markRole;
   const existingGroup = input.markGroups?.find((item) => item.role === role);
+  const auxiliaryGroups = input.markGroups?.filter((item) => item.role !== role) ?? [];
   return {
     ...spec,
-    markGroups: [{
-      id: `mark-group:${chartId}:${role}`,
-      chartId,
-      role,
-      memberKeys: markKeys(dataset, spec, role),
-      seriesField: spec.series?.field,
-      sharedConfig: existingGroup?.sharedConfig ?? (role === "line"
-        ? { strokeWidth: spec.styleTokens?.lineWidth ?? 2.5, opacity: 1 }
-        : { opacity: 1 }),
-      allowOverrides: existingGroup?.allowOverrides,
-    }],
+    markGroups: [
+      {
+        id: `mark-group:${chartId}:${role}`,
+        chartId,
+        role,
+        memberKeys: markKeys(dataset, spec, role),
+        seriesField: spec.series?.field,
+        sharedConfig: existingGroup?.sharedConfig ?? (role === "line"
+          ? { strokeWidth: spec.styleTokens?.lineWidth ?? 2.5, opacity: 1 }
+          : { opacity: 1 }),
+        allowOverrides: existingGroup?.allowOverrides,
+      },
+      ...auxiliaryGroups,
+    ],
   };
 }
 

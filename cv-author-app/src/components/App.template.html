@@ -460,6 +460,7 @@
               :composition-spec="axisBindingNode.compositionSpec"
               :composition-members="compositionMemberEncodingEntries"
               :columns="axisBindingColumns"
+              :channel-columns="axisBindingChannelColumns"
               :rows="axisBindingRows"
               :mark-config="axisBindingMarkGroupConfig"
               :renderer-error="axisBindingRendererError"
@@ -1613,7 +1614,7 @@
                 </g>
               </g>
               <PolarCoordinateSystem
-                v-for="node in passiveCompositeSelection ? [] : selectedCanvasNodesWithCoordinateGuides.filter((item) => item.coordinateGuide?.type === 'Polar')"
+                v-for="node in selectedCanvasNodesWithCoordinateGuides.filter((item) => item.coordinateGuide?.type === 'Polar' && (!passiveCompositeSelection || (item.compositionSpec?.type === 'facet' && item.compositionSpec.facetCoordinateSystem === 'Polar')))"
                 :key="`coordinate-guide-${node.id}`"
                 :node="node"
                 :view-zoom="selectionOverlayZoom"
@@ -1624,6 +1625,7 @@
                 :class="{ 'coordinate-control--drag-source': !!activeDropZone && compositionDragSourceId === node.id }"
                 :on-angle-pointer-down="onPolarAnglePointerDown"
                 :on-axis-scale-pointer-down="onCoordinateAxisScalePointerDown"
+                :on-inner-radius-pointer-down="onPolarInnerRadiusPointerDown"
               />
               </g>
             </g>

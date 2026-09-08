@@ -1,5 +1,6 @@
 import { cluster, stratify, type HierarchyNode } from "d3";
 import type { Dataset } from "../types";
+import { uniqueHierarchyRows } from "./treeLayout";
 
 export type RadialClusterNode = HierarchyNode<Dataset["rows"][number]> & {
   x: number;
@@ -24,7 +25,7 @@ export function createRadialClusterLayout(
   dataset: Dataset,
   options: RadialClusterLayoutOptions,
 ) {
-  const rows = dataset.rows.filter((row) => (row[options.keyField] ?? "").trim());
+  const rows = uniqueHierarchyRows(dataset.rows, options.keyField);
   const ids = new Set(rows.map((row) => row[options.keyField] ?? ""));
   const roots = rows.filter((row) => !ids.has(row[options.parentField] ?? ""));
   const synthetic = roots.length !== 1;

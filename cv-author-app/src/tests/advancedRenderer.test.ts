@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { advancedTemplateDefinitions } from "../utils/advancedChartCards";
+import { advancedTemplateDefinitions, advancedTemplateSvgs } from "../utils/advancedChartCards";
 import { getChartTemplateContract, normalizeChartTemplate } from "../utils/chartTemplates";
 import { getEncodingChannelConfigs } from "../utils/encodingConfig";
 import { renderDeterministicChart } from "../utils/semanticRenderer";
 import { prepareChartData } from "../utils/chartDataPipeline";
-import type { ChartSpec, CoordinateGuide, Dataset, NestedChildFrame } from "../types";
+import type { ChartPolarArea, ChartSpec, CoordinateGuide, Dataset, NestedChildFrame } from "../types";
+import { globalPalette } from "../config/global";
 
 const cartesian: CoordinateGuide = {
   type: "Cartesian",
@@ -136,12 +137,14 @@ const contourDataset: Dataset = {
 
 describe("advanced chart cards", () => {
   it("registers all requested cards with contracts", () => {
-    expect(advancedTemplateDefinitions).toHaveLength(17);
+    expect(advancedTemplateDefinitions).toHaveLength(24);
     expect(advancedTemplateDefinitions.map((card) => card.name)).toEqual([
       "Area Chart", "Stacked Area", "Streamgraph", "Horizon Chart",
       "Parallel Coordinates", "Icicle", "Sunburst", "Treemap", "Dendrogram",
-      "Radial Dendrogram", "Radial Bar Chart",
-      "Calendar", "Box Plot", "Contour", "Hexbin", "Chord", "Sankey",
+      "Radial Dendrogram", "Radial Bar (Sector)", "Radial Stacked Bar (Sector)",
+      "Radial Bar (Rectangle)", "Radial Stacked Bar (Rectangle)",
+      "Circular Bar", "Circular Stacked Bar", "Radar Chart",
+      "Calendar", "Single Box Plot", "Multiple Box Plot", "Contour", "Hexbin", "Chord", "Sankey",
     ]);
     advancedTemplateDefinitions.forEach((card) => {
       expect(normalizeChartTemplate(card.chartType)).not.toBeNull();
@@ -155,6 +158,7 @@ describe("advanced chart cards", () => {
     expect(radialCluster?.svgMarkup).toContain('data-leaf-radius="68"');
     expect(radialCluster?.svgMarkup).toContain('data-selection-radius="76"');
     expect(radialCluster?.svgMarkup).toContain('stroke-opacity="0.4"');
+    expect(radialCluster?.svgMarkup).toContain('stroke-width="2.5"');
     expect(radialCluster?.svgMarkup).toContain('fill="#555"');
     expect(radialCluster?.svgMarkup).toContain('fill="#999"');
     const contour = advancedTemplateDefinitions.find((card) => card.chartType === "Contour");
@@ -170,18 +174,39 @@ describe("advanced chart cards", () => {
     expect(hexbin?.svgMarkup?.match(/<path/g)?.length).toBeGreaterThan(500);
     expect(hexbin?.svgMarkup).toContain('stroke="black"');
     expect(hexbin?.svgMarkup).not.toContain("<image");
+    const singleBox = advancedTemplateDefinitions.find((card) => card.chartType === "SingleBoxplot");
+    const multipleBox = advancedTemplateDefinitions.find((card) => card.chartType === "MultipleBoxplot");
+    expect(singleBox?.svgMarkup).toContain('data-boxplot-mode="single"');
+    expect(multipleBox?.svgMarkup).toContain('data-boxplot-mode="multiple"');
+    expect(multipleBox?.svgMarkup).toContain('data-palette="global"');
+    ["Treemap", "Icicle", "Sunburst", "Sankey"].forEach((chartType) => {
+      expect(advancedTemplateDefinitions.find((card) => card.chartType === chartType)?.svgMarkup).toContain('data-palette="global"');
+    });
+    expect(advancedTemplateSvgs.AreaChart.match(/<circle /g)).toHaveLength(15);
+    expect(advancedTemplateSvgs.AreaChart).not.toContain('d="M28 152L28 125');
+    const areaPreview = advancedTemplateDefinitions.find((card) => card.chartType === "AreaChart")?.svgMarkup ?? "";
+    expect(areaPreview).toContain('data-point-count="19"');
+    expect(areaPreview).not.toContain('data-zero-endpoints="true"');
   });
 
   it("keeps semantic encoding channels for every new card family", () => {
     const channels = (chartType: string) => getEncodingChannelConfigs(chartType).map((config) => config.channel);
     expect(channels("AreaChart")).toEqual(["x", "y", "color"]);
     expect(channels("ParallelCoordinatesPlot")).toEqual(["dimensions", "color"]);
-    expect(channels("Sunburst")).toEqual(["key", "parent", "value", "color"]);
+    expect(channels("Sunburst")).toEqual(["key", "parent", "value", "color", "size"]);
     expect(channels("Dendrogram")).toEqual(["key", "parent", "value", "color", "size", "category"]);
-    expect(channels("RadialDendrogram")).toEqual(["key", "parent", "theta"]);
+    expect(channels("RadialDendrogram")).toEqual(["key", "parent", "theta", "color", "size"]);
     expect(channels("RadialBarChart")).toEqual(["theta", "segment", "radius", "color"]);
+    expect(channels("RadialStackedBarChart")).toEqual(["theta", "segment", "radius", "color"]);
+    expect(channels("RadialRectBarChart")).toEqual(["theta", "segment", "radius", "color"]);
+    expect(channels("RadialRectStackedBarChart")).toEqual(["theta", "segment", "radius", "color"]);
+    expect(channels("CircularBarChart")).toEqual(["segment", "theta", "color"]);
+    expect(channels("CircularStackedBarChart")).toEqual(["theta", "radius", "color", "size"]);
+    expect(channels("RadarChart")).toEqual(["theta", "radius", "color"]);
     expect(channels("Calendar")).toEqual(["date", "value", "color"]);
     expect(channels("Boxplot")).toEqual(["x", "y", "color"]);
+    expect(channels("SingleBoxplot")).toEqual(["y", "color"]);
+    expect(channels("MultipleBoxplot")).toEqual(["x", "y", "color"]);
     expect(channels("Contour")).toEqual(["x", "y", "color"]);
     expect(channels("Hexbin")).toEqual(["x", "y"]);
     expect(channels("Sankey")).toEqual(["source", "target", "value", "color"]);
@@ -212,6 +237,42 @@ describe("advanced chart cards", () => {
     }
   });
 
+  it("keeps Horizon labels outside the bands and independently toggles X/Y axes and labels", () => {
+    const encodings = {
+      x: { field: "date", type: "temporal" as const },
+      y: { field: "value", type: "quantitative" as const },
+      color: { field: "series", type: "nominal" as const },
+    };
+    const visible = render("HorizonChart", seriesDataset, { encodings });
+    expect(visible.content).toContain('data-renderer="observable-horizon@3"');
+    expect(visible.content).toContain('data-mark-role="horizon-axis" data-axis="x"');
+    expect(visible.content).toContain('data-mark-role="horizon-axis" data-axis="y"');
+    expect(visible.content).toContain('data-mark-role="horizon-axis-label" data-axis="x"');
+    expect(visible.content).toContain('data-mark-role="horizon-axis-label" data-axis="y"');
+    expect(visible.plotArea.x).toBeGreaterThan(40);
+
+    const axesOnly = render("HorizonChart", seriesDataset, {
+      encodings,
+      axes: {
+        x: { visible: true, labelsVisible: false },
+        y: { visible: true, labelsVisible: false },
+      },
+    });
+    expect(axesOnly.content).toContain('data-mark-role="horizon-axis" data-axis="x"');
+    expect(axesOnly.content).toContain('data-mark-role="horizon-axis" data-axis="y"');
+    expect(axesOnly.content).not.toContain('data-mark-role="horizon-axis-label"');
+
+    const hidden = render("HorizonChart", seriesDataset, {
+      encodings,
+      axes: {
+        x: { visible: false, labelsVisible: false },
+        y: { visible: false, labelsVisible: false },
+      },
+    });
+    expect(hidden.content).not.toContain('data-mark-role="horizon-axis"');
+    expect(hidden.plotArea.x).toBe(6);
+  });
+
   it("keeps repeated progression values in a plain area chart", () => {
     const repeatedDataset: Dataset = {
       id: "repeated-area",
@@ -236,7 +297,13 @@ describe("advanced chart cards", () => {
 
     expect(result.content).toContain('data-renderer="deterministic-area@1"');
     expect(result.content).toContain('data-point-count="4"');
+    expect(result.content).not.toContain('data-zero-endpoints="true"');
+    const path = result.content.match(/data-mark-role="area"[^>]*d="([^"]+)"/)?.[1] ?? "";
+    const firstY = Number(path.match(/^M[^,]+,([0-9.-]+)/)?.[1]);
     const yDomain = result.scales?.y.domain as [number, number];
+    const yRange = result.scales?.y.range as [number, number];
+    const zeroBaseline = yRange[0] + (0 - yDomain[0]) / (yDomain[1] - yDomain[0]) * (yRange[1] - yRange[0]);
+    expect(firstY).not.toBeCloseTo(zeroBaseline, 3);
     expect(yDomain[0]).toBeLessThanOrEqual(0);
     expect(yDomain[1]).toBeGreaterThanOrEqual(0);
   });
@@ -526,7 +593,54 @@ describe("advanced chart cards", () => {
     expect(result.content).toContain('data-mark-role="node"');
     expect(result.content).toContain('data-node-key="a1"');
     expect(result.content).toContain('data-row-key=');
+    if (chartType !== "Dendrogram") {
+      expect(result.content).toContain('data-palette="global"');
+      expect(globalPalette.categorical.some((color) => result.content.includes(`fill="${color}"`))).toBe(true);
+    }
   });
+
+  it.each(["Icicle", "Sunburst", "Treemap", "Dendrogram", "RadialDendrogram"])(
+    "keeps only black leaf labels visible in %s when internal labels are disabled",
+    (chartType) => {
+      const result = render(chartType, hierarchyDataset, {
+        encodings: {
+          key: { field: "id", type: "nominal" },
+          parent: { field: "parent", type: "nominal" },
+          value: { field: "value", type: "quantitative" },
+        },
+        markGroups: [{
+          id: `mark-group:${chartType}:node`,
+          chartId: chartType,
+          role: "node",
+          memberKeys: [],
+          sharedConfig: { nodeLabelsVisible: false, leafLabelsVisible: true },
+        }],
+      });
+      const labelTags = Array.from(
+        result.content.matchAll(/<text data-mark-role="node-label"([^>]*)>/g),
+        (match) => match[1] ?? "",
+      );
+
+      expect(labelTags).toHaveLength(3);
+      labelTags.forEach((attributes) => {
+        expect(attributes).toContain('data-hierarchy-label-kind="leaf"');
+        expect(attributes).toContain('fill="#111111"');
+        expect(attributes).not.toContain("stroke=");
+        expect(attributes).not.toContain("paint-order=");
+      });
+      expect(result.content).not.toContain('data-hierarchy-label-kind="internal"');
+      if (chartType === "Sunburst") {
+        expect(labelTags.every((attributes) => attributes.includes('data-label-position="outside"'))).toBe(true);
+        const labelRadius = (nodeKey: string) => Number(result.content
+          .match(new RegExp(`<text[^>]*data-node-key="${nodeKey}"[^>]*data-label-radius="([^"]+)"`))?.[1]);
+        const arcOuterRadius = (nodeKey: string) => Number(result.content
+          .match(new RegExp(`<path[^>]*data-node-key="${nodeKey}"[^>]*data-radius-outer="([^"]+)"`))?.[1]);
+        expect(labelRadius("a1")).toBe(arcOuterRadius("a1"));
+        expect(labelRadius("b")).toBe(arcOuterRadius("b"));
+        expect(labelRadius("b")).toBeLessThan(labelRadius("a1"));
+      }
+    },
+  );
 
   it("applies a static dendrogram node size to every node", () => {
     const result = render("Dendrogram", hierarchyDataset, {
@@ -546,6 +660,21 @@ describe("advanced chart cards", () => {
     const radii = Array.from(result.content.matchAll(/<circle r="([^"]+)"/g), (match) => Number(match[1]));
     expect(radii.length).toBeGreaterThan(0);
     expect(new Set(radii)).toEqual(new Set([18]));
+  });
+
+  it.each(["Dendrogram", "RadialDendrogram"])("renders every %s link with a thicker fixed-width stroke", (chartType) => {
+    const result = render(chartType, hierarchyDataset, {
+      encodings: {
+        key: { field: "id", type: "nominal" },
+        parent: { field: "parent", type: "nominal" },
+        value: { field: "value", type: "quantitative" },
+      },
+    });
+    const linkTags = Array.from(result.content.matchAll(/<path data-mark-role="link"([^>]*)\/>/g), (match) => match[1] ?? "");
+
+    expect(linkTags.length).toBeGreaterThan(0);
+    expect(linkTags.every((attributes) => attributes.includes('stroke-width="2.5"'))).toBe(true);
+    expect(linkTags.every((attributes) => attributes.includes('vector-effect="non-scaling-stroke"'))).toBe(true);
   });
 
   it("reports dendrogram selection bounds from rendered node and label extents", () => {
@@ -802,6 +931,86 @@ describe("advanced chart cards", () => {
     expect(Number(firstArc?.[1])).toBeCloseTo((-240 * Math.PI) / 180);
   });
 
+  it("fills each Sunburst parent from leaf-only values when internal rows contain aggregates", () => {
+    const sunburst = render("Sunburst", hierarchyDataset, {
+      encodings: {
+        key: { field: "id", type: "nominal" },
+        parent: { field: "parent", type: "nominal" },
+        value: { field: "value", type: "quantitative" },
+      },
+    });
+    const angleSpanFor = (nodeKey: string) => {
+      const tag = sunburst.content.match(new RegExp(`<path[^>]*data-node-key="${nodeKey}"[^>]*>`))?.[0];
+      expect(tag).toBeDefined();
+      const start = Number(tag?.match(/data-angle-start="([^"]+)"/)?.[1]);
+      const end = Number(tag?.match(/data-angle-end="([^"]+)"/)?.[1]);
+      return end - start;
+    };
+
+    expect(angleSpanFor("a") + angleSpanFor("b")).toBeCloseTo(Math.PI * 2);
+    expect(angleSpanFor("a1") + angleSpanFor("a2")).toBeCloseTo(angleSpanFor("a"));
+  });
+
+  it("centers Sunburst and Radial Dendrogram hierarchy levels on the same shared R", () => {
+    const sharedInput = {
+      width: 500,
+      height: 300,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: polar,
+      dataset: hierarchyDataset,
+      sharedHierarchyLevelCount: 2,
+      sharedHierarchyOuterRadius: 90,
+    } as const;
+    const dendrogram = renderDeterministicChart({
+      ...sharedInput,
+      chartId: "shared-r-dendrogram",
+      chartSpec: {
+        chartType: "RadialDendrogram",
+        datasetId: hierarchyDataset.id,
+        encodings: {
+          key: { field: "id", type: "nominal" },
+          parent: { field: "parent", type: "nominal" },
+        },
+      },
+    });
+    const sunburst = renderDeterministicChart({
+      ...sharedInput,
+      chartId: "shared-r-sunburst",
+      chartSpec: {
+        chartType: "Sunburst",
+        datasetId: hierarchyDataset.id,
+        encodings: {
+          key: { field: "id", type: "nominal" },
+          parent: { field: "parent", type: "nominal" },
+          value: { field: "value", type: "quantitative" },
+        },
+      },
+    });
+    const radiiByDepth = (markup: string, attribute: "data-radius" | "data-radius-center") => {
+      const values = new Map<number, Set<number>>();
+      const expression = new RegExp(`data-hierarchy-depth="(\\d+)"[^>]*${attribute}="([^"]+)"`, "g");
+      Array.from(markup.matchAll(expression)).forEach((match) => {
+        const depth = Number(match[1]);
+        const radius = Number(match[2]);
+        const depthValues = values.get(depth) ?? new Set<number>();
+        depthValues.add(radius);
+        values.set(depth, depthValues);
+      });
+      return values;
+    };
+    const dendrogramRadii = radiiByDepth(dendrogram.content, "data-radius");
+    const sunburstRadii = radiiByDepth(sunburst.content, "data-radius-center");
+
+    expect(dendrogram.polarArea).toMatchObject({ outerRadius: 90, hierarchyLevelCount: 2 });
+    expect(sunburst.polarArea).toMatchObject({ outerRadius: 90, hierarchyLevelCount: 2 });
+    expect([...dendrogramRadii.keys()]).toEqual([0, 1, 2]);
+    expect([...sunburstRadii.keys()]).toEqual([1, 2]);
+    [1, 2].forEach((depth) => {
+      expect([...dendrogramRadii.get(depth)!]).toEqual([...sunburstRadii.get(depth)!]);
+    });
+  });
+
   it("routes tree and network links around embedded child selection boxes", () => {
     const frame: NestedChildFrame = {
       parentDataKey: JSON.stringify({ rowKey: "3", role: "node" }),
@@ -888,6 +1097,27 @@ describe("advanced chart cards", () => {
     expect(calendar.content).toContain('data-mark-role="month-boundaries"');
     expect(boxplot.content).toContain('data-binning="continuous"');
     expect(boxplot.content).toContain('data-mark-role="box"');
+    expect(boxplot.content).toContain('data-palette="global"');
+  });
+
+  it("renders single and multiple box plots with palette colors", () => {
+    const single = render("SingleBoxplot", seriesDataset, {
+      encodings: { y: { field: "b", type: "quantitative" } },
+    });
+    const multiple = render("MultipleBoxplot", seriesDataset, {
+      encodings: {
+        x: { field: "department", type: "nominal" },
+        y: { field: "b", type: "quantitative" },
+      },
+    });
+    expect(single.content).toContain('data-boxplot-mode="single"');
+    expect(single.content.match(/data-mark-role="box"/g)).toHaveLength(1);
+    expect(multiple.content).toContain('data-boxplot-mode="multiple"');
+    expect(multiple.content.match(/data-mark-role="box"/g)).toHaveLength(3);
+    expect(multiple.content).toContain('fill-opacity="0.72"');
+    globalPalette.categorical.slice(0, 3).forEach((color) => {
+      expect(multiple.content).toContain(`fill="${color}"`);
+    });
   });
 
   it("renders contour paths and aggregated hexagons", () => {
@@ -935,11 +1165,112 @@ describe("advanced chart cards", () => {
     expect(result.content).toContain('data-mark-role="link"');
     expect(result.content).toContain('data-mark-role="node"');
     if (chartType === "Chord") {
-      expect(result.content).toContain('data-mark-role="group-ticks"');
+      expect(result.content).toContain('transform="translate(250 150) rotate(0)"');
+      expect(result.content).not.toContain('data-mark-role="group-ticks"');
+      expect(result.content).not.toContain('data-mark-role="group-label"');
       expect(result.content).toContain('data-ribbon-color="target"');
+      expect(result.polarArea).toMatchObject({
+        angleSpan: 360,
+        innerRadius: 0,
+      });
     } else {
       expect(result.content).toContain("linearGradient");
       expect(result.content).toContain('data-node-align="justify"');
+      expect(result.content).toContain('data-palette="global"');
+      expect(result.content).toContain(`stop-color="${globalPalette.categorical[0]}"`);
     }
+  });
+
+  it("restores Chord group axes and labels from explicit appearance settings", () => {
+    const result = render("Chord", flowDataset, {
+      axes: { theta: { visible: true, labelsVisible: true } },
+      encodings: {
+        source: { field: "source", type: "nominal" },
+        target: { field: "target", type: "nominal" },
+        value: { field: "value", type: "quantitative" },
+      },
+    });
+    expect(result.content).toContain('data-mark-role="group-ticks"');
+    expect(result.content).toContain('data-mark-role="group-label"');
+  });
+
+  it("uses graph-node order and exposes the Chord's unequal Theta bands", () => {
+    const graphDataset: Dataset = {
+      id: "ordered-chord-graph",
+      name: "ordered-chord-graph",
+      columns: [],
+      rows: [],
+      graph: {
+        nodes: {
+          columns: [
+            { name: "node_id", type: "nominal" },
+            { name: "month", type: "ordinal" },
+            { name: "metric", type: "quantitative" },
+          ],
+          rows: [
+            { node_id: "C", month: "1", metric: "3" },
+            { node_id: "C", month: "2", metric: "4" },
+            { node_id: "A", month: "1", metric: "5" },
+            { node_id: "B", month: "1", metric: "6" },
+          ],
+        },
+        edges: {
+          columns: [
+            { name: "source", type: "nominal" },
+            { name: "target", type: "nominal" },
+            { name: "value", type: "quantitative" },
+          ],
+          rows: [
+            { source: "A", target: "B", value: "2" },
+            { source: "B", target: "C", value: "8" },
+            { source: "C", target: "A", value: "4" },
+          ],
+        },
+      },
+    };
+    const spec: ChartSpec = {
+      chartType: "Chord",
+      datasetId: graphDataset.id,
+      encodings: {
+        key: { field: "node_id", type: "nominal" },
+        source: { field: "source", type: "nominal" },
+        target: { field: "target", type: "nominal" },
+        value: { field: "value", type: "quantitative" },
+      },
+    };
+    const prepared = prepareChartData("ordered-chord", graphDataset, spec);
+    const result = renderDeterministicChart({
+      chartId: "ordered-chord",
+      width: 500,
+      height: 300,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: polar,
+      chartSpec: prepared.chartSpec,
+      dataset: prepared.dataset,
+    });
+
+    const polarArea = result.polarArea as ChartPolarArea | undefined;
+    expect(polarArea?.angleBands?.map((band) => band.value)).toEqual(["C", "A", "B"]);
+    expect(new Set(polarArea?.angleBands?.map((band) => band.angleSpan))).toHaveProperty("size", 3);
+    expect(result.content.indexOf('data-node-key="C"')).toBeLessThan(result.content.indexOf('data-node-key="A"'));
+
+    const compact = renderDeterministicChart({
+      chartId: "compact-ordered-chord",
+      width: 136,
+      height: 136,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: {
+        type: "Polar",
+        origin: { x: 68, y: 68 },
+        innerRadiusRatio: 0,
+        outerRadiusRatio: 0.5,
+      },
+      chartSpec: prepared.chartSpec,
+      dataset: prepared.dataset,
+    });
+    expect((compact.polarArea as ChartPolarArea | undefined)?.angleBands
+      ?.every((band) => band.angleSpan > 0)).toBe(true);
   });
 });

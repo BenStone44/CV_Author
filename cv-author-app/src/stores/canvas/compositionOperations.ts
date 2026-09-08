@@ -541,7 +541,10 @@ export function useCanvasCompositionOperations(context: any) {
       facetCoordinateSystem = recommendation?.facetCoordinateSystem ?? "Cartesian";
       facetThetaField = recommendation?.facetThetaField;
       facetRadiusField = recommendation?.facetRadiusField;
-      const dataset = sourceChart?.chartSpec ? getDataset(sourceChart.chartSpec.datasetId) : null;
+      const sourceDataset = sourceChart?.chartSpec ? getDataset(sourceChart.chartSpec.datasetId) : null;
+      const dataset = sourceDataset && sourceChart?.chartSpec
+        ? prepareChartData(sourceChart.id, sourceDataset, sourceChart.chartSpec).dataset
+        : sourceDataset;
       facetGrid = recommendation?.facetGrid
         ? {
           ...recommendation.facetGrid,
@@ -913,6 +916,42 @@ export function useCanvasCompositionOperations(context: any) {
           node.compositionSpec = compositionSpec;
         }
       });
+      if (type === "facet" && facetCoordinateSystem === "Polar") {
+        const anchorX = bounds.minX;
+        const anchorY = bounds.minY;
+        children.forEach((member) => {
+          member.x = anchorX;
+          member.y = anchorY;
+          walkCanvasNodes([member]).forEach((chart) => {
+            if (!chart.chartSpec) return;
+            const contract = getChartTemplateContract(chart.chartSpec.chartType);
+            if (contract?.family !== "line" && contract?.family !== "area") return;
+            const localMinX = chart.kind === "leaf" ? chart.contentMinX : 0;
+            const localMinY = chart.kind === "leaf" ? chart.contentMinY : 0;
+            chart.coordinateGuide = {
+              type: "Polar",
+              origin: {
+                x: localMinX + chart.width / 2,
+                y: localMinY + chart.height / 2,
+              },
+              angleOffset: 0,
+              angleSpan: 360,
+              innerRadiusRatio: 0.18,
+              outerRadiusRatio: 1,
+              showThetaLine: false,
+              showRadiusLine: false,
+            };
+            chart.coordinateSystem = {
+              id: `coordinate:${chart.id}:polar-facet`,
+              type: "Polar",
+              ownerNodeId: chart.id,
+              members: [{ nodeId: chart.id, channels: ["angle", "radius"] }],
+              sharedChannels: [],
+            };
+            renderChartNode(chart);
+          });
+        });
+      }
       if (type === "concat") renderSharedCoordinateComposition(children[0]!, true);
       const replacedIds = new Set(type === "concat"
         ? children.map((node) => node.id)
@@ -937,6 +976,19 @@ export function useCanvasCompositionOperations(context: any) {
           scaleX: 1,
           scaleY: 1,
           rotation: 0,
+          coordinateGuide: facetCoordinateSystem === "Polar"
+            ? {
+              type: "Polar",
+              origin: {
+                x: Math.max(rootBounds.width, 1) / 2,
+                y: Math.max(rootBounds.height, 1) / 2,
+              },
+              angleOffset: 0,
+              angleSpan: 360,
+              innerRadiusRatio: 0.18,
+              outerRadiusRatio: 1,
+            }
+            : null,
           coordinateSystem,
           compositionSpec,
           children,
@@ -1112,7 +1164,7 @@ export function useCanvasCompositionOperations(context: any) {
     if (
       !node.chartSpec
       || !dataset
-      || (template !== "scatter" && !hasScatterLayer)
+      || (template !== "scatter" && template !== "matrix" && !hasScatterLayer)
       || fields.length === 0
       || fields.some((field) => !quantitative.has(field))
       || !radiusField
@@ -1133,11 +1185,12 @@ export function useCanvasCompositionOperations(context: any) {
       parentRowKey,
       parentRowKeys,
       parentChartNodeId: node.id,
-      parentMarkGroupId: node.chartSpec.markGroups?.find((group) => group.role === "point")?.id
+      parentMarkGroupId: node.chartSpec.markGroups?.find((group) =>
+        group.role === (template === "matrix" ? "cell" : "point"))?.id
         ?? node.layerSpec?.children
           .find((child) => normalizeChartTemplate(child.chartSpec.chartType) === "scatter")
           ?.chartSpec.markGroups?.find((group) => group.role === "point")?.id
-        ?? `mark-group:${node.id}:point`,
+        ?? `mark-group:${node.id}:${template === "matrix" ? "cell" : "point"}`,
       valueFields: fields,
       radiusField,
       innerChartType: "PieChart",
@@ -1853,8 +1906,11 @@ export function useCanvasCompositionOperations(context: any) {
       const gap = cartesian
         ? COMPOSITION_DROP_ZONE_GAP_PX / Math.max(viewZoom.value, 0.25)
         : 0;
-      const edgeX = cartesian ? bounds.width * 0.22 + gap : 0;
-      const edgeY = cartesian ? bounds.height * 0.22 + gap : 0;
+      // Polar concat portals live outside the occupied circle, including the
+      // angular band beyond the radial concat ring. Keep the closed root in
+      // the target search while the pointer is over those external sectors.
+      const edgeX = cartesian ? bounds.width * 0.22 + gap : bounds.width * 0.48;
+      const edgeY = cartesian ? bounds.height * 0.22 + gap : bounds.height * 0.48;
       return point.x >= bounds.minX - edgeX
         && point.x <= bounds.maxX + edgeX
         && point.y >= bounds.minY - edgeY
@@ -1876,6 +1932,110 @@ export function useCanvasCompositionOperations(context: any) {
       const outerCoordinateType = composition.type === "facet"
         ? composition.facetCoordinateSystem ?? targetChart.coordinateGuide?.type ?? "Cartesian"
         : targetChart.coordinateGuide?.type ?? "Cartesian";
+      if (bounds
+        && outerCoordinateType === "Polar"
+        && outerCompositionTarget.coordinateGuide?.type === "Polar") {
+        const model = createPolarCoordinateSystemModel(outerCompositionTarget, viewZoom.value);
+        const occupied = getPolarOccupiedGeometry(outerCompositionTarget);
+        if (model && occupied) {
+          const localPoint = toNodeLocalPoint(outerCompositionTarget, point);
+          const dx = localPoint.x - model.origin.x;
+          const dy = model.origin.y - localPoint.y;
+          const distance = Math.hypot(dx, dy);
+          const pointerAngle = (Math.atan2(-dy, dx) * 180 / Math.PI + 360) % 360;
+          const startAngle = occupied.startAngle;
+          const angleSpan = occupied.angleSpan;
+          const relativeAngle = (pointerAngle - startAngle + 360) % 360;
+          const inAngle = angleSpan >= 359.999 || relativeAngle <= angleSpan;
+          const renderedScale = Math.max(
+            Math.abs(outerCompositionTarget.scaleX),
+            Math.abs(outerCompositionTarget.scaleY),
+            0.0001,
+          ) * Math.max(viewZoom.value, 0.0001);
+          const gap = COMPOSITION_DROP_ZONE_GAP_PX / renderedScale;
+          const thickness = Math.max(20 / renderedScale, Math.min(occupied.outerRadius * 0.2, 56 / renderedScale));
+          const radialBands = [
+            ...(occupied.innerRadius > gap
+              ? [{
+                innerRadius: Math.max(0, occupied.innerRadius - gap - thickness),
+                outerRadius: occupied.innerRadius - gap,
+                position: "before" as const,
+              }]
+              : []),
+            {
+              innerRadius: occupied.outerRadius + gap,
+              outerRadius: occupied.outerRadius + gap + thickness,
+              position: "after" as const,
+            },
+          ];
+          const radial = radialBands.find((band) => inAngle
+            && distance >= band.innerRadius
+            && distance <= band.outerRadius);
+          if (radial) {
+            const geometry = polarSectorGeometry(
+              outerCompositionTarget,
+              model,
+              radial.innerRadius,
+              radial.outerRadius,
+              -startAngle,
+              -(startAngle + angleSpan),
+            );
+            if (geometry) return {
+              targetNodeId: outerCompositionTarget.id,
+              type: "concat",
+              sharedChannels: ["angle"],
+              ...geometry,
+              compatible: concatEdgeNodesAreCompatible(
+                outerCompositionTarget,
+                source,
+                "radial",
+                "angle",
+              ),
+              direction: "radial",
+              concatPosition: radial.position,
+            };
+          }
+          const angularGap = Math.min(6, Math.max(2, gap / Math.max(occupied.outerRadius, 1) * 180 / Math.PI));
+          const edgeAngle = Math.min(30, Math.max(8, angleSpan * 0.22));
+          const angularInnerRadius = occupied.outerRadius + gap + thickness + gap;
+          const angularOuterRadius = angularInnerRadius + thickness;
+          const within = (value: number, rangeStart: number, rangeSpan: number) =>
+            (value - ((rangeStart % 360) + 360) % 360 + 360) % 360 <= rangeSpan;
+          const before = within(relativeAngle, -angularGap - edgeAngle, edgeAngle);
+          const after = within(relativeAngle, angleSpan + angularGap, edgeAngle);
+          if (distance >= angularInnerRadius && distance <= angularOuterRadius && (before || after)) {
+            const isBefore = before && !after;
+            const sectorStart = isBefore
+              ? -(startAngle - angularGap - edgeAngle)
+              : -(startAngle + angleSpan + angularGap);
+            const sectorEnd = isBefore
+              ? -(startAngle - angularGap)
+              : -(startAngle + angleSpan + angularGap + edgeAngle);
+            const geometry = polarSectorGeometry(
+              outerCompositionTarget,
+              model,
+              angularInnerRadius,
+              angularOuterRadius,
+              sectorStart,
+              sectorEnd,
+            );
+            if (geometry) return {
+              targetNodeId: outerCompositionTarget.id,
+              type: "concat",
+              sharedChannels: ["radius"],
+              ...geometry,
+              compatible: concatEdgeNodesAreCompatible(
+                outerCompositionTarget,
+                source,
+                "angular",
+                "radius",
+              ),
+              direction: "angular",
+              concatPosition: isBefore ? "before" : "after",
+            };
+          }
+        }
+      }
       if (bounds && outerCoordinateType === "Cartesian") {
         // Every closed Cartesian composite exposes concat portals around its
         // complete frame. The direct target remains the root; its member
@@ -2359,6 +2519,47 @@ export function useCanvasCompositionOperations(context: any) {
           ? collectRenderedNodeSelectionBounds(target)
           : getCanvasNodeListBounds(members.length > 0 ? members : [target]);
         if (!bounds) return;
+        const outerCoordinateType = composition.type === "facet"
+          ? composition.facetCoordinateSystem ?? firstChartNode(target)?.coordinateGuide?.type
+          : firstChartNode(target)?.coordinateGuide?.type;
+        if (outerCoordinateType === "Polar" && target.coordinateGuide?.type === "Polar") {
+          const model = createPolarCoordinateSystemModel(target, viewZoom.value);
+          const occupied = getPolarOccupiedGeometry(target);
+          if (!model || !occupied) return;
+          const renderedScale = Math.max(
+            Math.abs(target.scaleX),
+            Math.abs(target.scaleY),
+            0.0001,
+          ) * Math.max(viewZoom.value, 0.0001);
+          const radialGap = COMPOSITION_DROP_ZONE_GAP_PX / renderedScale;
+          const radialThickness = Math.max(
+            20 / renderedScale,
+            Math.min(occupied.outerRadius * 0.2, 56 / renderedScale),
+          );
+          const edgeAngle = Math.min(30, Math.max(8, occupied.angleSpan * 0.22));
+          const angularGap = Math.min(
+            6,
+            Math.max(2, radialGap / Math.max(occupied.outerRadius, 1) * 180 / Math.PI),
+          );
+          const angularMiddleRadius = occupied.outerRadius
+            + radialGap
+            + radialThickness
+            + radialGap
+            + radialThickness / 2;
+          const probeAt = (radius: number, clockwiseDegrees: number) => {
+            const local = polarPointAtAngle(model.origin, radius, -clockwiseDegrees);
+            probes.push(nodeLocalToSelectionScopePoint(target, local));
+          };
+          probeAt((occupied.innerRadius + occupied.outerRadius) / 2, occupied.startAngle + occupied.angleSpan / 2);
+          probeAt(occupied.outerRadius + radialGap + radialThickness / 2, occupied.startAngle + occupied.angleSpan / 2);
+          if (occupied.innerRadius > radialGap) {
+            probeAt(Math.max(0, occupied.innerRadius - radialGap - radialThickness / 2), occupied.startAngle + occupied.angleSpan / 2);
+          }
+          probeAt(angularMiddleRadius, occupied.startAngle - angularGap - edgeAngle / 2);
+          probeAt(angularMiddleRadius, occupied.startAngle + occupied.angleSpan + angularGap + edgeAngle / 2);
+          probes.push(nodeLocalToSelectionScopePoint(target, model.origin));
+          return;
+        }
         const edgeX = Math.min(bounds.width * 0.22, Math.max(18 / Math.max(viewZoom.value, 0.25), 12));
         const edgeY = Math.min(bounds.height * 0.22, Math.max(18 / Math.max(viewZoom.value, 0.25), 12));
         const gap = COMPOSITION_DROP_ZONE_GAP_PX / Math.max(viewZoom.value, 0.25);

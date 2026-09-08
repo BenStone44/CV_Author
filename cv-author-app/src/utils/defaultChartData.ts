@@ -17,6 +17,11 @@ import case2GraphNodesCsv from "../../../data/case2_graph_nodes.csv?raw";
 import case2GraphLinksCsv from "../../../data/case2_graph_links.csv?raw";
 import hexbinGraphNodesCsv from "../../../data/hexbin_graph_nodes.csv?raw";
 import hexbinGraphLinksCsv from "../../../data/hexbin_graph_links.csv?raw";
+import chordPolarLineNodesCsv from "../../../data/chord_polar_line_nodes.csv?raw";
+import chordPolarLineLinksCsv from "../../../data/chord_polar_line_links.csv?raw";
+import matrixForceHeatmapCsv from "../../../data/matrix_force_heatmap.csv?raw";
+import matrixForceNodesCsv from "../../../data/matrix_force_nodes.csv?raw";
+import matrixForceEdgesCsv from "../../../data/matrix_force_edges.csv?raw";
 import { getChartTemplateContract, normalizeChartTemplate } from "./chartTemplates";
 import { prepareChartData } from "./chartDataPipeline";
 import { renderDeterministicChart } from "./semanticRenderer";
@@ -28,6 +33,8 @@ export const DEFAULT_CHORD_DATASET_ID = "builtin:default-chord-data";
 export const DEFAULT_HEXBIN_DATASET_ID = "builtin:d3-hexbin-diamonds";
 export const CASE2_GRAPH_DATASET_ID = "builtin:case2-station-graph";
 export const HEXBIN_GRAPH_DATASET_ID = "builtin:hexbin-spread-graph";
+export const CHORD_POLAR_LINE_DATASET_ID = "builtin:chord-polar-line-facet-graph";
+export const MATRIX_PIE_NETWORK_DATASET_ID = "builtin:matrix-pie-network";
 
 const defaultRows = Papa.parse<Record<string, string>>(defaultChartDataCsv, {
   header: true,
@@ -67,6 +74,11 @@ const case2GraphNodeRows = Papa.parse<Record<string, string>>(case2GraphNodesCsv
 const case2GraphLinkRows = Papa.parse<Record<string, string>>(case2GraphLinksCsv, { header: true, skipEmptyLines: "greedy" }).data;
 const hexbinGraphNodeRows = Papa.parse<Record<string, string>>(hexbinGraphNodesCsv, { header: true, skipEmptyLines: "greedy" }).data;
 const hexbinGraphLinkRows = Papa.parse<Record<string, string>>(hexbinGraphLinksCsv, { header: true, skipEmptyLines: "greedy" }).data;
+const chordPolarLineNodeRows = Papa.parse<Record<string, string>>(chordPolarLineNodesCsv, { header: true, skipEmptyLines: "greedy" }).data;
+const chordPolarLineLinkRows = Papa.parse<Record<string, string>>(chordPolarLineLinksCsv, { header: true, skipEmptyLines: "greedy" }).data;
+const matrixForceHeatmapRows = Papa.parse<Record<string, string>>(matrixForceHeatmapCsv, { header: true, skipEmptyLines: "greedy" }).data;
+const matrixForceNodeRows = Papa.parse<Record<string, string>>(matrixForceNodesCsv, { header: true, skipEmptyLines: "greedy" }).data;
+const matrixForceEdgeRows = Papa.parse<Record<string, string>>(matrixForceEdgesCsv, { header: true, skipEmptyLines: "greedy" }).data;
 
 /**
  * One neutral, long-form table shared by the built-in chart templates.
@@ -100,7 +112,7 @@ export const defaultHexbinDataset: Dataset = {
   rows: defaultHexbinRows,
 };
 
-/** Ten station nodes joined to NYC ZIP geometries through the point ID field. */
+/** Monthly observations for ten stations joined to NYC ZIP geometries by point ID. */
 export const case2GraphDataset: Dataset = {
   id: CASE2_GRAPH_DATASET_ID,
   name: "case2 station graph",
@@ -110,7 +122,12 @@ export const case2GraphDataset: Dataset = {
     nodes: { columns: [
       { name: "id", type: "nominal" }, { name: "point", type: "nominal" },
       { name: "label", type: "nominal" }, { name: "station_type", type: "nominal" },
-      { name: "month", type: "ordinal" }, { name: "value", type: "quantitative" },
+      { name: "month", type: "ordinal" },
+      { name: "pedestrian_trips", type: "quantitative" },
+      { name: "bicycle_trips", type: "quantitative" },
+      { name: "transit_rides", type: "quantitative" },
+      { name: "vehicle_trips", type: "quantitative" },
+      { name: "delivery_trips", type: "quantitative" },
     ], rows: case2GraphNodeRows },
     edges: { columns: [{ name: "source", type: "nominal" }, { name: "target", type: "nominal" }, { name: "value", type: "quantitative" }], rows: case2GraphLinkRows },
   },
@@ -131,6 +148,72 @@ export const hexbinGraphDataset: Dataset = {
   },
 };
 
+/** Graph-backed Chord with dense per-node series for the Circular Stacked Bar Facet case. */
+export const chordPolarLineDataset: Dataset = {
+  id: CHORD_POLAR_LINE_DATASET_ID,
+  name: "chord_polar_line_nodes.csv + chord_polar_line_links.csv",
+  columns: [],
+  rows: [],
+  graph: {
+    nodes: {
+      columns: [
+        { name: "node_id", type: "nominal" },
+        { name: "label", type: "nominal" },
+        { name: "week", type: "ordinal" },
+        { name: "energy_source", type: "nominal" },
+        { name: "generation_gwh", type: "quantitative" },
+      ],
+      rows: chordPolarLineNodeRows,
+    },
+    edges: {
+      columns: [
+        { name: "source", type: "nominal" },
+        { name: "target", type: "nominal" },
+        { name: "flow_twh", type: "quantitative" },
+      ],
+      rows: chordPolarLineLinkRows,
+    },
+  },
+};
+
+/** A 20 x 20 heatmap with a separate 100-node, three-community force graph. */
+export const matrixPieNetworkDataset: Dataset = {
+  id: MATRIX_PIE_NETWORK_DATASET_ID,
+  name: "matrix_force_heatmap.csv + matrix_force_nodes.csv + matrix_force_edges.csv",
+  columns: [
+    { name: "cell_id", type: "nominal" },
+    { name: "row_group", type: "ordinal" },
+    { name: "column_group", type: "ordinal" },
+    { name: "channel_a", type: "quantitative" },
+    { name: "channel_b", type: "quantitative" },
+    { name: "channel_c", type: "quantitative" },
+    { name: "channel_d", type: "quantitative" },
+    { name: "channel_e", type: "quantitative" },
+    { name: "heat_value", type: "quantitative" },
+  ],
+  rows: matrixForceHeatmapRows,
+  primaryKey: ["cell_id"],
+  graph: {
+    nodes: {
+      columns: [
+        { name: "id", type: "nominal" },
+        { name: "label", type: "nominal" },
+        { name: "community", type: "nominal" },
+        { name: "size", type: "quantitative" },
+      ],
+      rows: matrixForceNodeRows,
+    },
+    edges: {
+      columns: [
+        { name: "source", type: "nominal" },
+        { name: "target", type: "nominal" },
+        { name: "weight", type: "quantitative" },
+      ],
+      rows: matrixForceEdgeRows,
+    },
+  },
+};
+
 /** A shared parent-linked hierarchy used by every built-in tree template. */
 export const defaultTreeDataset: Dataset = {
   id: DEFAULT_TREE_DATASET_ID,
@@ -139,6 +222,7 @@ export const defaultTreeDataset: Dataset = {
     { name: "node_id", type: "nominal" },
     { name: "parent_id", type: "nominal" },
     { name: "label", type: "nominal" },
+    { name: "month", type: "ordinal" },
     { name: "weight", type: "quantitative" },
     { name: "metric_1", type: "quantitative" },
     { name: "metric_2", type: "quantitative" },
@@ -147,7 +231,7 @@ export const defaultTreeDataset: Dataset = {
     { name: "metric_5", type: "quantitative" },
   ],
   rows: defaultTreeRows,
-  primaryKey: ["node_id"],
+  primaryKey: ["node_id", "month"],
 };
 
 /** A graph dataset with separate node and edge tables for network templates. */
@@ -329,7 +413,12 @@ export function createDefaultChartSpec(chartType: string): ChartSpec | null {
     return {
       ...base,
       datasetId: DEFAULT_CHORD_DATASET_ID,
+      axes: {
+        theta: { visible: false, labelsVisible: false },
+        radius: { visible: false, labelsVisible: false },
+      },
       encodings: {
+        key: { field: "id", type: "nominal" },
         source: { field: "source", type: "nominal" },
         target: { field: "target", type: "nominal" },
         value: { field: "value", type: "quantitative" },
@@ -394,14 +483,55 @@ export function createDefaultChartSpec(chartType: string): ChartSpec | null {
       dataTransforms: groupFilter(),
     };
   }
-  if (normalized === "radialbarchart") {
+  if (normalized === "radarchart") {
+    const seriesEncoding = { field: "group", type: "nominal" as const };
+    return {
+      ...base,
+      encodings: {
+        theta: { field: "column", type: "ordinal" },
+        radius: { field: "value", type: "quantitative" },
+        color: seriesEncoding,
+      },
+      series: seriesEncoding,
+      seriesFields: [seriesEncoding],
+    };
+  }
+  const radialBar = normalized === "radialbarchart"
+    || normalized === "radialrectbarchart";
+  const radialStackedBar = normalized === "radialstackedbarchart"
+    || normalized === "radialrectstackedbarchart";
+  if (radialBar || radialStackedBar) {
+    const seriesEncoding = { field: "group", type: "nominal" as const };
     return {
       ...base,
       encodings: {
         segment: { field: "column", type: "ordinal" },
         radius: { field: "value", type: "quantitative" },
+        ...(radialStackedBar ? { color: seriesEncoding } : {}),
       },
-      dataTransforms: groupFilter(),
+      ...(radialStackedBar ? { series: seriesEncoding, seriesFields: [seriesEncoding] } : {}),
+      ...(!radialStackedBar ? { dataTransforms: groupFilter() } : {}),
+    };
+  }
+  const circularStackedBar = normalized === "circularstackedbarchart";
+  if (normalized === "circularbarchart" || circularStackedBar) {
+    const seriesEncoding = { field: "group", type: "nominal" as const };
+    return {
+      ...base,
+      encodings: {
+        ...(circularStackedBar
+          ? {
+            theta: { field: "value", type: "quantitative" as const },
+            radius: { field: "column", type: "ordinal" as const },
+          }
+          : {
+            segment: { field: "column", type: "ordinal" as const },
+            theta: { field: "value", type: "quantitative" as const },
+          }),
+        ...(circularStackedBar ? { color: seriesEncoding } : {}),
+      },
+      ...(circularStackedBar ? { series: seriesEncoding, seriesFields: [seriesEncoding] } : {}),
+      ...(!circularStackedBar ? { dataTransforms: groupFilter() } : {}),
     };
   }
 
@@ -433,7 +563,7 @@ export function defaultChartSpecWithAppearance(chartSpec: ChartSpec, chartId: st
   return {
     ...fallback,
     axisSwapped: chartSpec.axisSwapped,
-    axes: chartSpec.axes,
+    axes: chartSpec.axes ?? fallback.axes,
     styleTokens: chartSpec.styleTokens,
     ...(retainsDefaultSource ? {
       filters: chartSpec.filters,
@@ -449,6 +579,37 @@ export function defaultChartSpecWithAppearance(chartSpec: ChartSpec, chartId: st
       sharedConfig: { ...group.sharedConfig },
     })),
   } satisfies ChartSpec;
+}
+
+function densifyAreaPreviewDataset(dataset: Dataset): Dataset {
+  const progressionValues = Array.from(new Set(dataset.rows.map((row) => row.column ?? "")))
+    .filter(Boolean);
+  if (progressionValues.length < 2) return dataset;
+  const numericFields = new Set(dataset.columns
+    .filter((column) => column.type === "quantitative")
+    .map((column) => column.name));
+  const rows: Dataset["rows"] = [];
+  progressionValues.forEach((progression, progressionIndex) => {
+    const currentRows = dataset.rows.filter((row) => row.column === progression);
+    rows.push(...currentRows);
+    const nextProgression = progressionValues[progressionIndex + 1];
+    if (!nextProgression) return;
+    const nextByGroup = new Map(dataset.rows
+      .filter((row) => row.column === nextProgression)
+      .map((row) => [row.group ?? "", row]));
+    currentRows.forEach((current) => {
+      const next = nextByGroup.get(current.group ?? "");
+      if (!next) return;
+      const midpoint: Record<string, string> = { ...current, column: `${progression}-mid` };
+      numericFields.forEach((field) => {
+        const left = Number(current[field] ?? "");
+        const right = Number(next[field] ?? "");
+        if (Number.isFinite(left) && Number.isFinite(right)) midpoint[field] = String((left + right) / 2);
+      });
+      rows.push(midpoint);
+    });
+  });
+  return { ...dataset, rows };
 }
 
 export function renderDefaultChartSvg(
@@ -473,9 +634,12 @@ export function renderDefaultChartSvg(
       }
       : null;
   const defaultDataset = defaultDatasetForChartType(chartType);
+  const previewDataset = normalizeChartTemplate(chartType) === "area"
+    ? densifyAreaPreviewDataset(defaultDataset)
+    : defaultDataset;
   const prepared = prepareChartData(
     `default-preview-${chartType}`,
-    defaultDataset,
+    previewDataset,
     chartSpec,
   );
   const result = renderDeterministicChart({

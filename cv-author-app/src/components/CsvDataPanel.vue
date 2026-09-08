@@ -19,8 +19,12 @@ import {
 import case1Csv from "../../../data/case1.csv?raw";
 import case2Csv from "../../../data/case2.csv?raw";
 import case3Csv from "../../../data/case3.csv?raw";
+import chordPolarLineNodesCsv from "../../../data/chord_polar_line_nodes.csv?raw";
+import chordPolarLineLinksCsv from "../../../data/chord_polar_line_links.csv?raw";
 import academicScoresCsv from "../../../data/academic_scores.csv?raw";
+import academicScoresWideCsv from "../../../data/academic_scores_wide.csv?raw";
 import treeNodesCsv from "../../../data/tree_nodes.csv?raw";
+import deepTreeCsv from "../../../data/tree.csv?raw";
 import graphNodesCsv from "../../../data/nodes.csv?raw";
 import graphEdgesCsv from "../../../data/edges.csv?raw";
 import case2GraphNodesCsv from "../../../data/case2_graph_nodes.csv?raw";
@@ -551,7 +555,9 @@ async function ensurePresetDatasets() {
     { name: "case2.csv", source: case2Csv },
     { name: "case3.csv", source: case3Csv },
     { name: "academic_scores.csv", source: academicScoresCsv },
+    { name: "academic_scores_wide.csv", source: academicScoresWideCsv },
     { name: "tree_nodes.csv", source: treeNodesCsv },
+    { name: "tree.csv", source: deepTreeCsv },
   ];
   for (const preset of presets) {
     if (!datasets.value.some((dataset) => dataset.name === preset.name)) {
@@ -563,6 +569,13 @@ async function ensurePresetDatasets() {
       new File([graphNodesCsv], "nodes.csv", { type: "text/csv" }),
       new File([graphEdgesCsv], "edges.csv", { type: "text/csv" }),
       "nodes.csv + edges.csv",
+    );
+  }
+  if (!datasets.value.some((dataset) => dataset.name === "chord_polar_line_nodes.csv + chord_polar_line_links.csv")) {
+    await importGraphDataset(
+      new File([chordPolarLineNodesCsv], "chord_polar_line_nodes.csv", { type: "text/csv" }),
+      new File([chordPolarLineLinksCsv], "chord_polar_line_links.csv", { type: "text/csv" }),
+      "chord_polar_line_nodes.csv + chord_polar_line_links.csv",
     );
   }
   const legacyGeoDataset = datasets.value.find(

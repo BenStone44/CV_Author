@@ -12,6 +12,7 @@ export type EncodingRole = "dimension" | "measure" | "series" | "style";
 export type EncodingEmptyLabel = "Not bound" | "Static";
 export type ChartRendererKey =
   | "line"
+  | "radar"
   | "scatter"
   | "bar"
   | "pie"
@@ -96,6 +97,8 @@ export type ChartContract = {
   allowFieldReuse: boolean;
   supportsLayerComposition: boolean;
   shareableChannels: CoordinateChannel[];
+  /** Concat may use only the shared coordinate geometry, without matching data-axis encodings. */
+  concatCompatibility?: "shared-channel" | "coordinate-only";
   unusedDimensionStrategies: Array<"flatten" | "facet" | "nested">;
   dimensionUpgrades: ChartDimensionUpgradeSchema[];
   /** Required channel ids for instantiating this block. */
@@ -231,6 +234,29 @@ const barY = { channel: "y", label: "Y", role: "measure", required: true, accept
 const barStyle = { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
 const barSeries = { channel: "color", label: "Color", semanticLabel: "Series", role: "series", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Static", multiple: true, categoricalExclusive: true } satisfies ChartEncodingChannelSchema;
 const barSize = { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
+const polarBarCategory = { channel: "segment", label: "Category", role: "dimension", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
+const polarBarValue = { channel: "radius", label: "R value", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
+const polarBarSeries = { channel: "color", label: "Stack", semanticLabel: "Stack item", role: "series", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound", categoricalExclusive: true } satisfies ChartEncodingChannelSchema;
+const radialBarChannels = (stacked: boolean): ChartEncodingChannelSchema[] => [
+  { channel: "theta", label: "Angular width", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
+  polarBarCategory,
+  polarBarValue,
+  ...(stacked
+    ? [polarBarSeries]
+    : [{ channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema]),
+];
+const circularBarChannels = (stacked: boolean): ChartEncodingChannelSchema[] => stacked
+  ? [
+    { channel: "theta", label: "Theta", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
+    { channel: "radius", label: "R", role: "dimension", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound" },
+    { ...barSeries, semanticLabel: "Segment item" },
+    barSize,
+  ]
+  : [
+    { ...polarBarCategory, label: "Ring" },
+    { channel: "theta", label: "Theta value", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
+    { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" },
+  ];
 const areaChannels = (requiresSeries: boolean): ChartEncodingChannelSchema[] => [
   xAny,
   { ...yMeasure, accepts: ["quantitative"] },
@@ -311,6 +337,7 @@ export const chartContracts = {
   Sunburst: defineSchema("Sunburst", "Sunburst", "hierarchy", hierarchyChannels, {
     coordinateSystem: "Polar",
     shareableChannels: ["angle", "radius"],
+    concatCompatibility: "coordinate-only",
   }),
   Treemap: defineSchema("Treemap", "Treemap", "hierarchy", hierarchyChannels),
   Dendrogram: defineSchema("Dendrogram", "Dendrogram", "hierarchy", [
@@ -334,17 +361,41 @@ export const chartContracts = {
     coordinateSystem: "Polar",
     rendererVersion: 3,
     supportsLayerComposition: true,
-    // Angle is the terminal-leaf axis. Radius represents hierarchy depth and
-    // remains internal to the tree rather than acting as a shared axis.
-    shareableChannels: ["angle"],
+    shareableChannels: ["angle", "radius"],
+    concatCompatibility: "coordinate-only",
   }),
-  RadialBarChart: defineSchema("RadialBarChart", "Radial Bar Chart", "bar", [
-    { channel: "theta", label: "Theta", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
-    { channel: "segment", label: "Segment", role: "dimension", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound" },
-    { channel: "radius", label: "R", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
-    { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" },
-  ], {
+  RadialBarChart: defineSchema("RadialBarChart", "Radial Bar (Sector)", "bar", radialBarChannels(false), {
     coordinateSystem: "Polar",
+    shareableChannels: ["angle", "radius"],
+  }),
+  RadialStackedBarChart: defineSchema("RadialStackedBarChart", "Radial Stacked Bar (Sector)", "bar", radialBarChannels(true), {
+    coordinateSystem: "Polar",
+    shareableChannels: ["angle", "radius"],
+  }),
+  RadialRectBarChart: defineSchema("RadialRectBarChart", "Radial Bar (Rectangle)", "bar", radialBarChannels(false), {
+    coordinateSystem: "Polar",
+    shareableChannels: ["angle", "radius"],
+  }),
+  RadialRectStackedBarChart: defineSchema("RadialRectStackedBarChart", "Radial Stacked Bar (Rectangle)", "bar", radialBarChannels(true), {
+    coordinateSystem: "Polar",
+    shareableChannels: ["angle", "radius"],
+  }),
+  CircularBarChart: defineSchema("CircularBarChart", "Circular Bar", "bar", circularBarChannels(false), {
+    coordinateSystem: "Polar",
+    shareableChannels: ["angle", "radius"],
+  }),
+  CircularStackedBarChart: defineSchema("CircularStackedBarChart", "Circular Stacked Bar", "bar", circularBarChannels(true), {
+    coordinateSystem: "Polar",
+    shareableChannels: ["angle", "radius"],
+  }),
+  RadarChart: defineSchema("RadarChart", "Radar Chart", "area", [
+    { channel: "theta", label: "Axis", role: "dimension", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound" },
+    { channel: "radius", label: "Value", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
+    { ...lineSeries, required: false },
+  ], {
+    renderer: "radar",
+    coordinateSystem: "Polar",
+    markRole: "area",
     shareableChannels: ["angle", "radius"],
   }),
   Calendar: defineSchema("Calendar", "Calendar", "calendar", [
@@ -357,6 +408,15 @@ export const chartContracts = {
     { channel: "y", label: "Y", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
     { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "quantitative"], emptyLabel: "Static" },
   ]),
+  SingleBoxplot: defineSchema("SingleBoxplot", "Single Box Plot", "boxplot", [
+    { channel: "y", label: "Value", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
+    { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" },
+  ]),
+  MultipleBoxplot: defineSchema("MultipleBoxplot", "Multiple Box Plot", "boxplot", [
+    { channel: "x", label: "Group", role: "dimension", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound" },
+    { channel: "y", label: "Value", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
+    { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" },
+  ]),
   Contour: defineSchema("Contour", "Contour", "contour", [
     { channel: "x", label: "X", role: "dimension", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
     { channel: "y", label: "Y", role: "dimension", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
@@ -366,7 +426,13 @@ export const chartContracts = {
     { channel: "x", label: "X", role: "dimension", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
     { channel: "y", label: "Y", role: "dimension", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
   ]),
-  Chord: defineSchema("Chord", "Chord", "flow", flowChannels),
+  Chord: defineSchema("Chord", "Chord", "flow", [
+    { channel: "key", label: "Node ID", role: "dimension", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
+    ...flowChannels,
+  ], {
+    coordinateSystem: "Polar",
+    shareableChannels: ["angle"],
+  }),
   Sankey: defineSchema("Sankey", "Sankey", "flow", flowChannels),
   ForceDirectedGraph: defineSchema("ForceDirectedGraph", "Force-Directed Graph", "flow", [
     { channel: "key", label: "Node ID", role: "dimension", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },

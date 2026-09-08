@@ -298,6 +298,14 @@ export type ChartPolarArea = {
   angleSpan: number;
   innerRadius: number;
   outerRadius: number;
+  /** Ordered categorical Theta bands exposed by a structural Polar chart. */
+  angleBands?: Array<{
+    value: string;
+    startAngle: number;
+    angleSpan: number;
+  }>;
+  /** Number of hierarchy levels below the rendered root. */
+  hierarchyLevelCount?: number;
 };
 
 export type ChartScaleSpec = {
@@ -414,7 +422,7 @@ export type ChartSpec = {
   datasetId: string;
   /** Built-in bindings are preview scaffolding until the author supplies fields. */
   defaultDataBinding?: boolean;
-  /** Render graph-table links beneath Cartesian scatterplot points. */
+  /** Render graph-table links beneath Cartesian point or matrix-cell content. */
   link?: boolean;
   axisSwapped?: boolean;
   encodings: Partial<Record<ChartEncodingChannel, ChartEncoding>>;
@@ -552,6 +560,10 @@ export type CompositionSpec = {
   polarAngleOffset?: number;
   /** Maximum rendered outer radius across Polar composition members. */
   polarOuterRadius?: number;
+  /** Shared hierarchy depth scale for Sunburst/Radial Dendrogram R concat. */
+  sharedHierarchyLevelCount?: number;
+  /** Shared rendered outer radius for the hierarchy depth scale. */
+  sharedHierarchyOuterRadius?: number;
   facetField?: string;
   facetValues?: string[];
   facetDirection?: "row" | "column";
@@ -1208,6 +1220,14 @@ export type PolarAngleInteraction = {
   historyCommitted: boolean;
 };
 
+export type PolarInnerRadiusInteraction = {
+  type: "polar-inner-radius";
+  nodeId: string;
+  startPoint: Point;
+  scopeGroupId?: string;
+  historyCommitted: boolean;
+};
+
 export type ScaleInteraction = {
   type: "scale";
   handle: ScaleHandle;
@@ -1244,6 +1264,7 @@ export type Interaction =
   | CoordinateOriginInteraction
   | CoordinateAxisScaleInteraction
   | PolarAngleInteraction
+  | PolarInnerRadiusInteraction
   | PanInteraction;
 
 export type CanvasHistorySnapshot = {

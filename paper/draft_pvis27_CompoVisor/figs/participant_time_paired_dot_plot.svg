@@ -1,0 +1,248 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns="http://www.w3.org/2000/svg" width="547.2pt" height="338.4pt" viewBox="0 0 547.2 338.4" role="img" aria-labelledby="plot-title plot-description" version="1.1">
+  <title id="plot-title">Task completion time by participant (n = 12)</title>
+  <desc id="plot-description">Lines connect the same participant; diamonds show medians and squares show means.</desc>
+  <metadata>Generated from the participant records supplied on 2026-09-07.</metadata>
+  <defs>
+    <clipPath id="plot-clip"><rect x="125.856" y="40.608" width="410.4" height="243.64799999999997"/></clipPath>
+    <style><![CDATA[
+      text { font-family: "DejaVu Sans", "Bitstream Vera Sans", Arial, Helvetica, sans-serif; fill: #111111; }
+      .grid { stroke: #b0b0b0; stroke-opacity: 0.22; stroke-width: 0.8; }
+      .separator { stroke: #9ca3af; stroke-opacity: 0.42; stroke-width: 0.75; }
+      .axis { stroke: #000000; stroke-width: 0.8; fill: none; }
+      .tick { stroke: #000000; stroke-width: 0.8; }
+      .tick-label, .system-label, .axis-label, .legend-label { font-size: 10px; }
+      .figure-title { font-size: 12px; }
+      .note { font-size: 8px; }
+      .participant-line { stroke-opacity: 0.30; stroke-width: 0.9; }
+      .participant-point { fill-opacity: 0.72; stroke-opacity: 0.82; stroke-width: 0.45; }
+      .median { fill: #1f77b4; stroke: #1f77b4; }
+      .mean { fill: #d95f02; stroke: #d95f02; }
+    ]]></style>
+  </defs>
+
+  <rect width="547.2" height="338.4" fill="#ffffff"/>
+  <rect x="125.856" y="40.608" width="410.4" height="243.64799999999997" fill="#ffffff"/>
+
+  <g id="x-axis">
+    <line x1="144.511" y1="40.608" x2="144.511" y2="284.256" class="grid"/>
+    <line x1="144.511" y1="284.256" x2="144.511" y2="287.756" class="tick"/>
+    <text x="144.511" y="298.854" class="tick-label" text-anchor="middle">0</text>
+    <line x1="191.147" y1="40.608" x2="191.147" y2="284.256" class="grid"/>
+    <line x1="191.147" y1="284.256" x2="191.147" y2="287.756" class="tick"/>
+    <text x="191.147" y="298.854" class="tick-label" text-anchor="middle">2</text>
+    <line x1="237.783" y1="40.608" x2="237.783" y2="284.256" class="grid"/>
+    <line x1="237.783" y1="284.256" x2="237.783" y2="287.756" class="tick"/>
+    <text x="237.783" y="298.854" class="tick-label" text-anchor="middle">4</text>
+    <line x1="284.420" y1="40.608" x2="284.420" y2="284.256" class="grid"/>
+    <line x1="284.420" y1="284.256" x2="284.420" y2="287.756" class="tick"/>
+    <text x="284.420" y="298.854" class="tick-label" text-anchor="middle">6</text>
+    <line x1="331.056" y1="40.608" x2="331.056" y2="284.256" class="grid"/>
+    <line x1="331.056" y1="284.256" x2="331.056" y2="287.756" class="tick"/>
+    <text x="331.056" y="298.854" class="tick-label" text-anchor="middle">8</text>
+    <line x1="377.692" y1="40.608" x2="377.692" y2="284.256" class="grid"/>
+    <line x1="377.692" y1="284.256" x2="377.692" y2="287.756" class="tick"/>
+    <text x="377.692" y="298.854" class="tick-label" text-anchor="middle">10</text>
+    <line x1="424.329" y1="40.608" x2="424.329" y2="284.256" class="grid"/>
+    <line x1="424.329" y1="284.256" x2="424.329" y2="287.756" class="tick"/>
+    <text x="424.329" y="298.854" class="tick-label" text-anchor="middle">12</text>
+    <line x1="470.965" y1="40.608" x2="470.965" y2="284.256" class="grid"/>
+    <line x1="470.965" y1="284.256" x2="470.965" y2="287.756" class="tick"/>
+    <text x="470.965" y="298.854" class="tick-label" text-anchor="middle">14</text>
+    <line x1="517.601" y1="40.608" x2="517.601" y2="284.256" class="grid"/>
+    <line x1="517.601" y1="284.256" x2="517.601" y2="287.756" class="tick"/>
+    <text x="517.601" y="298.854" class="tick-label" text-anchor="middle">16</text>
+    <line x1="125.856" y1="284.256" x2="536.256" y2="284.256" class="axis"/>
+    <text x="331.056" y="312.533" class="axis-label" text-anchor="middle">Task completion time (minutes; lower is better)</text>
+  </g>
+
+  <g id="y-axis">
+    <line x1="122.356" y1="77.7" x2="125.856" y2="77.7" class="tick"/>
+    <text x="118.856" y="81.5" class="system-label" text-anchor="end">Data Illustrator</text>
+    <line x1="122.356" y1="162.4" x2="125.856" y2="162.4" class="tick"/>
+    <text x="118.856" y="166.20000000000002" class="system-label" text-anchor="end">Tableau</text>
+    <line x1="122.356" y1="247.1" x2="125.856" y2="247.1" class="tick"/>
+    <text x="118.856" y="250.9" class="system-label" text-anchor="end">Our system</text>
+    <line x1="125.856" y1="40.608" x2="125.856" y2="284.256" class="axis"/>
+  </g>
+
+  <g id="system-separators" clip-path="url(#plot-clip)">
+    <line x1="125.856" y1="120.05" x2="536.256" y2="120.05" class="separator"/>
+    <line x1="125.856" y1="204.75" x2="536.256" y2="204.75" class="separator"/>
+  </g>
+
+  <g id="paired-observations" clip-path="url(#plot-clip)">
+    <polyline points="427.049,77.700 420.054,162.400 213.688,247.100" fill="none" stroke="#1f77b4" class="participant-line">
+      <title>P01 — Data Illustrator: 12:07; Tableau: 11:49; Our system: 2:58</title>
+    </polyline>
+    <polyline points="249.442,77.700 242.836,162.400 202.806,247.100" fill="none" stroke="#ff7f0e" class="participant-line">
+      <title>P02 — Data Illustrator: 4:30; Tableau: 4:13; Our system: 2:30</title>
+    </polyline>
+    <polyline points="270.429,77.700 238.561,162.400 179.488,247.100" fill="none" stroke="#2ca02c" class="participant-line">
+      <title>P03 — Data Illustrator: 5:24; Tableau: 4:02; Our system: 1:30</title>
+    </polyline>
+    <polyline points="276.647,77.700 183.374,162.400 202.806,247.100" fill="none" stroke="#d62728" class="participant-line">
+      <title>P04 — Data Illustrator: 5:40; Tableau: 1:40; Our system: 2:30</title>
+    </polyline>
+    <polyline points="356.706,77.700 238.172,162.400 257.215,247.100" fill="none" stroke="#9467bd" class="participant-line">
+      <title>P05 — Data Illustrator: 9:06; Tableau: 4:01; Our system: 4:50</title>
+    </polyline>
+    <polyline points="319.397,77.700 240.504,162.400 240.892,247.100" fill="none" stroke="#8c564b" class="participant-line">
+      <title>P06 — Data Illustrator: 7:30; Tableau: 4:07; Our system: 4:08</title>
+    </polyline>
+    <polyline points="495.449,77.700 242.447,162.400 247.499,247.100" fill="none" stroke="#e377c2" class="participant-line">
+      <title>P07 — Data Illustrator: 15:03; Tableau: 4:12; Our system: 4:25</title>
+    </polyline>
+    <polyline points="271.595,77.700 223.015,162.400 216.408,247.100" fill="none" stroke="#7f7f7f" class="participant-line">
+      <title>P08 — Data Illustrator: 5:27; Tableau: 3:22; Our system: 3:05</title>
+    </polyline>
+    <polyline points="257.604,77.700 228.456,162.400 289.083,247.100" fill="none" stroke="#bcbd22" class="participant-line">
+      <title>P09 — Data Illustrator: 4:51; Tableau: 3:36; Our system: 6:12</title>
+    </polyline>
+    <polyline points="341.549,77.700 242.836,162.400 270.429,247.100" fill="none" stroke="#17becf" class="participant-line">
+      <title>P10 — Data Illustrator: 8:27; Tableau: 4:13; Our system: 5:24</title>
+    </polyline>
+    <polyline points="369.920,77.700 200.474,162.400 219.129,247.100" fill="none" stroke="#1f77b4" class="participant-line">
+      <title>P11 — Data Illustrator: 9:40; Tableau: 2:24; Our system: 3:12</title>
+    </polyline>
+    <polyline points="341.549,77.700 242.836,162.400 270.429,247.100" fill="none" stroke="#ff7f0e" class="participant-line">
+      <title>P12 — Data Illustrator: 8:27; Tableau: 4:13; Our system: 5:24</title>
+    </polyline>
+    <circle cx="427.049" cy="77.700" r="2.45" fill="#1f77b4" class="participant-point">
+      <title>P01 · Data Illustrator · 12:07</title>
+    </circle>
+    <circle cx="420.054" cy="162.400" r="2.45" fill="#1f77b4" class="participant-point">
+      <title>P01 · Tableau · 11:49</title>
+    </circle>
+    <circle cx="213.688" cy="247.100" r="2.45" fill="#1f77b4" class="participant-point">
+      <title>P01 · Our system · 2:58</title>
+    </circle>
+    <circle cx="249.442" cy="77.700" r="2.45" fill="#ff7f0e" class="participant-point">
+      <title>P02 · Data Illustrator · 4:30</title>
+    </circle>
+    <circle cx="242.836" cy="162.400" r="2.45" fill="#ff7f0e" class="participant-point">
+      <title>P02 · Tableau · 4:13</title>
+    </circle>
+    <circle cx="202.806" cy="247.100" r="2.45" fill="#ff7f0e" class="participant-point">
+      <title>P02 · Our system · 2:30</title>
+    </circle>
+    <circle cx="270.429" cy="77.700" r="2.45" fill="#2ca02c" class="participant-point">
+      <title>P03 · Data Illustrator · 5:24</title>
+    </circle>
+    <circle cx="238.561" cy="162.400" r="2.45" fill="#2ca02c" class="participant-point">
+      <title>P03 · Tableau · 4:02</title>
+    </circle>
+    <circle cx="179.488" cy="247.100" r="2.45" fill="#2ca02c" class="participant-point">
+      <title>P03 · Our system · 1:30</title>
+    </circle>
+    <circle cx="276.647" cy="77.700" r="2.45" fill="#d62728" class="participant-point">
+      <title>P04 · Data Illustrator · 5:40</title>
+    </circle>
+    <circle cx="183.374" cy="162.400" r="2.45" fill="#d62728" class="participant-point">
+      <title>P04 · Tableau · 1:40</title>
+    </circle>
+    <circle cx="202.806" cy="247.100" r="2.45" fill="#d62728" class="participant-point">
+      <title>P04 · Our system · 2:30</title>
+    </circle>
+    <circle cx="356.706" cy="77.700" r="2.45" fill="#9467bd" class="participant-point">
+      <title>P05 · Data Illustrator · 9:06</title>
+    </circle>
+    <circle cx="238.172" cy="162.400" r="2.45" fill="#9467bd" class="participant-point">
+      <title>P05 · Tableau · 4:01</title>
+    </circle>
+    <circle cx="257.215" cy="247.100" r="2.45" fill="#9467bd" class="participant-point">
+      <title>P05 · Our system · 4:50</title>
+    </circle>
+    <circle cx="319.397" cy="77.700" r="2.45" fill="#8c564b" class="participant-point">
+      <title>P06 · Data Illustrator · 7:30</title>
+    </circle>
+    <circle cx="240.504" cy="162.400" r="2.45" fill="#8c564b" class="participant-point">
+      <title>P06 · Tableau · 4:07</title>
+    </circle>
+    <circle cx="240.892" cy="247.100" r="2.45" fill="#8c564b" class="participant-point">
+      <title>P06 · Our system · 4:08</title>
+    </circle>
+    <circle cx="495.449" cy="77.700" r="2.45" fill="#e377c2" class="participant-point">
+      <title>P07 · Data Illustrator · 15:03</title>
+    </circle>
+    <circle cx="242.447" cy="162.400" r="2.45" fill="#e377c2" class="participant-point">
+      <title>P07 · Tableau · 4:12</title>
+    </circle>
+    <circle cx="247.499" cy="247.100" r="2.45" fill="#e377c2" class="participant-point">
+      <title>P07 · Our system · 4:25</title>
+    </circle>
+    <circle cx="271.595" cy="77.700" r="2.45" fill="#7f7f7f" class="participant-point">
+      <title>P08 · Data Illustrator · 5:27</title>
+    </circle>
+    <circle cx="223.015" cy="162.400" r="2.45" fill="#7f7f7f" class="participant-point">
+      <title>P08 · Tableau · 3:22</title>
+    </circle>
+    <circle cx="216.408" cy="247.100" r="2.45" fill="#7f7f7f" class="participant-point">
+      <title>P08 · Our system · 3:05</title>
+    </circle>
+    <circle cx="257.604" cy="77.700" r="2.45" fill="#bcbd22" class="participant-point">
+      <title>P09 · Data Illustrator · 4:51</title>
+    </circle>
+    <circle cx="228.456" cy="162.400" r="2.45" fill="#bcbd22" class="participant-point">
+      <title>P09 · Tableau · 3:36</title>
+    </circle>
+    <circle cx="289.083" cy="247.100" r="2.45" fill="#bcbd22" class="participant-point">
+      <title>P09 · Our system · 6:12</title>
+    </circle>
+    <circle cx="341.549" cy="77.700" r="2.45" fill="#17becf" class="participant-point">
+      <title>P10 · Data Illustrator · 8:27</title>
+    </circle>
+    <circle cx="242.836" cy="162.400" r="2.45" fill="#17becf" class="participant-point">
+      <title>P10 · Tableau · 4:13</title>
+    </circle>
+    <circle cx="270.429" cy="247.100" r="2.45" fill="#17becf" class="participant-point">
+      <title>P10 · Our system · 5:24</title>
+    </circle>
+    <circle cx="369.920" cy="77.700" r="2.45" fill="#1f77b4" class="participant-point">
+      <title>P11 · Data Illustrator · 9:40</title>
+    </circle>
+    <circle cx="200.474" cy="162.400" r="2.45" fill="#1f77b4" class="participant-point">
+      <title>P11 · Tableau · 2:24</title>
+    </circle>
+    <circle cx="219.129" cy="247.100" r="2.45" fill="#1f77b4" class="participant-point">
+      <title>P11 · Our system · 3:12</title>
+    </circle>
+    <circle cx="341.549" cy="77.700" r="2.45" fill="#ff7f0e" class="participant-point">
+      <title>P12 · Data Illustrator · 8:27</title>
+    </circle>
+    <circle cx="242.836" cy="162.400" r="2.45" fill="#ff7f0e" class="participant-point">
+      <title>P12 · Tableau · 4:13</title>
+    </circle>
+    <circle cx="270.429" cy="247.100" r="2.45" fill="#ff7f0e" class="participant-point">
+      <title>P12 · Our system · 5:24</title>
+    </circle></g>
+  <g id="summary-statistics" clip-path="url(#plot-clip)">
+    <path d="M 330.473 68.450 L 335.723 73.700 L 330.473 78.950 L 325.223 73.700 Z" class="median">
+      <title>Data Illustrator median: 7:58.5</title>
+    </path>
+    <rect x="327.345" y="77.600" width="8.2" height="8.2" class="mean">
+      <title>Data Illustrator mean: 8:01</title>
+    </rect>
+    <path d="M 239.532 153.150 L 244.782 158.400 L 239.532 163.650 L 234.282 158.400 Z" class="median">
+      <title>Tableau median: 4:4.5</title>
+    </path>
+    <rect x="241.197" y="162.300" width="8.2" height="8.2" class="mean">
+      <title>Tableau mean: 4:19</title>
+    </rect>
+    <path d="M 230.011 237.850 L 235.261 243.100 L 230.011 248.350 L 224.761 243.100 Z" class="median">
+      <title>Our system median: 3:40</title>
+    </path>
+    <rect x="230.056" y="247.000" width="8.2" height="8.2" class="mean">
+      <title>Our system mean: 3:51</title>
+    </rect></g>
+
+  <text x="125.856" y="28.608" class="figure-title" text-anchor="start">Task completion time by participant (n = 12)</text>
+  <g id="legend">
+    <path d="M 414 265.307 L 419.244 270.551 L 414 275.795 L 408.756 270.551 Z" class="median"/>
+    <text x="427" y="273.176" class="legend-label" text-anchor="start">Median</text>
+    <rect x="477.9" y="266.451" width="8.2" height="8.2" class="mean"/>
+    <text x="494" y="273.176" class="legend-label" text-anchor="start">Mean</text>
+  </g>
+  <text x="273.6" y="329.94" class="note" text-anchor="middle">Lines connect the same participant; diamonds show medians and squares show means.</text>
+</svg>

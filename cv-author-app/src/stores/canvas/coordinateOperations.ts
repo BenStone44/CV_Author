@@ -634,7 +634,10 @@ export function useCanvasCoordinateOperations(context: any) {
       : composition?.direction === "vertical" ? "y" : null;
   }
 
-  function coordinateTransformItemIds(itemIds: string[]) {
+  function coordinateTransformItemIds(
+    itemIds: string[],
+    options: { expandConcat?: boolean } = {},
+  ) {
     const expanded = new Set<string>();
     itemIds.forEach((id) => {
       const nestedRelationships = id.startsWith("nested-unit:")
@@ -656,7 +659,8 @@ export function useCanvasCoordinateOperations(context: any) {
           return;
         }
         if (composition.type === "concat") {
-          concatGraphMembers(composition).forEach((memberId) => {
+          if (options.expandConcat === false) expanded.add(node.id);
+          else concatGraphMembers(composition).forEach((memberId) => {
             if (getSelectionNode(memberId)) expanded.add(memberId);
           });
           return;

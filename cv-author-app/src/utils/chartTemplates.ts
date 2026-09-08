@@ -274,6 +274,11 @@ export function semanticSlotForChannel(
 ): SemanticBindingSlot | null {
   const template = normalizeChartTemplate(chartType);
   if (!template) return null;
+  const normalized = chartType.replace(/[\s_-]/g, "").toLowerCase();
+  if (normalized === "circularstackedbarchart") {
+    if (channel === "theta") return "value";
+    if (channel === "radius") return "category";
+  }
   if ((template === "pie" || template === "donut") && channel === "angle") return "theta";
   if (template === "bar" && channel === "color") {
     const variant = normalizeBarChartVariant(chartType);

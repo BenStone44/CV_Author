@@ -61,9 +61,41 @@ import {
 } from "../utils/treeLayout";
 import { markMatchesNestedDataKey } from "../stores/canvas/nestedMarkIdentity";
 import { frontendPalette, globalPalette } from "../config/global";
+import {
+  CHORD_POLAR_LINE_DATASET_ID,
+  chordPolarLineDataset,
+  MATRIX_PIE_NETWORK_DATASET_ID,
+  matrixPieNetworkDataset,
+} from "../utils/defaultChartData";
 
 const EMPTY_SELECTION_IDS: string[] = [];
 const NESTED_MAX_DIAMETER = 360;
+const CHORD_CIRCULAR_STACKED_CASE = "chord-circular-stacked-facet-concat";
+const LEGACY_CHORD_POLAR_LINE_CASE = "chord-polar-line-facet-concat";
+const MATRIX_FORCE_HEATMAP_CASE = "matrix-force-heatmap-marginal-bars";
+const LEGACY_MATRIX_PIE_NETWORK_CASE = "matrix-pie-network-marginal-bars";
+const requestedCase = typeof window === "undefined"
+  ? null
+  : new URLSearchParams(window.location.search).get("case");
+const isChordCircularStackedCase = requestedCase === CHORD_CIRCULAR_STACKED_CASE
+  || requestedCase === LEGACY_CHORD_POLAR_LINE_CASE;
+const isMatrixPieNetworkCase = requestedCase === MATRIX_FORCE_HEATMAP_CASE
+  || requestedCase === LEGACY_MATRIX_PIE_NETWORK_CASE;
+const datasetStore = useDatasetStore();
+if (isChordCircularStackedCase) {
+  datasetStore.datasets.value = [
+    ...datasetStore.datasets.value.filter((dataset) => dataset.id !== CHORD_POLAR_LINE_DATASET_ID),
+    chordPolarLineDataset,
+  ];
+  datasetStore.setActiveDataset(CHORD_POLAR_LINE_DATASET_ID);
+}
+if (isMatrixPieNetworkCase) {
+  datasetStore.datasets.value = [
+    ...datasetStore.datasets.value.filter((dataset) => dataset.id !== MATRIX_PIE_NETWORK_DATASET_ID),
+    matrixPieNetworkDataset,
+  ];
+  datasetStore.setActiveDataset(MATRIX_PIE_NETWORK_DATASET_ID);
+}
 
 const canvasRef = ref<HTMLElement | null>(null);
 const encodingInspectorOpen = ref(true);
@@ -106,6 +138,7 @@ const {
   axisBindingTarget,
   axisBindingNode,
   axisBindingColumns,
+  axisBindingChannelColumns,
   axisBindingRendererError,
   coordinateGuideNodes,
   barItemAxisBinding,
@@ -177,6 +210,7 @@ const {
   onCoordinateOriginPointerDown,
   onCoordinateAxisScalePointerDown,
   onPolarAnglePointerDown,
+  onPolarInnerRadiusPointerDown,
   setAxisBindingAggregation,
   setSingleBarValueOrder,
   setAxisSwap,
@@ -232,6 +266,8 @@ const {
   reorderSelectedNodes,
   alignSelection,
   resetCanvasZoom,
+  loadChordCircularStackedFacetCase,
+  loadMatrixPieNetworkCase,
 } = useCanvasStore(canvasRef);
 function deckglLayerOwner(node: CanvasNode) {
   const stack = node.deckglLayerStack;
@@ -570,7 +606,7 @@ function onTemplateCandidateDragEnd() {
   closeTemplateCategoryMenu();
 }
 
-const { activeDataset, datasets, geometrySources, getDataset, getGeometrySource } = useDatasetStore();
+const { activeDataset, datasets, geometrySources, getDataset, getGeometrySource } = datasetStore;
 const axisBindingRows = computed(() => {
   const datasetId = axisBindingNode.value?.chartSpec?.datasetId;
   const dataset = datasetId ? getDataset(datasetId) : activeDataset.value;
@@ -1460,7 +1496,10 @@ function openCompositionCandidates(type: CompositionType) {
     ].filter((field): field is string => !!field));
     const remainingClueFields = clueFields.filter((field) => !existingFacetFields.has(field));
     const dataset = node?.chartSpec ? getDataset(node.chartSpec.datasetId) : null;
-    const eligibleFields = dataset?.columns
+    const facetDataset = dataset && node?.chartSpec
+      ? materializeGraphDataset(dataset, node.chartSpec)
+      : dataset;
+    const eligibleFields = facetDataset?.columns
       .filter((column) => column.type === "nominal" || column.type === "ordinal")
       .map((column) => column.name)
       .filter((field) => !existingFacetFields.has(field)) ?? [];
@@ -1630,6 +1669,9 @@ function onCompositionEncodingChange(patch: Parameters<typeof setCompositionEnco
 
 function polarScaleChannels(node: CanvasNode): CoordinateChannel[] {
   const composition = node.compositionSpec;
+  if (composition?.type === "facet" && composition.facetCoordinateSystem === "Polar") {
+    return ["angle", "radius"];
+  }
   if (!composition || editingCompositionId.value === composition.id) return ["angle", "radius"];
   return composition.sharedChannels.filter((channel): channel is CoordinateChannel =>
     channel === "angle" || channel === "radius",
@@ -1682,6 +1724,24 @@ onMounted(() => {
   window.addEventListener("click", closeTemplateCategoryMenu);
   window.addEventListener("resize", positionNestedBindingPopup);
   window.addEventListener("resize", closeTemplateCategoryMenu);
+  if (isChordCircularStackedCase) {
+    document.documentElement.dataset.caseId = requestedCase;
+    document.documentElement.dataset.caseStatus = "loading";
+    void nextTick(async () => {
+      const loaded = await loadChordCircularStackedFacetCase(CHORD_POLAR_LINE_DATASET_ID);
+      await nextTick();
+      document.documentElement.dataset.caseStatus = loaded ? "ready" : "error";
+    });
+  }
+  if (isMatrixPieNetworkCase) {
+    document.documentElement.dataset.caseId = requestedCase;
+    document.documentElement.dataset.caseStatus = "loading";
+    void nextTick(async () => {
+      const loaded = await loadMatrixPieNetworkCase(MATRIX_PIE_NETWORK_DATASET_ID);
+      await nextTick();
+      document.documentElement.dataset.caseStatus = loaded ? "ready" : "error";
+    });
+  }
 });
 onUpdated(() => {
   // CanvasNodeView emits actual SVG occupancy groups for visible content. The store

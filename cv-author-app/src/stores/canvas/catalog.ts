@@ -41,14 +41,20 @@ const defaultDataTemplateDefinitions = [
   { id: "builtin-template:parallel-coordinates", name: "Parallel Coordinates", chartType: "ParallelCoordinatesPlot", coordinateSystem: "CoordinateFree" },
   { id: "builtin-template:pie", name: "Pie Chart", chartType: "PieChart", coordinateSystem: "Polar" },
   { id: "builtin-template:donut", name: "Donut", chartType: "DonutChart", coordinateSystem: "Polar" },
-  { id: "builtin-template:radial-bar-chart", name: "Radial Bar Chart", chartType: "RadialBarChart", coordinateSystem: "Polar" },
+  { id: "builtin-template:radial-bar-chart", name: "Radial Bar (Sector)", chartType: "RadialBarChart", coordinateSystem: "Polar" },
+  { id: "builtin-template:radial-stacked-bar-chart", name: "Radial Stacked Bar (Sector)", chartType: "RadialStackedBarChart", coordinateSystem: "Polar" },
+  { id: "builtin-template:radial-rect-bar-chart", name: "Radial Bar (Rectangle)", chartType: "RadialRectBarChart", coordinateSystem: "Polar" },
+  { id: "builtin-template:radial-rect-stacked-bar-chart", name: "Radial Stacked Bar (Rectangle)", chartType: "RadialRectStackedBarChart", coordinateSystem: "Polar" },
+  { id: "builtin-template:circular-bar-chart", name: "Circular Bar", chartType: "CircularBarChart", coordinateSystem: "Polar" },
+  { id: "builtin-template:circular-stacked-bar-chart", name: "Circular Stacked Bar", chartType: "CircularStackedBarChart", coordinateSystem: "Polar" },
+  { id: "builtin-template:radar-chart", name: "Radar Chart", chartType: "RadarChart", coordinateSystem: "Polar" },
   { id: "builtin-template:icicle", name: "Icicle", chartType: "Icicle", coordinateSystem: "CoordinateFree" },
   { id: "builtin-template:sunburst", name: "Sunburst", chartType: "Sunburst", coordinateSystem: "Polar" },
   { id: "builtin-template:treemap", name: "Treemap", chartType: "Treemap", coordinateSystem: "CoordinateFree" },
   { id: "builtin-template:dendrogram", name: "Dendrogram", chartType: "Dendrogram", coordinateSystem: "Cartesian" },
   { id: "builtin-template:radial-dendrogram", name: "Radial Dendrogram", chartType: "RadialDendrogram", coordinateSystem: "Polar" },
   { id: "builtin-template:force-directed-graph", name: "Force-Directed Graph", chartType: "ForceDirectedGraph", coordinateSystem: "CoordinateFree" },
-  { id: "builtin-template:chord", name: "Chord", chartType: "Chord", coordinateSystem: "CoordinateFree" },
+  { id: "builtin-template:chord", name: "Chord", chartType: "Chord", coordinateSystem: "Polar" },
 ] satisfies Array<Omit<SvgCandidate, "src" | "svgMarkup">>;
 
 const graphLinkTemplateDefinitions: SvgCandidate[] = [

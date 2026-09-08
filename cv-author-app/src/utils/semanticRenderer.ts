@@ -1,6 +1,6 @@
 import { extent } from "d3-array";
 import { scaleLinear, scaleLog, scalePoint, scaleUtc } from "d3-scale";
-import { arc, line as d3Line, pie } from "d3-shape";
+import { arc, curveCatmullRomClosed, line as d3Line, pie } from "d3-shape";
 import type { CartesianCoordinateGuide, ChartEncoding, ChartSpec, Dataset, LayerSpec, NestedChildFrame, NestedSpec, ChartPlotArea, ChartPolarArea, ChartScaleSpec, CoordinateGuide, MarkGroupSharedConfig } from "../types";
 import { renderLineChart, type LineRenderInput } from "./lineRenderer";
 import { cartesianAxisEncoding, normalizeBarChartVariant, normalizeChartTemplate, physicalCartesianAxisEncoding } from "./chartTemplates";
@@ -252,7 +252,15 @@ function barData(input: GenericRenderInput, xField: string, yField: string, seri
 }
 
 function renderBarChart(input: GenericRenderInput) {
-  if (input.chartSpec.chartType.replace(/[\s_-]/g, "").toLowerCase() === "radialbarchart") {
+  const normalizedType = input.chartSpec.chartType.replace(/[\s_-]/g, "").toLowerCase();
+  if ([
+    "radialbarchart",
+    "radialstackedbarchart",
+    "radialrectbarchart",
+    "radialrectstackedbarchart",
+    "circularbarchart",
+    "circularstackedbarchart",
+  ].includes(normalizedType)) {
     return renderRadialBarChart(input);
   }
   const xEncoding = input.chartSpec.encodings.x;
@@ -358,6 +366,9 @@ function renderBarChart(input: GenericRenderInput) {
   const groupBand = categoryBand * 0.78 / groupCount;
   const defaultWidth = variant === "grouped" ? groupBand * 0.88 : categoryBand * 0.7;
   const config = groupConfig(input.chartSpec, "bar");
+  const seriesStyles = isSeriesStyleMapping(config.seriesStyleMapping)
+    ? config.seriesStyleMapping.values
+    : {};
   const colorEncoding = input.chartSpec.encodings.color;
   const sizeEncoding = input.chartSpec.encodings.size;
   const visualRows = data.map((datum) => aggregateEncodingRow(datum.rows, input.chartSpec));
@@ -377,7 +388,8 @@ function renderBarChart(input: GenericRenderInput) {
     const seriesIndex = Math.max(0, seriesValues.indexOf(datum.series));
     const representative = aggregateEncodingRow(datum.rows, input.chartSpec);
     const fallbackColor = palette[seriesIndex % palette.length]!;
-    const color = visualColor(representative, colorEncoding, colorDomain, config, fallbackColor);
+    const color = seriesStyles[datum.series]?.color
+      ?? visualColor(representative, colorEncoding, colorDomain, config, fallbackColor);
     const mappedWidth = visualSize(representative, sizeEncoding, sizeDomain, config, defaultWidth);
     const barWidth = Math.max(1, Math.min(mappedWidth, variant === "grouped" ? groupBand * 0.92 : categoryBand * 0.9));
     const groupIndex = groupOffsets.get(datum.category) ?? 0;
@@ -426,50 +438,215 @@ function renderBarChart(input: GenericRenderInput) {
   };
 }
 
+type PolarBarDatum = {
+  row: Dataset["rows"][number];
+  rowIndexes: number[];
+  category: string;
+  series: string;
+  value: number;
+  weight: number;
+};
+
+function polarPointAtD3Angle(cx: number, cy: number, angle: number, radius: number) {
+  return { x: cx + Math.sin(angle) * radius, y: cy - Math.cos(angle) * radius };
+}
+
+function radialRectanglePath(cx: number, cy: number, angle: number, startRadius: number, endRadius: number, width: number) {
+  const tangent = { x: Math.cos(angle), y: Math.sin(angle) };
+  const start = polarPointAtD3Angle(cx, cy, angle, startRadius);
+  const end = polarPointAtD3Angle(cx, cy, angle, endRadius);
+  const half = width / 2;
+  return [
+    { x: start.x - tangent.x * half, y: start.y - tangent.y * half },
+    { x: end.x - tangent.x * half, y: end.y - tangent.y * half },
+    { x: end.x + tangent.x * half, y: end.y + tangent.y * half },
+    { x: start.x + tangent.x * half, y: start.y + tangent.y * half },
+  ].map((point, index) => `${index === 0 ? "M" : "L"}${point.x} ${point.y}`).join("") + "Z";
+}
+
 function renderRadialBarChart(input: GenericRenderInput) {
+  const normalized = input.chartSpec.chartType.replace(/[\s_-]/g, "").toLowerCase();
+  const circular = normalized.startsWith("circular");
+  const stacked = normalized.includes("stacked");
+  const angularLayout = circular;
+  const rectangular = normalized.includes("rect");
   const theta = input.chartSpec.encodings.theta ?? input.chartSpec.encodings.angle;
   const segment = input.chartSpec.encodings.segment;
   const radius = input.chartSpec.encodings.radius;
-  if (!segment || !radius) {
-    throw new Error("Radial Bar renderer requires Segment and R encodings.");
+  const categoryEncoding = circular && stacked ? radius : segment;
+  const valueEncoding = angularLayout ? theta : radius;
+  if (!categoryEncoding || !valueEncoding) {
+    throw new Error(`${circular ? "Circular" : "Radial"} Bar renderer requires ${circular && stacked ? "R and Theta" : `Category and ${circular ? "Theta" : "R"}`} encodings.`);
   }
-
-  const rows = input.dataset.rows.flatMap((row, rowIndex) => {
-    const category = (row[segment.field] ?? "").trim();
-    const rawValue = (row[radius.field] ?? "").trim();
-    const value = Number(rawValue);
-    const rawTheta = theta ? (row[theta.field] ?? "").trim() : "";
-    const thetaValue = theta ? Number(rawTheta) : 1;
-    return category && rawValue && Number.isFinite(value) && Number.isFinite(thetaValue)
-      ? [{ row, rowIndex, category, value: Math.max(0, value), thetaValue: Math.max(0, thetaValue) }]
+  const seriesEncoding = stacked
+    ? input.chartSpec.seriesFields?.[0]
+      ?? input.chartSpec.series
+      ?? input.chartSpec.encodings.color
+    : undefined;
+  const source = input.dataset.rows.flatMap((row, rowIndex) => {
+    const category = (row[categoryEncoding.field] ?? "").trim();
+    const value = Number((row[valueEncoding.field] ?? "").trim());
+    const series = seriesEncoding ? (row[seriesEncoding.field] ?? "").trim() : "__single__";
+    const weight = !circular && theta ? Number((row[theta.field] ?? "").trim()) : 1;
+    return category && series && Number.isFinite(value) && Number.isFinite(weight)
+      ? [{ row, rowIndexes: [rowIndex], category, series, value: Math.max(0, value), weight: Math.max(0, weight) }]
       : [];
   });
-  const categories = Array.from(new Set(rows.map((datum) => datum.category)));
-  const radiusAggregation = input.chartSpec.aggregations?.radius;
-  const thetaAggregation = input.chartSpec.aggregations?.theta ?? input.chartSpec.aggregations?.angle;
-  const data = categories.flatMap((category) => {
-    const members = rows.filter((datum) => datum.category === category);
-    if (!members.length) return [];
-    if (!radiusAggregation && !thetaAggregation) return members;
-    const radiusTotal = members.reduce((sum, datum) => sum + datum.value, 0);
-    const thetaTotal = members.reduce((sum, datum) => sum + datum.thetaValue, 0);
-    return [{
-      ...members[0]!,
-      value: radiusAggregation
-        ? radiusAggregation === "avg" ? radiusTotal / members.length : radiusTotal
-        : members[0]!.value,
-      thetaValue: thetaAggregation
-        ? thetaAggregation === "avg" ? thetaTotal / members.length : thetaTotal
-        : members[0]!.thetaValue,
-    }];
+  const grouped = new Map<string, PolarBarDatum>();
+  source.forEach((datum) => {
+    const groupKey = `${datum.category}\u0000${datum.series}`;
+    const current = grouped.get(groupKey);
+    if (!current) grouped.set(groupKey, { ...datum });
+    else {
+      current.value += datum.value;
+      current.weight += datum.weight;
+      current.rowIndexes.push(...datum.rowIndexes);
+    }
   });
-  if (!data.length) throw new Error("Radial Bar renderer found no Segment categories with numeric R values.");
-
+  const data = Array.from(grouped.values());
+  if (!data.length) throw new Error("Polar Bar renderer found no categories with numeric values.");
+  const categories = Array.from(new Set(data.map((datum) => datum.category)));
+  const seriesValues = Array.from(new Set(data.map((datum) => datum.series)));
+  const categoryWeights = categories.map((category) => {
+    const members = data.filter((datum) => datum.category === category);
+    return theta && !circular ? Math.max(0, ...members.map((datum) => datum.weight)) : 1;
+  });
   const guide = input.coordinateGuide?.type === "Polar" ? input.coordinateGuide : null;
   const cx = guide?.origin.x ?? input.minX + input.width / 2;
   const cy = guide?.origin.y ?? input.minY + input.height / 2;
   const baseRadius = Math.max(8, Math.min(input.width, input.height) * 0.38 * (guide?.radiusScale ?? 1));
-  const innerRatio = Math.max(0, Math.min(guide?.innerRadiusRatio ?? 0.28, 0.98));
+  const defaultInnerRatio = circular ? 0.16 : 0.24;
+  const innerRatio = Math.max(0, Math.min(guide?.innerRadiusRatio ?? defaultInnerRatio, 0.98));
+  const outerRatio = Math.max(innerRatio + 0.01, Math.min(guide?.outerRadiusRatio ?? 1, 1));
+  const innerRadius = baseRadius * innerRatio;
+  const outerRadius = baseRadius * outerRatio;
+  const angleSpan = Math.max(1, Math.min(guide?.angleSpan ?? 360, 360));
+  const angleOffset = guide?.angleOffset ?? 0;
+  const layoutStartAngle = (-270 + angleOffset) * Math.PI / 180;
+  const layoutEndAngle = layoutStartAngle + angleSpan * Math.PI / 180;
+  const maximum = Math.max(0, ...categories.map((category) => {
+    const values = data.filter((datum) => datum.category === category).map((datum) => datum.value);
+    return stacked ? values.reduce((sum, value) => sum + value, 0) : Math.max(0, ...values);
+  }));
+  const radialScale = scaleLinear().domain([0, maximum || 1]).range([innerRadius, outerRadius]);
+  const angularScale = scaleLinear().domain([0, maximum || 1]).range([layoutStartAngle, layoutEndAngle]);
+  const categoryAngles = pie<number>()
+    .sort(null)
+    .value((value) => value || 1)
+    .startAngle(layoutStartAngle)
+    .endAngle(layoutEndAngle)(categoryWeights);
+  const ringThickness = (outerRadius - innerRadius) / Math.max(categories.length, 1);
+  const circularRingGapRatio = angularLayout ? 0.34 : 0;
+  const config = groupConfig(input.chartSpec, "bar");
+  const colorEncoding = input.chartSpec.encodings.color;
+  const sizeEncoding = input.chartSpec.encodings.size;
+  const colorDomain = visualDomain(data.map((datum) => datum.row), colorEncoding);
+  const sizeDomain = visualDomain(data.map((datum) => datum.row), sizeEncoding);
+  const seriesStyles = isSeriesStyleMapping(config.seriesStyleMapping) ? config.seriesStyleMapping.values : {};
+  const offsets = new Map(categories.map((category) => [category, 0]));
+  const marks = data.map((datum, index) => {
+    const categoryIndex = categories.indexOf(datum.category);
+    const seriesIndex = Math.max(0, seriesValues.indexOf(datum.series));
+    const startValue = stacked ? offsets.get(datum.category) ?? 0 : 0;
+    const endValue = startValue + datum.value;
+    if (stacked) offsets.set(datum.category, endValue);
+    const fallbackColor = palette[(stacked ? seriesIndex : categoryIndex) % palette.length]!;
+    const styleKey = stacked ? datum.series : datum.category;
+    const color = seriesStyles[styleKey]?.color
+      ?? visualColor(datum.row, colorEncoding, colorDomain, config, fallbackColor);
+    let path = "";
+    let centerAngle = layoutStartAngle;
+    let markStartAngle = layoutStartAngle;
+    let markEndAngle = layoutStartAngle;
+    if (angularLayout) {
+      const ringInset = ringThickness * circularRingGapRatio / 2;
+      const ringInner = innerRadius + ringThickness * categoryIndex + ringInset;
+      const ringOuter = innerRadius + ringThickness * (categoryIndex + 1) - ringInset;
+      const startAngle = angularScale(startValue);
+      const endAngle = angularScale(endValue);
+      markStartAngle = startAngle;
+      markEndAngle = endAngle;
+      centerAngle = (startAngle + endAngle) / 2;
+      path = arc<any>()({
+        startAngle,
+        endAngle: Math.max(startAngle + 0.0001, endAngle),
+        innerRadius: ringInner,
+        outerRadius: Math.max(ringInner + 1, ringOuter),
+      }) ?? "";
+      path = path ? `${path}` : "";
+    } else {
+      const angleDatum = categoryAngles[categoryIndex];
+      if (!angleDatum) return "";
+      centerAngle = (angleDatum.startAngle + angleDatum.endAngle) / 2;
+      const startRadius = radialScale(startValue);
+      const endRadius = radialScale(endValue);
+      if (rectangular) {
+        const angularWidth = Math.max(2, Math.min(
+          (angleDatum.endAngle - angleDatum.startAngle) * Math.max(innerRadius, 18) * 0.72,
+          (outerRadius - innerRadius) * 0.34,
+        ));
+        path = radialRectanglePath(0, 0, centerAngle, startRadius, endRadius, angularWidth);
+      } else {
+        const availableAngle = angleDatum.endAngle - angleDatum.startAngle;
+        const referenceRadius = Math.max(innerRadius, 18);
+        const defaultWidth = availableAngle * referenceRadius * 0.76;
+        const mappedWidth = visualSize(datum.row, sizeEncoding, sizeDomain, config, defaultWidth);
+        const barAngle = Math.max(0.0001, Math.min(mappedWidth / referenceRadius, availableAngle * 0.92));
+        const inset = (availableAngle - barAngle) / 2;
+        path = arc<any>()({
+          startAngle: angleDatum.startAngle + inset,
+          endAngle: Math.max(angleDatum.startAngle + inset + 0.0001, angleDatum.endAngle - inset),
+          innerRadius: startRadius,
+          outerRadius: Math.max(startRadius + 1, endRadius),
+        }) ?? "";
+      }
+    }
+    const keys = datum.rowIndexes.map((rowIndex) => key(input.dataset, input.dataset.rows[rowIndex]!, rowIndex)).join(",");
+    const thetaValue = angularLayout ? datum.value : !circular && theta ? datum.weight : 1;
+    const canvasStartAngle = markStartAngle * 180 / Math.PI + 270;
+    const canvasEndAngle = markEndAngle * 180 / Math.PI + 270;
+    return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="bar" data-mark-group-id="mark-group:${esc(input.chartId)}:bar" data-row-keys="${esc(keys)}" data-category-key="${esc(datum.category)}" data-series-key="${esc(datum.series)}" data-angle="${centerAngle}" data-angle-start-deg="${canvasStartAngle}" data-angle-end-deg="${canvasEndAngle}" data-theta-value="${thetaValue}" data-value="${datum.value}" data-stack-start="${startValue}" data-stack-end="${endValue}" d="${path}" transform="translate(${cx} ${cy})" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 0.9)}"><title>${esc(datum.category)}${stacked ? ` / ${esc(datum.series)}` : ""}\n${datum.value}</title></path>`;
+  }).join("");
+  const orientation = angularLayout ? "angular" : "radial";
+  const shape = circular || !rectangular ? "sector" : "rectangle";
+  return {
+    content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="${circular ? "circular-bar" : "radial-bar"}" data-polar-orientation="${orientation}" data-bar-shape="${shape}" data-bar-variant="${stacked ? "stacked" : "single"}" data-renderer="deterministic-polar-bar@2" data-category-field="${esc(categoryEncoding.field)}" data-value-field="${esc(valueEncoding.field)}" data-facet-column="${esc(input.polarFacetCell?.columnValue ?? "")}" data-angle-start="${angleOffset}" data-angle-span="${angleSpan}" data-theta-mode="${theta ? "mapped" : "static"}" data-theta-field="${esc(theta?.field ?? "")}">${marks}</g>`,
+    plotArea: { x: cx - outerRadius, y: cy - outerRadius, width: outerRadius * 2, height: outerRadius * 2 },
+    polarArea: { startAngle: angleOffset, angleSpan, innerRadius, outerRadius },
+    scales: undefined,
+  };
+}
+
+function orderedPolarRows(input: GenericRenderInput, xField: string, xType: ChartEncoding["type"]) {
+  const rows = [...input.dataset.rows];
+  if (xType === "nominal" || xType === "ordinal") return rows;
+  const comparable = (value: string) => xType === "temporal" ? Date.parse(value) : Number(value);
+  return rows.sort((left, right) => comparable(left[xField] ?? "") - comparable(right[xField] ?? ""));
+}
+
+function renderRadarChart(input: GenericRenderInput) {
+  const theta = input.chartSpec.encodings.theta ?? input.chartSpec.encodings.angle;
+  const radius = input.chartSpec.encodings.radius;
+  if (!theta || !radius) throw new Error("Radar renderer requires Axis and Value encodings.");
+  const seriesEncoding = input.chartSpec.seriesFields?.[0]
+    ?? input.chartSpec.series
+    ?? (input.chartSpec.encodings.color?.type === "nominal" || input.chartSpec.encodings.color?.type === "ordinal"
+      ? input.chartSpec.encodings.color
+      : undefined);
+  const rows = input.dataset.rows.flatMap((row, rowIndex) => {
+    const axis = (row[theta.field] ?? "").trim();
+    const value = Number((row[radius.field] ?? "").trim());
+    const series = seriesEncoding ? (row[seriesEncoding.field] ?? "").trim() : "__single__";
+    return axis && series && Number.isFinite(value) ? [{ row, rowIndex, axis, value: Math.max(0, value), series }] : [];
+  });
+  if (rows.length === 0) throw new Error("Radar renderer found no axes with numeric values.");
+  const axes = Array.from(new Set(rows.map((datum) => datum.axis)));
+  const seriesValues = Array.from(new Set(rows.map((datum) => datum.series)));
+  const guide = input.coordinateGuide?.type === "Polar" ? input.coordinateGuide : null;
+  const cx = guide?.origin.x ?? input.minX + input.width / 2;
+  const cy = guide?.origin.y ?? input.minY + input.height / 2;
+  const baseRadius = Math.max(8, Math.min(input.width, input.height) * 0.38 * (guide?.radiusScale ?? 1));
+  const innerRatio = Math.max(0, Math.min(guide?.innerRadiusRatio ?? 0, 0.98));
   const outerRatio = Math.max(innerRatio + 0.01, Math.min(guide?.outerRadiusRatio ?? 1, 1));
   const innerRadius = baseRadius * innerRatio;
   const outerRadius = baseRadius * outerRatio;
@@ -477,81 +654,125 @@ function renderRadialBarChart(input: GenericRenderInput) {
   const angleOffset = guide?.angleOffset ?? 0;
   const startAngle = (-270 + angleOffset) * Math.PI / 180;
   const spanRadians = angleSpan * Math.PI / 180;
-  const angleLayout = pie<number>()
-    .sort(null)
-    .value((value) => value)
-    .startAngle(startAngle)
-    .endAngle(startAngle + spanRadians)(data.map((datum) => theta ? datum.thetaValue : 1));
-  const maximum = Math.max(...data.map((datum) => datum.value), 0);
-  const valueScale = scaleLinear()
-    .domain([0, maximum || 1])
-    .range([innerRadius, outerRadius]);
-  const config = groupConfig(input.chartSpec, "bar");
-  const colorEncoding = input.chartSpec.encodings.color;
-  const colorValues = Array.from(new Set(data.map((datum) => colorEncoding ? datum.row[colorEncoding.field] ?? "" : "")));
-  const colorIndexes = new Map(colorValues.map((value, index) => [value, index]));
-  const colorDomain = visualDomain(data.map((datum) => datum.row), colorEncoding);
-  const seriesStyles = isSeriesStyleMapping(config.seriesStyleMapping)
-    ? config.seriesStyleMapping.values
-    : {};
-  const barArc = arc<any>();
-
-  const marks = data.map((datum, index) => {
-    const angleDatum = angleLayout[index];
-    if (!angleDatum) return "";
-    const angle = (angleDatum.startAngle + angleDatum.endAngle) / 2;
-    const inset = Math.max(0, angleDatum.endAngle - angleDatum.startAngle) * 0.14;
-    const angle0 = angleDatum.startAngle + inset;
-    const angle1 = angleDatum.endAngle - inset;
-    const colorValue = colorEncoding ? datum.row[colorEncoding.field] ?? "" : "";
-    const fallbackColor = palette[(colorIndexes.get(colorValue) ?? index) % palette.length]!;
-    const color = seriesStyles[datum.category]?.color
-      ?? visualColor(datum.row, colorEncoding, colorDomain, config, fallbackColor);
-    const path = barArc({
-      startAngle: angle0,
-      endAngle: Math.max(angle0, angle1),
-      innerRadius,
-      outerRadius: valueScale(datum.value),
-    }) ?? "";
-    return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="bar" data-mark-group-id="mark-group:${esc(input.chartId)}:bar" data-row-key="${esc(key(input.dataset, datum.row, datum.rowIndex))}" data-category-key="${esc(datum.category)}" data-segment-value="${esc(datum.category)}" data-angle="${angle}" data-theta-value="${theta ? datum.thetaValue : 1}" data-value="${datum.value}" d="${path}" transform="translate(${cx} ${cy})" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 0.9)}"><title>${esc(datum.category)}\n${datum.value}</title></path>`;
+  const maximum = Math.max(0, ...rows.map((datum) => datum.value));
+  const radiusScale = scaleLinear().domain([0, maximum || 1]).range([innerRadius, outerRadius]);
+  const angleFor = (axis: string) => startAngle + axes.indexOf(axis) * spanRadians / Math.max(axes.length, 1);
+  const pointPath = (points: Array<{ x: number; y: number }>, close = true) =>
+    points.map((point, index) => `${index === 0 ? "M" : "L"}${point.x} ${point.y}`).join("") + (close ? "Z" : "");
+  const smoothPath = d3Line<{ x: number; y: number }>()
+    .x((point) => point.x)
+    .y((point) => point.y)
+    .curve(curveCatmullRomClosed.alpha(0.5));
+  const grid = [0.25, 0.5, 0.75, 1].map((ratio) => {
+    const points = axes.map((axis) => polarPointAtD3Angle(cx, cy, angleFor(axis), innerRadius + (outerRadius - innerRadius) * ratio));
+    return `<path data-mark-role="radar-grid" d="${pointPath(points)}" fill="none" stroke="#94a3b8" stroke-opacity="0.35" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
   }).join("");
-
-  // Mark labels are opt-in. Axis label visibility belongs to the coordinate
-  // layer and must not implicitly add text on top of radial marks.
-  const labels = data.length <= 24
-    && config.labelsVisible === true
-    ? data.map((datum, index) => {
-      const angleDatum = angleLayout[index];
-      if (!angleDatum) return "";
-      const angle = (angleDatum.startAngle + angleDatum.endAngle) / 2;
-      const degrees = angle * 180 / Math.PI;
-      const x = cx + Math.sin(angle) * (outerRadius + 7);
-      const y = cy - Math.cos(angle) * (outerRadius + 7);
-      const onLeft = Math.sin(angle) < 0;
-      const previous = angleLayout[index - 1];
-      const next = angleLayout[index + 1];
-      const arcGap = Math.max(12, Math.min(
-        previous ? Math.abs(angle - (previous.startAngle + previous.endAngle) / 2) : Math.abs((next?.startAngle ?? angle) - angle),
-        next ? Math.abs((next.startAngle + next.endAngle) / 2 - angle) : Math.abs(angle - (previous?.endAngle ?? angle)),
-      ) * (outerRadius + 7));
-      const style = adaptiveLabel({
-        text: datum.category,
-        width: arcGap,
-        height: 18,
-        fontSize: input.chartSpec.styleTokens?.fontSize ?? 9,
-        minFontSize: 7,
-        maxFontSize: 11,
-        background: "#ffffff",
-        fontFamily: input.chartSpec.styleTokens?.fontFamily,
-        padding: 2,
-      });
-      return `<text data-mark-role="bar-label" x="${x}" y="${y}" transform="rotate(${degrees} ${x} ${y})" text-anchor="${onLeft ? "end" : "start"}" dominant-baseline="middle" font-size="${style.fontSize}" fill="${esc(style.color)}">${esc(style.text)}</text>`;
-    }).join("") : "";
-
+  const spokes = axes.map((axis) => {
+    const start = polarPointAtD3Angle(cx, cy, angleFor(axis), innerRadius);
+    const end = polarPointAtD3Angle(cx, cy, angleFor(axis), outerRadius);
+    return `<line data-mark-role="radar-axis" x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" stroke="#94a3b8" stroke-opacity="0.4" vector-effect="non-scaling-stroke"/>`;
+  }).join("");
+  const config = groupConfig(input.chartSpec, "area");
+  const seriesStyles = isSeriesStyleMapping(config.seriesStyleMapping) ? config.seriesStyleMapping.values : {};
+  const marks = seriesValues.map((series, seriesIndex) => {
+    const members = rows.filter((datum) => datum.series === series);
+    const byAxis = new Map(members.map((datum) => [datum.axis, datum]));
+    const points = axes.map((axis) => {
+      const datum = byAxis.get(axis);
+      return polarPointAtD3Angle(cx, cy, angleFor(axis), radiusScale(datum?.value ?? 0));
+    });
+    const color = seriesStyles[series]?.color ?? palette[seriesIndex % palette.length]!;
+    const rowKeys = members.map((datum) => key(input.dataset, datum.row, datum.rowIndex)).join(",");
+    const curved = smoothPath(points) ?? pointPath(points);
+    const closed = curved.endsWith("Z") ? curved : `${curved}Z`;
+    return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series)}" data-row-keys="${esc(rowKeys)}" data-curve="catmull-rom-closed" d="${closed}" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 0.28)}" stroke="${esc(color)}" stroke-opacity="0.88" stroke-width="${Number(config.strokeWidth ?? input.chartSpec.styleTokens?.lineWidth ?? 2)}" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`;
+  }).join("");
   return {
-    content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="radial-bar" data-renderer="deterministic-radial-bar@1" data-segment-field="${esc(segment.field)}" data-theta-mode="${theta ? "mapped" : "static"}" data-theta-field="${esc(theta?.field ?? "")}">${marks}${labels}</g>`,
+    content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="radar" data-renderer="deterministic-radar@2" data-theta-field="${esc(theta.field)}" data-radius-field="${esc(radius.field)}">${grid}${spokes}${marks}</g>`,
     plotArea: { x: cx - outerRadius, y: cy - outerRadius, width: outerRadius * 2, height: outerRadius * 2 },
     polarArea: { startAngle: angleOffset, angleSpan, innerRadius, outerRadius },
+    scales: undefined,
+  };
+}
+
+export type PolarFacetCell = {
+  startAngle: number;
+  angleSpan: number;
+  innerRadiusRatio: number;
+  outerRadiusRatio: number;
+  rowValue?: string;
+  columnValue?: string;
+};
+
+function renderPolarFacetLine(input: GenericRenderInput, cell: PolarFacetCell) {
+  const xEncoding = input.chartSpec.encodings.x;
+  const yEncoding = input.chartSpec.encodings.y;
+  if (!xEncoding || !yEncoding || yEncoding.type !== "quantitative") {
+    throw new Error("Polar Line Facet requires X and quantitative Y encodings.");
+  }
+  const guide = input.coordinateGuide?.type === "Polar" ? input.coordinateGuide : null;
+  const cx = guide?.origin.x ?? input.minX + input.width / 2;
+  const cy = guide?.origin.y ?? input.minY + input.height / 2;
+  const baseRadius = Math.max(8, Math.min(input.width, input.height) * 0.42 * (guide?.radiusScale ?? 1));
+  const innerRadius = baseRadius * Math.max(0, Math.min(cell.innerRadiusRatio, 0.98));
+  const outerRadius = baseRadius * Math.max(cell.innerRadiusRatio + 0.01, Math.min(cell.outerRadiusRatio, 1));
+  const angularGap = Math.min(2.5, cell.angleSpan * 0.06);
+  const startAngle = (-270 + cell.startAngle + angularGap) * Math.PI / 180;
+  const endAngle = (-270 + cell.startAngle + cell.angleSpan - angularGap) * Math.PI / 180;
+  const seriesEncoding = input.chartSpec.seriesFields?.[0]
+    ?? input.chartSpec.series
+    ?? (input.chartSpec.encodings.color?.type === "nominal" || input.chartSpec.encodings.color?.type === "ordinal"
+      ? input.chartSpec.encodings.color
+      : undefined);
+  const validRows = orderedPolarRows(input, xEncoding.field, xEncoding.type).flatMap((row, rowIndex) => {
+    const x = (row[xEncoding.field] ?? "").trim();
+    const y = Number((row[yEncoding.field] ?? "").trim());
+    const series = seriesEncoding ? (row[seriesEncoding.field] ?? "").trim() : "__single__";
+    return x && series && Number.isFinite(y) ? [{ row, rowIndex, x, y, series }] : [];
+  });
+  if (validRows.length === 0) throw new Error("Polar Line Facet found no renderable rows.");
+  const xValues = Array.from(new Set(validRows.map((datum) => datum.x)));
+  const yValues = validRows.map((datum) => datum.y);
+  const minimum = Math.min(0, ...yValues);
+  const maximum = Math.max(0, ...yValues);
+  const angleScale = scalePoint<string>().domain(xValues).range([startAngle, endAngle]).padding(0.18);
+  const radiusScale = scaleLinear()
+    .domain(minimum === maximum ? [minimum, minimum + 1] : [minimum, maximum])
+    .range([innerRadius + (outerRadius - innerRadius) * 0.1, outerRadius - (outerRadius - innerRadius) * 0.1]);
+  const framePath = arc<any>()({
+    startAngle: (-270 + cell.startAngle + angularGap * 0.5) * Math.PI / 180,
+    endAngle: (-270 + cell.startAngle + cell.angleSpan - angularGap * 0.5) * Math.PI / 180,
+    innerRadius,
+    outerRadius,
+  }) ?? "";
+  const config = groupConfig(input.chartSpec, "line");
+  const seriesValues = Array.from(new Set(validRows.map((datum) => datum.series)));
+  const seriesStyles = isSeriesStyleMapping(config.seriesStyleMapping) ? config.seriesStyleMapping.values : {};
+  const areaFamily = normalizeChartTemplate(input.chartSpec.chartType) === "area";
+  const seriesMarks = seriesValues.map((series, seriesIndex) => {
+    const values = validRows.filter((datum) => datum.series === series);
+    const points = values.map((datum) => polarPointAtD3Angle(cx, cy, angleScale(datum.x) ?? startAngle, radiusScale(datum.y)));
+    const path = points.map((point, index) => `${index === 0 ? "M" : "L"}${point.x} ${point.y}`).join("");
+    const color = seriesStyles[series]?.color ?? palette[seriesIndex % palette.length]!;
+    const rowKeys = values.map((datum) => key(input.dataset, datum.row, datum.rowIndex)).join(",");
+    if (!areaFamily) {
+      return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="line" data-mark-group-id="mark-group:${esc(input.chartId)}:line" data-series-key="${esc(series)}" data-row-keys="${esc(rowKeys)}" d="${path}" fill="none" stroke="${esc(color)}" stroke-width="${Number(config.strokeWidth ?? input.chartSpec.styleTokens?.lineWidth ?? 2.5)}" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`;
+    }
+    const firstAngle = angleScale(values[0]?.x ?? "") ?? startAngle;
+    const lastAngle = angleScale(values.at(-1)?.x ?? "") ?? endAngle;
+    const lastBase = polarPointAtD3Angle(cx, cy, lastAngle, innerRadius);
+    const firstBase = polarPointAtD3Angle(cx, cy, firstAngle, innerRadius);
+    return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series)}" data-row-keys="${esc(rowKeys)}" d="${path}L${lastBase.x} ${lastBase.y}L${firstBase.x} ${firstBase.y}Z" fill="${esc(color)}" fill-opacity="${Number(config.opacity ?? 0.24)}" stroke="${esc(color)}" stroke-width="${Number(config.strokeWidth ?? 1.5)}" vector-effect="non-scaling-stroke"/>`;
+  }).join("");
+  return {
+    content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="polar-facet-${areaFamily ? "area" : "line"}" data-renderer="deterministic-polar-facet@1" data-facet-row="${esc(cell.rowValue ?? "")}" data-facet-column="${esc(cell.columnValue ?? "")}" data-facet-angle-start="${cell.startAngle}" data-facet-angle-span="${cell.angleSpan}"><path data-mark-role="facet-cell-frame" d="${framePath}" transform="translate(${cx} ${cy})" fill="#ffffff" fill-opacity="0.035" stroke="#94a3b8" stroke-opacity="0.5" vector-effect="non-scaling-stroke"/>${seriesMarks}</g>`,
+    plotArea: { x: cx - outerRadius, y: cy - outerRadius, width: outerRadius * 2, height: outerRadius * 2 },
+    polarArea: {
+      startAngle: cell.startAngle,
+      angleSpan: cell.angleSpan,
+      innerRadius,
+      outerRadius,
+    },
     scales: undefined,
   };
 }
@@ -562,6 +783,23 @@ function resolvedPolarEncodings(spec: ChartSpec) {
     segment: spec.encodings.segment,
     radius: spec.encodings.radius,
   };
+}
+
+function resolvedPieRadiusDomain(
+  sourceDomain: [number, number] | undefined,
+  localValues: number[],
+): [number, number] | null {
+  if (sourceDomain
+    && sourceDomain.every(Number.isFinite)
+    && sourceDomain[0] < sourceDomain[1]) {
+    return sourceDomain;
+  }
+  const localDomain = extent(localValues) as [number | undefined, number | undefined];
+  return localDomain[0] !== undefined
+    && localDomain[1] !== undefined
+    && localDomain[0] < localDomain[1]
+    ? [localDomain[0], localDomain[1]]
+    : null;
 }
 
 function renderPolarChart(input: GenericRenderInput, donut: boolean) {
@@ -702,14 +940,16 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
         ? values.reduce((sum, current) => sum + Math.max(0, current), 0)
         : Number.NaN;
     });
-    const radiusDomainValues = componentRadiusValues.filter(Number.isFinite);
-    const radiusDomain = extent(radiusDomainValues) as [number | undefined, number | undefined];
-    const radiusScale = radiusDomain[0] === undefined || radiusDomain[1] === undefined || radiusDomain[0] === radiusDomain[1]
+    const radiusDomain = resolvedPieRadiusDomain(
+      input.polarRadiusDomain,
+      componentRadiusValues.filter(Number.isFinite),
+    );
+    const radiusScale = !radiusDomain
       ? () => outerRadius
-      : scaleLinear().domain(radiusDomain as [number, number]).range([
+      : scaleLinear().domain(radiusDomain).range([
         markInnerRadius + (outerRadius - markInnerRadius) * 0.42,
         outerRadius,
-      ]);
+      ]).clamp(true);
     const seriesStyles = isSeriesStyleMapping(config.seriesStyleMapping)
       ? config.seriesStyleMapping.values
       : {};
@@ -797,12 +1037,13 @@ function renderPolarChart(input: GenericRenderInput, donut: boolean) {
   const radiusValues = radius
     ? rows.map((row) => Number(row[radius.field] ?? "")).filter(Number.isFinite)
     : [];
-  const radiusDomain = extent(radiusValues) as [number | undefined, number | undefined];
-  const radiusScale = radiusDomain[0] === undefined || radiusDomain[1] === undefined || radiusDomain[0] === radiusDomain[1]
+  const radiusDomain = resolvedPieRadiusDomain(input.polarRadiusDomain, radiusValues);
+  const radiusScale = !radiusDomain
     ? () => outerRadius
     : scaleLinear()
-      .domain(radiusDomain as [number, number])
-      .range([donutInnerRadius + (outerRadius - donutInnerRadius) * 0.48, outerRadius]);
+      .domain(radiusDomain)
+      .range([donutInnerRadius + (outerRadius - donutInnerRadius) * 0.48, outerRadius])
+      .clamp(true);
   const arcs = layout.map((datum, index) => {
     const row = rows[index]!;
     const radiusValue = radius ? Number(row[radius.field] ?? "") : Number.NaN;
@@ -882,6 +1123,61 @@ function renderMatrixChart(input: GenericRenderInput) {
   const columnIndexByValue = new Map(columnValues.map((value, index) => [value, index]));
   const xPositionByValue = new Map(columnValues.map((value) => [value, xPosition(value)]));
   const yPositionByValue = new Map(rowValues.map((value) => [value, yPosition(value)]));
+  const graphUsesMatrixPositions = !!input.dataset.graph
+    && input.dataset.graph.nodes.rows.some((row) =>
+      xPositionByValue.has(row[columnEncoding.field] ?? "")
+      && yPositionByValue.has(row[rowEncoding.field] ?? ""));
+  const links = input.chartSpec.link && input.dataset.graph && graphUsesMatrixPositions
+    ? (() => {
+      const linkConfig = groupConfig(input.chartSpec, "link");
+      const nodeIdField = input.chartSpec.encodings.key?.field
+        ?? input.dataset.graph!.nodes.columns.find((column) =>
+          ["id", "node_id", "key"].includes(column.name.toLowerCase()))?.name;
+      const sourceField = input.chartSpec.encodings.source?.field
+        ?? input.dataset.graph!.edges.columns.find((column) =>
+          ["source", "from", "source_id"].includes(column.name.toLowerCase()))?.name;
+      const targetField = input.chartSpec.encodings.target?.field
+        ?? input.dataset.graph!.edges.columns.find((column) =>
+          ["target", "to", "target_id"].includes(column.name.toLowerCase()))?.name;
+      const valueField = input.chartSpec.encodings.value?.field;
+      if (!nodeIdField || !sourceField || !targetField) return "";
+      const pointById = new Map(input.dataset.graph!.nodes.rows.flatMap((row) => {
+        const id = row[nodeIdField]?.trim();
+        const x = xPositionByValue.get(row[columnEncoding.field] ?? "");
+        const y = yPositionByValue.get(row[rowEncoding.field] ?? "");
+        return id && Number.isFinite(x) && Number.isFinite(y)
+          ? [[id, { x: x!, y: y! }] as const]
+          : [];
+      }));
+      const weights = valueField
+        ? input.dataset.graph!.edges.rows
+          .map((row) => Number(row[valueField] ?? ""))
+          .filter(Number.isFinite)
+        : [];
+      const weightDomain = weights.length
+        ? [Math.min(...weights), Math.max(...weights)] as [number, number]
+        : null;
+      const linkOpacity = Number(linkConfig.opacity
+        ?? Math.max(0.12, Math.min(0.52, 7 / Math.sqrt(input.dataset.graph!.edges.rows.length || 1))));
+      const linkColor = String(linkConfig.color ?? "#64748b");
+      const widthFor = (row: Dataset["rows"][number]) => {
+        if (!valueField || !weightDomain) return 1.5;
+        const value = Number(row[valueField] ?? "");
+        if (!Number.isFinite(value)) return 1.5;
+        if (weightDomain[0] === weightDomain[1]) return 2.5;
+        return 1.25 + (value - weightDomain[0]) / (weightDomain[1] - weightDomain[0]) * 3.25;
+      };
+      return input.dataset.graph!.edges.rows.flatMap((row) => {
+        const source = row[sourceField]?.trim() ?? "";
+        const target = row[targetField]?.trim() ?? "";
+        const start = pointById.get(source);
+        const end = pointById.get(target);
+        return start && end
+          ? [`<line data-chart-id="${esc(input.chartId)}" data-mark-role="link" data-mark-group-id="mark-group:${esc(input.chartId)}:link" data-source="${esc(source)}" data-target="${esc(target)}" x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" stroke="${esc(linkColor)}" stroke-opacity="${linkOpacity}" stroke-width="${widthFor(row)}" vector-effect="non-scaling-stroke"/>`]
+          : [];
+      }).join("");
+    })()
+    : "";
   const colorAggregation = valueEncoding?.field
     ? input.chartSpec.dimensionAggregations?.[valueEncoding.field]
     : undefined;
@@ -986,8 +1282,28 @@ function renderMatrixChart(input: GenericRenderInput) {
         : "";
     return `<rect data-chart-id="${esc(input.chartId)}" data-mark-role="cell" data-mark-group-id="mark-group:${esc(input.chartId)}:cell"${rowKeyAttribute} data-row-value="${esc(rowKey)}" data-column-value="${esc(columnKey)}" x="${centerX - cellWidth / 2 + 0.5}" y="${centerY - cellHeight / 2 + 0.5}" width="${Math.max(1, cellWidth - 1)}" height="${Math.max(1, cellHeight - 1)}" fill="${esc(color)}" fill-opacity="${renderedOpacity}"/>`;
   }).join("");
+  const forceOverlay = input.chartSpec.link && input.dataset.graph && !graphUsesMatrixPositions
+    ? renderAdvancedChart({
+      ...input,
+      coordinateGuide: null,
+      sharedPlotArea: plotArea,
+      chartSpec: {
+        ...input.chartSpec,
+        chartType: "ForceDirectedGraph",
+        templateId: "flow",
+        encodings: {
+          key: input.chartSpec.encodings.key,
+          source: input.chartSpec.encodings.source,
+          target: input.chartSpec.encodings.target,
+          value: input.chartSpec.encodings.value,
+          color: input.chartSpec.series,
+          size: input.chartSpec.encodings.size,
+        },
+      },
+    }).content
+    : "";
   return {
-    content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="matrix" data-renderer="deterministic-chart@1">${cells}</g>`,
+    content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="matrix" data-renderer="deterministic-chart@1"${input.chartSpec.link ? " data-link=\"true\"" : ""}>${cells}${links}${forceOverlay}</g>`,
     plotArea,
     scales: { x: xScale, y: yScale },
   };
@@ -1003,6 +1319,13 @@ export type GenericRenderInput = {
   chartSpec: ChartSpec;
   dataset: Dataset;
   polarConcatDirection?: "radial" | "angular";
+  /** Stable source-data domain for comparable Pie/Donut radii after filtering. */
+  polarRadiusDomain?: [number, number];
+  /** Common hierarchy depth scale supplied by an R-sharing Polar concat. */
+  sharedHierarchyLevelCount?: number;
+  sharedHierarchyOuterRadius?: number;
+  /** Structural projection owned by a Polar Facet composition. */
+  polarFacetCell?: PolarFacetCell;
   sharedPlotArea?: ChartPlotArea;
   sharedScales?: Partial<{ x: ChartScaleSpec; y: ChartScaleSpec }>;
   /** Child selection-box sizes keyed by the parent mark identity. */
@@ -1046,6 +1369,10 @@ export const deterministicChartPipelines: Record<ChartRendererKey, ChartPipeline
     coordinateSystem: "Cartesian",
     render: (input) => renderLineChart(cartesianInput(input)),
   },
+  radar: {
+    coordinateSystem: "Polar",
+    render: renderRadarChart,
+  },
   scatter: {
     coordinateSystem: "Cartesian",
     render: (input) => renderScatterChart(cartesianInput(input)),
@@ -1080,6 +1407,24 @@ export function renderDeterministicChart(input: GenericRenderInput) {
   const schema = getChartContract(input.chartSpec.chartType);
   if (!schema) throw new Error(`Unsupported chart template: ${input.chartSpec.chartType}`);
   const pipeline = deterministicChartPipelines[schema.renderer];
+  if (input.polarFacetCell && (schema.family === "line" || schema.family === "area")) {
+    requireCoordinateGuide(input, "Polar");
+    return renderPolarFacetLine(input, input.polarFacetCell);
+  }
+  if (input.polarFacetCell && schema.family === "bar" && schema.coordinateSystem === "Polar") {
+    const guide = requireCoordinateGuide(input, "Polar") as Extract<CoordinateGuide, { type: "Polar" }>;
+    return pipeline.render({
+      ...input,
+      coordinateGuide: {
+        ...guide,
+        angleOffset: input.polarFacetCell.startAngle,
+        angleSpan: input.polarFacetCell.angleSpan,
+        innerRadiusRatio: input.polarFacetCell.innerRadiusRatio,
+        outerRadiusRatio: input.polarFacetCell.outerRadiusRatio,
+      },
+      dataset: materializeGraphDataset(input.dataset, input.chartSpec),
+    });
+  }
   const coordinateSystem = schema.coordinateSystem ?? pipeline.coordinateSystem;
   if (coordinateSystem !== "CoordinateFree") requireCoordinateGuide(input, coordinateSystem);
   return pipeline.render({
@@ -1140,7 +1485,21 @@ export function renderNestedPie(input: {
   const fields = input.nestedSpec.valueFields;
   const groupId = input.nestedSpec.groupId ?? `nested-pie-group:${input.nestedSpec.parentChartNodeId}`;
   const colors = globalPalette.categorical;
-  const baseRadius = Math.max(5, Math.min(input.width, input.height) * 0.018);
+  const matrixParent = input.baseSpec.templateId === "matrix"
+    || input.baseSpec.chartType.replace(/[\s_-]/g, "").toLowerCase().includes("matrix");
+  const xDomainSize = Array.isArray(input.baseSpec.scales?.x?.domain)
+    ? input.baseSpec.scales.x.domain.length
+    : 1;
+  const yDomainSize = Array.isArray(input.baseSpec.scales?.y?.domain)
+    ? input.baseSpec.scales.y.domain.length
+    : 1;
+  const matrixCellRadius = matrixParent
+    ? Math.min(
+      scales.plotArea.width / Math.max(xDomainSize, 1),
+      scales.plotArea.height / Math.max(yDomainSize, 1),
+    ) * 0.28
+    : 0;
+  const baseRadius = Math.max(5, matrixCellRadius || Math.min(input.width, input.height) * 0.018);
   const radiusField = input.nestedSpec.radiusField;
   const radiusValues = radiusField
     ? input.dataset.rows.map((row) => Number(row[radiusField] ?? "")).filter(Number.isFinite)

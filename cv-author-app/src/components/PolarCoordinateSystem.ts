@@ -17,6 +17,8 @@ export type PolarCoordinateSystemModel = {
   upperAngle: number;
   radiusEnd: Point;
   radiusControlPoint: Point;
+  innerRadius: number;
+  innerRadiusControlPoint: Point;
   upperRadiusEnd: Point;
   radiusLabel: Point;
   thetaLabel: Point;
@@ -88,7 +90,12 @@ export function createPolarCoordinateSystemModel(
 
   // Guide-only template nodes use the legacy control radius until a chart
   // spec exists, while their canvas hit target can still be circular.
-  const occupiedGeometry = node.chartSpec ? getPolarOccupiedGeometry(node) : null;
+  const occupiedOrCompositeGeometry = getPolarOccupiedGeometry(node);
+  const occupiedGeometry = node.chartSpec
+    || (node.compositionSpec?.type === "facet" && node.compositionSpec.facetCoordinateSystem === "Polar")
+    ? occupiedOrCompositeGeometry
+    : null;
+  const origin = occupiedOrCompositeGeometry?.origin ?? guide.origin;
   const compositeRadius = useCompositeRadius
     && (node.compositionSpec?.type === "layer" || node.compositionSpec?.type === "concat")
     ? node.compositionSpec.polarOuterRadius
@@ -105,31 +112,41 @@ export function createPolarCoordinateSystemModel(
     ? POLAR_CONTROL_RADIUS_GAP * 2
     : POLAR_CONTROL_RADIUS_GAP;
   const radius = chartRadius + controlGap / renderedScale;
+  const outerRatio = Math.max(0.01, Math.min(guide.outerRadiusRatio ?? 1, 1));
+  const innerRatio = Math.max(0, Math.min(guide.innerRadiusRatio ?? 0, outerRatio - 0.01));
+  const occupiedOuterRadius = occupiedGeometry?.outerRadius ?? chartRadius;
+  const baseRadius = occupiedOuterRadius / outerRatio;
+  const innerRadius = Math.max(0, Math.min(occupiedOuterRadius, baseRadius * innerRatio));
   const angleSpan = normalizePolarAngleSpan(guide.angleSpan);
   const upperAngle = 360 - angleSpan;
   const radiusEnd = {
-    x: guide.origin.x + radius,
-    y: guide.origin.y,
+    x: origin.x + radius,
+    y: origin.y,
   };
   const radiusControlPoint = {
     x: radiusEnd.x + 22 / renderedScale,
     y: radiusEnd.y,
   };
-  const upperRadiusEnd = pointAtAngle(guide.origin, radius, upperAngle);
-  const thetaLabel = pointAtAngle(guide.origin, radius + 18, angleSpan >= 359.999 ? 315 : angleSpan / 2);
+  const upperRadiusEnd = pointAtAngle(origin, radius, upperAngle);
+  const thetaLabel = pointAtAngle(origin, radius + 18, angleSpan >= 359.999 ? 315 : angleSpan / 2);
   return {
-    origin: guide.origin,
+    origin,
     radius,
+    innerRadius,
     angleSpan,
     upperAngle,
     radiusEnd,
     upperRadiusEnd,
-    radiusLabel: { x: guide.origin.x + radius * 0.52, y: guide.origin.y - 10 },
+    radiusLabel: { x: origin.x + radius * 0.52, y: origin.y - 10 },
     thetaLabel,
-    upperControlArcPath: arcPath(guide.origin, radius, upperAngle + 15, upperAngle),
-    lowerControlArcPath: arcPath(guide.origin, radius, 0, -15),
-    angleControlArcPath: arcPath(guide.origin, radius, upperAngle + 15, upperAngle),
+    upperControlArcPath: arcPath(origin, radius, upperAngle + 15, upperAngle),
+    lowerControlArcPath: arcPath(origin, radius, 0, -15),
+    angleControlArcPath: arcPath(origin, radius, upperAngle + 15, upperAngle),
     radiusControlPoint,
+    innerRadiusControlPoint: {
+      x: origin.x + innerRadius,
+      y: origin.y,
+    },
     renderedScale,
   };
 }
@@ -150,6 +167,10 @@ export const PolarCoordinateSystem = defineComponent({
     },
     onAxisScalePointerDown: {
       type: Function as PropType<(node: CanvasNode, axis: CoordinateChannel, event: PointerEvent) => void>,
+      default: null,
+    },
+    onInnerRadiusPointerDown: {
+      type: Function as PropType<(node: CanvasNode, event: PointerEvent) => void>,
       default: null,
     },
   },
@@ -199,25 +220,25 @@ export const PolarCoordinateSystem = defineComponent({
       }, [
         ...(props.showAxis && showRadiusLine ? [h("line", {
           class: "polar-coordinate-axis polar-coordinate-axis--radius",
-          x1: guide!.origin.x,
-          y1: guide!.origin.y,
+          x1: model.origin.x,
+          y1: model.origin.y,
           x2: model.radiusEnd.x,
           y2: model.radiusEnd.y,
           fill: "none",
           "vector-effect": "non-scaling-stroke",
         }), ...radialTicks.map((tick) => h("line", {
           class: "polar-coordinate-axis-tick polar-coordinate-axis-tick--radius",
-          x1: guide!.origin.x + tick.radius,
-          y1: guide!.origin.y - tickHalfLength,
-          x2: guide!.origin.x + tick.radius,
-          y2: guide!.origin.y + tickHalfLength,
+          x1: model.origin.x + tick.radius,
+          y1: model.origin.y - tickHalfLength,
+          x2: model.origin.x + tick.radius,
+          y2: model.origin.y + tickHalfLength,
           fill: "none",
           "data-radius-ratio": tick.ratio,
           "vector-effect": "non-scaling-stroke",
         }))] : []),
         ...(props.showAxis && showThetaLine ? radialTicks.map((tick) => h("path", {
           class: "polar-coordinate-grid-ring",
-          d: radialGridPath(guide!.origin, tick.radius, model.angleSpan),
+          d: radialGridPath(model.origin, tick.radius, model.angleSpan),
           fill: "none",
           "data-radius-ratio": tick.ratio,
           "vector-effect": "non-scaling-stroke",
@@ -225,8 +246,8 @@ export const PolarCoordinateSystem = defineComponent({
         ...(interactive && showAngleControl ? [
           h("line", {
             class: "polar-coordinate-control-ray",
-            x1: guide!.origin.x,
-            y1: guide!.origin.y,
+            x1: model.origin.x,
+            y1: model.origin.y,
             x2: model.radiusEnd.x,
             y2: model.radiusEnd.y,
           }),
@@ -246,8 +267,8 @@ export const PolarCoordinateSystem = defineComponent({
         ] : []),
         ...(interactive && showRadiusControl ? [h("line", {
           class: "polar-coordinate-radius-drag-target",
-          x1: guide!.origin.x,
-          y1: guide!.origin.y,
+          x1: model.origin.x,
+          y1: model.origin.y,
           x2: model.radiusEnd.x,
           y2: model.radiusEnd.y,
           fill: "none",
@@ -284,6 +305,24 @@ export const PolarCoordinateSystem = defineComponent({
           h("title", radialScaleAxis === "ring" ? "Adjust polar ring scale" : "Adjust polar radius"),
           h("circle", { class: "polar-coordinate-radius-hit-target", cx: 0, cy: 0, r: 10 }),
           h("circle", { class: "polar-coordinate-radius-handle", cx: 0, cy: 0, r: 7 }),
+        ])] : []),
+        ...(interactive && showRadiusControl && props.onInnerRadiusPointerDown ? [h("g", {
+          class: "polar-coordinate-inner-radius-control",
+          transform: `translate(${model.innerRadiusControlPoint.x} ${model.innerRadiusControlPoint.y}) scale(${1 / model.renderedScale})`,
+          "pointer-events": "all",
+          role: "slider",
+          "aria-label": "Adjust polar inner radius",
+          "aria-valuemin": 0,
+          "aria-valuemax": 1,
+          onPointerdown: (event: PointerEvent) => {
+            event.preventDefault();
+            event.stopPropagation();
+            props.onInnerRadiusPointerDown?.(props.node, event);
+          },
+        }, [
+          h("title", "Adjust polar inner radius"),
+          h("circle", { class: "polar-coordinate-inner-radius-hit-target", cx: 0, cy: 0, r: 10 }),
+          h("circle", { class: "polar-coordinate-inner-radius-handle", cx: 0, cy: 0, r: 6 }),
         ])] : []),
         ...(interactive && showAngleControl ? [h("g", {
           class: "polar-coordinate-angle-control",

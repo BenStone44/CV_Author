@@ -16,22 +16,23 @@ const familyDefinitions: Array<{
   {
     id: "barchart",
     label: "Bar chart",
-    chartTypes: new Set(["singlebarchart", "groupedbarchart", "stackedbarchart", "divergentbarchart", "divergentstackedbarchart", "radialbarchart"]),
+    chartTypes: new Set(["singlebarchart", "groupedbarchart", "stackedbarchart", "divergentbarchart", "divergentstackedbarchart", "radialbarchart", "radialstackedbarchart", "radialrectbarchart", "radialrectstackedbarchart", "circularbarchart", "circularstackedbarchart"]),
   },
   {
     id: "areachart",
     label: "Area chart",
-    chartTypes: new Set(["areachart", "stackedareachart", "streamgraph", "horizonchart"]),
+    chartTypes: new Set(["areachart", "stackedareachart", "streamgraph", "horizonchart", "radarchart"]),
   },
   { id: "point", label: "Point", chartTypes: new Set(["scatterplot", "hexbin"]) },
   {
     id: "linechart",
     label: "Line chart",
-    chartTypes: new Set(["linegraph", "multilinechart", "parallelcoordinatesplot"]),
+    chartTypes: new Set(["linegraph", "multilinechart", "parallelcoordinatesplot", "radarchart"]),
   },
+  { id: "radar", label: "Radar", chartTypes: new Set(["radarchart"]) },
 
   { id: "heatmap", label: "Heatmap", chartTypes: new Set(["matrixdiagram", "contour", "hexbin"]) },
-  { id: "arc", label: "Arc", chartTypes: new Set(["piechart", "donutchart", "radialbarchart"]) },
+  { id: "arc", label: "Arc", chartTypes: new Set(["piechart", "donutchart", "radialbarchart", "radialstackedbarchart", "circularbarchart", "circularstackedbarchart"]) },
   { id: "tree", label: "Tree", chartTypes: new Set(["sunburst", "icicle", "treemap", "dendrogram", "radialdendrogram"]) },
   { id: "network", label: "Network", chartTypes: new Set(["forcedirectedgraph", "graphlink", "graphlinkpolar"]) },
 
@@ -39,7 +40,7 @@ const familyDefinitions: Array<{
   { id: "sankey", label: "Sankey", chartTypes: new Set(["sankey"]) },
 
   { id: "calendar", label: "Calendar", chartTypes: new Set(["calendar"]) },
-  { id: "boxplot", label: "Boxplot", chartTypes: new Set(["boxplot", "boxandwhisker"]) },
+  { id: "boxplot", label: "Boxplot", chartTypes: new Set(["boxplot", "boxandwhisker", "singleboxplot", "multipleboxplot"]) },
   {
     id: "geographic-point",
     label: "Geographic point",

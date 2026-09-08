@@ -1,5 +1,11 @@
 import type { ChartAxisChannel, ChartSpec, CoordinateGuide } from "../types";
 
+function defaultAxisVisibility(spec: ChartSpec | null | undefined, channel: ChartAxisChannel) {
+  const normalized = spec?.chartType.replace(/[\s_-]/g, "").toLowerCase();
+  if (normalized === "chord" && (channel === "theta" || channel === "radius")) return false;
+  return true;
+}
+
 function legacyAxisVisibility(guide: CoordinateGuide | null | undefined, channel: ChartAxisChannel) {
   if (guide?.type === "Cartesian") {
     if (channel === "x") return guide.showXLine;
@@ -31,7 +37,7 @@ export function chartAxisVisible(
   const config = spec?.axes?.[channel];
   return config?.visible
     ?? legacyAxisVisibility(guide, channel)
-    ?? true;
+    ?? defaultAxisVisibility(spec, channel);
 }
 
 export function chartAxisLabelsVisible(
@@ -42,5 +48,5 @@ export function chartAxisLabelsVisible(
   const config = spec?.axes?.[channel];
   return config?.labelsVisible
     ?? legacyLabelVisibility(guide, channel)
-    ?? true;
+    ?? defaultAxisVisibility(spec, channel);
 }

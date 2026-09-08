@@ -1036,7 +1036,15 @@
   cursor: ew-resize;
   touch-action: none;
 }
+.coordinate-guide-layer :deep(.polar-coordinate-inner-radius-control) {
+  cursor: ew-resize;
+  touch-action: none;
+}
 .coordinate-guide-layer :deep(.polar-coordinate-radius-hit-target) {
+  fill: transparent;
+  stroke: transparent;
+}
+.coordinate-guide-layer :deep(.polar-coordinate-inner-radius-hit-target) {
   fill: transparent;
   stroke: transparent;
 }
@@ -1052,6 +1060,12 @@
   fill: #432818;
   stroke: var(--frontend-surface-raised);
   stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.coordinate-guide-layer :deep(.polar-coordinate-inner-radius-handle) {
+  fill: var(--frontend-surface-raised);
+  stroke: #99582a;
+  stroke-width: 2;
   vector-effect: non-scaling-stroke;
 }
 .coordinate-guide-layer :deep(.polar-coordinate-angle-handle) {

@@ -11,6 +11,7 @@ import type {
   NestedRelationship,
   Point,
   PolarAngleInteraction,
+  PolarInnerRadiusInteraction,
   RelativeNestedParameters,
   RotateInteraction,
   ScaleHandle,
@@ -58,6 +59,7 @@ export function useCanvasInteraction(context: any) {
     getCanvasViewport,
     getCanvasBounds,
     getChartTemplateContract,
+    getPolarOccupiedGeometry,
     getGroupAtPath,
     getRootNode,
     getSelectionNode,
@@ -920,7 +922,10 @@ export function useCanvasInteraction(context: any) {
   function onScaleHandlePointerDown(handle: ScaleHandle, event: PointerEvent) {
     if (event.button !== 0 || !selectionBounds.value) return;
     event.stopPropagation();
-    const itemIds = coordinateTransformItemIds(selectedIds.value);
+    // Concat is an open container: its direct members retain independent
+    // frames. Moving a member still moves the complete concat unit, while a
+    // resize handle edits only the explicitly selected direct member.
+    const itemIds = coordinateTransformItemIds(selectedIds.value, { expandConcat: false });
     const snapshots = Object.fromEntries(itemIds.map((id) => {
       const item = getSelectionNode(id);
       return [id, {
@@ -1030,6 +1035,23 @@ export function useCanvasInteraction(context: any) {
     };
     attachPointerListeners();
   }
+  function onPolarInnerRadiusPointerDown(node: CanvasNode, event: PointerEvent) {
+    if (event.button !== 0 || node.coordinateGuide?.type !== "Polar") return;
+    event.preventDefault();
+    event.stopPropagation();
+    rotationInputVisible.value = false;
+    polarAngleInputVisible.value = false;
+    const scopeGroupId = editingGroupPath.value.at(-1);
+    const startPoint = toSelectionScopePoint(event.clientX, event.clientY, scopeGroupId);
+    interaction.value = {
+      type: "polar-inner-radius",
+      nodeId: node.id,
+      startPoint,
+      scopeGroupId,
+      historyCommitted: false,
+    };
+    attachPointerListeners();
+  }
   function updateRotateInteraction(currentPoint: Point, ri: RotateInteraction) {
     const angle = Math.atan2(currentPoint.y - ri.center.y, currentPoint.x - ri.center.x) - ri.startAngle;
     const degrees = angle * 180 / Math.PI;
@@ -1072,6 +1094,7 @@ export function useCanvasInteraction(context: any) {
       return;
     }
     const targets = coordinateTargets(node.id, "angle");
+    if (node.compositionSpec?.type === "facet") guide.angleSpan = angleSpan;
     targets.forEach((member) => {
       if (member.coordinateGuide?.type !== "Polar") return;
       member.coordinateGuide.angleSpan = angleSpan;
@@ -1390,6 +1413,9 @@ export function useCanvasInteraction(context: any) {
       else if (memberGuide.type === "Polar" && ci.axis === "radius") memberGuide.radiusScale = nextScale;
       else if (memberGuide.type === "Polar" && ci.axis === "ring") memberGuide.ringScale = nextScale;
     });
+    if (guide.type === "Polar" && ci.axis === "radius" && node.compositionSpec?.type === "facet") {
+      guide.radiusScale = nextScale;
+    }
     if ((node.compositionSpec?.type === "layer" || node.compositionSpec?.type === "concat")
       && editingCompositionId.value !== node.compositionSpec.id) {
       const owner = findCanvasNode(node.coordinateSystem?.ownerNodeId ?? "") ?? node;
@@ -1415,6 +1441,25 @@ export function useCanvasInteraction(context: any) {
     targets.forEach((member) => {
       if (member.coordinateGuide?.type !== "Polar") return;
       member.coordinateGuide.angleSpan = angleSpan;
+    });
+    renderCoordinateTargets(node, targets);
+  }
+  function updatePolarInnerRadiusInteraction(currentPoint: Point, pi: PolarInnerRadiusInteraction) {
+    const node = findCanvasNode(pi.nodeId);
+    const guide = node?.coordinateGuide;
+    if (!node || guide?.type !== "Polar") return;
+    const geometry = getPolarOccupiedGeometry(node);
+    if (!geometry || geometry.outerRadius <= 0) return;
+    const localPoint = toNodeLocalPoint(node, currentPoint);
+    const outerRatio = Math.max(0.01, Math.min(guide.outerRadiusRatio ?? 1, 1));
+    const baseRadius = geometry.outerRadius / outerRatio;
+    const distance = Math.hypot(localPoint.x - geometry.origin.x, localPoint.y - geometry.origin.y);
+    const innerRatio = clamp(distance / Math.max(baseRadius, 0.0001), 0, Math.max(0, outerRatio - 0.01));
+    const targets = coordinateTargets(node.id, "radius");
+    const affected = [node, ...targets].filter((member, index, all) =>
+      all.findIndex((candidate) => candidate.id === member.id) === index);
+    affected.forEach((member) => {
+      if (member.coordinateGuide?.type === "Polar") member.coordinateGuide.innerRadiusRatio = innerRatio;
     });
     renderCoordinateTargets(node, targets);
   }
@@ -1600,6 +1645,17 @@ export function useCanvasInteraction(context: any) {
       updatePolarAngleInteraction(coordinatePoint, ai);
       return;
     }
+    if (ai.type === "polar-inner-radius") {
+      const coordinatePoint = ai.scopeGroupId
+        ? toSelectionScopePoint(event.clientX, event.clientY, ai.scopeGroupId)
+        : point;
+      if (!ai.historyCommitted && Math.hypot(coordinatePoint.x - ai.startPoint.x, coordinatePoint.y - ai.startPoint.y) > 0.1) {
+        pushCanvasHistory();
+        ai.historyCommitted = true;
+      }
+      updatePolarInnerRadiusInteraction(coordinatePoint, ai);
+      return;
+    }
     const scalePoint = ai.scopeGroupId
       ? toSelectionScopePoint(event.clientX, event.clientY, ai.scopeGroupId)
       : point;
@@ -1658,6 +1714,7 @@ export function useCanvasInteraction(context: any) {
     onCoordinateOriginPointerDown,
     onCoordinateAxisScalePointerDown,
     onPolarAnglePointerDown,
+    onPolarInnerRadiusPointerDown,
     updateRotateInteraction,
     setSelectionRotation,
     setPolarAngleSpan,
@@ -1669,6 +1726,7 @@ export function useCanvasInteraction(context: any) {
     updateCoordinateOriginInteraction,
     updateCoordinateAxisScaleInteraction,
     updatePolarAngleInteraction,
+    updatePolarInnerRadiusInteraction,
     finalizeMarqueeSelection,
     onWindowPointerUp,
     onWindowPointerMove,

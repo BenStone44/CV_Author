@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { nextTick, ref } from "vue";
 import type { CanvasGroupNode, CanvasLeafNode, CanvasNode, Dataset, GeometrySource, PolarCoordinateGuide, RelativeNestedParameters } from "../types";
 import { deckglPointNestHoverEvent } from "../types";
-import { collectNodeSelectionBounds } from "../utils/canvasUtils";
+import { collectNodeSelectionBounds, getPolarOccupiedGeometry } from "../utils/canvasUtils";
 import { csvColumnDragMime, encodeCsvColumnDragPayload } from "../utils/csvColumnDrag";
 import { inferColumnIntents } from "../utils/dimensionInference";
 
@@ -556,7 +556,12 @@ describe("implemented chart template cards", () => {
       { id: "builtin-template:stacked-bar", name: "Stacked Bar", chartType: "StackedBarChart" },
       { id: "builtin-template:divergent-bar", name: "Divergent Bar", chartType: "DivergentBarChart" },
       { id: "builtin-template:divergent-stacked-bar", name: "Divergent Stacked Bar", chartType: "DivergentStackedBarChart" },
-      { id: "builtin-template:radial-bar-chart", name: "Radial Bar Chart", chartType: "RadialBarChart" },
+      { id: "builtin-template:radial-bar-chart", name: "Radial Bar (Sector)", chartType: "RadialBarChart" },
+      { id: "builtin-template:radial-stacked-bar-chart", name: "Radial Stacked Bar (Sector)", chartType: "RadialStackedBarChart" },
+      { id: "builtin-template:radial-rect-bar-chart", name: "Radial Bar (Rectangle)", chartType: "RadialRectBarChart" },
+      { id: "builtin-template:radial-rect-stacked-bar-chart", name: "Radial Stacked Bar (Rectangle)", chartType: "RadialRectStackedBarChart" },
+      { id: "builtin-template:circular-bar-chart", name: "Circular Bar", chartType: "CircularBarChart" },
+      { id: "builtin-template:circular-stacked-bar-chart", name: "Circular Stacked Bar", chartType: "CircularStackedBarChart" },
     ]);
   });
 
@@ -926,6 +931,48 @@ describe("implemented chart template cards", () => {
     expect(chart.renderedContent?.match(/data-mark-role="bar"/g)).toHaveLength(4);
   });
 
+  it("binds Circular Stacked Bar as Theta, R, and quantitative Segment items", () => {
+    const dataset: Dataset = {
+      id: "circular-stacked-segments",
+      name: "circular-stacked-segments.csv",
+      columns: [
+        { name: "month", type: "ordinal" },
+        { name: "planned", type: "quantitative" },
+        { name: "actual", type: "quantitative" },
+      ],
+      rows: [
+        { month: "Jan", planned: "8", actual: "3" },
+        { month: "Feb", planned: "5", actual: "4" },
+      ],
+      primaryKey: ["month"],
+    };
+    const chart = polarChart("circular-stacked-segment-node", 120);
+    chart.chartSpec = {
+      chartType: "CircularStackedBarChart",
+      datasetId: dataset.id,
+      encodings: {},
+    };
+    const store = useCanvasStore(ref(null));
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [chart];
+    store.selectedIds.value = [chart.id];
+    store.axisBindingTarget.value = { nodeId: chart.id, channel: "angle" };
+
+    store.setChartEncoding("radius", "month");
+    store.setValueSeriesFields(["planned", "actual"]);
+
+    expect(chart.chartSpec?.encodings.radius).toEqual({ field: "month", type: "ordinal" });
+    expect(chart.chartSpec?.encodings.theta).toEqual({ field: "planned", type: "quantitative" });
+    expect(chart.chartSpec?.encodings.segment).toBeUndefined();
+    expect(chart.chartSpec?.valueFields?.map((encoding) => encoding.field)).toEqual(["planned", "actual"]);
+    expect(store.barItemAxisBinding(chart)).toEqual({ label: "Segment item", fields: ["planned", "actual"] });
+    expect(chart.renderedContent).toContain('data-polar-orientation="angular"');
+    expect(chart.renderedContent).toContain('data-category-field="month"');
+    expect(chart.renderedContent).toContain('data-value-field="__csv_value__"');
+    expect(chart.renderedContent?.match(/data-mark-role="bar"/g)).toHaveLength(4);
+  });
+
   it("replaces the polar Theta source from the encoding panel", () => {
     const dataset: Dataset = {
       id: "polar-channel-resolution",
@@ -1262,6 +1309,68 @@ describe("composition selection hierarchy", () => {
     expect(store.canUndo.value).toBe(true);
     expect(JSON.stringify(store.chartRelationships.value)).toBe(relationshipStateBefore);
     expect(Array.from(storage.entries())).toEqual(storageBefore);
+  });
+
+  it("keeps resize handles active for one direct Concat member", () => {
+    listeners.clear();
+    const canvasRef = coordinateCanvasRef();
+    Object.assign(canvasRef.value!, { clientWidth: 1800, clientHeight: 1000 });
+    const store = useCanvasStore(canvasRef);
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    const first = lineChart("concat-resize-a", 100, false);
+    const second = lineChart("concat-resize-b", 920, false);
+    const composition = {
+      id: "composition:concat-resize",
+      type: "concat" as const,
+      direction: "horizontal" as const,
+      members: [first, second].map((node) => ({
+        nodeId: node.id,
+        sourceNodeId: first.id,
+        chartType: node.chartSpec?.chartType,
+        sharedChannels: ["y" as const],
+      })),
+      sharedChannels: ["y" as const],
+      concatLinks: [{
+        targetNodeId: first.id,
+        sourceNodeId: second.id,
+        direction: "horizontal" as const,
+        position: "after" as const,
+        sharedChannels: ["y" as const],
+      }],
+    };
+    const coordinateSystem = {
+      id: "coordinate:concat-resize",
+      type: "Cartesian" as const,
+      ownerNodeId: first.id,
+      members: [first, second].map((node) => ({ nodeId: node.id, channels: ["x" as const, "y" as const] })),
+      sharedChannels: ["y" as const],
+    };
+    first.compositionSpec = composition;
+    second.compositionSpec = composition;
+    first.coordinateSystem = coordinateSystem;
+    second.coordinateSystem = coordinateSystem;
+    store.canvasNodes.value = [first, second];
+
+    store.onCanvasNodePointerDown(first, pointerEvent(140, 140));
+    listeners.get("pointerup")?.(pointerEvent(140, 140));
+
+    expect(store.selectedIds.value).toEqual([first.id]);
+    expect(store.passiveCompositeSelection.value).toBe(false);
+    expect(store.scaleHandles.value).toHaveLength(4);
+    const handle = store.scaleHandles.value.find((candidate) => candidate.key === "se")!;
+    const secondWidth = second.width;
+    store.onScaleHandlePointerDown("se", pointerEvent(handle.x, handle.y));
+
+    expect(store.interaction.value).toMatchObject({
+      type: "scale",
+      itemIds: [first.id],
+    });
+    listeners.get("pointermove")?.(pointerEvent(handle.x + 80, handle.y));
+    listeners.get("pointerup")?.(pointerEvent(handle.x + 80, handle.y));
+
+    expect(first.width).toBeGreaterThan(800);
+    expect(second.width).toBe(secondWidth);
   });
 
   it("defers geographic node position updates until the drag ends", () => {
@@ -2186,13 +2295,14 @@ describe("CSV to Pie binding", () => {
     store.canvasNodes.value = [pieNode];
     store.selectedIds.value = [pieNode.id];
     store.axisBindingTarget.value = { nodeId: pieNode.id, channel: "angle" };
+    store.setPolarSegmentFields(["component"]);
     store.setPieAngleFields(["weight"]);
     store.bindPolarRadiusField("radius");
 
     expect(pieNode.chartSpec?.angleFields).toBeUndefined();
     expect(pieNode.chartSpec?.encodings.theta).toEqual({ field: "weight", type: "quantitative" });
     expect(pieNode.chartSpec?.encodings.radius).toEqual({ field: "radius", type: "quantitative" });
-    expect(pieNode.renderedContent).toContain('data-category-key="1"');
+    expect(pieNode.renderedContent).toContain('data-category-key="water"');
     expect(pieNode.renderedContent).toContain('data-radius-field="radius"');
     expect(pieNode.renderedContent).toContain('data-radius-value="10"');
     expect(pieNode.renderedContent).toContain('data-radius-value="40"');
@@ -2604,6 +2714,279 @@ describe("dimension overflow decisions", () => {
     expect((right?.x ?? 0) - (left?.x ?? 0)).toBe((left?.width ?? 0) * (left?.scaleX ?? 1) + 4);
     expect(store.selectedIds.value).toEqual([facetRoot.id]);
     expect(store.selectionBounds.value).toEqual(collectNodeSelectionBounds(facetRoot));
+  });
+
+  it("projects a line facet into donut sectors around one Polar frame", async () => {
+    listeners.clear();
+    const dataset: Dataset = {
+      id: "polar-line-facet-dataset",
+      name: "polar-line-facet.csv",
+      columns: [
+        { name: "person", type: "nominal" },
+        { name: "time", type: "temporal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: ["A", "B"].flatMap((person, personIndex) => [1, 2, 3].map((month) => ({
+        person,
+        time: `2026-0${month}-01`,
+        value: String(10 + personIndex * 4 + month),
+      }))),
+      primaryKey: ["person", "time"],
+    };
+    const chart = lineChart("polar-line-facet-source", 100, false);
+    chart.chartSpec = { ...chart.chartSpec!, datasetId: dataset.id };
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [chart];
+    store.selectedIds.value = [chart.id];
+    store.axisBindingTarget.value = { nodeId: chart.id, channel: "x" };
+
+    expect(store.applyDimensionFacet("person", "column")).toBe(true);
+    const facetRoot = store.canvasNodes.value[0]!;
+    expect(facetRoot.kind).toBe("group");
+    const facetCells = facetRoot.kind === "group" ? facetRoot.children : [];
+    store.axisBindingTarget.value = { nodeId: facetCells[0]!.id, channel: "x" };
+    store.setCompositionEncoding({
+      facetCoordinateSystem: "Polar",
+      facetThetaField: "person",
+      facetDirection: "column",
+    });
+
+    expect(facetRoot.compositionSpec?.facetCoordinateSystem).toBe("Polar");
+    expect(facetRoot.coordinateSystem?.type).toBe("Polar");
+    expect(facetCells.map((cell) => cell.coordinateGuide?.type)).toEqual(["Polar", "Polar"]);
+    expect(facetCells.every((cell) => cell.coordinateGuide?.type === "Polar"
+      && cell.coordinateGuide.showThetaLine === false
+      && cell.coordinateGuide.showRadiusLine === false)).toBe(true);
+    expect(facetRoot.coordinateGuide?.type === "Polar" && facetRoot.coordinateGuide.showThetaLine).toBeUndefined();
+    expect(facetCells.map((cell) => [cell.x, cell.y])).toEqual([
+      [facetCells[0]!.x, facetCells[0]!.y],
+      [facetCells[0]!.x, facetCells[0]!.y],
+    ]);
+    expect(facetCells.map((cell) => cell.renderedContent?.match(/data-chart-type="[^"]+"/)?.[0]), JSON.stringify(facetCells.map((cell) => cell.chartSpec?.renderer))).toEqual([
+      'data-chart-type="polar-facet-line"',
+      'data-chart-type="polar-facet-line"',
+    ]);
+    expect(facetCells.map((cell) => cell.chartSpec?.polarArea?.angleSpan)).toEqual([180, 180]);
+    expect(facetCells.map((cell) => cell.chartSpec?.polarArea?.startAngle)).toEqual([0, 180]);
+    expect(facetCells.every((cell) => cell.renderedContent?.includes('data-mark-role="facet-cell-frame"'))).toBe(true);
+
+    store.selectedIds.value = [facetRoot.id];
+    const rootGeometry = getPolarOccupiedGeometry(facetRoot)!;
+    expect(rootGeometry.outerRadius).toBeCloseTo(
+      facetCells[0]!.chartSpec!.polarArea!.outerRadius
+        * Math.min(Math.abs(facetCells[0]!.scaleX), Math.abs(facetCells[0]!.scaleY)),
+    );
+    expect(store.selectionFrame.value).toMatchObject({
+      x: facetRoot.x + rootGeometry.bounds.minX,
+      y: facetRoot.y + rootGeometry.bounds.minY,
+      width: rootGeometry.bounds.width,
+      height: rootGeometry.bounds.height,
+    });
+
+    const rootGuide = facetRoot.coordinateGuide?.type === "Polar" ? facetRoot.coordinateGuide : null;
+    expect(rootGuide).toBeTruthy();
+    const targetInnerRatio = 0.34;
+    const baseRadius = rootGeometry.outerRadius / (rootGuide!.outerRadiusRatio ?? 1);
+    const innerStart = {
+      x: facetRoot.x + rootGuide!.origin.x + rootGeometry.innerRadius,
+      y: facetRoot.y + rootGuide!.origin.y,
+    };
+    store.onPolarInnerRadiusPointerDown(facetRoot, pointerEvent(innerStart.x, innerStart.y));
+    listeners.get("pointermove")?.(pointerEvent(
+      facetRoot.x + rootGuide!.origin.x + baseRadius * targetInnerRatio,
+      facetRoot.y + rootGuide!.origin.y,
+    ));
+    listeners.get("pointerup")?.(pointerEvent(innerStart.x, innerStart.y));
+    expect(rootGuide!.innerRadiusRatio).toBeCloseTo(targetInnerRatio);
+    expect(facetCells.every((cell) => cell.coordinateGuide?.type === "Polar"
+      && Math.abs((cell.coordinateGuide.innerRadiusRatio ?? 0) - targetInnerRatio) < 1e-6)).toBe(true);
+    expect(facetCells.every((cell) => (cell.chartSpec?.polarArea?.innerRadius ?? 0) > rootGeometry.innerRadius)).toBe(true);
+
+    const outerScaleStart = rootGuide!.radiusScale ?? 1;
+    const outerStart = {
+      x: facetRoot.x + rootGuide!.origin.x + getPolarOccupiedGeometry(facetRoot)!.outerRadius,
+      y: facetRoot.y + rootGuide!.origin.y,
+    };
+    store.onCoordinateAxisScalePointerDown(facetRoot, "radius", pointerEvent(outerStart.x, outerStart.y));
+    listeners.get("pointermove")?.(pointerEvent(outerStart.x + 40, outerStart.y));
+    listeners.get("pointerup")?.(pointerEvent(outerStart.x + 40, outerStart.y));
+    const expectedOuterScale = outerScaleStart + 40 / facetRoot.width;
+    expect(rootGuide!.radiusScale).toBeCloseTo(expectedOuterScale);
+    expect(facetCells.every((cell) => cell.coordinateGuide?.type === "Polar"
+      && Math.abs((cell.coordinateGuide.radiusScale ?? 0) - expectedOuterScale) < 1e-6)).toBe(true);
+
+    const source = polarChart("polar-line-facet-concat-source", 1200, 360);
+    source.chartSpec = {
+      ...source.chartSpec!,
+      chartType: "RadialBarChart",
+      datasetId: dataset.id,
+      encodings: {
+        segment: { field: "person", type: "nominal" },
+        radius: { field: "value", type: "quantitative" },
+      },
+    };
+    store.canvasNodes.value = [facetRoot, source];
+    const concatZones = store.compositionDropZones(source.id)
+      .filter((zone) => zone.targetNodeId === facetRoot.id && zone.type === "concat");
+    expect(concatZones.map((zone) => [zone.direction, zone.concatPosition, zone.sharedChannels])).toEqual(expect.arrayContaining([
+      ["radial", "after", ["angle"]],
+    ]));
+    const outerRadialZone = concatZones.find((zone) => zone.direction === "radial" && zone.concatPosition === "after");
+    expect(outerRadialZone).toMatchObject({ compatible: true });
+    let dropPoint: { x: number; y: number } | undefined;
+    for (let y = outerRadialZone!.bounds.minY + 2; y < outerRadialZone!.bounds.maxY && !dropPoint; y += 8) {
+      for (let x = outerRadialZone!.bounds.minX + 2; x < outerRadialZone!.bounds.maxX; x += 8) {
+        const hit = store.compositionDropZoneAtPoint({ x, y }, source.id);
+        if (hit?.targetNodeId === facetRoot.id && hit.type === "concat"
+          && hit.direction === "radial" && hit.concatPosition === "after") {
+          dropPoint = { x, y };
+          break;
+        }
+      }
+    }
+    expect(dropPoint).toBeDefined();
+    expect(store.compositionDropZoneAtPoint(dropPoint!, source.id)).toMatchObject({
+      targetNodeId: facetRoot.id,
+      type: "concat",
+      direction: "radial",
+      concatPosition: "after",
+      compatible: true,
+    });
+    store.selectedIds.value = [source.id];
+    store.onCanvasNodePointerDown(source, pointerEvent(source.x + 20, source.y + 20));
+    listeners.get("pointermove")?.(pointerEvent(dropPoint!.x, dropPoint!.y));
+    expect(store.activeDropZone.value).toMatchObject({
+      targetNodeId: facetRoot.id,
+      type: "concat",
+      direction: "radial",
+      concatPosition: "after",
+      compatible: true,
+    });
+    listeners.get("pointerup")?.(pointerEvent(dropPoint!.x, dropPoint!.y));
+    await nextTick();
+    expect(facetRoot.compositionSpec?.type).toBe("facet");
+    expect(facetRoot.parentCompositionSpec?.type).toBe("concat");
+    expect(source.compositionSpec?.type).toBe("concat");
+  });
+
+  it("keeps a Chord inside a Polar Line Facet radial concat", () => {
+    const dataset: Dataset = {
+      id: "chord-polar-line-facet",
+      name: "chord graph",
+      columns: [],
+      rows: [],
+      graph: {
+        nodes: {
+          columns: [
+            { name: "node_id", type: "nominal" },
+            { name: "month", type: "ordinal" },
+            { name: "share", type: "quantitative" },
+          ],
+          rows: ["North", "South", "West"].flatMap((nodeId, nodeIndex) => [1, 2, 3].map((month) => ({
+            node_id: nodeId,
+            month: `2025-0${month}-01`,
+            share: String(40 + nodeIndex * 8 + month * 2),
+          }))),
+        },
+        edges: {
+          columns: [
+            { name: "source", type: "nominal" },
+            { name: "target", type: "nominal" },
+            { name: "flow", type: "quantitative" },
+          ],
+          rows: [
+            { source: "North", target: "South", flow: "80" },
+            { source: "North", target: "West", flow: "40" },
+            { source: "South", target: "North", flow: "35" },
+            { source: "South", target: "West", flow: "25" },
+            { source: "West", target: "North", flow: "20" },
+            { source: "West", target: "South", flow: "20" },
+          ],
+        },
+      },
+    };
+    const line = lineChart("polar-line-facet-unit", 700, false);
+    line.chartSpec = {
+      ...line.chartSpec!,
+      datasetId: dataset.id,
+      encodings: {
+        x: { field: "month", type: "ordinal" },
+        y: { field: "share", type: "quantitative" },
+      },
+    };
+    const chord = polarChart("inner-chord-unit", 100, 360);
+    chord.chartSpec = {
+      chartType: "Chord",
+      datasetId: dataset.id,
+      encodings: {
+        key: { field: "node_id", type: "nominal" },
+        source: { field: "source", type: "nominal" },
+        target: { field: "target", type: "nominal" },
+        value: { field: "flow", type: "quantitative" },
+      },
+    };
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [line, chord];
+    store.axisBindingTarget.value = { nodeId: chord.id, channel: "angle" };
+    expect(store.axisBindingColumns.value.map((column) => column.name)).toEqual(["source", "target", "flow"]);
+    expect(store.axisBindingChannelColumns.value?.key?.map((column) => column.name)).toEqual([
+      "node_id",
+      "month",
+      "share",
+    ]);
+    store.setChartEncoding("key", "node_id");
+    expect(chord.chartSpec?.encodings.key).toEqual({ field: "node_id", type: "nominal" });
+    store.selectedIds.value = [line.id];
+
+    expect(store.createFacetFromFields(line.id, {
+      coordinateSystem: "Polar",
+      thetaField: "node_id",
+    })).toBe(true);
+    const facetRoot = store.canvasNodes.value.find((node) => node.compositionSpec?.type === "facet")!;
+    expect(store.concatNodesAreCompatible([chord, facetRoot], "radial", "angle")).toBe(true);
+
+    store.selectedIds.value = [chord.id];
+    store.onCanvasNodePointerDown(chord, pointerEvent(chord.x + 20, chord.y + 20));
+    expect(store.availableDropZones.value).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        targetNodeId: facetRoot.id,
+        type: "concat",
+        direction: "radial",
+        concatPosition: "before",
+        compatible: true,
+      }),
+    ]));
+    store.interaction.value = null;
+    store.compositionDragSourceId.value = null;
+    store.activeDropZone.value = null;
+    store.availableDropZones.value = [];
+
+    store.canvasNodes.value = [chord, facetRoot];
+    store.selectedIds.value = [chord.id, facetRoot.id];
+    expect(store.executeComposition("concat", true, ["angle"], "radial")).toBe(true);
+    expect(chord.coordinateGuide?.type === "Polar" && chord.coordinateGuide.outerRadiusRatio).toBe(0.5);
+    expect(facetRoot.coordinateGuide?.type === "Polar" && facetRoot.coordinateGuide.innerRadiusRatio).toBe(0.5);
+    expect(facetRoot.compositionSpec?.type).toBe("facet");
+    expect(facetRoot.parentCompositionSpec?.type).toBe("concat");
+    expect(facetRoot.kind === "group"
+      ? facetRoot.children.filter((child) => child.renderedContent?.includes('data-chart-type="polar-facet-line"')).length
+      : 0).toBe(3);
+    const bands = chord.chartSpec?.polarArea?.angleBands ?? [];
+    expect(bands.map((band) => band.value)).toEqual(["North", "South", "West"]);
+    expect(new Set(bands.map((band) => band.angleSpan)).size).toBe(3);
+    if (facetRoot.kind === "group") {
+      facetRoot.children.forEach((child) => {
+        const nodeId = child.chartSpec?.filters?.node_id;
+        const band = bands.find((candidate) => candidate.value === nodeId);
+        expect(band).toBeDefined();
+        expect(child.renderedContent).toContain(`data-facet-angle-start="${band!.startAngle}"`);
+        expect(child.renderedContent).toContain(`data-facet-angle-span="${band!.angleSpan}"`);
+      });
+    }
   });
 
   it("exposes a facet cell filter as relationship-owned nested context", () => {
@@ -3721,7 +4104,7 @@ describe("composition coordinate editing", () => {
     expect(store.selectionPolarOutlines.value[0]?.path).toContain(" A 152 152 ");
   });
 
-  it("normalizes Polar axis compatibility and exposes only a radial tree's leaf axis", () => {
+  it("allows coordinate-only Polar concat and activates a shared hierarchy depth scale for R", () => {
     const treeDataset: Dataset = {
       id: "polar-tree-compatibility",
       name: "polar-tree-compatibility.csv",
@@ -3763,11 +4146,34 @@ describe("composition coordinate editing", () => {
         radius: { field: "value", type: "quantitative" },
       },
     };
+    const sunburst = polarChart("polar-compatible-sunburst", 2100);
+    sunburst.chartSpec = {
+      chartType: "Sunburst",
+      datasetId: treeDataset.id,
+      encodings: {
+        key: { field: "node_id", type: "nominal" },
+        parent: { field: "parent_id", type: "nominal" },
+        value: { field: "value", type: "quantitative" },
+      },
+    };
 
     expect(store.concatNodesAreCompatible([pie, donut], "radial", "angle")).toBe(true);
     expect(store.concatNodesAreCompatible([pie, donut], "angular", "radius")).toBe(true);
+    expect(store.concatNodesAreCompatible([tree, sunburst], "radial", "angle")).toBe(true);
+    expect(store.concatNodesAreCompatible([tree, sunburst], "angular", "radius")).toBe(true);
     expect(store.concatNodesAreCompatible([tree, radialBars], "radial", "angle")).toBe(true);
     expect(store.concatNodesAreCompatible([tree, radialBars], "angular", "radius")).toBe(false);
+
+    store.canvasNodes.value = [tree, sunburst];
+    store.selectedIds.value = [tree.id, sunburst.id];
+    expect(store.executeComposition("concat", true, ["radius"], "angular")).toBe(true);
+    const composition = store.canvasNodes.value[0]?.compositionSpec;
+    expect(composition?.sharedHierarchyLevelCount).toBe(1);
+    expect(composition?.sharedHierarchyOuterRadius).toBeGreaterThan(0);
+    const dendrogramRadius = Number(tree.renderedContent?.match(/data-hierarchy-depth="1"[^>]*data-radius="([^"]+)"/)?.[1]);
+    const sunburstRadius = Number(sunburst.renderedContent?.match(/data-hierarchy-depth="1"[^>]*data-radius-center="([^"]+)"/)?.[1]);
+    expect(dendrogramRadius).toBeGreaterThan(0);
+    expect(dendrogramRadius).toBeCloseTo(sunburstRadius);
   });
 
   it("filters a Polar concat companion to Radial Dendrogram leaves", () => {
@@ -4160,6 +4566,109 @@ describe("composition coordinate editing", () => {
     nestedPies.forEach((node, index) => {
       expect(node.x + node.width * node.scaleX / 2).toBeCloseTo(nodeCenters[index]!.x);
       expect(node.y + node.height * node.scaleY / 2).toBeCloseTo(nodeCenters[index]!.y);
+    });
+  });
+
+  it("filters a monthly Radial Stacked Bar by each Dendrogram node ID", async () => {
+    listeners.clear();
+    const metrics = ["metric_1", "metric_2"];
+    const dataset: Dataset = {
+      id: "dendrogram-monthly-radial-stacks",
+      name: "dendrogram-monthly-radial-stacks.csv",
+      columns: [
+        { name: "node_id", type: "nominal" },
+        { name: "parent_id", type: "nominal" },
+        { name: "month", type: "ordinal" },
+        ...metrics.map((name) => ({ name, type: "quantitative" as const })),
+      ],
+      rows: [
+        { node_id: "root", parent_id: "", month: "Jan", metric_1: "30", metric_2: "3" },
+        { node_id: "root", parent_id: "", month: "Feb", metric_1: "18", metric_2: "7" },
+        { node_id: "branch", parent_id: "root", month: "Jan", metric_1: "4", metric_2: "22" },
+        { node_id: "branch", parent_id: "root", month: "Feb", metric_1: "9", metric_2: "40" },
+      ],
+      primaryKey: ["node_id", "month"],
+    };
+    const tree = lineChart("monthly-radial-stack-parent", 100, false);
+    tree.chartSpec = {
+      chartType: "Dendrogram",
+      datasetId: dataset.id,
+      encodings: {
+        key: { field: "node_id", type: "nominal" },
+        parent: { field: "parent_id", type: "nominal" },
+      },
+      plotArea: { x: 40, y: 40, width: 480, height: 240 },
+      markGroups: [{
+        id: `mark-group:${tree.id}:node`,
+        chartId: tree.id,
+        role: "node",
+        memberKeys: [],
+        sharedConfig: {},
+      }],
+    };
+    tree.renderedContent = '<g data-chart-type="dendrogram"/>';
+
+    const radialStack = polarChart("monthly-radial-stack-child", 800, 340);
+    radialStack.chartSpec = {
+      ...radialStack.chartSpec!,
+      chartType: "RadialStackedBarChart",
+      datasetId: dataset.id,
+      encodings: {
+        segment: { field: "month", type: "ordinal" },
+      },
+      valueFields: metrics.map((field) => ({ field, type: "quantitative" as const })),
+    };
+    const nodeIds = ["root", "branch"];
+    const marks = nodeIds.map((nodeId, index) => {
+      const left = 220 + index * 150;
+      const circle = new SvgMarkStub({}, { left, top: 240, right: left + 12, bottom: 252 });
+      return new SvgMarkStub({
+        "data-chart-id": tree.id,
+        "data-mark-role": "node",
+        "data-mark-group-id": `mark-group:${tree.id}:node`,
+        "data-node-key": nodeId,
+        "data-row-key": `${nodeId}|Jan`,
+      }, { left, top: 240, right: left + 72, bottom: 252 }, [], circle);
+    });
+    const treeElement = new SvgMarkStub({ "data-node-id": tree.id }, {
+      left: tree.x,
+      top: tree.y,
+      right: tree.x + tree.width,
+      bottom: tree.y + tree.height,
+    }, marks);
+    const canvasRef = ref({
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1800, height: 1000 }),
+      querySelectorAll: () => [treeElement],
+    } as unknown as HTMLElement);
+    const store = useCanvasStore(canvasRef);
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [dataset];
+    store.canvasNodes.value = [tree, radialStack];
+    store.selectedIds.value = [radialStack.id];
+    store.axisBindingTarget.value = { nodeId: radialStack.id, channel: "radius" };
+    store.setValueSeriesFields(metrics);
+
+    store.onCanvasNodePointerDown(radialStack, pointerEvent(radialStack.x + 20, radialStack.y + 20));
+    const plotArea = tree.chartSpec.plotArea!;
+    listeners.get("pointermove")?.(pointerEvent(
+      tree.x + plotArea.x + plotArea.width / 2,
+      tree.y + plotArea.y + plotArea.height / 2,
+    ));
+    listeners.get("pointermove")?.(pointerEvent(226, 246));
+    listeners.get("pointerup")?.(pointerEvent(226, 246));
+    await nextTick();
+
+    const nestedBars = store.canvasNodes.value.filter((node) => node.id !== tree.id);
+    expect(nestedBars).toHaveLength(nodeIds.length);
+    expect(nestedBars.every((node) => node.renderedContent?.match(/data-mark-role="bar"/g)?.length === 4)).toBe(true);
+    const relationships = Object.values(store.relationshipStore.state.value.nestedRelationships);
+    expect(relationships.map((relationship) => relationship.inheritedFilterContexts?.[0]?.value)).toEqual(nodeIds);
+    nestedBars.forEach((node, index) => {
+      const ownNodeId = nodeIds[index]!;
+      const otherNodeId = nodeIds[1 - index]!;
+      expect(node.renderedContent).toContain(`${ownNodeId}|Jan|metric_1`);
+      expect(node.renderedContent).toContain(`${ownNodeId}|Feb|metric_2`);
+      expect(node.renderedContent).not.toContain(`${otherNodeId}|Jan|metric_1`);
     });
   });
 

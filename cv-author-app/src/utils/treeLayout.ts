@@ -60,6 +60,23 @@ export function coordinateTreeLeafEncoding(spec: ChartSpec | null | undefined): 
 }
 
 /**
+ * A hierarchy owns one structural record per node even when the CSV also
+ * contains repeated observation rows (for example, one row per month).
+ * Preserve the first source row so its composite row key remains a stable
+ * anchor for Nested children, while the complete dataset stays available to
+ * the child chart through its inherited node-id filter.
+ */
+export function uniqueHierarchyRows(rows: Dataset["rows"], keyField: string) {
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    const key = (row[keyField] ?? "").trim();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
  * Values represented by terminal nodes on a Cartesian dendrogram's leaf axis.
  * The axis uses the same ordering encoding as the renderer (category, then
  * key), while hierarchy membership is determined from key/parent links.

@@ -84,7 +84,7 @@ export function resolvedPolarAxisRoles(spec: ChartSpec, field: string): PolarAxi
   const segmentFields = spec.angleFields?.map((encoding) => encoding.field) ?? [];
   return [
     ...(thetaField === field ? [{ channel: "theta" as const, label: "Theta" as const }] : []),
-    ...((template === "pie" || template === "donut" || spec.chartType.replace(/[\s_-]/g, "").toLowerCase() === "radialbarchart")
+    ...((template === "pie" || template === "donut" || spec.chartType.replace(/[\s_-]/g, "").toLowerCase().includes("barchart"))
       && (segmentField === field || segmentFields.includes(field))
       ? [{ channel: "segment" as const, label: "Segment" as const }]
       : []),

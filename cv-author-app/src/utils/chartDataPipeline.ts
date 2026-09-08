@@ -64,6 +64,12 @@ export function materializeGraphDataset(dataset: Dataset, spec: ChartSpec): Data
     };
   }
   const template = normalizeChartTemplate(spec.chartType);
+  // A composite dataset may keep a chart-local table alongside graph tables.
+  // Non-flow charts consume those raw CSV rows; graph renderers retain the
+  // separate node/edge lineage above and below this boundary.
+  if (dataset.columns.length > 0 && dataset.rows.length > 0 && template !== "flow") {
+    return dataset;
+  }
   const table = template === "flow" ? dataset.graph.edges : dataset.graph.nodes;
   return {
     ...dataset,
@@ -126,6 +132,10 @@ export function materializeCsvValueSeries(dataset: Dataset, spec: ChartSpec) {
   }));
   const materializedDatasetWithoutKey: Dataset = {
     ...dataset,
+    // These rows are now the explicit long-form chart view. If graph lineage
+    // stays attached, the renderer selects the raw graph table again and
+    // silently replaces the derived measure rows.
+    graph: undefined,
     columns: [
       ...dataset.columns.filter((column) => column.name !== CSV_MEASURE_ID_FIELD && column.name !== CSV_MEASURE_VALUE_FIELD),
       { name: CSV_MEASURE_ID_FIELD, type: "nominal" },
@@ -149,13 +159,19 @@ export function materializeCsvValueSeries(dataset: Dataset, spec: ChartSpec) {
   const seriesFields = Array.from(new Map(
     [...priorSeriesFields, seriesEncoding].map((encoding) => [encoding.field, encoding]),
   ).values());
+  const normalizedChartType = spec.chartType.replace(/[\s_-]/g, "").toLowerCase();
+  const polarBar = (normalizedChartType.startsWith("radial") || normalizedChartType.startsWith("circular"))
+    && normalizedChartType.includes("barchart");
+  const valueChannel: ChartEncodingChannel = polarBar
+    ? normalizedChartType.startsWith("circular") ? "theta" : "radius"
+    : "y";
   return {
     dataset: materializedDataset,
     chartSpec: {
       ...spec,
       encodings: {
         ...spec.encodings,
-        y: { field: CSV_MEASURE_VALUE_FIELD, type: "quantitative" as const },
+        [valueChannel]: { field: CSV_MEASURE_VALUE_FIELD, type: "quantitative" as const },
         color: seriesEncoding,
       },
       series: seriesFields[0] ?? seriesEncoding,

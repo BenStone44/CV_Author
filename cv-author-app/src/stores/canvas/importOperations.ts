@@ -122,17 +122,20 @@ export function useCanvasImportOperations(context: any) {
       };
     }
     if (normalizedChartType === "chord" && dataset?.graph) {
+      const nodeColumns = dataset.graph.nodes.columns;
       const edgeColumns = dataset.graph.edges.columns;
-      const findColumn = (names: string[]) => {
-        const column = edgeColumns.find((candidate) => names.includes(candidate.name.toLowerCase()));
+      const findColumn = (columns: typeof nodeColumns, names: string[]) => {
+        const column = columns.find((candidate) => names.includes(candidate.name.toLowerCase()));
         return column ? { field: column.name, type: column.type } : undefined;
       };
-      const source = findColumn(["source", "from", "source_id"]);
-      const target = findColumn(["target", "to", "target_id"]);
-      const value = findColumn(["value", "weight", "link_value"]);
+      const key = findColumn(nodeColumns, ["id", "node_id", "key"]);
+      const source = findColumn(edgeColumns, ["source", "from", "source_id"]);
+      const target = findColumn(edgeColumns, ["target", "to", "target_id"]);
+      const value = findColumn(edgeColumns, ["value", "weight", "link_value"]);
       return {
         ...unbound,
         encodings: {
+          ...(key ? { key } : {}),
           ...(source ? { source } : {}),
           ...(target ? { target } : {}),
           ...(value?.type === "quantitative" ? { value } : {}),

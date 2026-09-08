@@ -1,5 +1,6 @@
 type NestedMarkIdentity = {
   rowKey?: string;
+  nodeKey?: string;
   categoryKey?: string;
   seriesKey?: string;
   rowValue?: string;
@@ -11,13 +12,14 @@ type NestedMarkIdentity = {
 export function nestedItemDataKey(element: Element, fallbackIndex: number, categoryOnly = false) {
   const identity: NestedMarkIdentity = {
     rowKey: categoryOnly ? undefined : element.getAttribute("data-row-key") ?? undefined,
+    nodeKey: element.getAttribute("data-node-key") ?? undefined,
     categoryKey: element.getAttribute("data-category-key") ?? undefined,
     seriesKey: categoryOnly ? undefined : element.getAttribute("data-series-key") ?? undefined,
     rowValue: element.getAttribute("data-row-value") ?? undefined,
     columnValue: element.getAttribute("data-column-value") ?? undefined,
     role: element.getAttribute("data-mark-role") ?? undefined,
   };
-  if (!identity.rowKey && !identity.categoryKey && !identity.seriesKey && !identity.rowValue && !identity.columnValue) {
+  if (!identity.rowKey && !identity.nodeKey && !identity.categoryKey && !identity.seriesKey && !identity.rowValue && !identity.columnValue) {
     identity.fallbackIndex = fallbackIndex;
   }
   return JSON.stringify(identity);
@@ -27,6 +29,7 @@ export function markMatchesNestedDataKey(element: Element, dataKey: string, fall
   try {
     const identity = JSON.parse(dataKey) as NestedMarkIdentity;
     return (identity.rowKey === undefined || element.getAttribute("data-row-key") === identity.rowKey)
+      && (identity.nodeKey === undefined || element.getAttribute("data-node-key") === identity.nodeKey)
       && (identity.categoryKey === undefined || element.getAttribute("data-category-key") === identity.categoryKey)
       && (identity.seriesKey === undefined || element.getAttribute("data-series-key") === identity.seriesKey)
       && (identity.rowValue === undefined || element.getAttribute("data-row-value") === identity.rowValue)

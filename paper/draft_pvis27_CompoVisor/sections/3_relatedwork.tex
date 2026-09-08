@@ -38,7 +38,7 @@ them through direct manipulation.
 
 \subsection{Libraries and Grammars for Composite Visualization}
 
-Visualization libraries~\cite{Protovis, Atlas, Encodable, ProtoGraph, bostock2011d3} and grammars~\cite{nebula, Atlas, Decinteraction, satyanarayan2015reactive, satyanarayan2016vega, zong2022animated, VolumeVisualization, moreira2023urban, Atom, Gosling, dmutidens, Libra} provide formal mechanisms for authoring visualizations. 
+Visualization libraries~\cite{Protovis, Atlas, Encodable, ProtoGraph, bostock2011d3} and grammars~\cite{nebula, Atlas, Decinteraction, satyanarayan2015reactive, satyanarayan2016vega, zong2022animated, VolumeVisualization, moreira2023urban, ATOM, Gosling, dmutidens, Libra} provide formal mechanisms for authoring visualizations. 
 
 In composite visualization authoring, low-level libraries such as D3~\cite{bostock2011d3} offer fine-grained control over different visual marks, but require authors to manually implement relationships among them, including alignment, layout coordination, and shared scales. Higher-level declarative grammars such as Vega-Lite~\cite{satyanarayan2016vega} reduce some of this implementation burden by providing operators and configuration options for common cases such as concatenation, faceting, and layering. Nevertheless, these compositions are still specified through textual or hierarchical structures, rather than through direct associations among visual objects. When compositions become complex, authors often need high familiarity with the specification structure and produce lengthy hierarchical descriptions. Hence, expressing visual composition intents through code or declarative specifications remains indirect for iterative canvas-based arrangement, nesting, layering, and refinement.
 
@@ -46,12 +46,12 @@ In composite visualization authoring, low-level libraries such as D3~\cite{bosto
 
 \subsection{Interactive Visualization Design Tools}
 
-Numerous interactive tools~\cite{Epigraphics, DataInk, Tableau, DataWrapper,
+Numerous interactive tools~\cite{Epigraphics, DataInk, Tableau, Datawrapper,
 plotly, Lyra, DataIllustrator} have been developed to support visualization
 authoring without conventional programming.
 
-Chart typology tools and online chart makers \cite{manyeyes, DataWrapper,
-rawgraphs, plotly} allow users to quickly create common charts from
+Chart typology tools and online chart makers \cite{ManyEyes, Datawrapper,
+RAWGraphs, plotly} allow users to quickly create common charts from
 data and compare design alternatives. More advanced systems such as
 Tableau~\cite{Tableau} provide richer interactive authoring workflows,
 including shelf-based encoding, automatic chart generation, and detailed

@@ -23,7 +23,7 @@ describe("semantic Case 1 renderers", () => {
   it("keeps one registered pipeline per supported chart template", () => {
     expect(Object.keys(deterministicChartPipelines).sort()).toEqual([
       "area", "bar", "boxplot", "calendar", "contour", "donut", "flow",
-      "hexbin", "hierarchy", "line", "matrix", "parallel", "pie", "scatter",
+      "hexbin", "hierarchy", "line", "matrix", "parallel", "pie", "radar", "scatter",
     ]);
     expect(deterministicChartPipelines.bar.coordinateSystem).toBe("Cartesian");
     expect(deterministicChartPipelines.donut.coordinateSystem).toBe("Polar");
@@ -581,6 +581,42 @@ describe("semantic Case 1 renderers", () => {
     expect(sharedThetaAndRadius.content.match(/data-mark-role="arc"/g)).toHaveLength(2);
     expect(sharedThetaAndRadius.content).toContain('data-radius-field="value"');
     expect(sharedThetaAndRadius.content).toContain('data-radius-value="15"');
+  });
+
+  it("keeps a filtered Pie radius comparable to the source dataset domain", () => {
+    const filtered: Dataset = {
+      id: "filtered-pie-radius",
+      name: "filtered-pie-radius.csv",
+      columns: [
+        { name: "segment", type: "nominal" },
+        { name: "value", type: "quantitative" },
+        { name: "total", type: "quantitative" },
+      ],
+      rows: [{ segment: "A", value: "10", total: "50" }],
+    };
+    const result = renderDeterministicChart({
+      chartId: "filtered-pie-radius",
+      width: 320,
+      height: 180,
+      minX: 0,
+      minY: 0,
+      coordinateGuide: { type: "Polar", origin: { x: 160, y: 90 } },
+      chartSpec: {
+        chartType: "PieChart",
+        datasetId: filtered.id,
+        encodings: {
+          theta: { field: "value", type: "quantitative" },
+          segment: { field: "segment", type: "nominal" },
+          radius: { field: "total", type: "quantitative" },
+        },
+      },
+      dataset: filtered,
+      polarRadiusDomain: [0, 100],
+    });
+
+    const pathStartRadius = Number(result.content.match(/data-radius-value="50"[^>]*d="M([^,]+),/)?.[1]);
+    expect(pathStartRadius).toBeGreaterThan(0);
+    expect(pathStartRadius).toBeLessThan(result.polarArea!.outerRadius);
   });
 
   it("keeps repeated Segment values as separate arcs without an explicit Theta aggregation", () => {

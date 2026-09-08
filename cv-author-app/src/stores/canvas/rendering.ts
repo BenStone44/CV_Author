@@ -15,6 +15,7 @@ import { normalizeNestedCallout } from "../../utils/nestedCallout";
 export function useCanvasRendering(context: any) {
   const {
     chartRelationships,
+    concatCompositionForNode,
     concatLinksFor,
     defaultChartDataset,
     defaultChartSpecWithAppearance,
@@ -29,6 +30,7 @@ export function useCanvasRendering(context: any) {
     migrateLineChartAppearance,
     nestedPreparedDataCache,
     nodeLocalToSelectionScopePoint,
+    toNodeLocalPoint,
     normalizeChartTemplate,
     prepareChartData,
     renderDeterministicChart,
@@ -36,6 +38,7 @@ export function useCanvasRendering(context: any) {
     resolveChartEncodingIssues,
     transformsWithNestedContext,
     collectNodeSelectionBounds,
+    walkCanvasNodes,
   } = context;
   function renderingAncestor(node: CanvasNode) {
     const contexts = node.compositionAncestors ?? [];
@@ -54,6 +57,10 @@ export function useCanvasRendering(context: any) {
 
   function renderingComposition(node: CanvasNode) {
     if (editingCompositionId.value === node.compositionSpec?.id) return node.compositionSpec;
+    // A facet cell keeps its own projection when the closed Facet root is a
+    // direct member of an outer composition. The outer Concat allocates the
+    // root's polar frame; it must not replace the cell's facet semantics.
+    if (node.compositionSpec?.type === "facet") return node.compositionSpec;
     return renderingAncestor(node)?.compositionSpec ?? node.compositionSpec;
   }
 
@@ -165,9 +172,10 @@ export function useCanvasRendering(context: any) {
   }
 
   function alignPolarConcatFrame(owner: CanvasNode, members: CanvasNode[]) {
-    if (owner.coordinateGuide?.type !== "Polar" || owner.compositionSpec?.type !== "concat") return;
+    const composition = concatCompositionForNode(owner) ?? renderingComposition(owner);
+    if (owner.coordinateGuide?.type !== "Polar" || composition?.type !== "concat") return;
     if (!members.every((member) => member.coordinateGuide?.type === "Polar")) return;
-    const orderedMembers = owner.compositionSpec.members
+    const orderedMembers = composition.members
       .map((item) => members.find((member) => member.id === item.nodeId))
       .filter((member): member is CanvasNode => !!member);
     if (orderedMembers.length === 0) return;
@@ -175,7 +183,7 @@ export function useCanvasRendering(context: any) {
     // Project the concat graph onto one polar axis. Links in the other axis
     // keep their endpoints aligned so radial and angular concats can combine.
     const positionsFor = (direction: "radial" | "angular") => {
-      const links = concatLinksFor(owner.compositionSpec!).filter((link) =>
+      const links = concatLinksFor(composition).filter((link) =>
         link.direction === direction
         && memberIds.has(link.targetNodeId)
         && memberIds.has(link.sourceNodeId),
@@ -213,12 +221,54 @@ export function useCanvasRendering(context: any) {
     };
     const radial = positionsFor("radial");
     const angular = positionsFor("angular");
+    const memberCharts = (member: CanvasNode) => member.chartSpec
+      ? [member]
+      : walkCanvasNodes([member]).filter((candidate) => !!candidate.chartSpec);
+    const normalizedChartType = (member: CanvasNode) => member.chartSpec?.chartType
+      .replace(/[\s_-]/g, "")
+      .toLowerCase() ?? "";
+    const radiusLinks = concatLinksFor(composition).filter((link) =>
+      link.direction === "angular"
+      && link.sharedChannels.includes("radius")
+      && memberIds.has(link.targetNodeId)
+      && memberIds.has(link.sourceNodeId),
+    );
+    const hasSunburstDendrogramRadiusLink = radiusLinks.some((link) => {
+      const target = orderedMembers.find((member) => member.id === link.targetNodeId);
+      const source = orderedMembers.find((member) => member.id === link.sourceNodeId);
+      if (!target || !source) return false;
+      const targetTypes = new Set(memberCharts(target).map(normalizedChartType));
+      const sourceTypes = new Set(memberCharts(source).map(normalizedChartType));
+      return (targetTypes.has("sunburst") && sourceTypes.has("radialdendrogram"))
+        || (targetTypes.has("radialdendrogram") && sourceTypes.has("sunburst"));
+    });
+    if (hasSunburstDendrogramRadiusLink) {
+      const hierarchyCharts = orderedMembers
+        .flatMap(memberCharts)
+        .filter((member) => {
+          const type = normalizedChartType(member);
+          return type === "sunburst" || type === "radialdendrogram";
+        });
+      const levelCount = Math.max(
+        1,
+        ...hierarchyCharts.map((member) => member.chartSpec?.polarArea?.hierarchyLevelCount ?? 0),
+      );
+      const outerRadius = Math.max(
+        1,
+        ...hierarchyCharts.map((member) => member.chartSpec?.polarArea?.outerRadius ?? 0),
+      );
+      composition.sharedHierarchyLevelCount = levelCount;
+      composition.sharedHierarchyOuterRadius = outerRadius;
+    } else {
+      composition.sharedHierarchyLevelCount = undefined;
+      composition.sharedHierarchyOuterRadius = undefined;
+    }
     const ownerOrigin = nodeLocalToSelectionScopePoint(owner, owner.coordinateGuide.origin);
     const totalAngleSpan = Math.max(1, Math.min(
-      owner.compositionSpec.polarAngleSpan ?? owner.coordinateGuide.angleSpan ?? 360,
+      composition.polarAngleSpan ?? owner.coordinateGuide.angleSpan ?? 360,
       360,
     ));
-    const baseAngleOffset = owner.compositionSpec.polarAngleOffset ?? owner.coordinateGuide.angleOffset ?? 0;
+    const baseAngleOffset = composition.polarAngleOffset ?? owner.coordinateGuide.angleOffset ?? 0;
     const angularSpan = totalAngleSpan / angular.count;
     orderedMembers.forEach((member) => {
       const guide = member.coordinateGuide;
@@ -237,6 +287,24 @@ export function useCanvasRendering(context: any) {
       guide.angleOffset = baseAngleOffset + angularSpan * angularIndex;
       guide.innerRadiusRatio = radialIndex / radial.count;
       guide.outerRadiusRatio = (radialIndex + 1) / radial.count;
+      if (member.kind === "group" && !member.chartSpec && member.compositionSpec?.type !== "concat") {
+        const syncDescendantGuides = (parent: CanvasNode, originInParent: Point) => {
+          if (parent.kind !== "group") return;
+          parent.children.forEach((child) => {
+            const originInChild = toNodeLocalPoint(child, originInParent);
+            const childGuide = child.coordinateGuide;
+            if (child.chartSpec && childGuide?.type === "Polar") {
+              childGuide.origin = originInChild;
+              childGuide.angleSpan = guide.angleSpan;
+              childGuide.angleOffset = guide.angleOffset;
+              childGuide.innerRadiusRatio = guide.innerRadiusRatio;
+              childGuide.outerRadiusRatio = guide.outerRadiusRatio;
+            }
+            syncDescendantGuides(child, originInChild);
+          });
+        };
+        syncDescendantGuides(member, guide.origin);
+      }
     });
   }
 
@@ -468,10 +536,23 @@ export function useCanvasRendering(context: any) {
     const owner = members.find((member) => member.id === system?.ownerNodeId) ?? members[0]!;
     // First obtain every unit's native domain. The second pass merges only the
     // declared shared channels and preserves independent concat dimensions.
+    if (type === "concat" && composition) {
+      composition.sharedHierarchyLevelCount = undefined;
+      composition.sharedHierarchyOuterRadius = undefined;
+    }
     members.forEach((member) => renderChartNode(member, false));
     if (type === "concat") {
       syncConcatLeafAxisDomains(owner, members);
-      if (owner.coordinateGuide?.type === "Polar") alignPolarConcatFrame(owner, members);
+      if (owner.coordinateGuide?.type === "Polar") {
+        const directMembers = composition.members
+          .map((item) => findCanvasNode(item.nodeId))
+          .filter((member): member is CanvasNode => !!member);
+        const directOwner = directMembers.find((member) => member.id === system?.ownerNodeId
+          || walkCanvasNodes([member]).some((descendant) => descendant.id === system?.ownerNodeId))
+          ?? directMembers[0]
+          ?? owner;
+        alignPolarConcatFrame(directOwner, directMembers);
+      }
       else {
         alignCartesianConcatFrames(owner, members);
         if (applyAxisVisibility) syncCartesianConcatAxisVisibility(owner, members);
@@ -593,13 +674,129 @@ export function useCanvasRendering(context: any) {
   function chartEncodingFieldAvailable(dataset: Dataset, chartType: string, channel: string, field: string) {
     if (!dataset.graph) return dataset.columns.some((column) => column.name === field);
     const normalized = chartType.replace(/[\s_-]/g, "").toLowerCase();
-    if (normalized !== "forcedirectedgraph") {
-      return dataset.columns.some((column) => column.name === field);
-    }
-    const table = channel === "source" || channel === "target" || channel === "value"
+    const flowChart = getChartTemplateContract(chartType)?.family === "flow";
+    if (normalized !== "forcedirectedgraph" && !flowChart
+      && dataset.columns.some((column) => column.name === field)) return true;
+    const table = (normalized === "forcedirectedgraph" || flowChart)
+      && (channel === "source" || channel === "target" || channel === "value")
       ? dataset.graph.edges
       : dataset.graph.nodes;
     return table.columns.some((column) => column.name === field);
+  }
+
+  function sharedChordAngleBands(node: CanvasNode) {
+    const concatContext = [...(node.compositionAncestors ?? [])].reverse().find((context) =>
+      context.compositionSpec.type === "concat"
+      && concatLinksFor(context.compositionSpec).some((link) => link.sharedChannels.includes("angle")));
+    if (!concatContext) return undefined;
+    const composition = concatContext.compositionSpec;
+    const directMembers = composition.members.flatMap((member) => {
+      const directNode = findCanvasNode(member.nodeId);
+      return directNode ? [{ id: member.nodeId, node: directNode }] : [];
+    });
+    const containingMember = directMembers.find((member) =>
+      member.node.id === node.id
+      || walkCanvasNodes([member.node]).some((candidate) => candidate.id === node.id));
+    if (!containingMember) return undefined;
+    const adjacency = new Map<string, Set<string>>();
+    concatLinksFor(composition)
+      .filter((link) => link.sharedChannels.includes("angle"))
+      .forEach((link) => {
+        const targets = adjacency.get(link.targetNodeId) ?? new Set<string>();
+        targets.add(link.sourceNodeId);
+        adjacency.set(link.targetNodeId, targets);
+        const sources = adjacency.get(link.sourceNodeId) ?? new Set<string>();
+        sources.add(link.targetNodeId);
+        adjacency.set(link.sourceNodeId, sources);
+      });
+    const connected = new Set<string>([containingMember.id]);
+    const queue = [containingMember.id];
+    while (queue.length > 0) {
+      adjacency.get(queue.shift()!)?.forEach((memberId) => {
+        if (connected.has(memberId)) return;
+        connected.add(memberId);
+        queue.push(memberId);
+      });
+    }
+    const chord = directMembers
+      .filter((member) => connected.has(member.id))
+      .flatMap((member) => walkCanvasNodes([member.node]))
+      .find((candidate) => candidate.chartSpec?.chartType.replace(/[\s_-]/g, "").toLowerCase() === "chord");
+    const area = chord?.chartSpec?.polarArea;
+    if (!area?.angleBands) return undefined;
+    const currentOffset = chord?.coordinateGuide?.type === "Polar"
+      ? chord.coordinateGuide.angleOffset ?? 0
+      : area.startAngle;
+    const offsetDelta = currentOffset - area.startAngle;
+    return area.angleBands.map((band) => ({
+      ...band,
+      startAngle: band.startAngle + offsetDelta,
+    }));
+  }
+
+  function polarFacetCellForNode(node: CanvasNode, composition: CanvasNode["compositionSpec"]) {
+    if (composition?.type !== "facet" || composition.facetCoordinateSystem !== "Polar") return undefined;
+    const memberIndex = composition.members.findIndex((member) => member.nodeId === node.id);
+    if (memberIndex < 0) return undefined;
+    const spec = node.chartSpec;
+    const grid = composition.facetGrid;
+    const thetaValues = grid
+      ? [...grid.columnValues]
+      : composition.facetDirection === "column"
+        ? Array.from(new Set(composition.facetValues ?? []))
+        : [""];
+    const radiusValues = grid
+      ? [...grid.rowValues]
+      : composition.facetDirection === "row"
+        ? Array.from(new Set(composition.facetValues ?? []))
+        : [""];
+    const thetaValue = grid
+      ? spec?.filters?.[grid.columnField]
+      : composition.facetDirection === "column"
+        ? spec?.filters?.[composition.facetThetaField ?? composition.facetField ?? ""]
+        : undefined;
+    const radiusValue = grid
+      ? spec?.filters?.[grid.rowField]
+      : composition.facetDirection === "row"
+        ? spec?.filters?.[composition.facetRadiusField ?? composition.facetField ?? ""]
+        : undefined;
+    const thetaCount = Math.max(thetaValues.length, 1);
+    const radiusCount = Math.max(radiusValues.length, 1);
+    const fallbackThetaIndex = composition.facetDirection === "column" ? memberIndex % thetaCount : 0;
+    const fallbackRadiusIndex = grid
+      ? Math.floor(memberIndex / thetaCount)
+      : composition.facetDirection === "row" ? memberIndex % radiusCount : 0;
+    const thetaIndex = Math.max(0, thetaValue ? thetaValues.indexOf(thetaValue) : fallbackThetaIndex);
+    const radiusIndex = Math.max(0, radiusValue ? radiusValues.indexOf(radiusValue) : fallbackRadiusIndex);
+    const guide = node.coordinateGuide?.type === "Polar" ? node.coordinateGuide : null;
+    const radialStart = Math.max(0, Math.min(guide?.innerRadiusRatio ?? 0.18, 0.98));
+    const radialEnd = Math.max(radialStart + 0.01, Math.min(guide?.outerRadiusRatio ?? 1, 1));
+    const radialSpan = (radialEnd - radialStart) / radiusCount;
+    const sharedBand = thetaValue
+      ? sharedChordAngleBands(node)?.find((band) => band.value === thetaValue)
+      : undefined;
+    return {
+      startAngle: sharedBand?.startAngle
+        ?? (guide?.angleOffset ?? 0) + thetaIndex * (guide?.angleSpan ?? 360) / thetaCount,
+      angleSpan: sharedBand?.angleSpan ?? (guide?.angleSpan ?? 360) / thetaCount,
+      innerRadiusRatio: radialStart + radiusIndex * radialSpan,
+      outerRadiusRatio: radialStart + (radiusIndex + 1) * radialSpan,
+      rowValue: radiusValue,
+      columnValue: thetaValue,
+    };
+  }
+
+  function sourcePieRadiusDomain(spec: ChartSpec, dataset: Dataset): [number, number] | undefined {
+    const template = normalizeChartTemplate(spec.chartType);
+    const field = spec.encodings.radius?.field;
+    if ((template !== "pie" && template !== "donut") || !field) return undefined;
+    const values = dataset.rows
+      .map((row) => Number(row[field] ?? ""))
+      .filter(Number.isFinite)
+      .map((value) => Math.max(0, value));
+    if (values.length === 0) return undefined;
+    const maximum = Math.max(...values);
+    return maximum > 0 ? [0, maximum] : undefined;
   }
 
   function renderChartNode(node: CanvasNode, useLayerScales = true) {
@@ -649,7 +846,13 @@ export function useCanvasRendering(context: any) {
     const complete = hasRequiredChartEncodings(chartSpec)
       && encodingIssues.length === 0
       && !defaultFieldsUnavailable;
-    const coordinateReady = contract.coordinateSystem === "CoordinateFree" || node.coordinateGuide?.type === contract.coordinateSystem;
+    const polarFacetProjection = composition?.type === "facet"
+      && composition.facetCoordinateSystem === "Polar"
+      && (contract.family === "line" || contract.family === "area")
+      && node.coordinateGuide?.type === "Polar";
+    const coordinateReady = polarFacetProjection
+      || contract.coordinateSystem === "CoordinateFree"
+      || node.coordinateGuide?.type === contract.coordinateSystem;
     if (encodingIssues.length > 0) {
       node.renderedContent = null;
       node.chartSpec = {
@@ -822,9 +1025,17 @@ export function useCanvasRendering(context: any) {
         coordinateGuide: node.coordinateGuide,
         chartSpec: syncedChartSpec,
         dataset: renderableDataset,
+        polarRadiusDomain: sourcePieRadiusDomain(renderingInputSpec, renderDataset),
+        polarFacetCell: polarFacetCellForNode(node, composition),
         polarConcatDirection: composition?.type === "concat"
           && (composition.direction === "radial" || composition.direction === "angular")
           ? composition.direction
+          : undefined,
+        sharedHierarchyLevelCount: composition?.type === "concat"
+          ? composition.sharedHierarchyLevelCount
+          : undefined,
+        sharedHierarchyOuterRadius: composition?.type === "concat"
+          ? composition.sharedHierarchyOuterRadius
           : undefined,
         sharedPlotArea,
         sharedScales,
@@ -863,7 +1074,7 @@ export function useCanvasRendering(context: any) {
       if (node.coordinateGuide?.type === "Polar" && result.polarArea) {
         node.coordinateGuide.radius = result.polarArea.outerRadius;
       }
-      if (node.nestedSpec && template === "scatter") {
+      if (node.nestedSpec && (template === "scatter" || template === "matrix")) {
         const nested = renderNestedPie({
           chartId: node.id,
           width: node.width,

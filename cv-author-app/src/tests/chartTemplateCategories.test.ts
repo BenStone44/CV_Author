@@ -27,6 +27,7 @@ describe("chart template categories", () => {
       "Area chart",
       "Point",
       "Line chart",
+      "Radar",
       "Heatmap",
       "Arc",
       "Tree",
@@ -35,11 +36,12 @@ describe("chart template categories", () => {
       "Calendar",
       "Boxplot",
     ]);
-    expect(grouped).toHaveLength(candidates.length + 2);
+    expect(grouped).toHaveLength(candidates.length + 7);
     expect(new Set(grouped.map((candidate) => candidate.id)).size).toBe(candidates.length);
-    expect(categories.find((category) => category.id === "barchart")?.candidates).toHaveLength(6);
-    expect(categories.find((category) => category.id === "linechart")?.candidates).toHaveLength(3);
-    expect(categories.find((category) => category.id === "areachart")?.candidates).toHaveLength(4);
+    expect(categories.find((category) => category.id === "barchart")?.candidates).toHaveLength(11);
+    expect(categories.find((category) => category.id === "linechart")?.candidates).toHaveLength(4);
+    expect(categories.find((category) => category.id === "areachart")?.candidates).toHaveLength(5);
+    expect(categories.find((category) => category.id === "radar")?.candidates.map((candidate) => candidate.chartType)).toEqual(["RadarChart"]);
     expect(categories.find((category) => category.id === "heatmap")?.candidates.map((candidate) => candidate.chartType)).toEqual([
       "MatrixDiagram",
       "Contour",
@@ -53,6 +55,9 @@ describe("chart template categories", () => {
       "PieChart",
       "DonutChart",
       "RadialBarChart",
+      "RadialStackedBarChart",
+      "CircularBarChart",
+      "CircularStackedBarChart",
     ]);
     expect(categories.find((category) => category.id === "tree")?.candidates.map((candidate) => candidate.chartType)).toEqual([
       "Sunburst",

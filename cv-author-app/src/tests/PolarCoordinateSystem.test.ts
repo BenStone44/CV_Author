@@ -266,6 +266,50 @@ describe("independent Polar coordinate system component", () => {
     expect(createPolarCoordinateSystemModel(node)?.radius).toBe(68);
   });
 
+  it("renders an independent inner-radius handle at the occupied inner ring", () => {
+    const node = polarNode({
+      renderedContent: '<path data-mark-role="arc"/>',
+      coordinateGuide: {
+        type: "Polar",
+        origin: { x: 110, y: 100 },
+        innerRadiusRatio: 0.3,
+        outerRadiusRatio: 1,
+      },
+      chartSpec: {
+        chartType: "DonutChart",
+        datasetId: "measurements",
+        encodings: { theta: { field: "value", type: "quantitative" } },
+        plotArea: { x: 30, y: 20, width: 160, height: 160 },
+        polarArea: { startAngle: 0, angleSpan: 360, innerRadius: 24, outerRadius: 80 },
+      },
+    });
+    const onInnerRadiusPointerDown = vi.fn();
+    const render = (PolarCoordinateSystem as any).setup({
+      node,
+      viewZoom: 1,
+      applyTransform: false,
+      onInnerRadiusPointerDown,
+    });
+    const coordinateSystem = render();
+    const control = coordinateSystem.children.find((child: any) =>
+      String(child.props.class ?? "").includes("polar-coordinate-inner-radius-control"),
+    );
+    const event = {
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    } as unknown as PointerEvent;
+
+    expect(createPolarCoordinateSystemModel(node)).toMatchObject({
+      innerRadius: 24,
+      innerRadiusControlPoint: { x: 134, y: 100 },
+    });
+    expect(control.props.transform).toBe("translate(134 100) scale(0.5)");
+    control.props.onPointerdown(event);
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(event.stopPropagation).toHaveBeenCalledOnce();
+    expect(onInnerRadiusPointerDown).toHaveBeenCalledWith(node, event);
+  });
+
   it("does not render for a non-Polar guide", () => {
     const node = polarNode({
       coordinateGuide: {

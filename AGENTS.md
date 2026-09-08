@@ -219,7 +219,13 @@ Polar coordinate tree, not as coordinate-free hierarchies. A tree has one
 special external leaf axis and one internal depth axis. For a Cartesian tree,
 left/right growth exposes Y and up/down growth exposes X. A radial tree exposes
 Angle. The orthogonal Cartesian channel or Polar Radius is the depth axis and
-must not be shared by Layer or Concat. Determine terminal nodes from the
+must not be shared by Layer or Concat with a non-hierarchy chart. A Sunburst
+and RadialDendrogram are the hierarchy exception: an Angular Concat may share
+Radius only through one explicit hierarchy-depth scale. Use the maximum visible
+depth across the linked hierarchy members, one common outer radius, and place
+each RadialDendrogram node at the center radius of the Sunburst band for the
+same root-relative depth. Do not independently normalize the two renderers or
+infer level correspondence from node names. Determine terminal nodes from the
 `key`/`parent` relation. Order the leaf domain by `category` then `key` for a
 Cartesian tree, and by `theta`/`angle` then `key` for a radial tree. Treat that
 domain as categorical even when leaf keys are numeric.

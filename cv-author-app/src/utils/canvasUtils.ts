@@ -199,6 +199,70 @@ export function getPolarOccupiedGeometry(node: CanvasNode): PolarOccupiedGeometr
   const declaredPolar = node.coordinateSystem?.type === "Polar"
     || chartSchema?.coordinateSystem === "Polar";
   if (!polarGuide && !declaredPolar) return null;
+  if (node.kind === "group"
+    && node.compositionSpec?.type === "facet"
+    && node.compositionSpec.facetCoordinateSystem === "Polar"
+    && polarGuide) {
+    const childGeometry = node.children.flatMap((child) => {
+      const geometry = getPolarOccupiedGeometry(child);
+      if (!geometry) return [];
+      const localMinX = child.kind === "leaf" ? child.contentMinX : 0;
+      const localMinY = child.kind === "leaf" ? child.contentMinY : 0;
+      const unrotatedOrigin = {
+        x: child.x + (geometry.origin.x - localMinX) * child.scaleX,
+        y: child.y + (geometry.origin.y - localMinY) * child.scaleY,
+      };
+      const childCenter = {
+        x: child.x + child.width * child.scaleX / 2,
+        y: child.y + child.height * child.scaleY / 2,
+      };
+      const radians = child.rotation * Math.PI / 180;
+      const dx = unrotatedOrigin.x - childCenter.x;
+      const dy = unrotatedOrigin.y - childCenter.y;
+      const transformedOrigin = child.rotation === 0
+        ? unrotatedOrigin
+        : {
+          x: childCenter.x + dx * Math.cos(radians) - dy * Math.sin(radians),
+          y: childCenter.y + dx * Math.sin(radians) + dy * Math.cos(radians),
+        };
+      const radialScale = Math.min(Math.abs(child.scaleX), Math.abs(child.scaleY));
+      return [{
+        origin: transformedOrigin,
+        outerRadius: geometry.outerRadius * radialScale,
+        innerRadius: geometry.innerRadius * radialScale,
+      }];
+    });
+    if (childGeometry.length > 0) {
+      const origin = {
+        x: childGeometry.reduce((sum, geometry) => sum + geometry.origin.x, 0) / childGeometry.length,
+        y: childGeometry.reduce((sum, geometry) => sum + geometry.origin.y, 0) / childGeometry.length,
+      };
+      const outerRadius = Math.max(...childGeometry.map((geometry) =>
+        Math.hypot(geometry.origin.x - origin.x, geometry.origin.y - origin.y) + geometry.outerRadius));
+      const innerRadius = Math.min(...childGeometry.map((geometry) =>
+        Math.max(0, geometry.innerRadius - Math.hypot(geometry.origin.x - origin.x, geometry.origin.y - origin.y))));
+      const startAngle = ((polarGuide.angleOffset ?? 0) % 360 + 360) % 360;
+      const angleSpan = Math.max(1, Math.min(polarGuide.angleSpan ?? 360, 360));
+      const bounds = {
+        minX: origin.x - outerRadius,
+        minY: origin.y - outerRadius,
+        maxX: origin.x + outerRadius,
+        maxY: origin.y + outerRadius,
+        width: outerRadius * 2,
+        height: outerRadius * 2,
+      };
+      return {
+        origin,
+        startAngle,
+        endAngle: startAngle + angleSpan,
+        angleSpan,
+        innerRadius,
+        outerRadius,
+        bounds,
+        path: polarOccupiedPath(origin, innerRadius, outerRadius, startAngle, angleSpan),
+      };
+    }
+  }
   const localMinX = node.kind === "leaf" ? node.contentMinX : 0;
   const localMinY = node.kind === "leaf" ? node.contentMinY : 0;
   const origin = polarGuide?.origin ?? {
@@ -521,7 +585,12 @@ export function cloneChartSpec(chartSpec: ChartSpec | null | undefined) {
       : undefined,
     plotArea: chartSpec.plotArea ? { ...chartSpec.plotArea } : undefined,
     selectionBounds: chartSpec.selectionBounds ? { ...chartSpec.selectionBounds } : undefined,
-    polarArea: chartSpec.polarArea ? { ...chartSpec.polarArea } : undefined,
+    polarArea: chartSpec.polarArea
+      ? {
+        ...chartSpec.polarArea,
+        angleBands: chartSpec.polarArea.angleBands?.map((band) => ({ ...band })),
+      }
+      : undefined,
     axes: chartSpec.axes
       ? Object.fromEntries(Object.entries(chartSpec.axes).map(([channel, config]) => [
         channel,

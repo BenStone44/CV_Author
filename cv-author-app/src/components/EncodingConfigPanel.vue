@@ -63,6 +63,7 @@ const props = defineProps<{
   fatherColumns?: DataColumn[];
   coordinateGuide?: CoordinateGuide | null;
   columns: DataColumn[];
+  channelColumns?: Partial<Record<ChartEncodingChannel, DataColumn[]>>;
   rows: DataRow[];
   markConfig: MarkGroupSharedConfig;
   rendererError?: string;
@@ -114,8 +115,13 @@ function isDiscreteAxis(axis: "x" | "y") {
   return type === "nominal" || type === "ordinal";
 }
 const normalizedChartType = computed(() => props.chartSpec.chartType.replace(/[\s_-]/g, "").toLowerCase());
+const isChord = computed(() => normalizedChartType.value === "chord");
+const isHorizon = computed(() => normalizedChartType.value === "horizonchart");
 const isSingleBar = computed(() => normalizedChartType.value === "singlebarchart");
 const configs = computed(() => getEncodingChannelConfigsForSpec(props.chartSpec));
+function columnsForChannel(channel: ChartEncodingChannel) {
+  return props.channelColumns?.[channel] ?? props.columns;
+}
 function displayedEncodingField(channel: ChartEncodingChannel) {
   return props.chartSpec.defaultDataBinding
     ? ""
@@ -123,7 +129,9 @@ function displayedEncodingField(channel: ChartEncodingChannel) {
 }
 const isPolar = computed(() => template.value === "pie"
   || template.value === "donut"
-  || normalizedChartType.value === "radialbarchart");
+  || (normalizedChartType.value.includes("radial") && normalizedChartType.value.includes("barchart"))
+  || (normalizedChartType.value.includes("circular") && normalizedChartType.value.includes("barchart"))
+  || normalizedChartType.value === "radarchart");
 const usesPolarAxisRows = computed(() => getChartTemplateContract(props.chartSpec.chartType)?.coordinateSystem === "Polar"
   && configs.value.some((config) => config.channel === "theta")
   && configs.value.some((config) => config.channel === "radius"));
@@ -168,6 +176,9 @@ const treeDirections: Array<{
 ];
 const isForceDirected = computed(() => normalizedChartType.value === "forcedirectedgraph");
 const nodeLabelsVisible = computed(() => props.markConfig.nodeLabelsVisible !== false);
+const leafLabelsVisible = computed(() => props.markConfig.leafLabelsVisible === undefined
+  ? nodeLabelsVisible.value
+  : props.markConfig.leafLabelsVisible !== false);
 function markNumber(name: string, fallback: number) {
   const value = Number(props.markConfig[name]);
   return Number.isFinite(value) ? value : fallback;
@@ -178,7 +189,7 @@ const forceLinkStrength = computed(() => markNumber("linkStrength", 0.7));
 const forceCenterStrength = computed(() => markNumber("centerStrength", 0.08));
 const forceCollisionRadius = computed(() => markNumber("collisionRadius", 10));
 const standardConfigs = computed(() => configs.value.filter((config) => {
-  if (isCartesian.value && (config.channel === "x" || config.channel === "y")) return false;
+  if ((isCartesian.value || isHorizon.value) && (config.channel === "x" || config.channel === "y")) return false;
   if (isPolar.value && config.channel === "segment") return false;
   if (usesPolarAxisRows.value && config.channel === "theta") return false;
   if (usesPolarAxisRows.value && config.channel === "radius") return false;
@@ -282,6 +293,7 @@ const polarSegmentMode = computed<"categorical" | "quantitative" | null>(() => {
   if ((props.chartSpec.angleFields?.length ?? 0) > 0) return "quantitative";
   return null;
 });
+const hasPolarSegment = computed(() => configs.value.some((config) => config.channel === "segment"));
 const polarSegmentMembers = computed(() => {
   if (props.chartSpec.defaultDataBinding) return [];
   const field = props.chartSpec.encodings.segment?.field;
@@ -296,7 +308,7 @@ const polarSegmentMembers = computed(() => {
 });
 const editableSeriesMembers = computed(() => seriesItemMode.value === "quantitative"
   ? selectedValueSeriesFields.value.map((field) => ({ id: field, label: field }))
-  : isPolar.value
+  : isPolar.value && hasPolarSegment.value && !supportsSeriesItems.value
     ? polarSegmentMembers.value
     : seriesMembers.value);
 const polarSegmentColumns = computed(() => {
@@ -316,7 +328,7 @@ const sizeConfig = computed(() => configs.value.find((config) => config.channel 
 const colorField = computed(() => displayedEncodingField("color"));
 const sizeField = computed(() => displayedEncodingField("size"));
 const colorColumn = computed(() => props.columns.find((column) => column.name === colorField.value));
-const supportsLegend = computed(() => (isPolar.value && polarSegmentMembers.value.length > 0)
+const supportsLegend = computed(() => (isPolar.value && hasPolarSegment.value && polarSegmentMembers.value.length > 0)
   || supportsSeriesItems.value
   || (template.value === "scatter" && colorColumn.value?.type === "nominal"));
 const showColorMapping = computed(() => !!colorColumn.value && colorColumn.value.type !== "nominal");
@@ -448,6 +460,7 @@ const axisRows = computed(() => (["x", "y"] as const).flatMap((axis) => {
 function isEncodingChannelDisabled(channel: ChartEncodingChannel) {
   if (channel === "y") return hasDerivedValueSeries(props.chartSpec);
   if (channel === "theta") return hasDerivedValueSeries(props.chartSpec, "theta");
+  if (channel === "radius") return hasDerivedValueSeries(props.chartSpec);
   return false;
 }
 
@@ -485,6 +498,14 @@ function setPolarAxisVisibility(axis: "theta" | "radius", visible: boolean) {
 
 function setPolarAxisLabelsVisible(axis: "theta" | "radius", visible: boolean) {
   emit("chartAxisChange", axis, { labelsVisible: visible });
+}
+
+function setChordAxisVisibility(visible: boolean) {
+  emit("chartAxisChange", "theta", { visible });
+}
+
+function setChordLabelsVisible(visible: boolean) {
+  emit("chartAxisChange", "theta", { labelsVisible: visible });
 }
 
 function toggleDetailPanel(channel: "color" | "size") {
@@ -686,7 +707,7 @@ function updateSingleBarTopN(rawValue: string) {
           </div>
           <EncodingChannelField
             :config="displayedEncodingConfig({ ...polarThetaConfig, label: 'Theta' })"
-            :columns="columns"
+            :columns="columnsForChannel('theta')"
             :father-columns="fatherColumns"
             :value="displayedEncodingField('theta')"
             :disabled="isEncodingChannelDisabled('theta')"
@@ -720,10 +741,11 @@ function updateSingleBarTopN(rawValue: string) {
             :class="{ 'is-mapped': !!radiusField }"
           >
             <EncodingChannelField
-              :config="{ ...polarRadiusConfig, label: 'R field', emptyLabel: polarRadiusConfig.required ? 'Not bound' : 'Static' }"
-              :columns="columns"
+              :config="displayedEncodingConfig({ ...polarRadiusConfig, label: 'R field', emptyLabel: polarRadiusConfig.required ? 'Not bound' : 'Static' })"
+              :columns="columnsForChannel('radius')"
               :father-columns="fatherColumns"
               :value="radiusField"
+              :disabled="isEncodingChannelDisabled('radius')"
               @change="updateMappingDefaults('radius', $event)"
             />
             <label v-if="!radiusField && !polarRadiusConfig.required" class="encoding-config__polar-radius-control">
@@ -765,9 +787,29 @@ function updateSingleBarTopN(rawValue: string) {
           </div>
         </div>
       </section>
-      <section v-if="isCartesian && axisRows.length" class="encoding-config__axis-rows" aria-label="Cartesian axis encodings">
+      <section v-if="isChord" class="encoding-config__appearance" aria-label="Chord axis appearance">
+        <label class="encoding-config__option">
+          <span>Show group axis</span>
+          <input
+            type="checkbox"
+            :checked="polarAxisVisibility('theta')"
+            aria-label="Show Chord group axis"
+            @change="setChordAxisVisibility(($event.target as HTMLInputElement).checked)"
+          />
+        </label>
+        <label class="encoding-config__option">
+          <span>Show group labels</span>
+          <input
+            type="checkbox"
+            :checked="polarAxisLabelsVisible('theta')"
+            aria-label="Show Chord group labels"
+            @change="setChordLabelsVisible(($event.target as HTMLInputElement).checked)"
+          />
+        </label>
+      </section>
+      <section v-if="(isCartesian || isHorizon) && axisRows.length" class="encoding-config__axis-rows" aria-label="Cartesian axis encodings">
         <div class="encoding-config__axis-rows-toolbar">
-          <div class="encoding-config__axis-switch">
+          <div v-if="!isHorizon" class="encoding-config__axis-switch">
             <span>Swap axes</span>
             <button
               type="button"
@@ -788,6 +830,7 @@ function updateSingleBarTopN(rawValue: string) {
           <div class="encoding-config__axis-channel-label">
             <span class="encoding-config__axis-row-label">{{ row.axis.toUpperCase() }}</span>
             <button
+              v-if="!isHorizon"
               type="button"
               class="encoding-config__axis-direction-button"
               :title="`Reverse ${row.axis.toUpperCase()}-axis direction`"
@@ -799,7 +842,7 @@ function updateSingleBarTopN(rawValue: string) {
           </div>
           <EncodingChannelField
             :config="displayedEncodingConfig(row.config)"
-            :columns="columns"
+            :columns="columnsForChannel(row.bindingAxis)"
             :father-columns="fatherColumns"
             :value="displayedEncodingField(row.bindingAxis)"
             :disabled="isEncodingChannelDisabled(row.bindingAxis)"
@@ -847,7 +890,7 @@ function updateSingleBarTopN(rawValue: string) {
         <div class="encoding-config__channel-row">
           <EncodingChannelField
             :config="displayedEncodingConfig(axisConfig(config))"
-            :columns="columns"
+            :columns="columnsForChannel(config.channel)"
             :father-columns="fatherColumns"
             :value="displayedEncodingField(config.channel)"
             :disabled="isEncodingChannelDisabled(config.channel)"
@@ -859,7 +902,7 @@ function updateSingleBarTopN(rawValue: string) {
         <div v-for="config in compactConfigs" :key="config.channel" class="encoding-config__detail-row">
           <EncodingChannelField
             :config="axisConfig(config)"
-            :columns="columns"
+            :columns="columnsForChannel(config.channel)"
             :father-columns="fatherColumns"
             :value="displayedEncodingField(config.channel)"
             @change="updateMappingDefaults(config.channel, $event)"
@@ -996,12 +1039,12 @@ function updateSingleBarTopN(rawValue: string) {
       </p>
 
       <div
-        v-if="isPolar || (!supportsSeriesItems && editableSeriesMembers.length)"
+        v-if="(isPolar && hasPolarSegment) || (!supportsSeriesItems && editableSeriesMembers.length)"
         class="encoding-config__segment-style-layout"
-        :class="{ 'encoding-config__segment-style-layout--split': isPolar && editableSeriesMembers.length }"
+        :class="{ 'encoding-config__segment-style-layout--split': isPolar && hasPolarSegment && editableSeriesMembers.length }"
       >
         <section
-          v-if="isPolar"
+          v-if="isPolar && hasPolarSegment"
           class="encoding-config__angle encoding-config__segment-drop"
           :class="{
             'is-drop-active': segmentDropState === 'valid',
@@ -1029,7 +1072,7 @@ function updateSingleBarTopN(rawValue: string) {
             <span :title="columnDisplayLabel(column.name)">{{ columnDisplayLabel(column.name) }}</span>
           </label>
         </section>
-        <div v-if="editableSeriesMembers.length || supportsLegend" class="encoding-config__member-styles">
+        <div v-if="!supportsSeriesItems && (editableSeriesMembers.length || supportsLegend)" class="encoding-config__member-styles">
           <header v-if="supportsLegend">
             <label v-if="supportsLegend" class="encoding-config__legend-toggle">
               <span>Show legend</span>
@@ -1248,11 +1291,19 @@ function updateSingleBarTopN(rawValue: string) {
         </div>
       </div>
       <label class="encoding-config__option encoding-config__node-label-toggle">
-        <span>Show node labels</span>
+        <span>Show internal labels</span>
         <input
           type="checkbox"
           :checked="nodeLabelsVisible"
           @change="emit('markConfigChange', { nodeLabelsVisible: ($event.target as HTMLInputElement).checked })"
+        />
+      </label>
+      <label class="encoding-config__option encoding-config__node-label-toggle">
+        <span>Show leaf labels</span>
+        <input
+          type="checkbox"
+          :checked="leafLabelsVisible"
+          @change="emit('markConfigChange', { leafLabelsVisible: ($event.target as HTMLInputElement).checked })"
         />
       </label>
       <label v-if="normalizedChartType === 'dendrogram' && !sizeField" class="encoding-config__static">

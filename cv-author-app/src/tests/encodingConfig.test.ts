@@ -42,8 +42,11 @@ describe("card encoding configuration", () => {
       "StackedBarChart", "DivergentBarChart", "DivergentStackedBarChart", "PieChart",
       "DonutChart", "MatrixDiagram", "AreaChart", "StackedAreaChart", "Streamgraph",
       "HorizonChart", "ParallelCoordinatesPlot", "Icicle", "Sunburst", "Treemap",
-      "Dendrogram", "RadialDendrogram", "RadialBarChart", "Calendar", "Boxplot",
-      "Contour", "Hexbin", "Chord", "Sankey",
+      "Dendrogram", "RadialDendrogram", "RadialBarChart", "RadialStackedBarChart",
+      "RadialRectBarChart", "RadialRectStackedBarChart", "CircularBarChart",
+      "CircularStackedBarChart", "RadarChart", "Calendar", "Boxplot", "SingleBoxplot",
+      "MultipleBoxplot", "Contour", "Hexbin", "Chord", "Sankey", "ForceDirectedGraph",
+      "GraphLink", "GraphLinkPolar",
     ];
     expect(Object.keys(chartEncodingSchemas)).toEqual(chartTypes);
     chartTypes.forEach((chartType) => {
