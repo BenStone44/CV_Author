@@ -1,0 +1,141 @@
+\section{Authoring-Oriented Design Space}
+\label{sec:design-space}
+
+Existing taxonomies characterize recurring structures and relationships in
+completed composite visualizations~\cite{javed2012exploring,Composite,vaid}.
+To make these structures authorable, we operationalize them around three
+decisions: what visual units should be composed, what data and spatial
+relationships define their composition, and how these relationships are
+realized across coordinate systems. We ground the composition units in expert
+perception and use established composition patterns to derive their
+relationships and spatial realizations, forming the design basis of {\system}.
+
+
+\subsection{Perceptually Grounded Chart Blocks}
+
+To derive units that remain visually recognizable yet independently
+composable, we conducted an expert-grounded analysis of the VAID
+corpus~\cite{vaid}, which contains 442 composite visualizations. We selected
+the 100 visualizations with the longest specifications, using specification
+length as a proxy for relatively complex composition structures. Six
+visualization experts (E1--E6) participated, including four academic
+researchers (E1--E4) and two industry practitioners (E5--E6). All had more
+than five years of visualization experience and had designed or implemented
+composite visualizations. E1 and E3 additionally had prior experience with
+visualization surveys and classification.
+
+\textbf{Block granularity.}
+The experts decomposed the selected visualizations into units they considered
+visually coherent and meaningful to construct or manipulate independently, and
+we asked why these units should not be defined at a coarser or finer level.
+Their responses suggested that block granularity is shaped jointly by
+structural independence, established chart semantics, and perceptual identity.
+Experts tended to preserve recognizable chart forms as single units even when
+they could be decomposed into repeated graphical elements; for example, a
+stacked bar chart was viewed as one chart rather than a composition of multiple
+bar charts, and a sunburst as one chart rather than a composition of arcs.
+At the same time, visualization tools and design practice have established
+named idioms such as grouped and stacked bar charts, or streamgraphs and
+stacked area charts, whose distinctions are already meaningful to authors.
+We therefore define blocks around perceptually complete and conventionally
+recognized chart structures, avoiding both coarse composite-level templates
+and fine-grained decomposition into marks.
+
+
+
+
+\textbf{Block families.}
+To organize chart blocks for composite authoring, we examined what cues experts
+use to identify the chart types they are looking for and to recognize related
+design alternatives. The experts then performed a grouping task, organizing
+blocks they expected to find under the same category in an authoring tool or
+considered plausible alternatives. We converted their co-grouping judgments
+into pairwise similarities and combined hierarchical clustering, majority
+agreement, and qualitative rationales to identify recurring perceptual
+relationships.
+
+Three factors repeatedly shaped these judgments. Coordinate-system alternatives
+can be structurally related yet perceptually distinct: most experts treated
+icicle and sunburst charts as separate idioms, while E1 associated them as
+alternatives. Dimensional alternatives, such as basic,
+grouped, and stacked bar charts, were commonly related despite different data
+requirements and mark organizations. Recognizable visual variants also
+remained independently identifiable: E1 and E3 viewed step-line charts mainly
+as line-chart variants, while E6 emphasized their distinct identity in some
+domain-specific uses. We use these recurring perceptual cues to guide the
+organization of block families, connecting related blocks while preserving
+their explicit visual identities.
+
+
+
+\subsection{Dimension-Aware Composition Semantics}
+
+Existing taxonomies define composition primarily through the resulting visual
+relationships~\cite{javed2012exploring,Composite,vaid}. For authoring, we
+further characterize each composition type by how it organizes data dimensions
+across chart blocks. This representation allows composition compatibility to
+be checked from block specifications and connects chart-level data assignments
+with composition-level structure.
+
+\textbf{Layering} combines blocks within a shared coordinate space. The
+participating blocks retain their own marks and encodings while sharing
+compatible positional dimensions and scales. Layering therefore combines
+visual structures without introducing an additional data dimension for layout.
+\textbf{Concatenation} preserves separate chart blocks while establishing a
+shared spatial reference along one dimension. The blocks may encode different
+measures or structures, but their compatible positional dimension provides the
+basis for alignment and coordinated placement.
+\textbf{Faceting} promotes a data dimension to the composition level. Rather
+than encoding that dimension within a single chart, the system partitions the
+data and instantiates the same block for each value, using the promoted
+dimension to organize the repeated views spatially.
+\textbf{Nesting} similarly externalizes a data relationship into composition,
+but associates child blocks with repeated elements of a parent block. A shared
+key, filtering condition, or hierarchical correspondence determines which
+child instance belongs to each parent element and provides its spatial anchor.
+
+From this perspective, composition is not only a spatial arrangement of
+charts, but also a way of reorganizing how data dimensions are represented.
+In particular, dimensions can remain within a block, be promoted to repeated
+views through faceting, or be expressed through parent--child relationships
+in nesting. These semantics provide the basis for {\system}'s data-aware
+composition and dimensional adaptation.
+
+
+\subsection{Composition through Spatial References}
+
+Composition is not determined by a block's coordinate system alone. Instead,
+{\system} considers the spatial references exposed by a block and whether they
+can support the relationship required by a composition. These references may
+be explicit coordinate dimensions, derived structural axes, or positions
+associated with repeated elements.
+
+\textbf{Coordinate dimensions.}
+Cartesian and polar blocks expose explicit spatial dimensions. Cartesian
+blocks provide $x$ and $y$, while polar blocks provide angular ($\theta$) and
+radial ($r$) dimensions. Layering can share both dimensions, whereas
+concatenation shares one dimension and allocates the other. In polar
+coordinates, this produces angular concatenation, which partitions $\theta$
+while sharing $r$, and radial concatenation, which partitions $r$ while
+sharing $\theta$. Geographic blocks similarly share a common geographic
+reference, allowing compatible layers to be aligned through the same map
+projection.
+
+\textbf{Other spatial references.}
+Useful spatial references may also arise from visual structure:
+1) Repeated or ordered elements can expose derived
+alignment axes; for example, the ordered leaves of a tree can form an axis even
+when the tree layout has no conventional data axis, while nodes arranged around
+a chord diagram provide angular positions that can align with repeated views.
+2) Individual marks or structural elements can instead serve as element-level
+anchors. Nesting uses such anchors to position child blocks and derive their
+data context, allowing parent and child blocks to use different coordinate
+systems. Thus, layouts such as force-directed graphs, bubble layouts, Venn
+diagrams, and word clouds may lack semantically meaningful axes while still
+providing positions that support nesting. 3) Finally, some blocks derive their
+geometry from another block rather than defining an independent spatial
+reference. Network links, for example, obtain their endpoints from node
+positions and therefore inherit the spatial reference of the node layer,
+allowing them to participate in layering wherever the referenced nodes are
+positioned.
+

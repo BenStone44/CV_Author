@@ -176,7 +176,7 @@ export const chordPolarLineDataset: Dataset = {
   },
 };
 
-/** A 20 x 20 heatmap with a separate 100-node, three-community force graph. */
+/** A graph-derived 20 x 20 heatmap with a weighted force-network overlay. */
 export const matrixPieNetworkDataset: Dataset = {
   id: MATRIX_PIE_NETWORK_DATASET_ID,
   name: "matrix_force_heatmap.csv + matrix_force_nodes.csv + matrix_force_edges.csv",
@@ -199,7 +199,16 @@ export const matrixPieNetworkDataset: Dataset = {
         { name: "id", type: "nominal" },
         { name: "label", type: "nominal" },
         { name: "community", type: "nominal" },
-        { name: "size", type: "quantitative" },
+        { name: "density", type: "nominal" },
+        { name: "weight", type: "quantitative" },
+        { name: "channel_a", type: "quantitative" },
+        { name: "channel_b", type: "quantitative" },
+        { name: "channel_c", type: "quantitative" },
+        { name: "channel_d", type: "quantitative" },
+        { name: "channel_e", type: "quantitative" },
+        { name: "dominant_component", type: "nominal" },
+        { name: "layout_x", type: "quantitative" },
+        { name: "layout_y", type: "quantitative" },
       ],
       rows: matrixForceNodeRows,
     },
@@ -208,6 +217,7 @@ export const matrixPieNetworkDataset: Dataset = {
         { name: "source", type: "nominal" },
         { name: "target", type: "nominal" },
         { name: "weight", type: "quantitative" },
+        { name: "kind", type: "nominal" },
       ],
       rows: matrixForceEdgeRows,
     },

@@ -1,0 +1,55 @@
+\section{Discussion}
+\label{sec:discussion}
+
+{\system} demonstrates that composite visualization authoring can benefit from
+treating explicit visual structure as the primary authoring reference. By
+representing recognizable charts as reusable blocks and preserving composition
+relationships as explicit structures, {\system} provides a middle ground
+between predefined chart construction and low-level graphical specification.
+Our evaluation suggests that this abstraction can improve compositional
+understanding and preserve a consistent workflow across a broader range of
+visualization structures.
+
+\textbf{Lessons learned.}
+Participants generally found recognizable chart blocks and explicit
+composition relationships easy to understand, and the exploratory study showed
+that block-based workflow can transfer across different chart
+types, coordinate systems, and structural forms. These results support our
+design choice of keeping visual forms and composition relationships explicit,
+while allowing dimensional changes to be introduced when needed. Compared with
+DI, this reduces the need to reason about fine-grained graphical and structural
+levels; compared with Tableau, it places greater emphasis on making the
+resulting visual form visible before further dimensional adaptation. The study
+also suggests that variation in composable units can increase expressive
+flexibility without requiring a different composition workflow.
+
+\textbf{Limitations.} First, {\system} supports
+composing visualizations from existing units but does not allow users to create
+new units, which may constrain finer-grained designs and more open-ended
+authoring. Second, our perceptual principles currently serve as design
+guidelines rather than a systematically validated taxonomy. The expert-derived
+families and implemented blocks therefore provide only an initial coverage of
+the design space; additional composable structures and alternative block
+boundaries may remain unexplored. 
+Third, our current dimensional adaptation covers only a limited
+set of transitions, primarily within chart families and through faceting.
+More general dimensional changes may involve nested structures or transformations
+across different families. Extending
+these cases could support a broader recommendation space, where the system
+suggests possible structural adaptations while leaving the final choice to the
+author.
+
+
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented {\system}, a block-based authoring environment for composite
+visualizations that combines explicit chart units, layout-referenced
+composition, and dimensional adaptation. A formative study informed the block
+granularity and family organization, while case studies and user evaluations
+showed that the resulting authoring logic supports diverse composite
+visualizations through a consistent and learnable workflow. Overall, our work
+suggests that treating visual structure as an explicit authoring reference can
+bridge the gap between predefined chart construction and low-level graphical
+specification.

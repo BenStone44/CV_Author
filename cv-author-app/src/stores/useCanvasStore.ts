@@ -4403,7 +4403,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     return true;
   }
 
-  /** Build a heatmap with a three-community force overlay and marginal stacked bars. */
+  /** Build a graph-derived heatmap with a weighted force overlay and marginal stacked bars. */
   async function loadMatrixPieNetworkCase(datasetId: string) {
     const dataset = getDataset(datasetId);
     const matrixCandidate = implementedTemplateDefinitions.find((candidate) =>
@@ -4425,13 +4425,17 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (!matrix?.chartSpec || !topBar?.chartSpec || !leftBar?.chartSpec) return false;
 
     const valueFields = ["channel_a", "channel_b", "channel_c", "channel_d", "channel_e"];
-    const seriesColors = {
-      channel_a: { color: "#003049" },
-      channel_b: { color: "#006d77" },
-      channel_c: { color: "#780000" },
-      channel_d: { color: "#9c2f00" },
-      channel_e: { color: "#5a189a" },
-    };
+    const componentColors = [
+      globalPalette.categorical[0]!,
+      globalPalette.categorical[1]!,
+      globalPalette.categorical[2]!,
+      globalPalette.categorical[3]!,
+      globalPalette.categorical[4]!,
+    ];
+    const seriesColors = Object.fromEntries(valueFields.map((field, index) => [
+      field,
+      { color: componentColors[index]! },
+    ]));
     const resetFrame = (node: CanvasNode, x: number, y: number, width: number, height: number) => {
       node.x = x;
       node.y = y;
@@ -4446,7 +4450,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (matrix.coordinateGuide?.type === "Cartesian") matrix.coordinateGuide.yDirection = 1;
     if (leftBar.coordinateGuide?.type === "Cartesian") leftBar.coordinateGuide.yDirection = 1;
 
-    matrix.name = "Heatmap — three-community force network";
+    matrix.name = "Graph-derived heatmap — weighted force network";
     matrix.chartSpec = {
       ...matrix.chartSpec,
       datasetId,
@@ -4459,9 +4463,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         source: { field: "source", type: "nominal" },
         target: { field: "target", type: "nominal" },
         value: { field: "weight", type: "quantitative" },
-        size: { field: "size", type: "quantitative" },
+        size: { field: "weight", type: "quantitative" },
       },
-      series: { field: "community", type: "nominal" },
+      series: { field: "dominant_component", type: "nominal" },
       aggregations: undefined,
       dataTransforms: undefined,
       filters: undefined,
@@ -4480,7 +4484,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
             opacity: 0.94,
             colorMapping: {
               type: "linear",
-              domain: [14, 165],
+              domain: [0, 25],
               stops: globalPalette.gradient.map((color, index) => ({
                 offset: index / Math.max(1, globalPalette.gradient.length - 1),
                 color,
@@ -4495,25 +4499,22 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           role: "node",
           memberKeys: [],
           sharedConfig: {
-            communityField: "community",
-            communityStrength: 0.26,
-            chargeStrength: -72,
-            linkDistance: 34,
-            linkStrength: 0.68,
-            centerStrength: 0.025,
-            collisionRadius: 4,
+            layoutXField: "layout_x",
+            layoutYField: "layout_y",
+            layoutNormalized: true,
+            nodeShape: "pie",
+            pieFields: valueFields.join(","),
             nodeLabelsVisible: false,
             sizeMapping: {
               type: "linear",
-              stops: [{ offset: 0, size: 4 }, { offset: 1, size: 12 }],
+              stops: [{ offset: 0, size: 8 }, { offset: 1, size: 24 }],
             },
             colorMapping: {
               type: "categorical",
-              values: {
-                "Community A": "#003049",
-                "Community B": "#c1121f",
-                "Community C": "#006d77",
-              },
+              values: Object.fromEntries(valueFields.map((field, index) => [
+                field,
+                componentColors[index]!,
+              ])),
             },
           },
           allowOverrides: true,
@@ -4523,7 +4524,16 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           chartId: matrix.id,
           role: "link",
           memberKeys: [],
-          sharedConfig: { color: "#263238", opacity: 0.28 },
+          sharedConfig: {
+            color: "#ffffff",
+            opacity: 0.24,
+            internalOpacity: 0.12,
+            internalWidth: 2,
+            crossOpacity: 0.22,
+            crossWidth: 3,
+            radialOpacity: 0.62,
+            radialWidth: 4.8,
+          },
           allowOverrides: true,
         },
       ],

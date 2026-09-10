@@ -1608,7 +1608,7 @@ function renderForceDirected(input: GenericRenderInput) {
     const source = (row[sourceField] ?? "").trim();
     const target = (row[targetField] ?? "").trim();
     return source && target && nodeIds.has(source) && nodeIds.has(target)
-      ? [{ source, target, value: numeric(row, input.chartSpec.encodings.value, 1), index }]
+      ? [{ source, target, value: numeric(row, input.chartSpec.encodings.value, 1), kind: row.kind ?? "", index }]
       : [];
   });
   const sizeEncoding = input.chartSpec.encodings.size;
@@ -1650,7 +1650,22 @@ function renderForceDirected(input: GenericRenderInput) {
   const communityAnchorFor = (node: typeof nodeRows[number]) => configuredCommunityField
     ? communityAnchors.get(node.row[configuredCommunityField] ?? "") ?? { x: centerX, y: centerY }
     : { x: centerX, y: centerY };
+  const layoutXField = typeof forceConfig.layoutXField === "string" ? forceConfig.layoutXField : undefined;
+  const layoutYField = typeof forceConfig.layoutYField === "string" ? forceConfig.layoutYField : undefined;
+  const hasStoredLayout = !!layoutXField && !!layoutYField && nodeRows.every((node) =>
+    Number.isFinite(Number(node.row[layoutXField] ?? ""))
+    && Number.isFinite(Number(node.row[layoutYField] ?? "")));
+  const layoutNormalized = forceConfig.layoutNormalized !== false;
   const seededNodes = nodeRows.map((node, index) => {
+    if (hasStoredLayout && layoutXField && layoutYField) {
+      const rawX = Number(node.row[layoutXField]);
+      const rawY = Number(node.row[layoutYField]);
+      return {
+        ...node,
+        x: layoutNormalized ? area.x + Math.max(0, Math.min(1, rawX)) * area.width : area.x + rawX,
+        y: layoutNormalized ? area.y + Math.max(0, Math.min(1, rawY)) * area.height : area.y + rawY,
+      };
+    }
     const anchor = communityAnchorFor(node);
     const angle = index * Math.PI * (3 - Math.sqrt(5));
     const distance = Math.min(area.width, area.height) * 0.08 * Math.sqrt((index + 1) / Math.max(nodeRows.length, 1));
@@ -1660,21 +1675,23 @@ function renderForceDirected(input: GenericRenderInput) {
   // the original endpoint ids in `links` so the SVG data attributes remain
   // stable and can still resolve through the node index below.
   const simulationLinks = links.map((link) => ({ ...link }));
-  const simulation = forceSimulation(seededNodes as any)
-    .force("link", forceLink(simulationLinks as any)
-      .id((node: any) => node.id)
-      .distance(linkDistance)
-      .strength(linkStrength))
-    .force("charge", forceManyBody().strength(chargeStrength))
-    .force("center", forceCenter(centerX, centerY))
-    .force("x", forceX((node: any) => communityAnchorFor(node).x)
-      .strength(communityValues.length > 1 ? communityStrength : centerStrength))
-    .force("y", forceY((node: any) => communityAnchorFor(node).y)
-      .strength(communityValues.length > 1 ? communityStrength : centerStrength))
-    .force("collide", forceCollide((node: any) => Math.max(collisionRadius, radiusFor(node) + nestedExtentFor(node) + 6)))
-    .stop();
-  const simulationTicks = input.nestedChildFrames?.length ? 300 : 180;
-  for (let tick = 0; tick < simulationTicks; tick += 1) simulation.tick();
+  if (!hasStoredLayout) {
+    const simulation = forceSimulation(seededNodes as any)
+      .force("link", forceLink(simulationLinks as any)
+        .id((node: any) => node.id)
+        .distance(linkDistance)
+        .strength(linkStrength))
+      .force("charge", forceManyBody().strength(chargeStrength))
+      .force("center", forceCenter(centerX, centerY))
+      .force("x", forceX((node: any) => communityAnchorFor(node).x)
+        .strength(communityValues.length > 1 ? communityStrength : centerStrength))
+      .force("y", forceY((node: any) => communityAnchorFor(node).y)
+        .strength(communityValues.length > 1 ? communityStrength : centerStrength))
+      .force("collide", forceCollide((node: any) => Math.max(collisionRadius, radiusFor(node) + nestedExtentFor(node) + 6)))
+      .stop();
+    const simulationTicks = input.nestedChildFrames?.length ? 300 : 180;
+    for (let tick = 0; tick < simulationTicks; tick += 1) simulation.tick();
+  }
 
   const colorEncoding = input.chartSpec.encodings.color;
   const colorDomain = colorEncoding
@@ -1684,7 +1701,12 @@ function renderForceDirected(input: GenericRenderInput) {
   const numericColorDomain = visualDomain(nodeRows.map((node) => node.row), colorEncoding);
   const colorMapping = forceConfig.colorMapping;
   const nodeLabelsVisible = forceConfig.nodeLabelsVisible !== false;
+  const pieFields = typeof forceConfig.pieFields === "string"
+    ? forceConfig.pieFields.split(",").map((field) => field.trim()).filter(Boolean)
+    : [];
+  const renderPieNodes = forceConfig.nodeShape === "pie" && pieFields.length > 1;
   const linkConfig = sharedConfig(input, "link");
+  const linkWeightDomain = finiteDomain(links.map((link) => link.value), [1, 1]);
   const nodeById = new Map(seededNodes.map((node) => [node.id, node]));
   const linkMarks = links.map((link) => {
     const source = nodeById.get(link.source);
@@ -1712,7 +1734,21 @@ function renderForceDirected(input: GenericRenderInput) {
     const targetPoint = targetFrame
       ? nestedFrameLinkEndpoint(target, source, targetFrame)
       : target;
-    return `<line data-chart-id="${esc(input.chartId)}" data-mark-role="link" data-mark-group-id="mark-group:${esc(input.chartId)}:link" data-source="${esc(link.source)}" data-target="${esc(link.target)}" x1="${sourcePoint.x}" y1="${sourcePoint.y}" x2="${targetPoint.x}" y2="${targetPoint.y}" stroke="${esc(String(linkConfig.color ?? "#94a3b8"))}" stroke-opacity="${Number(linkConfig.opacity ?? 0.55)}" stroke-width="${Math.max(1, Math.min(4, link.value || 1))}"/>`;
+    const opacityKey = link.kind ? `${link.kind}Opacity` : "opacity";
+    const widthKey = link.kind ? `${link.kind}Width` : "width";
+    const baseOpacity = Number(linkConfig[opacityKey] ?? linkConfig.opacity ?? 0.55);
+    const configuredWidth = Number(linkConfig[widthKey]);
+    const weightFactor = linkWeightDomain[0] === linkWeightDomain[1]
+      ? 1
+      : 0.8 + (link.value - linkWeightDomain[0]) / (linkWeightDomain[1] - linkWeightDomain[0]) * 1.2;
+    const weightOpacityFactor = linkWeightDomain[0] === linkWeightDomain[1]
+      ? 1
+      : 0.35 + (link.value - linkWeightDomain[0]) / (linkWeightDomain[1] - linkWeightDomain[0]) * 0.65;
+    const opacity = Math.max(0, Math.min(1, baseOpacity * weightOpacityFactor));
+    const width = Number.isFinite(configuredWidth)
+      ? configuredWidth * weightFactor
+      : Math.max(1, Math.min(4, link.value || 1));
+    return `<line data-chart-id="${esc(input.chartId)}" data-mark-role="link" data-link-kind="${esc(link.kind)}" data-link-weight="${link.value}" data-mark-group-id="mark-group:${esc(input.chartId)}:link" data-source="${esc(link.source)}" data-target="${esc(link.target)}" x1="${sourcePoint.x}" y1="${sourcePoint.y}" x2="${targetPoint.x}" y2="${targetPoint.y}" stroke="${esc(String(linkConfig.color ?? "#94a3b8"))}" stroke-opacity="${opacity}" stroke-width="${width}"/>`;
   }).join("");
   const nodeMarks = seededNodes.map((node) => {
     const rawColor = colorEncoding ? node.row[colorEncoding.field] ?? "" : "";
@@ -1729,9 +1765,37 @@ function renderForceDirected(input: GenericRenderInput) {
       ?? (typeof forceConfig.color === "string" ? forceConfig.color : tableau[node.index % tableau.length]!);
     const radius = radiusFor(node);
     const label = node.row.label ?? node.id;
+    const nodeGlyph = renderPieNodes
+      ? (() => {
+        const values = pieFields.map((field) => Math.max(0, Number(node.row[field] ?? "") || 0));
+        const total = values.reduce((sum, value) => sum + value, 0);
+        let angle = 0;
+        return values.map((value, index) => {
+          const field = pieFields[index]!;
+          const nextAngle = index === values.length - 1 || total <= 0
+            ? Math.PI * 2
+            : angle + value / total * Math.PI * 2;
+          const path = d3Arc()
+            .innerRadius(0)
+            .outerRadius(radius)
+            .startAngle(angle)
+            .endAngle(nextAngle)({
+              innerRadius: 0,
+              outerRadius: radius,
+              startAngle: angle,
+              endAngle: nextAngle,
+            }) ?? "";
+          const sliceColor = isCategoricalColorMapping(colorMapping)
+            ? colorMapping.values[field] ?? tableau[index % tableau.length]!
+            : tableau[index % tableau.length]!;
+          angle = nextAngle;
+          return `<path data-mark-role="node-pie-slice" data-series-key="${esc(field)}" transform="translate(${node.x} ${node.y})" d="${path}" fill="${esc(sliceColor)}" stroke="#fff" stroke-width="0.75"><title>${esc(String(label))} · ${esc(field)}: ${value}</title></path>`;
+        }).join("");
+      })()
+      : `<circle cx="${node.x}" cy="${node.y}" r="${radius}" fill="${color}" stroke="#fff" stroke-width="1.5"><title>${esc(String(label))}</title></circle>`;
     const labelStyle = adaptiveLabel({ text: String(label), width: Math.max(18, area.width * 0.22), height: 18, background: "#ffffff", fontSize: 10, minFontSize: 6, maxFontSize: 10, padding: 1 });
     const labelMarkup = nodeLabelsVisible && labelStyle.text ? `<text data-mark-role="node-label" pointer-events="none" x="${node.x + radius + 3}" y="${node.y}" dy="0.35em" font-size="${labelStyle.fontSize}" fill="${labelStyle.color}">${esc(labelStyle.text)}</text>` : "";
-    return `<g data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id)}" data-row-key="${esc(rowKey(graphNodeDataset, node.row, node.index))}"><circle cx="${node.x}" cy="${node.y}" r="${radius}" fill="${color}" stroke="#fff" stroke-width="1.5"><title>${esc(String(label))}</title></circle>${labelMarkup}</g>`;
+    return `<g data-chart-id="${esc(input.chartId)}" data-mark-role="node" data-mark-group-id="mark-group:${esc(input.chartId)}:node" data-node-key="${esc(node.id)}" data-node-x="${node.x}" data-node-y="${node.y}" data-node-radius="${radius}" data-row-key="${esc(rowKey(graphNodeDataset, node.row, node.index))}">${nodeGlyph}${labelMarkup}</g>`;
   }).join("");
   // Selection follows the rendered network footprint. Labels are positioned
   // beside their node circles and can extend beyond the plot area.
@@ -1781,7 +1845,7 @@ function renderForceDirected(input: GenericRenderInput) {
     }
     : area;
   return {
-    content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="force-directed-graph" data-renderer="observable-force-directed@1">${linkMarks}${nodeMarks}</g>`,
+    content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="force-directed-graph" data-layout-source="${hasStoredLayout ? "stored-force" : "live-force"}" data-node-shape="${renderPieNodes ? "pie" : "circle"}" data-renderer="observable-force-directed@1">${linkMarks}${nodeMarks}</g>`,
     plotArea: area,
     selectionBounds,
   };

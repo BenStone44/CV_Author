@@ -1,0 +1,127 @@
+
+\section{Related Work}
+
+We review prior work on design patterns of composite visualizations,
+predictability and flexibility in visualization authoring, and interactive
+mechanisms for composing visual structures.
+
+
+\subsection{Design Patterns of Composite Visualization}
+
+
+
+Multiple-view and composite visualizations combine distinct visual
+representations to support comparison, coordination, and analysis of complex
+data. Prior work has established guidelines for coordinated multiple views and
+identified recurring comparison strategies such as juxtaposition,
+superposition, and explicit encoding~\cite{GuidelinesMultipleViews,
+CoordinatedMultipleViews,VisualComparison}. Related design spaces further
+examine dashboard layouts, domain-specific multi-view structures, and
+multifaceted visualizations~\cite{DashboardDesignSpace,
+MultiViewDesignPatterns,MultiFacetedGraph}.
+
+More directly, composite visualization taxonomies characterize recurring
+spatial, semantic, and data relationships among views. Early work identifies
+patterns including juxtaposition, integration, superimposition, overloading,
+and nesting~\cite{javed2012exploring}. Subsequent studies distinguish view
+composition from spatial configuration~\cite{Composite}, derive finer
+taxonomies based on spatial and semantic relationships~\cite{deng2023survey},
+and index composite designs by their visual structures, data characteristics,
+and analytical tasks~\cite{vaid}. Together, these studies provide a vocabulary
+for describing how completed composite visualizations are organized.
+
+These models, however, do not determine the authoring units through which such
+structures should be constructed. {\system} builds on these taxonomies by
+using spatial relationships as references for direct manipulation, while
+grounding the decomposition into chart-level blocks in how visualization
+experts perceive composite structures.
+
+
+\subsection{Predictability and Flexibility in Visualization Authoring}
+\label{sec:related-authoring-granularity}
+
+Visualization authoring approaches make different trade-offs between
+predictability and flexibility, depending on how explicitly visual structures
+are presented to authors and how freely they can be adapted.
+
+Fine-grained graphical authoring systems~\cite{D3,Protovis,Lyra,Lyra2,
+DataIllustrator,Charticulator,iVisDesigner,DataDrivenGuides,StructGraphics,
+Hanpuku,iVoLVER,DataInk,DataBreeze,InChorus,Liger,
+VisualizationbyDemonstration,CreatingChartsbyDemonstrationGold} provide
+further flexibility by exposing graphical and structural components below the
+chart level. Data Illustrator~\cite{DataIllustrator} and
+Charticulator~\cite{Charticulator} support highly customized structures, but
+place greater construction and coordination demands on authors.
+
+
+Explicit visual-template systems~\cite{ManyEyes,RAWGraphs} present
+recognizable chart forms with bounded data roles, allowing authors to
+anticipate the resulting visualization before configuration.
+Many Eyes~\cite{ManyEyes} and RAWGraphs~\cite{RAWGraphs} exemplify this
+chart-chooser paradigm, where the visual form is explicit from the outset.
+Such templates minimize structural reasoning and provide highly predictable
+outcomes, but their expressiveness is limited by the available template
+collection.
+
+Generalized grammar- and schema-based systems~\cite{Tableau, Vega,VegaLite,
+ggplot2LayeredGrammarofGraphics,Polaris,Tableau,ApacheECharts,Altair,Ivy}
+increase flexibility by abstracting across chart classes through shared marks,
+encoding channels, structural roles, or parameters. Vega-Lite~\cite{VegaLite}
+systematically combines these abstractions to cover a broad design space,
+while Ivy~\cite{Ivy} generalizes examples through parameterized templates.
+Such abstractions reduce the need for a separate template for every chart
+variant, but require authors to reason about the underlying grammar and
+compatible design choices rather than selecting an immediately explicit
+visual outcome.
+
+
+
+{\system} prioritizes the visual clarity and predictability of explicit
+templates by exposing recognizable chart blocks as authoring units. Rather
+than replacing these units with a more abstract grammar, related blocks are
+organized into interoperable chart families, whose boundaries are grounded in
+how experts perceive constituent units of composite visualizations. This
+provides controlled flexibility across related structures while preserving
+the explicit identity of each block.
+
+\subsection{Interactive Composition Mechanisms}
+\label{sec:related-composition-systems}
+
+Given explicit authoring units, existing systems differ in how authors express
+and manipulate composition relationships among them.
+
+Operator-based composition systems~\cite{VegaLite,Vega,
+ggplot2LayeredGrammarofGraphics,Altair,ApacheECharts,Atlas,ATOM,
+ComputableViz,GoFish,Gosling,GenomeSpy,GoTree,Cicero,Nebula,Mosaic,Encodable}
+encode composition through operators and specification structures.
+Vega-Lite~\cite{VegaLite} provides operators for layering,
+concatenation, and faceting, while GoFish~\cite{GoFish} supports recursive
+graphical composition. These mechanisms provide composition semantics
+and broad coverage, but authors express relationships through specification
+abstractions rather than directly manipulating chart units.
+
+
+Visual assembly systems~\cite{SnapTogetherVisualization,Improvise,VisMashup,
+VisComposer,SemanticSnapping,Medley,MultiVision,DrillboardsDrillVis,
+QuickDashboard,QualDash,Pilingjs,GEViTRec} make views or components
+manipulable during composition. Semantic Snapping~\cite{
+SemanticSnapping} guides the combination of compatible views, while
+Medley~\cite{Medley} supports assembly of multi-view designs.
+These approaches make constituent views and their spatial relationships clear,
+but primarily focus on arrangement and coordination among complete views.
+
+Structure-aware composition systems~\cite{Visception,CompositingVis} extend
+direct composition to hierarchical or internal visual structures.
+Visception~\cite{Visception} supports chart-in-chart composition through
+hierarchical mappings, while CompositingVis~\cite{CompositingVis} maps spatial
+manipulations to different composite-view relationships. These systems make
+more complex composition structures directly authorable, although their
+interactions are designed around particular hierarchical or spatial
+composition settings.
+
+{\system} combines direct manipulation with explicit composition semantics at
+the chart-block level. Dragging one block relative to another uses
+layout-referenced targets to express concatenation, layering, faceting, or
+nesting, including targets within another chart. This provides a consistent
+interaction across composition forms while keeping constituent blocks and
+their relationships explicit and editable.

@@ -1,0 +1,95 @@
+
+\firstsection{Introduction}
+
+\maketitle
+
+Composite visualizations combine multiple charts to compare data, reveal
+cross-view relationships, and communicate multivariate patterns. They are
+common in visual analytics and communication~\cite{vasurvey, Survey16,
+deng2023survey, AI4VIS}, including concatenation, layering, faceting, and
+nesting~\cite{javed2012exploring, Composite, vaid}. Authoring them requires
+coordinating data, encodings, layouts, coordinate systems, and dependencies
+across charts.
+
+Existing authoring approaches make trade-offs between predictability
+and flexibility. Low-level libraries~\cite{D3} and graphical editors~\cite{Lyra,DataIllustrator,Charticulator} provide
+fine-grained control, but require substantial effort to construct and
+coordinate visual structures.
+Explicit visual templates~\cite{ManyEyes,
+RAWGraphs} instead expose recognizable chart forms with bounded
+data roles, making intended outcomes easy to anticipate. Grammar- and schema-based approaches~\cite{VegaLite,Tableau,ApacheECharts} increase expressiveness by
+abstracting across chart classes through shared marks, encoding channels, and
+structural roles. However, this
+flexibility requires authors to reason about increasingly abstract visual
+structures, while explicit templates remain difficult to scale to the diverse
+structures of composite visualizations.
+
+We retain the clarity of explicit templates, but decompose composite
+visualizations into predictable and recomposable chart blocks. Each block has
+a recognizable visual structure and bounded behaviors, making the authoring
+unit and expected outcome explicit. Related blocks are further organized
+into chart families, providing controlled transitions across compatible
+structures without abandoning their visual identities. The key question is
+where to place these block and family boundaries: units that are too coarse
+remain restrictive, whereas overly fine units lose the efficiency and
+predictability of template-based authoring. We therefore conducted a formative
+study in which visualization experts decomposed composite visualizations into
+constituent units, informing the boundaries and organization of our chart
+blocks and families.
+
+
+Given these explicit units, the next question is how authors should express
+composition relationships among them. Prior work characterizes composite
+visualizations through recurring spatial relationships~\cite{
+javed2012exploring,Composite,vaid}. We use these relationships directly as
+references for interaction: dragging one block relative to another selects
+layout-referenced targets that express concatenation, layering, faceting, or
+nesting. Each action creates an explicit and editable composition relationship,
+rather than merely determining the placement of a chart.
+
+Explicit chart blocks nevertheless impose bounded data roles, which can make
+exploration brittle when dimensions are added, removed, or reorganized. This
+is particularly relevant to composite visualization, where a dimension may be
+represented within a chart, distributed across repeated views, or expressed
+through a composition relationship.
+
+We therefore allow dimensional changes to move across chart-level and
+composition-level representations. Related blocks within a chart family and
+compatible composition structures can provide alternative realizations of the
+same dimensional organization, while preserving compatible data assignments
+and visual intent. This extends the flexibility of explicit chart blocks
+without requiring authors to reconstruct their designs through lower-level
+graphical abstractions.
+
+
+
+Guided by these principles, we developed {\system}, an interactive authoring
+tool for constructing composite visualizations from reusable chart blocks.
+{\system} combines visually explicit chart units, layout-referenced
+drag-and-drop composition, and data-aware dimensional adaptation to support
+concatenation, layering, faceting, and nesting while keeping constituent
+blocks, their relationships, and dimensional adaptations editable
+throughout authoring.
+We evaluate {\system} through case studies, a comparative user study, 
+and an exploratory
+user study spanning a broader range of composite visualization scenarios.
+Together, these evaluations characterize how {\system} support a
+consistent and learnable workflow for composite visualization authoring.
+
+
+In summary, our contributions are:
+\begin{itemize}
+    \item A \textbf{formative study} that grounds the decomposition and granularity
+    of reusable chart blocks in how visualization experts perceive composite
+    visualizations;
+
+
+    \item An \textbf{interactive authoring approach} that supports
+     drag-and-drop composition with a data-aware engine
+    for dimensional adaptation;
+
+
+    \item A \textbf{comprehensive evaluation} of {\system}, including case studies, a comparative user study, and an exploratory user study.
+\end{itemize}
+
+

@@ -17,9 +17,9 @@ const matrixSpec: ChartSpec = {
     source: { field: "source", type: "nominal" },
     target: { field: "target", type: "nominal" },
     value: { field: "weight", type: "quantitative" },
-    size: { field: "size", type: "quantitative" },
+    size: { field: "weight", type: "quantitative" },
   },
-  series: { field: "community", type: "nominal" },
+  series: { field: "dominant_component", type: "nominal" },
   markGroups: [
     {
       id: "matrix-case:cells",
@@ -30,7 +30,7 @@ const matrixSpec: ChartSpec = {
         opacity: 0.94,
         colorMapping: {
           type: "linear",
-          domain: [14, 165],
+          domain: [0, 25],
           stops: [
             { offset: 0, color: "#f7fbff" },
             { offset: 0.5, color: "#4292c6" },
@@ -46,19 +46,24 @@ const matrixSpec: ChartSpec = {
       role: "node",
       memberKeys: [],
       sharedConfig: {
-        communityField: "community",
-        communityStrength: 0.26,
+        layoutXField: "layout_x",
+        layoutYField: "layout_y",
+        layoutNormalized: true,
+        nodeShape: "pie",
+        pieFields: "channel_a,channel_b,channel_c,channel_d,channel_e",
         nodeLabelsVisible: false,
         sizeMapping: {
           type: "linear",
-          stops: [{ offset: 0, size: 4 }, { offset: 1, size: 12 }],
+          stops: [{ offset: 0, size: 8 }, { offset: 1, size: 24 }],
         },
         colorMapping: {
           type: "categorical",
           values: {
-            "Community A": "#003049",
-            "Community B": "#c1121f",
-            "Community C": "#006d77",
+            channel_a: "#606c38",
+            channel_b: "#283618",
+            channel_c: "#ffe6a7",
+            channel_d: "#dda15e",
+            channel_e: "#bc6c25",
           },
         },
       },
@@ -76,7 +81,7 @@ const matrixSpec: ChartSpec = {
 };
 
 describe("Matrix force-network heatmap case", () => {
-  it("renders a 20 by 20 heatmap beneath a dense 100-node graph", () => {
+  it("renders a 20 by 20 heatmap beneath a weighted 72-node graph", () => {
     const prepared = prepareChartData("matrix-case", matrixPieNetworkDataset, matrixSpec);
     const result = renderDeterministicChart({
       chartId: "matrix-case",
@@ -95,42 +100,66 @@ describe("Matrix force-network heatmap case", () => {
     });
 
     expect(result.content.match(/data-mark-role="cell"/g)).toHaveLength(400);
-    expect(result.content.match(/data-mark-role="node"/g)).toHaveLength(100);
-    expect(result.content.match(/data-mark-role="link"/g)).toHaveLength(412);
+    expect(result.content.match(/data-mark-role="node"/g)).toHaveLength(72);
+    expect(result.content.match(/data-mark-role="node-pie-slice"/g)).toHaveLength(360);
+    expect(result.content.match(/data-mark-role="link"/g)).toHaveLength(163);
+    expect(result.content).toContain('data-link-weight="8"');
     expect(result.content).toContain('data-chart-type="force-directed-graph"');
+    expect(result.content).toContain('data-layout-source="stored-force"');
+    expect(result.content).toContain('data-node-shape="pie"');
     expect(result.content).toContain('fill-opacity="0.94"');
     expect(result.content).not.toContain('data-chart-type="nested-pie"');
     expect(result.content).not.toContain('data-mark-role="node-label"');
-    expect(result.content).toContain('fill="#003049"');
-    expect(result.content).toContain('fill="#c1121f"');
-    expect(result.content).toContain('fill="#006d77"');
+    ["#606c38", "#283618", "#ffe6a7", "#dda15e", "#bc6c25"].forEach((color) => {
+      expect(result.content).toContain(`fill="${color}"`);
+    });
   });
 
-  it("provides three balanced communities, varied node sizes, and three heat hotspots", () => {
+  it("derives node components and the heatmap from the same weighted graph", () => {
     const graph = matrixPieNetworkDataset.graph;
     expect(graph).toBeDefined();
     if (!graph) return;
 
-    const communityCounts = graph.nodes.rows.reduce<Record<string, number>>((counts, row) => {
-      const community = row.community ?? "";
-      counts[community] = (counts[community] ?? 0) + 1;
-      return counts;
-    }, {});
-    expect(communityCounts).toEqual({
-      "Community A": 34,
-      "Community B": 33,
-      "Community C": 33,
-    });
-    const sizes = graph.nodes.rows.map((row) => Number(row.size));
-    expect(Math.min(...sizes)).toBe(6);
-    expect(Math.max(...sizes)).toBe(60);
+    expect(graph.nodes.rows).toHaveLength(72);
+    expect(graph.nodes.rows.filter((row) => row.density === "core")).toHaveLength(48);
+    expect(graph.nodes.rows.filter((row) => row.density === "scattered")).toHaveLength(24);
+    expect(graph.edges.rows.filter((row) => row.kind !== "internal").length).toBeGreaterThan(25);
+    expect(graph.edges.rows.filter((row) => row.kind === "radial")).toHaveLength(40);
 
-    const heatAt = (row: number, column: number) => Number(matrixPieNetworkDataset.rows.find((datum) =>
-      datum.row_group === `R${String(row).padStart(2, "0")}`
-      && datum.column_group === `C${String(column).padStart(2, "0")}`)?.heat_value ?? 0);
-    expect(heatAt(5, 5)).toBeGreaterThan(120);
-    expect(heatAt(14, 7)).toBeGreaterThan(120);
-    expect(heatAt(11, 16)).toBeGreaterThan(120);
-    expect(Math.min(...matrixPieNetworkDataset.rows.map((row) => Number(row.heat_value)))).toBe(14);
+    const componentFields = ["channel_a", "channel_b", "channel_c", "channel_d", "channel_e"];
+    graph.nodes.rows.forEach((row) => {
+      const componentTotal = componentFields.reduce((sum, field) => sum + Number(row[field]), 0);
+      expect(componentTotal).toBeCloseTo(Number(row.weight), 2);
+      expect(Number(row.layout_x)).toBeGreaterThanOrEqual(0);
+      expect(Number(row.layout_x)).toBeLessThanOrEqual(1);
+      expect(Number(row.layout_y)).toBeGreaterThanOrEqual(0);
+      expect(Number(row.layout_y)).toBeLessThanOrEqual(1);
+      expect(componentFields).toContain(row.dominant_component);
+    });
+    matrixPieNetworkDataset.rows.forEach((row) => {
+      const componentTotal = componentFields.reduce((sum, field) => sum + Number(row[field]), 0);
+      expect(componentTotal).toBeCloseTo(Number(row.heat_value), 2);
+    });
+    componentFields.forEach((field) => {
+      const nodeTotal = graph.nodes.rows.reduce((sum, row) => sum + Number(row[field]), 0);
+      const heatTotal = matrixPieNetworkDataset.rows.reduce((sum, row) => sum + Number(row[field]), 0);
+      expect(Math.abs(nodeTotal - heatTotal)).toBeLessThan(0.2);
+    });
+    const heatValues = matrixPieNetworkDataset.rows.map((row) => Number(row.heat_value));
+    expect(Math.min(...heatValues)).toBe(0);
+    expect(Math.max(...heatValues)).toBeGreaterThan(20);
+
+    const nodeWeightTotal = graph.nodes.rows.reduce((sum, row) => sum + Number(row.weight), 0);
+    const nodeCentroid = graph.nodes.rows.reduce((center, row) => ({
+      x: center.x + Number(row.layout_x) * Number(row.weight) / nodeWeightTotal,
+      y: center.y + Number(row.layout_y) * Number(row.weight) / nodeWeightTotal,
+    }), { x: 0, y: 0 });
+    const heatWeightTotal = heatValues.reduce((sum, value) => sum + value, 0);
+    const heatCentroid = matrixPieNetworkDataset.rows.reduce((center, row) => ({
+      x: center.x + (Number(row.column_group?.slice(1)) - 0.5) / 20 * Number(row.heat_value) / heatWeightTotal,
+      y: center.y + (Number(row.row_group?.slice(1)) - 0.5) / 20 * Number(row.heat_value) / heatWeightTotal,
+    }), { x: 0, y: 0 });
+    expect(heatCentroid.x).toBeCloseTo(nodeCentroid.x, 2);
+    expect(heatCentroid.y).toBeCloseTo(nodeCentroid.y, 2);
   });
 });

@@ -28,6 +28,7 @@ try {
   const force = matrix.locator('[data-chart-type="force-directed-graph"]');
   const links = force.locator('[data-mark-role="link"]');
   const nodes = force.locator('[data-mark-role="node"]');
+  const pieSlices = force.locator('[data-mark-role="node-pie-slice"]');
   const stackedBars = page.locator('[data-chart-type="bar"][data-bar-variant="stacked"]');
   const topBar = stackedBars.filter({ has: page.locator('[data-mark-role="bar"][data-category-key="C01"]') });
   const rightBar = stackedBars.filter({ has: page.locator('[data-mark-role="bar"][data-category-key="R01"]') });
@@ -37,6 +38,7 @@ try {
     cells: await cells.count(),
     force: await force.count(),
     nodes: await nodes.count(),
+    pieSlices: await pieSlices.count(),
     links: await links.count(),
     stackedBars: await stackedBars.count(),
     topSegments: await topBar.locator('[data-mark-role="bar"]').count(),
@@ -46,8 +48,9 @@ try {
     matrix: 1,
     cells: 400,
     force: 1,
-    nodes: 100,
-    links: 412,
+    nodes: 72,
+    pieSlices: 360,
+    links: 163,
     stackedBars: 2,
     topSegments: 100,
     rightSegments: 100,
@@ -56,19 +59,50 @@ try {
     if (counts[name] !== value) throw new Error(`${name}: expected ${value}, found ${counts[name]}`);
   }
 
-  const nodeVisuals = await nodes.evaluateAll((items) => items.map((item) => {
-    const circle = item.querySelector("circle");
-    return {
-      fill: circle?.getAttribute("fill") ?? "",
-      radius: Number(circle?.getAttribute("r") ?? 0),
-    };
-  }));
-  const nodeColors = [...new Set(nodeVisuals.map((node) => node.fill))];
-  const nodeRadii = nodeVisuals.map((node) => node.radius);
-  if (nodeColors.length !== 3
-    || Math.min(...nodeRadii) > 4.1
-    || Math.max(...nodeRadii) < 11.9) {
-    throw new Error(`Force communities or node sizes are invalid: ${JSON.stringify({ nodeColors, nodeRadii })}`);
+  const nodeRadii = await nodes.evaluateAll((items) =>
+    items.map((item) => Number(item.getAttribute("data-node-radius") ?? 0)));
+  const nodeGeometry = await nodes.evaluateAll((items) => items.map((item) => ({
+    key: item.getAttribute("data-node-key") ?? "",
+    x: Number(item.getAttribute("data-node-x") ?? 0),
+    y: Number(item.getAttribute("data-node-y") ?? 0),
+    radius: Number(item.getAttribute("data-node-radius") ?? 0),
+  })));
+  const clearanceViolations = nodeGeometry.flatMap((node, index) => nodeGeometry.slice(index + 1).flatMap((other) =>
+    Math.hypot(node.x - other.x, node.y - other.y) + 0.5 < (node.radius + other.radius) * 1.25
+      ? [`${node.key}:${other.key}`]
+      : []));
+  if (clearanceViolations.length > 0) {
+    throw new Error(`Pie node clearance is below 1.25 radii: ${JSON.stringify(clearanceViolations)}`);
+  }
+  const nodeColors = await pieSlices.evaluateAll((items) =>
+    [...new Set(items.map((item) => item.getAttribute("fill") ?? ""))]);
+  const expectedNodeColors = ["#606c38", "#283618", "#ffe6a7", "#dda15e", "#bc6c25"];
+  if (nodeColors.length !== 5
+    || expectedNodeColors.some((color) => !nodeColors.includes(color))
+    || Math.min(...nodeRadii) > 8.1
+    || Math.max(...nodeRadii) < 23.9) {
+    throw new Error(`Force component colors or node sizes are invalid: ${JSON.stringify({ nodeColors, nodeRadii })}`);
+  }
+  const layoutSource = await force.getAttribute("data-layout-source");
+  if (layoutSource !== "stored-force") throw new Error(`Expected stored force positions, found ${layoutSource}`);
+  const nodeShape = await force.getAttribute("data-node-shape");
+  if (nodeShape !== "pie") throw new Error(`Expected Pie nodes, found ${nodeShape}`);
+  const linkVisuals = await links.evaluateAll((items) => items.map((item) => ({
+    kind: item.getAttribute("data-link-kind") ?? "",
+    weight: Number(item.getAttribute("data-link-weight") ?? 0),
+    width: Number(item.getAttribute("stroke-width") ?? 0),
+    opacity: Number(item.getAttribute("stroke-opacity") ?? 0),
+    color: item.getAttribute("stroke") ?? "",
+  })));
+  const radialLinks = linkVisuals.filter((link) => link.kind === "radial");
+  const lightestRadial = radialLinks.reduce((best, link) => link.weight < best.weight ? link : best);
+  const heaviestRadial = radialLinks.reduce((best, link) => link.weight > best.weight ? link : best);
+  if (heaviestRadial.width <= lightestRadial.width
+    || heaviestRadial.opacity <= lightestRadial.opacity
+    || Math.min(...linkVisuals.map((link) => link.width)) > 1.7
+    || Math.max(...linkVisuals.map((link) => link.width)) < 9.5
+    || linkVisuals.some((link) => link.color !== "#ffffff")) {
+    throw new Error(`Link weights are not visibly mapped to width: ${JSON.stringify({ lightestRadial, heaviestRadial })}`);
   }
 
   const heatmapColors = await cells.evaluateAll((items) =>
@@ -134,7 +168,15 @@ try {
     screenshotPath,
     counts,
     nodeColors,
+    layoutSource,
+    nodeShape,
     nodeRadiusRange: [Math.min(...nodeRadii), Math.max(...nodeRadii)],
+    nodeClearanceViolations: clearanceViolations.length,
+    linkWidthRange: [
+      Math.min(...linkVisuals.map((link) => link.width)),
+      Math.max(...linkVisuals.map((link) => link.width)),
+    ],
+    radialOpacityRange: [lightestRadial.opacity, heaviestRadial.opacity],
     heatmapColorCount: heatmapColors.length,
     matrixBounds,
     topBounds,
