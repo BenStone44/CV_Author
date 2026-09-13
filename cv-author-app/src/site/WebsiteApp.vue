@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import areaPreview from '../../../docs/screenshots/area-chart-block-dense-preview.png'
-import chordPreview from '../../../docs/screenshots/chord-polar-line-facet-concat.png'
-import matrixPreview from '../../../docs/screenshots/matrix-pie-network-marginal-bars.png'
-import radialPreview from '../../../docs/screenshots/sunburst-radial-dendrogram-shared-r.png'
-import treePreview from '../../../docs/screenshots/tree-leaf-labels-black.png'
+const galleryAssetPath = '/site/gallery'
+const areaPreview = `${galleryAssetPath}/area-chart-block-dense-preview.png`
+const chordPreview = `${galleryAssetPath}/chord-polar-line-facet-concat.png`
+const matrixPreview = `${galleryAssetPath}/matrix-pie-network-marginal-bars.png`
+const radialPreview = `${galleryAssetPath}/sunburst-radial-dendrogram-shared-r.png`
+const treePreview = `${galleryAssetPath}/tree-leaf-labels-black.png`
 
 type SitePage = 'home' | 'gallery' | 'tutorials'
 

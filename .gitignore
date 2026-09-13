@@ -1,2 +1,5 @@
 .venv/
 .cv-author-llm-cache.json
+
+# The website branch does not track the research-data submodule checkout.
+data/VisAnatomy/

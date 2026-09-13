@@ -1,6 +1,8 @@
-# cv-author-app
+# VisBricks Website
 
-This app is built with Vue 3 and Vite.
+This branch contains the public VisBricks website and its browser-based editor. It is built with Vue 3 and Vite.
+
+Website-only components live in `src/site/`. The existing authoring application remains under `src/components/` and is exposed through the separate `/editor/` entry. Research datasets, archived tests, development notes, and paper artifacts are intentionally kept on `master` rather than this deployment-focused branch.
 
 ## Recommended IDE Setup
 
