@@ -8,6 +8,7 @@ import vueDevTools from 'vite-plugin-vue-devtools'
 
 const virtualChartAssetsId = 'virtual:chart-assets'
 const resolvedVirtualChartAssetsId = `\0${virtualChartAssetsId}`
+const appDirectory = fileURLToPath(new URL('.', import.meta.url))
 const templateDirectory = fileURLToPath(new URL('./templates', import.meta.url))
 const templateDefinitions = (existsSync(templateDirectory)
   ? readdirSync(templateDirectory, { withFileTypes: true })
@@ -68,6 +69,16 @@ export default defineConfig({
     vue(),
     vueDevTools(),
   ],
+  build: {
+    rollupOptions: {
+      input: {
+        home: resolve(appDirectory, 'index.html'),
+        gallery: resolve(appDirectory, 'gallery/index.html'),
+        tutorials: resolve(appDirectory, 'tutorials/index.html'),
+        editor: resolve(appDirectory, 'editor/index.html'),
+      },
+    },
+  },
   server: {
     proxy: {
       '/api': 'http://127.0.0.1:8787',

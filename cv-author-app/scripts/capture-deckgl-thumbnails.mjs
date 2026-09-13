@@ -68,7 +68,7 @@ page.on("pageerror", (error) => {
 
 try {
   for (const [layerType, fileName] of selectedCaptures) {
-    const url = `${baseUrl}/?deckgl-thumbnail=${encodeURIComponent(layerType)}`;
+    const url = `${baseUrl}/editor/?deckgl-thumbnail=${encodeURIComponent(layerType)}`;
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
     await page.addStyleTag({
       content: "#vue-devtools-anchor,.vue-devtools__anchor,.vue-devtools__anchor-btn,.vue-devtools__panel,.vue-devtools-frame{display:none!important;visibility:hidden!important}",

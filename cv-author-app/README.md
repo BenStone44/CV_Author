@@ -55,6 +55,17 @@ npm run dev:all
 
 The frontend is available at `http://127.0.0.1:5173` and proxies `/api` requests to the API service.
 
+### Website Entries
+
+The production site is split into focused static entries:
+
+- `/`: product landing page
+- `/gallery/`: visualization composition gallery
+- `/tutorials/`: guided introductions
+- `/editor/`: the complete VisBricks authoring application
+
+Vite builds all four entries together. The editor remains isolated from the public website shell, so website design work does not alter the canvas application's component hierarchy.
+
 ### Type-Check, Compile and Minify for Production
 
 ```sh
