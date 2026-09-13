@@ -432,16 +432,11 @@
                   :rows="entry.dataset?.rows ?? []"
                   :mark-config="nestedMarkConfig(entry.node)"
                   :renderer-error="entry.node.chartSpec.renderer?.error"
-                  @channel-change="(channel, field) => withEncodingNode(entry.node, () => onEncodingChannelChange(channel, field))"
                   @composition-change="(patch) => withEncodingNode(entry.node, () => onCompositionEncodingChange(patch))"
                   @axis-swap="(swapped) => setAxisSwap(swapped, entry.node.id)"
                   @chart-axis-change="(axis, patch) => withEncodingNode(entry.node, () => onChartAxisChange(axis, patch))"
                   @coordinate-axis-reverse="(axis) => withEncodingNode(entry.node, () => onCoordinateAxisReverse(axis))"
-                  @series-field-change="(field) => withEncodingNode(entry.node, () => onSeriesFieldChange(field))"
-                  @series-fields-change="(fields) => withEncodingNode(entry.node, () => onSeriesFieldsChange(fields))"
-                  @value-series-fields-change="(fields) => withEncodingNode(entry.node, () => setValueSeriesFields(fields))"
-                  @segment-fields-change="(fields) => withEncodingNode(entry.node, () => setPolarSegmentFields(fields))"
-                  @parallel-fields-change="(fields) => withEncodingNode(entry.node, () => setParallelFields(fields))"
+                  @role-binding-change="(roleId, fields, materialization) => withEncodingNode(entry.node, () => setRoleBindingFields(roleId, fields, materialization))"
                   @aggregation-change="(channel, aggregation) => withEncodingNode(entry.node, () => setAxisBindingAggregation(channel, aggregation))"
                   @single-bar-value-order-change="(direction, topN) => withEncodingNode(entry.node, () => setSingleBarValueOrder(direction, topN))"
                   @mark-config-change="(patch) => onNestedMarkConfigChange(entry.node, patch)"
@@ -465,16 +460,11 @@
               :mark-config="axisBindingMarkGroupConfig"
               :renderer-error="axisBindingRendererError"
               @close="closeEncodingInspector"
-              @channel-change="onEncodingChannelChange"
               @composition-change="onCompositionEncodingChange"
               @axis-swap="onAxisSwap"
               @chart-axis-change="onChartAxisChange"
               @coordinate-axis-reverse="onCoordinateAxisReverse"
-              @series-field-change="onSeriesFieldChange"
-              @series-fields-change="onSeriesFieldsChange"
-              @value-series-fields-change="setValueSeriesFields"
-              @segment-fields-change="setPolarSegmentFields"
-              @parallel-fields-change="setParallelFields"
+              @role-binding-change="setRoleBindingFields"
               @aggregation-change="setAxisBindingAggregation"
               @single-bar-value-order-change="setSingleBarValueOrder"
               @mark-config-change="updateAxisBindingMarkGroupConfig"
@@ -1086,7 +1076,9 @@
                 :geometry-features="deckglLayerGeometrySource(node)?.features ?? []"
                 :layers="deckglLayerRenderSpecs(node)"
                 :nested-overlays="deckglNestedOverlays(node)"
-                :nest-drag-source-id="compositionDragSourceId"
+                :nest-drag-source-id="chartDrilldown?.nodeId === node.id && chartDrilldown.level === 'part'
+                  ? compositionDragSourceId
+                  : null"
                 :pass-through-candidate-drop="graphLinkDragActive"
                 :width="deckglLayerWidth(node)"
                 :height="deckglLayerHeight(node)"
@@ -1201,7 +1193,8 @@
                     'composition-drop-zone--after': dropZone.concatPosition === 'after',
                     'composition-drop-zone--nested': dropZone.type === 'nested',
                     'composition-drop-zone--enter': dropZone.nestedAction === 'enter',
-                    'composition-drop-zone--invalid': !dropZone.compatible,
+                    'composition-drop-zone--align-only': !dropZone.compatible && dropZone.type !== 'nested',
+                    'composition-drop-zone--invalid': !dropZone.compatible && dropZone.type === 'nested',
                   }"
                   :x="dropZone.bounds.minX"
                   :y="dropZone.bounds.minY"
@@ -1218,13 +1211,16 @@
                   :class="{
                     'composition-mode-label--nested': dropZone.type === 'nested',
                     'composition-mode-label--concat': dropZone.type === 'concat' || dropZone.type === 'concat-corner',
+                    'composition-mode-label--align-only': !dropZone.compatible && dropZone.type !== 'nested',
                   }"
                   :x="dropZone.bounds.minX + dropZone.bounds.width / 2"
                   :y="dropZone.bounds.minY + 22 / selectionOverlayZoom"
                   text-anchor="middle"
                   dominant-baseline="middle"
                   :font-size="13 / selectionOverlayZoom"
-                >{{ dropZone.type === 'nested'
+                >{{ !dropZone.compatible && dropZone.type !== 'nested'
+                    ? `Align only · ${dropZone.type === 'layer' ? 'center' : dropZone.direction ?? 'edge'}`
+                    : dropZone.type === 'nested'
                     ? 'Nested'
                     : dropZone.type === 'layer'
                     ? `Layer${dropZone.sharedChannels.length ? ` · ${dropZone.sharedChannels.map((channel) => channel.toUpperCase()).join(' + ')}` : ''}`
@@ -1302,71 +1298,6 @@
                           aria-hidden="true"
                         ></span>
                         <span :title="member.label">{{ member.label }}</span>
-                      </div>
-                    </div>
-                  </foreignObject>
-                </g>
-              </g>
-              <g
-                v-if="seriesItemOverlay"
-                :transform="editingGroupTransform"
-                :data-canvas-owner-node-id="seriesItemOverlay.node.id"
-                class="series-item-drop-guide"
-              >
-                <g
-                  :transform="`rotate(${seriesItemOverlay.frame.rotation} ${seriesItemOverlay.frame.center.x} ${seriesItemOverlay.frame.center.y})`"
-                >
-                  <foreignObject
-                    :x="seriesItemOverlay.frame.x"
-                    :y="seriesItemOverlay.frame.y"
-                    :width="seriesItemOverlay.frame.width"
-                    :height="seriesItemOverlay.frame.height"
-                  >
-                    <div
-                      xmlns="http://www.w3.org/1999/xhtml"
-                      class="series-item-panel"
-                      @pointerdown.stop
-                    >
-                      <header class="series-item-panel__header">
-                        <strong>{{ seriesItemOverlay.label }}</strong>
-                        <span class="series-item-panel__bindings">
-                          <span
-                            v-for="field in seriesItemOverlay.fields"
-                            :key="`${seriesItemOverlay.node.id}-binding-${field}`"
-                            class="series-item-panel__binding"
-                          >
-                            <span :title="field">{{ field }}</span>
-                            <button
-                              type="button"
-                              :title="`Remove ${field}`"
-                              :aria-label="`Remove ${field}`"
-                              @pointerdown.stop
-                              @click="removeSeriesCaptionItem(seriesItemOverlay.node.id, field, $event)"
-                            >
-                              <X :size="12" :stroke-width="1.8" aria-hidden="true" />
-                            </button>
-                          </span>
-                        </span>
-                      </header>
-                      <div
-                        v-for="member in seriesItemOverlay.members"
-                        :key="`${seriesItemOverlay.node.id}-series-member-${member.memberId}`"
-                        class="series-item-panel__member"
-                      >
-                        <span :title="member.label">{{ member.label }}</span>
-                        <label
-                          class="series-item-panel__color"
-                          :style="{ background: member.color }"
-                          :title="`${member.label} color`"
-                        >
-                          <input
-                            type="color"
-                            list="frontend-color-palette"
-                            :value="member.color"
-                            :aria-label="`${member.label} color`"
-                            @input="onSeriesItemStyleChange(member.memberId, { color: $event.target.value })"
-                          />
-                        </label>
                       </div>
                     </div>
                   </foreignObject>

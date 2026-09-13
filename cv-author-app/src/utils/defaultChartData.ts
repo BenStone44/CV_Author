@@ -352,6 +352,8 @@ export function replaceDefaultDataBinding(spec: ChartSpec, datasetId: string): C
     || datasetId === defaultDatasetForChartType(spec.chartType).id) return spec;
   return {
     chartType: spec.chartType,
+    blockId: spec.blockId,
+    blockRevision: spec.blockRevision,
     templateId: spec.templateId ?? normalizeChartTemplate(spec.chartType) ?? undefined,
     datasetId,
     axisSwapped: spec.axisSwapped,
@@ -500,7 +502,7 @@ export function createDefaultChartSpec(chartType: string): ChartSpec | null {
       encodings: {
         theta: { field: "column", type: "ordinal" },
         radius: { field: "value", type: "quantitative" },
-        color: seriesEncoding,
+        series: seriesEncoding,
       },
       series: seriesEncoding,
       seriesFields: [seriesEncoding],
@@ -517,7 +519,7 @@ export function createDefaultChartSpec(chartType: string): ChartSpec | null {
       encodings: {
         segment: { field: "column", type: "ordinal" },
         radius: { field: "value", type: "quantitative" },
-        ...(radialStackedBar ? { color: seriesEncoding } : {}),
+        ...(radialStackedBar ? { series: seriesEncoding } : {}),
       },
       ...(radialStackedBar ? { series: seriesEncoding, seriesFields: [seriesEncoding] } : {}),
       ...(!radialStackedBar ? { dataTransforms: groupFilter() } : {}),
@@ -538,7 +540,7 @@ export function createDefaultChartSpec(chartType: string): ChartSpec | null {
             segment: { field: "column", type: "ordinal" as const },
             theta: { field: "value", type: "quantitative" as const },
           }),
-        ...(circularStackedBar ? { color: seriesEncoding } : {}),
+        ...(circularStackedBar ? { series: seriesEncoding } : {}),
       },
       ...(circularStackedBar ? { series: seriesEncoding, seriesFields: [seriesEncoding] } : {}),
       ...(!circularStackedBar ? { dataTransforms: groupFilter() } : {}),
@@ -559,7 +561,7 @@ export function createDefaultChartSpec(chartType: string): ChartSpec | null {
     encodings: {
       x: { field: "column", type: "ordinal" },
       y: { field: valueField, type: "quantitative" },
-      ...(multiSeries ? { color: seriesEncoding } : {}),
+      ...(multiSeries ? { series: seriesEncoding } : {}),
     },
     ...(multiSeries ? { series: seriesEncoding, seriesFields: [seriesEncoding] } : {}),
     ...(!multiSeries ? { dataTransforms: groupFilter() } : {}),

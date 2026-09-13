@@ -64,6 +64,7 @@ import {
   isCategoricalColorMapping,
   isLinearColorMapping,
   isLinearSizeMapping,
+  isSeriesStyleMapping,
   globalGradientColor,
   mapColorValue,
   mapSizeValue,
@@ -295,6 +296,10 @@ function formatTick(value: number) {
 
 function renderArea(input: GenericRenderInput) {
   const type = normalizedType(input.chartSpec.chartType);
+  const areaConfig = sharedConfig(input, "area");
+  const seriesStyles = isSeriesStyleMapping(areaConfig.seriesStyleMapping)
+    ? areaConfig.seriesStyleMapping.values
+    : {};
   if (type === "areachart") {
     if (input.coordinateGuide?.type !== "Cartesian") {
       throw new Error("Area Chart requires a Cartesian coordinate guide.");
@@ -309,13 +314,14 @@ function renderArea(input: GenericRenderInput) {
     const axisSwapped = input.chartSpec.axisSwapped === true;
     const valueScale = axisSwapped ? lineResult.scales.x : lineResult.scales.y;
     const baseline = areaValuePosition(valueScale, 0);
-    const opacity = Number(sharedConfig(input, "area").opacity ?? 0.42);
+    const opacity = Number(areaConfig.opacity ?? 0.42);
     const marks = lineResult.series.map((series) => {
       const points = series.points.map(({ x, y }) => ({ x, y }));
       const path = areaPath(points, axisSwapped, baseline);
       if (!path) return "";
       const rowKeys = series.points.flatMap((point) => point.rowKeys);
-      return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series.key)}" data-point-count="${points.length}" data-row-keys="${esc(rowKeys.join(","))}" d="${path}" fill="${esc(series.color)}" fill-opacity="${opacity}" stroke="${esc(series.color)}" stroke-width="${series.lineWidth}" stroke-linejoin="round" vector-effect="non-scaling-stroke"><title>${esc(series.key === "__single__" ? (cartesianAxisEncoding(input.chartSpec, "y")?.field ?? "") : series.key)}</title></path>`;
+      const color = seriesStyles[series.key]?.color ?? series.color;
+      return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series.key)}" data-point-count="${points.length}" data-row-keys="${esc(rowKeys.join(","))}" d="${path}" fill="${esc(color)}" fill-opacity="${opacity}" stroke="${esc(color)}" stroke-width="${series.lineWidth}" stroke-linejoin="round" vector-effect="non-scaling-stroke"><title>${esc(series.key === "__single__" ? (cartesianAxisEncoding(input.chartSpec, "y")?.field ?? "") : series.key)}</title></path>`;
     }).join("");
     return {
       content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="area" data-axis-swapped="${axisSwapped}" data-area-curve="basis" data-renderer="deterministic-area@1">${marks}</g>`,
@@ -329,7 +335,10 @@ function renderArea(input: GenericRenderInput) {
   const isHorizon = type.includes("horizon");
   const isStacked = type.includes("stacked") || type.includes("stream");
   const isStream = type.includes("stream");
-  const seriesEncoding = input.chartSpec.encodings.color;
+  const seriesEncoding = input.chartSpec.roleBindings?.series?.fields[0]
+    ?? input.chartSpec.encodings.series
+    ?? input.chartSpec.seriesFields?.[0]
+    ?? input.chartSpec.series;
   const rows = input.dataset.rows.filter((row) => Number.isFinite(numeric(row, yEncoding)) && (row[xEncoding.field] ?? "") !== "");
   const hasExplicitAggregation = input.chartSpec.aggregations?.y !== undefined
     || Object.keys(input.chartSpec.dimensionAggregations ?? {}).length > 0;
@@ -412,7 +421,8 @@ function renderArea(input: GenericRenderInput) {
       const pathId = `${uid}-path-${seriesIndex}`;
       const clipId = `${uid}-clip-${seriesIndex}`;
       const data = table.map((datum) => ({ x: datum.x ?? "", value: Number(datum[series] ?? 0) }));
-      const uses = d3Range(bands).map((band) => `<use href="#${pathId}" fill="${globalGradientColor((band + 1) / bands, [0, 1])}" transform="translate(0 ${band * size})"/>`).join("");
+      const configuredColor = seriesStyles[series]?.color;
+      const uses = d3Range(bands).map((band) => `<use href="#${pathId}" fill="${configuredColor ?? globalGradientColor((band + 1) / bands, [0, 1])}" transform="translate(0 ${band * size})"/>`).join("");
       return `<g transform="translate(0 ${top})"><defs><clipPath id="${clipId}"><rect x="${plotLeft}" y="${padding}" width="${plotWidth}" height="${Math.max(0, size - padding)}"/></clipPath><path id="${pathId}" d="${area(data) ?? ""}"/></defs><g clip-path="url(#${clipId})" data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series)}">${uses}</g></g>`;
     }).join("");
     const tickCount = Math.max(2, Math.floor(plotWidth / 80));
@@ -468,8 +478,9 @@ function renderArea(input: GenericRenderInput) {
     if (series) {
       const path = areaPath(series.points.map(({ x, y }) => ({ x, y })), axisSwapped, baseline);
       const rowKeys = series.points.flatMap((point) => point.rowKeys);
-      const opacity = Number(sharedConfig(input, "area").opacity ?? 0.42);
-      const mark = `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series.key)}" data-point-count="${series.points.length}" data-row-keys="${esc(rowKeys.join(","))}" d="${path}" fill="${esc(series.color)}" fill-opacity="${opacity}" stroke="${esc(series.color)}" stroke-width="${series.lineWidth}" stroke-linejoin="round" vector-effect="non-scaling-stroke"><title>${esc(series.key === "__single__" ? yEncoding.field : series.key)}</title></path>`;
+      const opacity = Number(areaConfig.opacity ?? 0.42);
+      const color = seriesStyles[series.key]?.color ?? series.color;
+      const mark = `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(series.key)}" data-point-count="${series.points.length}" data-row-keys="${esc(rowKeys.join(","))}" d="${path}" fill="${esc(color)}" fill-opacity="${opacity}" stroke="${esc(color)}" stroke-width="${series.lineWidth}" stroke-linejoin="round" vector-effect="non-scaling-stroke"><title>${esc(series.key === "__single__" ? yEncoding.field : series.key)}</title></path>`;
       return {
         content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="area" data-area-variant="${isStream ? "streamgraph" : isStacked ? "stacked" : "area"}" data-axis-swapped="${axisSwapped}" data-stack-offset="${isStream ? "silhouette" : "zero"}" data-stack-order="${isStream ? "inside-out" : "none"}" data-area-curve="basis" data-renderer="observable-area@3">${mark}</g>`,
         plotArea: lineResult.plotArea,
@@ -518,7 +529,9 @@ function renderArea(input: GenericRenderInput) {
       .y1((point) => valuePosition(point[1]));
   area.curve(curveBasis);
   const marks = layers.map((layer, index) => {
-    const color = !isStacked && seriesValues.length === 1 ? "steelblue" : tableau[index % tableau.length]!;
+    const series = seriesValues[index] ?? "";
+    const fallbackColor = !isStacked && seriesValues.length === 1 ? "steelblue" : tableau[index % tableau.length]!;
+    const color = seriesStyles[series]?.color ?? fallbackColor;
     return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="area" data-mark-group-id="mark-group:${esc(input.chartId)}:area" data-series-key="${esc(seriesValues[index] ?? "")}" data-point-count="${layer.length}" d="${area(layer as unknown as Array<[number, number]>) ?? ""}" fill="${color}"><title>${esc(seriesValues[index] === "__single__" ? yEncoding.field : seriesValues[index] ?? "")}</title></path>`;
   }).join("");
   return {

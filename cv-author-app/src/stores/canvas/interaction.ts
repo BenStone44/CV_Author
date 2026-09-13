@@ -85,6 +85,7 @@ export function useCanvasInteraction(context: any) {
     registerChartRelationship,
     renderChartNode,
     renderCoordinateTargets,
+    renderSemanticNode,
     renderSharedCoordinateComposition,
     replaceSelectionScopeNodes,
     restoreCompositionEditLayout,
@@ -94,6 +95,7 @@ export function useCanvasInteraction(context: any) {
     selectedNodes,
     semanticSelection,
     selectionBounds,
+    selectionFrame,
     setImportNotice,
     setAxisBindingTarget,
     setSelection,
@@ -920,7 +922,8 @@ export function useCanvasInteraction(context: any) {
     attachPointerListeners();
   }
   function onScaleHandlePointerDown(handle: ScaleHandle, event: PointerEvent) {
-    if (event.button !== 0 || !selectionBounds.value) return;
+    if (event.button !== 0 || !selectionBounds.value || !selectionFrame.value) return;
+    event.preventDefault();
     event.stopPropagation();
     // Concat is an open container: its direct members retain independent
     // frames. Moving a member still moves the complete concat unit, while a
@@ -952,7 +955,17 @@ export function useCanvasInteraction(context: any) {
       }];
     }));
     const scopeGroupId = editingGroupPath.value.at(-1);
-    interaction.value = { type: "scale", handle, startPoint: toSelectionScopePoint(event.clientX, event.clientY, scopeGroupId), startBounds: selectionBounds.value, itemIds, snapshots, scopeGroupId, historyCommitted: false };
+    interaction.value = {
+      type: "scale",
+      handle,
+      startPoint: toSelectionScopePoint(event.clientX, event.clientY, scopeGroupId),
+      startBounds: selectionBounds.value,
+      startFrame: { ...selectionFrame.value },
+      itemIds,
+      snapshots,
+      scopeGroupId,
+      historyCommitted: false,
+    };
     attachPointerListeners();
   }
   function onRotateHandlePointerDown(event: PointerEvent) {
@@ -1160,6 +1173,169 @@ export function useCanvasInteraction(context: any) {
     moveUpdateFrame = null;
     pendingMoveUpdate = null;
   }
+
+  function resizeTargetFrame(
+    currentPoint: Point,
+    si: ScaleInteraction,
+    canvasBounds: { minX: number; minY: number; maxX: number; maxY: number },
+    editableAxis?: "x" | "y",
+  ) {
+    const start = si.startFrame;
+    const isEast = si.handle === "ne" || si.handle === "se";
+    const isSouth = si.handle === "sw" || si.handle === "se";
+    const directionX = isEast ? 1 : -1;
+    const directionY = isSouth ? 1 : -1;
+    const radians = start.rotation * Math.PI / 180;
+    const horizontal = { x: Math.cos(radians), y: Math.sin(radians) };
+    const vertical = { x: -Math.sin(radians), y: Math.cos(radians) };
+    const center = { x: start.x + start.width / 2, y: start.y + start.height / 2 };
+    const startHandle = {
+      x: center.x + directionX * start.width / 2 * horizontal.x
+        + directionY * start.height / 2 * vertical.x,
+      y: center.y + directionX * start.width / 2 * horizontal.y
+        + directionY * start.height / 2 * vertical.y,
+    };
+    const anchor = {
+      x: center.x - directionX * start.width / 2 * horizontal.x
+        - directionY * start.height / 2 * vertical.x,
+      y: center.y - directionX * start.width / 2 * horizontal.y
+        - directionY * start.height / 2 * vertical.y,
+    };
+    // Preserve the initial grab offset within the circular handle. This avoids
+    // a jump on the first pointermove when the pointerdown was not at its center.
+    const requestedHandle = {
+      x: clamp(startHandle.x + currentPoint.x - si.startPoint.x, canvasBounds.minX, canvasBounds.maxX),
+      y: clamp(startHandle.y + currentPoint.y - si.startPoint.y, canvasBounds.minY, canvasBounds.maxY),
+    };
+    const anchorToHandle = {
+      x: requestedHandle.x - anchor.x,
+      y: requestedHandle.y - anchor.y,
+    };
+    const projectedWidth = directionX
+      * (anchorToHandle.x * horizontal.x + anchorToHandle.y * horizontal.y);
+    const projectedHeight = directionY
+      * (anchorToHandle.x * vertical.x + anchorToHandle.y * vertical.y);
+    const width = editableAxis === "y" ? start.width : Math.max(24, projectedWidth);
+    const height = editableAxis === "x" ? start.height : Math.max(24, projectedHeight);
+    const nextCenter = {
+      x: anchor.x + directionX * width / 2 * horizontal.x
+        + directionY * height / 2 * vertical.x,
+      y: anchor.y + directionX * width / 2 * horizontal.y
+        + directionY * height / 2 * vertical.y,
+    };
+    return {
+      x: nextCenter.x - width / 2,
+      y: nextCenter.y - height / 2,
+      width,
+      height,
+      rotation: start.rotation,
+      center: nextCenter,
+    };
+  }
+
+  /**
+   * Cartesian corner resize is solved against one immutable pointerdown
+   * snapshot. The renderer may choose responsive margins, so resize the node
+   * frame once, solve the resulting plot scale, then translate the plot center
+   * onto the requested frame. No value from an earlier pointermove is reused.
+   */
+  function updateExactCartesianScaleInteraction(
+    currentPoint: Point,
+    si: ScaleInteraction,
+    canvasBounds: { minX: number; minY: number; maxX: number; maxY: number },
+    editableAxis?: "x" | "y",
+  ) {
+    if (si.itemIds.length !== 1) return false;
+    const item = getSelectionNode(si.itemIds[0]!);
+    const snap = si.snapshots[si.itemIds[0]!];
+    if (!item || !snap || item.coordinateGuide?.type !== "Cartesian" || !item.chartSpec?.plotArea) return false;
+    // Composite and Nested roots have relationship-owned layout. Their direct
+    // members continue through the existing group resize path.
+    if (item.compositionSpec || nestedSelectionRelationships(item.id).length > 0) return false;
+
+    const target = resizeTargetFrame(currentPoint, si, canvasBounds, editableAxis);
+    const widthRatio = target.width / Math.max(si.startFrame.width, 0.0001);
+    const heightRatio = target.height / Math.max(si.startFrame.height, 0.0001);
+    const localMinX = item.kind === "leaf" ? item.contentMinX : 0;
+    const localMinY = item.kind === "leaf" ? item.contentMinY : 0;
+    item.x = snap.x;
+    item.y = snap.y;
+    item.width = Math.max(snap.width * Math.abs(snap.scaleX) * widthRatio, 1);
+    item.height = Math.max(snap.height * Math.abs(snap.scaleY) * heightRatio, 1);
+    item.scaleX = Math.sign(snap.scaleX) || 1;
+    item.scaleY = Math.sign(snap.scaleY) || 1;
+    if (snap.coordinateOrigin) {
+      item.coordinateGuide.origin = {
+        x: localMinX + (snap.coordinateOrigin.x - localMinX) * widthRatio,
+        y: localMinY + (snap.coordinateOrigin.y - localMinY) * heightRatio,
+      };
+    }
+    item.coordinateGuide.xScale = snap.coordinateScales?.x ?? 1;
+    item.coordinateGuide.yScale = snap.coordinateScales?.y ?? 1;
+
+    const render = () => {
+      if (item.layerSpec) renderSemanticNode(item);
+      else renderChartNode(item);
+    };
+    render();
+    let plot = item.chartSpec?.plotArea;
+    if (!plot) return true;
+    item.coordinateGuide.xScale = Math.max(
+      0.001,
+      (item.coordinateGuide.xScale ?? 1) * target.width / Math.max(plot.width * Math.abs(item.scaleX), 0.0001),
+    );
+    item.coordinateGuide.yScale = Math.max(
+      0.001,
+      (item.coordinateGuide.yScale ?? 1) * target.height / Math.max(plot.height * Math.abs(item.scaleY), 0.0001),
+    );
+    render();
+    plot = item.chartSpec?.plotArea;
+    if (!plot) return true;
+
+    // A bounded correction handles renderers whose responsive base plot is
+    // rounded. It is deterministic and does not depend on a prior pointermove.
+    const correctionX = target.width / Math.max(plot.width * Math.abs(item.scaleX), 0.0001);
+    const correctionY = target.height / Math.max(plot.height * Math.abs(item.scaleY), 0.0001);
+    if (Math.abs(correctionX - 1) > 0.000001 || Math.abs(correctionY - 1) > 0.000001) {
+      item.coordinateGuide.xScale = Math.max(0.001, (item.coordinateGuide.xScale ?? 1) * correctionX);
+      item.coordinateGuide.yScale = Math.max(0.001, (item.coordinateGuide.yScale ?? 1) * correctionY);
+      render();
+      plot = item.chartSpec?.plotArea;
+      if (!plot) return true;
+    }
+
+    const localPlotCenter = {
+      x: plot.x + plot.width / 2,
+      y: plot.y + plot.height / 2,
+    };
+    const localFrameCenter = {
+      x: localMinX + item.width / 2,
+      y: localMinY + item.height / 2,
+    };
+    const localOffset = {
+      x: (localPlotCenter.x - localFrameCenter.x) * item.scaleX,
+      y: (localPlotCenter.y - localFrameCenter.y) * item.scaleY,
+    };
+    const radians = item.rotation * Math.PI / 180;
+    const rotatedOffset = {
+      x: localOffset.x * Math.cos(radians) - localOffset.y * Math.sin(radians),
+      y: localOffset.x * Math.sin(radians) + localOffset.y * Math.cos(radians),
+    };
+    item.x = target.center.x - rotatedOffset.x - item.width * item.scaleX / 2;
+    item.y = target.center.y - rotatedOffset.y - item.height * item.scaleY / 2;
+
+    (["x", "y"] as const).forEach((channel) => {
+      const binding = bindingForChartChannel(item.id, channel);
+      if (!binding) return;
+      dispatchRelationship({
+        type: "update-axis",
+        axisId: binding.axisId,
+        changes: { config: { scale: channel === "x" ? item.coordinateGuide!.xScale : item.coordinateGuide!.yScale } },
+      });
+    });
+    return true;
+  }
+
   function updateScaleInteraction(currentPoint: Point, si: ScaleInteraction) {
     const scopeGroup = si.scopeGroupId ? getGroupAtPath() : null;
     const canvasBounds = scopeGroup
@@ -1182,6 +1358,7 @@ export function useCanvasInteraction(context: any) {
     const editableAxis = si.itemIds
       .map((id) => concatEditableAxis(getSelectionNode(id)))
       .find((axis): axis is "x" | "y" => !!axis);
+    if (updateExactCartesianScaleInteraction(currentPoint, si, canvasBounds, editableAxis)) return;
     const uniformMinScale = Math.max(minScaleX, minScaleY);
     const uniformMaxScale = Math.min(maxScaleX, maxScaleY);
     const uniformScale = clamp(
@@ -1477,10 +1654,28 @@ export function useCanvasInteraction(context: any) {
     const deckglSource = ai?.type === "move" && compositionDragSourceId.value
       ? findCanvasNode(compositionDragSourceId.value)
       : null;
-    const deckglDropTarget = deckglSource?.chartSpec && deckglSource.renderedContent
-      ? deckglPointDropTarget.value
+    const hoveredDeckglTarget = deckglPointDropTarget.value;
+    const hoveredDeckglLayer = hoveredDeckglTarget
+      ? findCanvasNode(hoveredDeckglTarget.layerId)
+      : null;
+    const hoveredDeckglOwnerId = hoveredDeckglLayer?.deckglLayerStack?.[0]
+      ?? hoveredDeckglLayer?.id;
+    const deckglDropTarget = deckglSource?.chartSpec
+      && deckglSource.renderedContent
+      && chartDrilldown.value?.nodeId === hoveredDeckglOwnerId
+      && chartDrilldown.value?.level === "part"
+      ? hoveredDeckglTarget
       : null;
     let finalMovePoint: Point | null = null;
+    let alignmentCommitted = false;
+    const commitAlignmentAt = (point: Point) => {
+      const sourceNodeId = compositionDragSourceId.value;
+      if (!sourceNodeId) return false;
+      const zone = compositionDropZoneAtPoint(point, sourceNodeId);
+      activeDropZone.value = zone;
+      if (!zone || zone.compatible || (zone.type !== "layer" && zone.type !== "concat")) return false;
+      return commitCompositionDrop(zone, sourceNodeId);
+    };
     const nestedLayoutIds = ai && ai.type !== "move" && "itemIds" in ai
       ? Object.values(chartRelationships.value.nestedRelationships)
         .filter((relationship) => ai.itemIds.includes(relationship.parentChartId)
@@ -1500,13 +1695,22 @@ export function useCanvasInteraction(context: any) {
             : toCanvasPoint(event.clientX, event.clientY);
           finalMovePoint = finalPoint;
           updateMoveInteraction(finalPoint, ai);
-          if (!deckglDropTarget) pushMoveHistory(ai);
+          if (!deckglDropTarget) {
+            alignmentCommitted = commitAlignmentAt(finalPoint);
+            pushMoveHistory(ai);
+          }
           // The model now owns the final position. Restore the temporary DOM
           // transform so it cannot become the base for the next drag.
           clearTransformOnlyMove();
         } else {
           flushMoveInteraction();
-          if (!deckglDropTarget) commitMoveHistory(ai);
+          if (!deckglDropTarget) {
+            const releasePoint = ai.scopeGroupId
+              ? toSelectionScopePoint(event.clientX, event.clientY, ai.scopeGroupId)
+              : toCanvasPoint(event.clientX, event.clientY);
+            alignmentCommitted = commitAlignmentAt(releasePoint);
+            commitMoveHistory(ai);
+          }
           if (ai.transformOnly) clearTransformOnlyMove();
         }
       } else {
@@ -1529,7 +1733,7 @@ export function useCanvasInteraction(context: any) {
           ai.historySnapshot,
           ai.snapshots[compositionDragSourceId.value],
         );
-      } else if (ai?.type === "move" && ai.historyCommitted && compositionDragSourceId.value) {
+      } else if (ai?.type === "move" && ai.historyCommitted && compositionDragSourceId.value && !alignmentCommitted) {
         if (ai.transformOnly && finalMovePoint) {
           activeDropZone.value = compositionDropZoneAtPoint(finalMovePoint, compositionDragSourceId.value);
         } else {

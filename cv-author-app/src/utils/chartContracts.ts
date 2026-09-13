@@ -7,6 +7,17 @@ import type {
   CoordinateSystem,
   DataColumnType,
 } from "../types";
+import { DeclarativeChartBlockTemplate } from "../chart-blocks/ChartBlockTemplate";
+import type {
+  BlockFamilyId,
+  BlockRoleSpecification,
+  ChartBlockSpecification,
+  DropAreaSpecification,
+  RoleBindingModeSpecification,
+  SeriesPresentationSpecification,
+  SpatialReferenceSpecification,
+  StructuralTargetSpecification,
+} from "../chart-blocks/model";
 
 export type EncodingRole = "dimension" | "measure" | "series" | "style";
 export type EncodingEmptyLabel = "Not bound" | "Static";
@@ -33,6 +44,8 @@ export type ChartChannelContract = {
   accepts: DataColumnType[];
   emptyLabel: EncodingEmptyLabel;
   multiple?: boolean;
+  /** Selection/materialization choices rendered by the generic role editor. */
+  bindingModes?: readonly RoleBindingModeSpecification[];
   /** Categorical bindings stay single-select even when measure-set bindings are multi-select. */
   categoricalExclusive?: boolean;
   configurable?: boolean;
@@ -86,6 +99,7 @@ export type ChartContract = {
   coordinateSystem: Exclude<CoordinateSystem, "Geographic">;
   markRole: "line" | "point" | "bar" | "arc" | "cell" | "area" | "path" | "node" | "box" | "contour" | "hexagon" | "link";
   channels: ChartEncodingChannelSchema[];
+  seriesPresentation?: SeriesPresentationSpecification;
   aggregationPolicy: "allowed" | "forbidden";
   /** Default materialization mode; conditions may refine it from a binding. */
   dataMode: ChartDataMode;
@@ -153,13 +167,20 @@ function defineSchema(
   const requiredChannels = channels.filter((channel) => channel.required).map((channel) => channel.channel);
   const roles: ChartRoleContract[] = channels
     .filter((channel) => channel.role === "dimension" || channel.role === "series" || channel.role === "measure")
-    .map((channel) => ({
-      id: channel.channel,
-      kind: channel.role === "measure" ? "measure" : "dimension",
-      accepts: [...channel.accepts],
-      minFields: channel.required ? 1 : 0,
-      maxFields: channel.multiple ? Number.POSITIVE_INFINITY : 1,
-    }));
+    .map((channel) => {
+      const bindingModes = channel.bindingModes ?? [{
+        kind: "field" as const,
+        minFields: channel.required ? 1 : 0,
+        maxFields: 1,
+      }];
+      return {
+        id: channel.channel,
+        kind: channel.role === "measure" ? "measure" : "dimension",
+        accepts: [...channel.accepts],
+        minFields: Math.min(...bindingModes.map((mode) => mode.minFields)),
+        maxFields: Math.max(...bindingModes.map((mode) => mode.maxFields)),
+      };
+    });
   return {
     ...base,
     requiredChannels,
@@ -171,6 +192,8 @@ function defineSchema(
 }
 
 function boundEncodings(spec: ChartSpec, channel: ChartEncodingChannel, role: EncodingRole): ChartEncoding[] {
+  const canonical = spec.roleBindings?.[channel];
+  if (canonical) return canonical.fields;
   if (role === "series") {
     if (spec.seriesFields?.length) return spec.seriesFields;
     if (spec.series) return [spec.series];
@@ -223,20 +246,42 @@ export function nestedContextFields(spec: ChartSpec) {
 
 const xAny = { channel: "x", label: "X", role: "dimension", required: true, accepts: ["ordinal", "quantitative", "nominal"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
 const yMeasure = { channel: "y", label: "Y", role: "measure", required: true, accepts: ["ordinal", "quantitative"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
-const multiLineYMeasure = { ...yMeasure, multiple: true } satisfies ChartEncodingChannelSchema;
+const multiLineYMeasure = {
+  ...yMeasure,
+  multiple: true,
+  bindingModes: [
+    { kind: "field", minFields: 1, maxFields: 1 },
+    { kind: "fold", minFields: 2, maxFields: Number.POSITIVE_INFINITY, keyOutputRoleId: "series", valueOutputRoleId: "y" },
+  ],
+} satisfies ChartEncodingChannelSchema;
 const lineSize = { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
-const lineShape = { channel: "shape", label: "Shape", role: "style", required: false, accepts: ["nominal"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
-const lineSeries = { channel: "color", label: "Color", semanticLabel: "Series", role: "series", required: false, accepts: ["nominal", "ordinal"], emptyLabel: "Static", categoricalExclusive: true } satisfies ChartEncodingChannelSchema;
+const lineSeries = { channel: "series", label: "Series", role: "series", required: false, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound", categoricalExclusive: true } satisfies ChartEncodingChannelSchema;
 const scatterColor = { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
 const barX = { channel: "x", label: "X", role: "dimension", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
 const categoricalBarX = { ...barX, accepts: ["nominal", "ordinal"] } satisfies ChartEncodingChannelSchema;
 const barY = { channel: "y", label: "Y", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
+const foldedBarY = {
+  ...barY,
+  multiple: true,
+  bindingModes: [
+    { kind: "field", minFields: 1, maxFields: 1 },
+    { kind: "fold", minFields: 2, maxFields: Number.POSITIVE_INFINITY, keyOutputRoleId: "series", valueOutputRoleId: "y", presentation: "grouped-series" },
+  ],
+} satisfies ChartEncodingChannelSchema;
+const foldedStackedBarY = {
+  ...barY,
+  multiple: true,
+  bindingModes: [
+    { kind: "field", minFields: 1, maxFields: 1 },
+    { kind: "fold", minFields: 2, maxFields: Number.POSITIVE_INFINITY, keyOutputRoleId: "series", valueOutputRoleId: "y", presentation: "stacked-series" },
+  ],
+} satisfies ChartEncodingChannelSchema;
 const barStyle = { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
-const barSeries = { channel: "color", label: "Color", semanticLabel: "Series", role: "series", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Static", multiple: true, categoricalExclusive: true } satisfies ChartEncodingChannelSchema;
+const barSeries = { channel: "series", label: "Series", role: "series", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound", multiple: true, categoricalExclusive: true } satisfies ChartEncodingChannelSchema;
 const barSize = { channel: "size", label: "Size", role: "style", required: false, accepts: ["quantitative"], emptyLabel: "Static" } satisfies ChartEncodingChannelSchema;
 const polarBarCategory = { channel: "segment", label: "Category", role: "dimension", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
 const polarBarValue = { channel: "radius", label: "R value", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" } satisfies ChartEncodingChannelSchema;
-const polarBarSeries = { channel: "color", label: "Stack", semanticLabel: "Stack item", role: "series", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound", categoricalExclusive: true } satisfies ChartEncodingChannelSchema;
+const polarBarSeries = { channel: "series", label: "Series", role: "series", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound", categoricalExclusive: true } satisfies ChartEncodingChannelSchema;
 const radialBarChannels = (stacked: boolean): ChartEncodingChannelSchema[] => [
   { channel: "theta", label: "Angular width", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
   polarBarCategory,
@@ -249,7 +294,7 @@ const circularBarChannels = (stacked: boolean): ChartEncodingChannelSchema[] => 
   ? [
     { channel: "theta", label: "Theta", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
     { channel: "radius", label: "R", role: "dimension", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound" },
-    { ...barSeries, semanticLabel: "Segment item" },
+    barSeries,
     barSize,
   ]
   : [
@@ -259,7 +304,15 @@ const circularBarChannels = (stacked: boolean): ChartEncodingChannelSchema[] => 
   ];
 const areaChannels = (requiresSeries: boolean): ChartEncodingChannelSchema[] => [
   xAny,
-  { ...yMeasure, accepts: ["quantitative"] },
+  {
+    ...yMeasure,
+    accepts: ["quantitative"],
+    multiple: true,
+    bindingModes: [
+      { kind: "field", minFields: 1, maxFields: 1 },
+      { kind: "fold", minFields: 2, maxFields: Number.POSITIVE_INFINITY, keyOutputRoleId: "series", valueOutputRoleId: "y" },
+    ],
+  },
   { ...lineSeries, required: requiresSeries },
 ];
 const hierarchyChannels: ChartEncodingChannelSchema[] = [
@@ -275,45 +328,84 @@ const flowChannels: ChartEncodingChannelSchema[] = [
   { channel: "value", label: "Flow value", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Not bound" },
   { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "quantitative"], emptyLabel: "Static" },
 ];
+const lineSeriesPresentation = {
+  roleId: "series",
+  layout: "line",
+  legend: true,
+  itemProperties: ["color", "lineStyle", "strokeWidth"],
+} as const satisfies SeriesPresentationSpecification;
+const singleLineSeriesPresentation = {
+  ...lineSeriesPresentation,
+  layout: "single",
+  legend: false,
+} as const satisfies SeriesPresentationSpecification;
+const groupedBarSeriesPresentation = {
+  roleId: "series",
+  layout: "grouped",
+  legend: true,
+  itemProperties: ["color"],
+} as const satisfies SeriesPresentationSpecification;
+const stackedBarSeriesPresentation = {
+  roleId: "series",
+  layout: "stacked",
+  legend: true,
+  itemProperties: ["color"],
+} as const satisfies SeriesPresentationSpecification;
+const areaSeriesPresentation = {
+  roleId: "series",
+  layout: "area",
+  legend: true,
+  itemProperties: ["color"],
+} as const satisfies SeriesPresentationSpecification;
 
 /**
- * The single reviewable source of truth for every chart exposed by the app.
- * Encoding controls consume `channels`; rendering consumes `renderer` and
- * `coordinateSystem`; validation consumes the remaining contract fields.
+ * Data-contract payloads used to construct the chart-block specifications.
+ * The public `chartContracts` export below is projected back out of those
+ * specifications for compatibility with existing inference/UI consumers.
  */
-export const chartContracts = {
-  LineGraph: defineSchema("LineGraph", "Single Line", "line", [xAny, yMeasure, { ...lineSeries, configurable: false }, lineSize, lineShape], {
+const chartContractData = {
+  LineGraph: defineSchema("LineGraph", "Single Line", "line", [xAny, yMeasure], {
     aggregationPolicy: "forbidden",
     requiresFunctionalDependency: true,
+    seriesPresentation: singleLineSeriesPresentation,
     dimensionUpgrades: [{ chartType: "MultiLineChart", label: "Multi-line", role: "series" }],
   }),
-  MultiLineChart: defineSchema("MultiLineChart", "Multi-Line Chart", "line", [xAny, multiLineYMeasure, lineSeries, lineSize, lineShape]),
+  MultiLineChart: defineSchema("MultiLineChart", "Multi-Line Chart", "line", [xAny, multiLineYMeasure, lineSeries], {
+    seriesPresentation: lineSeriesPresentation,
+  }),
   Scatterplot: defineSchema("Scatterplot", "Scatterplot", "scatter", [
     xAny,
     { ...yMeasure, accepts: ["quantitative", "ordinal", "nominal"] },
     scatterColor,
     lineSize,
   ]),
-  SingleBarChart: defineSchema("SingleBarChart", "Single Bar", "bar", [barX, barY, barStyle, barSize], {
+  SingleBarChart: defineSchema("SingleBarChart", "Single Bar", "bar", [barX, foldedBarY, { ...barSeries, required: false }, barSize], {
+    seriesPresentation: groupedBarSeriesPresentation,
     dimensionUpgrades: [
       { chartType: "GroupedBarChart", label: "Grouped bar", role: "series" },
       { chartType: "StackedBarChart", label: "Stacked bar", role: "series" },
     ],
   }),
-  GroupedBarChart: defineSchema("GroupedBarChart", "Grouped Bar", "bar", [categoricalBarX, barY, { ...barSeries, semanticLabel: "Group item" }, barSize]),
-  StackedBarChart: defineSchema("StackedBarChart", "Stacked Bar", "bar", [categoricalBarX, barY, { ...barSeries, semanticLabel: "Segment item" }, barSize]),
+  GroupedBarChart: defineSchema("GroupedBarChart", "Grouped Bar", "bar", [categoricalBarX, foldedBarY, barSeries, barSize], {
+    seriesPresentation: groupedBarSeriesPresentation,
+  }),
+  StackedBarChart: defineSchema("StackedBarChart", "Stacked Bar", "bar", [categoricalBarX, foldedStackedBarY, barSeries, barSize], {
+    seriesPresentation: stackedBarSeriesPresentation,
+  }),
   DivergentBarChart: defineSchema("DivergentBarChart", "Divergent Bar", "bar", [barX, barY, barStyle, barSize], {
     dimensionUpgrades: [{ chartType: "DivergentStackedBarChart", label: "Divergent stacked bar", role: "series" }],
   }),
-  DivergentStackedBarChart: defineSchema("DivergentStackedBarChart", "Divergent Stacked Bar", "bar", [categoricalBarX, barY, { ...barSeries, semanticLabel: "Segment item" }, barSize]),
+  DivergentStackedBarChart: defineSchema("DivergentStackedBarChart", "Divergent Stacked Bar", "bar", [categoricalBarX, foldedStackedBarY, barSeries, barSize], {
+    seriesPresentation: stackedBarSeriesPresentation,
+  }),
   PieChart: defineSchema("PieChart", "Pie Chart", "pie", [
-    { channel: "theta", label: "Theta", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
-    { channel: "segment", label: "Segment", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound", multiple: true, categoricalExclusive: true },
+    { channel: "theta", label: "Theta", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Static", multiple: true, bindingModes: [{ kind: "field", minFields: 0, maxFields: 1 }, { kind: "fold", minFields: 2, maxFields: Number.POSITIVE_INFINITY, keyOutputRoleId: "segment", valueOutputRoleId: "theta" }] },
+    { channel: "segment", label: "Segment", role: "dimension", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound", categoricalExclusive: true },
     { channel: "radius", label: "R", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Not bound" },
   ]),
   DonutChart: defineSchema("DonutChart", "Donut", "donut", [
-    { channel: "theta", label: "Theta", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Static" },
-    { channel: "segment", label: "Segment", role: "dimension", required: true, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound", multiple: true, categoricalExclusive: true },
+    { channel: "theta", label: "Theta", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Static", multiple: true, bindingModes: [{ kind: "field", minFields: 0, maxFields: 1 }, { kind: "fold", minFields: 2, maxFields: Number.POSITIVE_INFINITY, keyOutputRoleId: "segment", valueOutputRoleId: "theta" }] },
+    { channel: "segment", label: "Segment", role: "dimension", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound", categoricalExclusive: true },
     { channel: "radius", label: "R", role: "measure", required: false, accepts: ["quantitative"], emptyLabel: "Not bound" },
   ]),
   MatrixDiagram: defineSchema("MatrixDiagram", "Matrix", "matrix", [
@@ -322,16 +414,17 @@ export const chartContracts = {
     { channel: "color", label: "Color", role: "measure", required: false, accepts: ["quantitative", "nominal"], emptyLabel: "Static" },
   ]),
   AreaChart: defineSchema("AreaChart", "Area Chart", "area", areaChannels(false), {
+    seriesPresentation: areaSeriesPresentation,
     aggregationPolicy: "allowed",
     requiresFunctionalDependency: false,
     dimensionUpgrades: [{ chartType: "StackedAreaChart", label: "Stacked area", role: "series" }],
   }),
-  StackedAreaChart: defineSchema("StackedAreaChart", "Stacked Area", "area", areaChannels(true)),
-  Streamgraph: defineSchema("Streamgraph", "Streamgraph", "area", areaChannels(true)),
-  HorizonChart: defineSchema("HorizonChart", "Horizon Chart", "area", areaChannels(true), { coordinateSystem: "CoordinateFree", shareableChannels: [] }),
+  StackedAreaChart: defineSchema("StackedAreaChart", "Stacked Area", "area", areaChannels(true), { seriesPresentation: areaSeriesPresentation }),
+  Streamgraph: defineSchema("Streamgraph", "Streamgraph", "area", areaChannels(true), { seriesPresentation: areaSeriesPresentation }),
+  HorizonChart: defineSchema("HorizonChart", "Horizon Chart", "area", areaChannels(true), { coordinateSystem: "CoordinateFree", shareableChannels: [], seriesPresentation: areaSeriesPresentation }),
   ParallelCoordinatesPlot: defineSchema("ParallelCoordinatesPlot", "Parallel Coordinates", "parallel", [
-    { channel: "dimensions", label: "Dimensions", role: "dimension", required: true, accepts: ["quantitative", "nominal", "ordinal"], emptyLabel: "Not bound", multiple: true },
-    { channel: "color", label: "Color", role: "series", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" },
+    { channel: "dimensions", label: "Dimensions", role: "dimension", required: true, accepts: ["quantitative", "nominal", "ordinal"], emptyLabel: "Not bound", multiple: true, bindingModes: [{ kind: "repeat", minFields: 2, maxFields: Number.POSITIVE_INFINITY }] },
+    { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" },
   ]),
   Icicle: defineSchema("Icicle", "Icicle", "hierarchy", hierarchyChannels),
   Sunburst: defineSchema("Sunburst", "Sunburst", "hierarchy", hierarchyChannels, {
@@ -371,6 +464,7 @@ export const chartContracts = {
   RadialStackedBarChart: defineSchema("RadialStackedBarChart", "Radial Stacked Bar (Sector)", "bar", radialBarChannels(true), {
     coordinateSystem: "Polar",
     shareableChannels: ["angle", "radius"],
+    seriesPresentation: stackedBarSeriesPresentation,
   }),
   RadialRectBarChart: defineSchema("RadialRectBarChart", "Radial Bar (Rectangle)", "bar", radialBarChannels(false), {
     coordinateSystem: "Polar",
@@ -379,6 +473,7 @@ export const chartContracts = {
   RadialRectStackedBarChart: defineSchema("RadialRectStackedBarChart", "Radial Stacked Bar (Rectangle)", "bar", radialBarChannels(true), {
     coordinateSystem: "Polar",
     shareableChannels: ["angle", "radius"],
+    seriesPresentation: stackedBarSeriesPresentation,
   }),
   CircularBarChart: defineSchema("CircularBarChart", "Circular Bar", "bar", circularBarChannels(false), {
     coordinateSystem: "Polar",
@@ -387,6 +482,7 @@ export const chartContracts = {
   CircularStackedBarChart: defineSchema("CircularStackedBarChart", "Circular Stacked Bar", "bar", circularBarChannels(true), {
     coordinateSystem: "Polar",
     shareableChannels: ["angle", "radius"],
+    seriesPresentation: stackedBarSeriesPresentation,
   }),
   RadarChart: defineSchema("RadarChart", "Radar Chart", "area", [
     { channel: "theta", label: "Axis", role: "dimension", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound" },
@@ -397,6 +493,7 @@ export const chartContracts = {
     coordinateSystem: "Polar",
     markRole: "area",
     shareableChannels: ["angle", "radius"],
+    seriesPresentation: { ...areaSeriesPresentation, layout: "radar" },
   }),
   Calendar: defineSchema("Calendar", "Calendar", "calendar", [
     { channel: "date", label: "Date", role: "dimension", required: true, accepts: ["ordinal"], emptyLabel: "Not bound" },
@@ -477,17 +574,447 @@ export const chartContracts = {
   }),
 } satisfies Record<string, ChartEncodingSchema>;
 
+export type SupportedChartType = keyof typeof chartContractData;
+
+const chartTypeFamilies: Record<SupportedChartType, readonly BlockFamilyId[]> = {
+  LineGraph: ["linechart"],
+  MultiLineChart: ["linechart"],
+  Scatterplot: ["point"],
+  SingleBarChart: ["barchart"],
+  GroupedBarChart: ["barchart"],
+  StackedBarChart: ["barchart"],
+  DivergentBarChart: ["barchart"],
+  DivergentStackedBarChart: ["barchart"],
+  PieChart: ["arc"],
+  DonutChart: ["arc"],
+  MatrixDiagram: ["heatmap"],
+  AreaChart: ["areachart"],
+  StackedAreaChart: ["areachart"],
+  Streamgraph: ["areachart"],
+  HorizonChart: ["areachart"],
+  ParallelCoordinatesPlot: ["linechart"],
+  Icicle: ["tree"],
+  Sunburst: ["tree"],
+  Treemap: ["tree"],
+  Dendrogram: ["tree"],
+  RadialDendrogram: ["tree"],
+  RadialBarChart: ["barchart", "arc"],
+  RadialStackedBarChart: ["barchart", "arc"],
+  RadialRectBarChart: ["barchart"],
+  RadialRectStackedBarChart: ["barchart"],
+  CircularBarChart: ["barchart", "arc"],
+  CircularStackedBarChart: ["barchart", "arc"],
+  RadarChart: ["areachart", "linechart", "radar"],
+  Calendar: ["calendar"],
+  Boxplot: ["boxplot"],
+  SingleBoxplot: ["boxplot"],
+  MultipleBoxplot: ["boxplot"],
+  Contour: ["heatmap"],
+  Hexbin: ["point", "heatmap"],
+  Chord: ["chord"],
+  Sankey: ["sankey"],
+  ForceDirectedGraph: ["network"],
+  GraphLink: ["network"],
+  GraphLinkPolar: ["network"],
+};
+
+const candidateIds: Partial<Record<SupportedChartType, string>> = {
+  LineGraph: "builtin-template:line",
+  MultiLineChart: "builtin-template:multi-line",
+  Scatterplot: "builtin-template:scatter",
+  MatrixDiagram: "builtin-template:matrix",
+  SingleBarChart: "builtin-template:single-bar",
+  GroupedBarChart: "builtin-template:grouped-bar",
+  StackedBarChart: "builtin-template:stacked-bar",
+  DivergentBarChart: "builtin-template:divergent-bar",
+  DivergentStackedBarChart: "builtin-template:divergent-stacked-bar",
+  AreaChart: "builtin-template:area-chart",
+  StackedAreaChart: "builtin-template:stacked-area-chart",
+  HorizonChart: "builtin-template:horizon-chart",
+  ParallelCoordinatesPlot: "builtin-template:parallel-coordinates",
+  PieChart: "builtin-template:pie",
+  DonutChart: "builtin-template:donut",
+  RadialBarChart: "builtin-template:radial-bar-chart",
+  RadialStackedBarChart: "builtin-template:radial-stacked-bar-chart",
+  RadialRectBarChart: "builtin-template:radial-rect-bar-chart",
+  RadialRectStackedBarChart: "builtin-template:radial-rect-stacked-bar-chart",
+  CircularBarChart: "builtin-template:circular-bar-chart",
+  CircularStackedBarChart: "builtin-template:circular-stacked-bar-chart",
+  RadarChart: "builtin-template:radar-chart",
+  Icicle: "builtin-template:icicle",
+  Sunburst: "builtin-template:sunburst",
+  Treemap: "builtin-template:treemap",
+  Dendrogram: "builtin-template:dendrogram",
+  RadialDendrogram: "builtin-template:radial-dendrogram",
+  ForceDirectedGraph: "builtin-template:force-directed-graph",
+  GraphLink: "builtin-template:graph-link",
+  GraphLinkPolar: "builtin-template:graph-link-polar",
+};
+
+const familyOrders: Partial<Record<BlockFamilyId, readonly SupportedChartType[]>> = {
+  tree: ["Sunburst", "Icicle", "Treemap", "Dendrogram", "RadialDendrogram"],
+};
+
+const treeDirectionPlacement = {
+  right: { channel: "y", boundary: "right", concatDirection: "horizontal", concatPosition: "after" },
+  left: { channel: "y", boundary: "left", concatDirection: "horizontal", concatPosition: "before" },
+  down: { channel: "x", boundary: "bottom", concatDirection: "vertical", concatPosition: "after" },
+  up: { channel: "x", boundary: "top", concatDirection: "vertical", concatPosition: "before" },
+} as const;
+
+const treeDepthPlacement = {
+  right: { channel: "x" },
+  left: { channel: "x" },
+  down: { channel: "y" },
+  up: { channel: "y" },
+} as const;
+
+function catalogId(chartType: SupportedChartType) {
+  return candidateIds[chartType]
+    ?? `builtin-template:${chartType.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase()}`;
+}
+
+function blockRoles(contract: ChartContract): BlockRoleSpecification[] {
+  return contract.channels.map((channel) => {
+    const bindingModes = channel.bindingModes ?? [{
+      kind: "field" as const,
+      minFields: channel.required ? 1 as const : 0 as const,
+      maxFields: 1 as const,
+    }];
+    return {
+      id: channel.channel,
+      label: channel.semanticLabel ?? channel.label,
+      kind: channel.channel === "key"
+        ? "identity" as const
+        : channel.role === "measure"
+          ? "measure" as const
+          : channel.role === "series"
+            ? "series" as const
+            : channel.role === "style"
+              ? "style" as const
+              : "dimension" as const,
+      channel: channel.channel,
+      required: channel.required,
+      accepts: channel.accepts,
+      minFields: Math.min(...bindingModes.map((mode) => mode.minFields)),
+      maxFields: Math.max(...bindingModes.map((mode) => mode.maxFields)),
+      bindingModes,
+      editor: {
+        label: channel.label,
+        emptyLabel: channel.emptyLabel,
+        configurable: channel.configurable !== false,
+        categoricalExclusive: channel.categoricalExclusive,
+      },
+    };
+  });
+}
+
+function edgeArea(
+  id: string,
+  referenceId: string,
+  boundary: "left" | "right" | "top" | "bottom",
+  treeDirections?: DropAreaSpecification["treeDirections"],
+): DropAreaSpecification {
+  return {
+    id,
+    operation: "concat",
+    geometry: {
+      kind: "outside-edge-band",
+      referenceId,
+      boundary,
+      gapPx: 10,
+      minimumThicknessPx: 18,
+      maximumFraction: 0.22,
+    },
+    sharedReferenceIds: [referenceId],
+    exclusiveGroup: "composition",
+    treeDirections,
+  };
+}
+
+function cartesianReferences(): SpatialReferenceSpecification[] {
+  return [
+    {
+      id: "axis-x",
+      kind: "axis",
+      semantic: "position",
+      exposure: "external",
+      compatibility: "type-exact",
+      roleIds: ["x", "column"],
+      placement: { channel: "x" },
+      presentation: { baseline: "axis", ticks: "scale", labels: "scale" },
+    },
+    {
+      id: "axis-y",
+      kind: "axis",
+      semantic: "position",
+      exposure: "external",
+      compatibility: "type-exact",
+      roleIds: ["y", "row"],
+      placement: { channel: "y" },
+      presentation: { baseline: "axis", ticks: "scale", labels: "scale" },
+    },
+  ];
+}
+
+function polarReferences(): SpatialReferenceSpecification[] {
+  return [
+    {
+      id: "axis-angle",
+      kind: "axis",
+      semantic: "position",
+      exposure: "external",
+      compatibility: "type-exact",
+      roleIds: ["theta", "angle", "segment"],
+      placement: { channel: "angle" },
+      presentation: { baseline: "axis", ticks: "scale", labels: "scale" },
+    },
+    {
+      id: "axis-radius",
+      kind: "axis",
+      semantic: "position",
+      exposure: "external",
+      compatibility: "type-exact",
+      roleIds: ["radius", "value"],
+      placement: { channel: "radius" },
+      presentation: { baseline: "axis", ticks: "scale", labels: "scale" },
+    },
+  ];
+}
+
+function standardDropAreas(
+  coordinateSystem: ChartContract["coordinateSystem"],
+  references: readonly SpatialReferenceSpecification[],
+  layerEnabled: boolean,
+): DropAreaSpecification[] {
+  const areas: DropAreaSpecification[] = [];
+  const ids = new Set(references.map((reference) => reference.id));
+  if (coordinateSystem === "Cartesian") {
+    if (ids.has("axis-y")) areas.push(edgeArea("concat-left", "axis-y", "left"), edgeArea("concat-right", "axis-y", "right"));
+    if (ids.has("axis-x")) areas.push(edgeArea("concat-top", "axis-x", "top"), edgeArea("concat-bottom", "axis-x", "bottom"));
+  } else if (coordinateSystem === "Polar") {
+    if (ids.has("axis-angle")) {
+      areas.push(
+        { id: "concat-inner", operation: "concat", geometry: { kind: "outside-annulus", referenceId: "axis-angle", boundary: "inner", gapPx: 10, minimumThicknessPx: 18, maximumFraction: 0.22 }, sharedReferenceIds: ["axis-angle"], exclusiveGroup: "composition" },
+        { id: "concat-outer", operation: "concat", geometry: { kind: "outside-annulus", referenceId: "axis-angle", boundary: "outer", gapPx: 10, minimumThicknessPx: 18, maximumFraction: 0.22 }, sharedReferenceIds: ["axis-angle"], exclusiveGroup: "composition" },
+      );
+    }
+    if (ids.has("axis-radius")) {
+      areas.push(
+        { id: "concat-start", operation: "concat", geometry: { kind: "outside-angular-band", referenceId: "axis-radius", boundary: "start", gapPx: 10, minimumThicknessPx: 18, maximumAngle: 45 }, sharedReferenceIds: ["axis-radius"], exclusiveGroup: "composition" },
+        { id: "concat-end", operation: "concat", geometry: { kind: "outside-angular-band", referenceId: "axis-radius", boundary: "end", gapPx: 10, minimumThicknessPx: 18, maximumAngle: 45 }, sharedReferenceIds: ["axis-radius"], exclusiveGroup: "composition" },
+      );
+    }
+  }
+  if (layerEnabled && references.some((reference) => reference.exposure === "external")) {
+    areas.push({ id: "layer-body", operation: "layer", geometry: { kind: "body-inset", insetPx: 10 }, sharedReferenceIds: references.filter((reference) => reference.exposure === "external").map((reference) => reference.id), exclusiveGroup: "composition" });
+  }
+  areas.push(
+    { id: "nested-mark", operation: "nested", geometry: { kind: "structural-target", targetId: "marks" }, sharedReferenceIds: [], exclusiveGroup: "nested" },
+    { id: "enter", operation: "enter", geometry: { kind: "enter-portal", maximumDiameterPx: 72 }, sharedReferenceIds: [], exclusiveGroup: "navigation" },
+  );
+  return areas;
+}
+
+function standardStructuralTargets(contract: ChartContract): StructuralTargetSpecification[] {
+  return [{
+    id: "marks",
+    markRole: contract.markRole,
+    repeated: true,
+    contextRoleIds: contract.nestedContext === "node-id" ? ["key"] : contract.roles.filter((role) => role.kind === "dimension").map((role) => role.id),
+    anchorReferenceId: "mark-anchors",
+  }];
+}
+
+function standardSpatialReferences(contract: ChartContract): SpatialReferenceSpecification[] {
+  if (contract.chartType === "Dendrogram") {
+    return [
+      {
+        id: "tree-leaf-axis",
+        kind: "derived-axis",
+        semantic: "tree-leaf",
+        exposure: "external",
+        compatibility: "tree-leaf-domain",
+        roleIds: ["category", "key"],
+        placementByTreeDirection: treeDirectionPlacement,
+        domainResolver: { kind: "terminal-leaves", keyRoleId: "key", parentRoleId: "parent", orderRoleIds: ["category", "key"] },
+        presentation: { baseline: "none", ticks: "terminal-node-centers", labels: "terminal-node-labels" },
+      },
+      {
+        id: "tree-depth-axis",
+        kind: "derived-axis",
+        semantic: "hierarchy-depth",
+        exposure: "internal",
+        compatibility: "hierarchy-depth",
+        placementByTreeDirection: treeDepthPlacement,
+        domainResolver: { kind: "hierarchy-depth", keyRoleId: "key", parentRoleId: "parent" },
+        presentation: { baseline: "none", ticks: "none", labels: "none" },
+      },
+      { id: "mark-anchors", kind: "anchor-set", semantic: "mark-anchor", exposure: "internal", compatibility: "type-exact", roleIds: ["key"], placement: { channel: "anchor" } },
+    ];
+  }
+  if (contract.chartType === "RadialDendrogram") {
+    return [
+      {
+        id: "tree-leaf-axis",
+        kind: "derived-axis",
+        semantic: "tree-leaf",
+        exposure: "external",
+        compatibility: "tree-leaf-domain",
+        roleIds: ["theta", "key"],
+        placement: { channel: "angle", boundary: "outer", concatDirection: "radial", concatPosition: "after" },
+        domainResolver: { kind: "terminal-leaves", keyRoleId: "key", parentRoleId: "parent", orderRoleIds: ["theta", "angle", "key"] },
+        presentation: { baseline: "none", ticks: "terminal-node-centers", labels: "terminal-node-labels" },
+      },
+      {
+        id: "tree-depth-axis",
+        kind: "derived-axis",
+        semantic: "hierarchy-depth",
+        exposure: "conditional",
+        compatibility: "hierarchy-depth",
+        placement: { channel: "radius" },
+        domainResolver: { kind: "hierarchy-depth", keyRoleId: "key", parentRoleId: "parent" },
+        presentation: { baseline: "none", ticks: "none", labels: "none" },
+        conditionalPartnerCapability: "hierarchy-depth",
+      },
+      { id: "mark-anchors", kind: "anchor-set", semantic: "mark-anchor", exposure: "internal", compatibility: "type-exact", roleIds: ["key"], placement: { channel: "anchor" } },
+    ];
+  }
+  const references = contract.coordinateSystem === "Cartesian"
+    ? cartesianReferences()
+    : contract.coordinateSystem === "Polar"
+      ? polarReferences()
+      : [];
+  if (contract.chartType === "Sunburst") {
+    const radius = references.find((reference) => reference.id === "axis-radius");
+    if (radius) {
+      radius.semantic = "hierarchy-depth";
+      radius.exposure = "conditional";
+      radius.compatibility = "hierarchy-depth";
+      radius.conditionalPartnerCapability = "hierarchy-depth";
+      radius.domainResolver = { kind: "hierarchy-depth", keyRoleId: "key", parentRoleId: "parent" };
+    }
+  }
+  const declaredRoles = new Set(contract.channels.map((channel) => channel.channel));
+  references.forEach((reference) => {
+    if (reference.roleIds) {
+      const roleIds = reference.roleIds.filter((roleId) => declaredRoles.has(roleId as ChartEncodingChannel));
+      reference.roleIds = roleIds.length ? roleIds : undefined;
+    }
+  });
+  return [
+    ...references,
+    { id: "mark-anchors", kind: "anchor-set", semantic: "mark-anchor", exposure: "internal", compatibility: "type-exact", roleIds: contract.nestedContext === "node-id" ? ["key"] : undefined, placement: { channel: "anchor" } },
+  ];
+}
+
+function treeDropAreas(contract: ChartContract): DropAreaSpecification[] | null {
+  if (contract.chartType === "Dendrogram") {
+    return [
+      edgeArea("concat-leaf-left", "tree-leaf-axis", "left", ["right", "left"]),
+      edgeArea("concat-leaf-right", "tree-leaf-axis", "right", ["right", "left"]),
+      edgeArea("concat-leaf-top", "tree-leaf-axis", "top", ["down", "up"]),
+      edgeArea("concat-leaf-bottom", "tree-leaf-axis", "bottom", ["down", "up"]),
+      { id: "layer-leaf", operation: "layer", geometry: { kind: "body-inset", insetPx: 10 }, sharedReferenceIds: ["tree-leaf-axis"], exclusiveGroup: "composition" },
+      { id: "nested-node", operation: "nested", geometry: { kind: "structural-target", targetId: "marks" }, sharedReferenceIds: [], exclusiveGroup: "nested" },
+      { id: "enter", operation: "enter", geometry: { kind: "enter-portal", maximumDiameterPx: 72 }, sharedReferenceIds: [], exclusiveGroup: "navigation" },
+    ];
+  }
+  if (contract.chartType === "RadialDendrogram") {
+    return [
+      { id: "concat-leaf-outer", operation: "concat", geometry: { kind: "outside-annulus", referenceId: "tree-leaf-axis", boundary: "outer", gapPx: 10, minimumThicknessPx: 18, maximumFraction: 0.22 }, sharedReferenceIds: ["tree-leaf-axis"], exclusiveGroup: "composition" },
+      { id: "concat-depth-start", operation: "concat", geometry: { kind: "outside-angular-band", referenceId: "tree-depth-axis", boundary: "start", gapPx: 10, minimumThicknessPx: 18, maximumAngle: 45 }, sharedReferenceIds: ["tree-depth-axis"], exclusiveGroup: "composition", requiresPartnerCapability: "hierarchy-depth" },
+      { id: "concat-depth-end", operation: "concat", geometry: { kind: "outside-angular-band", referenceId: "tree-depth-axis", boundary: "end", gapPx: 10, minimumThicknessPx: 18, maximumAngle: 45 }, sharedReferenceIds: ["tree-depth-axis"], exclusiveGroup: "composition", requiresPartnerCapability: "hierarchy-depth" },
+      { id: "layer-leaf", operation: "layer", geometry: { kind: "body-inset", insetPx: 10 }, sharedReferenceIds: ["tree-leaf-axis"], exclusiveGroup: "composition" },
+      { id: "nested-node", operation: "nested", geometry: { kind: "structural-target", targetId: "marks" }, sharedReferenceIds: [], exclusiveGroup: "nested" },
+      { id: "enter", operation: "enter", geometry: { kind: "enter-portal", maximumDiameterPx: 72 }, sharedReferenceIds: [], exclusiveGroup: "navigation" },
+    ];
+  }
+  return null;
+}
+
+function createBlockSpecification(chartType: SupportedChartType): ChartBlockSpecification<ChartContract> {
+  const contract = chartContractData[chartType];
+  const references = standardSpatialReferences(contract);
+  const specialTreeDropAreas = treeDropAreas(contract);
+  const dropAreas = specialTreeDropAreas ?? standardDropAreas(
+    contract.coordinateSystem,
+    references,
+    contract.supportsLayerComposition,
+  );
+  if (chartType === "Sunburst") {
+    dropAreas.forEach((area) => {
+      if (area.sharedReferenceIds.includes("axis-radius")) area.requiresPartnerCapability = "hierarchy-depth";
+    });
+  }
+  const capabilities = chartType === "Sunburst" || chartType === "RadialDendrogram"
+    ? ["hierarchy", "hierarchy-depth"]
+    : contract.family === "hierarchy"
+      ? ["hierarchy"]
+      : [];
+  return {
+    schemaVersion: 1,
+    id: `chart-block:${chartType.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase()}`,
+    revision: 2,
+    chartType,
+    aliases: [],
+    label: contract.label,
+    families: chartTypeFamilies[chartType],
+    dataShape: contract.family === "hierarchy"
+      ? "hierarchy"
+      : contract.family === "flow"
+        ? "graph"
+        : "tabular",
+    data: contract,
+    roles: blockRoles(contract),
+    seriesPresentation: contract.seriesPresentation,
+    coordinateSystem: contract.coordinateSystem,
+    spatialReferences: references,
+    structuralTargets: standardStructuralTargets(contract),
+    composition: {
+      layer: { enabled: dropAreas.some((area) => area.operation === "layer") },
+      concat: { enabled: dropAreas.some((area) => area.operation === "concat") },
+      facet: { enabled: true },
+      nested: { asParent: true, asChild: true },
+      capabilities,
+      dropAreas,
+    },
+    renderer: { kind: "svg", key: contract.renderer, version: contract.rendererVersion },
+    catalog: {
+      candidateId: catalogId(chartType),
+      label: contract.label,
+      previewKey: chartType,
+      defaultSize: contract.coordinateSystem === "Polar" ? { width: 360, height: 360 } : { width: 420, height: 260 },
+      familyOrder: Object.fromEntries(chartTypeFamilies[chartType].map((family) => [
+        family,
+        familyOrders[family]?.indexOf(chartType) ?? Number.MAX_SAFE_INTEGER,
+      ])),
+      hidden: chartType === "Boxplot",
+      unavailable: chartType === "GraphLinkPolar",
+    },
+  };
+}
+
+/** Every implemented SVG chart is represented by one inheritable template class. */
+export const coreChartBlockTemplates = (Object.keys(chartContractData) as SupportedChartType[])
+  .map((chartType) => new DeclarativeChartBlockTemplate(createBlockSpecification(chartType)));
+
+export const coreChartBlockSpecifications = coreChartBlockTemplates
+  .map((template) => template.specification);
+
+/** Compatibility projection; all active values come from BlockSpecification.data. */
+export const chartContracts = Object.fromEntries(coreChartBlockSpecifications
+  .map((specification) => [specification.chartType, specification.data])) as typeof chartContractData;
+
 /** Compatibility export for the former encoding-schema module. */
 export const chartEncodingSchemas = chartContracts;
-
-export type SupportedChartType = keyof typeof chartContracts;
 
 function normalizedName(value: string) {
   return value.replace(/[\s_-]/g, "").toLowerCase();
 }
 
 const exactSchemas = new Map(
-  Object.values(chartContracts).map((schema) => [normalizedName(schema.chartType), schema]),
+  coreChartBlockSpecifications.map((specification) => [normalizedName(specification.chartType), specification.data]),
 );
 
 const familyMatchers: Array<readonly [ChartTemplateKind, (value: string) => boolean]> = [

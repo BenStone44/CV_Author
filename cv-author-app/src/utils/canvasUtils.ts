@@ -565,6 +565,14 @@ export function cloneChartSpec(chartSpec: ChartSpec | null | undefined) {
         encoding ? { ...encoding } : encoding,
       ]),
     ) as ChartSpec["encodings"],
+    roleBindings: chartSpec.roleBindings
+      ? Object.fromEntries(Object.entries(chartSpec.roleBindings).map(([roleId, binding]) => [
+        roleId,
+        binding
+          ? { ...binding, fields: binding.fields.map((field) => ({ ...field })) }
+          : binding,
+      ])) as ChartSpec["roleBindings"]
+      : undefined,
     aggregations: chartSpec.aggregations ? { ...chartSpec.aggregations } : undefined,
     autoAggregations: chartSpec.autoAggregations ? { ...chartSpec.autoAggregations } : undefined,
     angleFields: chartSpec.angleFields?.map((encoding) => ({ ...encoding })),
@@ -608,9 +616,19 @@ export function cloneChartSpec(chartSpec: ChartSpec | null | undefined) {
     numericFilters: chartSpec.numericFilters
       ? Object.fromEntries(Object.entries(chartSpec.numericFilters).map(([field, filter]) => [field, { ...filter }]))
       : undefined,
-    dataTransforms: chartSpec.dataTransforms?.map((transform) => transform.mode === "values"
-      ? { ...transform, values: [...transform.values] }
-      : { ...transform }),
+    dataTransforms: chartSpec.dataTransforms?.map((transform) => {
+      if (transform.kind === "filter" && transform.mode === "values") {
+        return { ...transform, values: [...transform.values] };
+      }
+      if (transform.kind === "fold") {
+        return {
+          ...transform,
+          sourceFields: [...transform.sourceFields],
+          lineage: { ...transform.lineage, sourceFields: [...transform.lineage.sourceFields] },
+        };
+      }
+      return { ...transform };
+    }),
     markGroups: chartSpec.markGroups?.map((group) => ({
       ...group,
       memberKeys: [...group.memberKeys],

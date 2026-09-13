@@ -1,6 +1,13 @@
 import type { ChartSpec, ChartEncodingChannel, DataColumnType } from "../types";
 import { getChartContract } from "./chartContracts";
 import { normalizeBarChartVariant, normalizeChartTemplate } from "./chartTemplates";
+import { getChartBlockSpecification } from "../chart-blocks/registry";
+import {
+  roleBindingMaterialization,
+  roleBindingResolvedFields,
+  roleBindingSelectedFields,
+} from "../chart-blocks/bindings";
+import type { RoleSelectionMaterialization } from "../chart-blocks/bindings";
 
 export type EncodingChannelConfig = {
   channel: ChartEncodingChannel;
@@ -49,16 +56,50 @@ export type PolarAxisRole = {
   label: "Theta" | "Segment" | "R";
 };
 
+export type MultiFieldRoleConfig = {
+  roleId: ChartEncodingChannel;
+  label: string;
+  required: boolean;
+  accepts: DataColumnType[];
+  minFields: number;
+  maxFields: number;
+  directAllowed: boolean;
+  materializations: Exclude<RoleSelectionMaterialization, "direct">[];
+};
+
+export function getMultiFieldRoleConfigsForSpec(spec: ChartSpec): MultiFieldRoleConfig[] {
+  const specification = getChartBlockSpecification(spec.chartType);
+  if (!specification) return [];
+  return specification.roles.flatMap((role) => {
+    const materializations = role.bindingModes
+      .filter((mode): mode is Extract<typeof mode, { kind: "fold" | "repeat" }> => mode.kind !== "field")
+      .map((mode) => mode.kind);
+    if (materializations.length === 0) return [];
+    return [{
+      roleId: role.id as ChartEncodingChannel,
+      label: role.label,
+      required: role.required,
+      accepts: [...role.accepts],
+      minFields: Math.min(...role.bindingModes.map((mode) => mode.minFields)),
+      maxFields: Math.max(...role.bindingModes.map((mode) => mode.maxFields)),
+      directAllowed: role.bindingModes.some((mode) => mode.kind === "field"),
+      materializations,
+    }];
+  });
+}
+
 export function resolvedSeriesField(spec: ChartSpec) {
-  return spec.series?.field
+  return roleBindingResolvedFields(spec, "series")[0]?.field
+    ?? spec.encodings.series?.field
+    ?? spec.series?.field
     ?? spec.seriesFields?.[0]?.field
     ?? (spec.encodings.color?.type === "nominal" ? spec.encodings.color.field : undefined)
     ?? "";
 }
 
 export function hasDerivedValueSeries(spec: ChartSpec, valueSlot: "y" | "value" | "theta" = "y") {
-  if (valueSlot === "theta" || valueSlot === "value") return (spec.angleFields?.length ?? 0) > 1;
-  return (spec.valueFields?.length ?? 0) > 1;
+  const roleId = valueSlot === "theta" || valueSlot === "value" ? "theta" : "y";
+  return roleBindingMaterialization(spec, roleId) === "fold";
 }
 
 export function resolveChartTemplateVariant(spec: ChartSpec): ChartTemplateVariant {
@@ -93,6 +134,21 @@ export function resolvedPolarAxisRoles(spec: ChartSpec, field: string): PolarAxi
 }
 
 export function getEncodingChannelConfigs(chartType: string): EncodingChannelConfig[] {
+  const specification = getChartBlockSpecification(chartType);
+  if (specification) {
+    return specification.roles
+      .filter((role) => role.editor.configurable)
+      .map((role) => ({
+        channel: role.channel,
+        label: role.editor.label,
+        role: role.kind === "identity" ? "dimension" : role.kind,
+        required: role.required,
+        accepts: [...role.accepts],
+        emptyLabel: role.editor.emptyLabel,
+        multiple: role.maxFields > 1 ? true : undefined,
+        categoricalExclusive: role.editor.categoricalExclusive,
+      }));
+  }
   const schema = getChartContract(chartType);
   if (!schema) return [];
   return schema.channels
@@ -101,12 +157,12 @@ export function getEncodingChannelConfigs(chartType: string): EncodingChannelCon
 }
 
 export function getEncodingChannelConfigsForSpec(spec: ChartSpec): EncodingChannelConfig[] {
-  const configs = getEncodingChannelConfigs(spec.chartType);
-  if (resolveChartTemplateVariant(spec) !== "line-multi") return configs;
-  return configs.filter((config) => !["color", "size", "shape"].includes(config.channel));
+  return getEncodingChannelConfigs(spec.chartType);
 }
 
 function nativeEncodingFields(spec: ChartSpec, channel: ChartEncodingChannel) {
+  const canonical = spec.roleBindings?.[channel];
+  if (canonical) return canonical.fields.map((field) => field.field);
   const template = normalizeChartTemplate(spec.chartType);
   if (template === "matrix") {
     if (channel === "x") return [spec.encodings.x?.field, spec.encodings.column?.field];
@@ -135,6 +191,9 @@ function nativeEncodingFields(spec: ChartSpec, channel: ChartEncodingChannel) {
     return spec.valueFields.map((encoding) => encoding.field);
   }
   if (channel === "dimensions") return spec.parallelFields?.map((encoding) => encoding.field) ?? [];
+  if (channel === "series") {
+    return [spec.encodings.series?.field, spec.series?.field, ...(spec.seriesFields?.map((encoding) => encoding.field) ?? [])];
+  }
   if (channel === "color" && (template === "pie" || template === "donut")) {
     return [spec.encodings.color?.field, spec.encodings.x?.field];
   }
@@ -162,6 +221,7 @@ export function resolveChartEncodingIssues(spec: ChartSpec): EncodingResolutionI
   });
 
   const seriesNative = uniqueFields([
+    spec.encodings.series?.field,
     spec.series?.field,
     ...(spec.seriesFields?.map((encoding) => encoding.field) ?? []),
     spec.encodings.color?.type === "nominal" ? spec.encodings.color.field : undefined,
@@ -189,6 +249,8 @@ export function resolveChartEncodingIssues(spec: ChartSpec): EncodingResolutionI
 }
 
 export function resolvedEncodingField(spec: ChartSpec, channel: ChartEncodingChannel) {
+  const selected = roleBindingSelectedFields(spec, channel);
+  if (selected.length > 0) return selected[0] ?? "";
   const template = normalizeChartTemplate(spec.chartType);
   if (channel === "y" && (template === "line" || template === "area")) {
     if (spec.valueFields?.length) return spec.valueFields[0]?.field ?? "";
@@ -215,6 +277,7 @@ export function resolvedEncodingField(spec: ChartSpec, channel: ChartEncodingCha
   }
   if (channel === "theta") return spec.encodings.theta?.field ?? spec.encodings.angle?.field ?? spec.encodings.y?.field ?? "";
   if (channel === "dimensions") return spec.parallelFields?.[0]?.field ?? "";
+  if (channel === "series") return resolvedSeriesField(spec);
   if (channel === "color" && (normalizeChartTemplate(spec.chartType) === "pie" || normalizeChartTemplate(spec.chartType) === "donut")) {
     return spec.encodings.color?.field ?? spec.encodings.x?.field ?? "";
   }

@@ -1,13 +1,21 @@
-import type { ChartEncoding, ChartSpec, CoordinateChannel, Dataset, EncodingChannel } from "../types";
+import type { ChartEncoding, ChartEncodingChannel, ChartSpec, CoordinateChannel, Dataset, EncodingChannel } from "../types";
+import { getChartBlockSpecification } from "../chart-blocks/registry";
+import { resolveBlockSurface } from "../chart-blocks/spatial";
 
 export type CartesianTreeDirection = "right" | "left" | "down" | "up";
 
 export function isCartesianTreeChart(chartType: string | null | undefined) {
-  return chartType?.replace(/[\s_-]/g, "").toLowerCase() === "dendrogram";
+  if (!chartType) return false;
+  const specification = getChartBlockSpecification(chartType);
+  return specification?.coordinateSystem === "Cartesian"
+    && specification.spatialReferences.some((reference) => reference.semantic === "tree-leaf");
 }
 
 export function isPolarTreeChart(chartType: string | null | undefined) {
-  return chartType?.replace(/[\s_-]/g, "").toLowerCase() === "radialdendrogram";
+  if (!chartType) return false;
+  const specification = getChartBlockSpecification(chartType);
+  return specification?.coordinateSystem === "Polar"
+    && specification.spatialReferences.some((reference) => reference.semantic === "tree-leaf");
 }
 
 export function isCoordinateTreeChart(chartType: string | null | undefined) {
@@ -36,11 +44,15 @@ export function cartesianTreeLeafAxis(direction: CartesianTreeDirection): Encodi
 
 /** The only external coordinate channel a tree exposes for composition. */
 export function coordinateTreeLeafAxis(spec: ChartSpec | null | undefined): CoordinateChannel | null {
-  if (isCartesianTreeChart(spec?.chartType)) {
-    return cartesianTreeLeafAxis(cartesianTreeDirection(spec));
-  }
-  if (isPolarTreeChart(spec?.chartType)) return "angle";
-  return null;
+  if (!spec) return null;
+  const specification = getChartBlockSpecification(spec.chartType);
+  const reference = specification
+    ? resolveBlockSurface(specification, spec).references.find((candidate) => candidate.semantic === "tree-leaf")
+    : undefined;
+  const channel = reference?.placement.channel;
+  return channel === "x" || channel === "y" || channel === "angle" || channel === "radius"
+    ? channel
+    : null;
 }
 
 /**
@@ -48,15 +60,17 @@ export function coordinateTreeLeafAxis(spec: ChartSpec | null | undefined): Coor
  * The source encoding supplies leaf identity/order, not a continuous measure.
  */
 export function coordinateTreeLeafEncoding(spec: ChartSpec | null | undefined): ChartEncoding | undefined {
-  if (isCartesianTreeChart(spec?.chartType)) {
-    const encoding = spec?.encodings.category ?? spec?.encodings.key;
-    return encoding ? { ...encoding, type: "nominal" } : undefined;
-  }
-  if (isPolarTreeChart(spec?.chartType)) {
-    const encoding = spec?.encodings.theta ?? spec?.encodings.angle ?? spec?.encodings.key;
-    return encoding ? { ...encoding, type: "nominal" } : undefined;
-  }
-  return undefined;
+  if (!spec) return undefined;
+  const specification = getChartBlockSpecification(spec.chartType);
+  const resolver = specification?.spatialReferences
+    .find((reference) => reference.semantic === "tree-leaf")?.domainResolver;
+  if (resolver?.kind !== "terminal-leaves") return undefined;
+  const roleIds = [...resolver.orderRoleIds, resolver.keyRoleId];
+  const encoding = roleIds.flatMap((roleId) => {
+    const candidate = spec.encodings[roleId as ChartEncodingChannel];
+    return candidate ? [candidate] : [];
+  })[0];
+  return encoding ? { ...encoding, type: "nominal" } : undefined;
 }
 
 /**
@@ -89,18 +103,30 @@ export function cartesianTreeLeafValues(spec: ChartSpec | null | undefined, rows
 /** Ordered values represented by terminal nodes on either tree coordinate system. */
 export function coordinateTreeLeafValues(spec: ChartSpec | null | undefined, rows: Dataset["rows"] = []) {
   if (!isCoordinateTreeChart(spec?.chartType)) return [];
-  const keyField = spec?.encodings.key?.field;
-  const parentField = spec?.encodings.parent?.field;
+  const specification = spec ? getChartBlockSpecification(spec.chartType) : null;
+  const resolver = specification?.spatialReferences
+    .find((reference) => reference.semantic === "tree-leaf")?.domainResolver;
+  if (resolver?.kind !== "terminal-leaves") return [];
+  const keyField = spec?.encodings[resolver.keyRoleId as ChartEncodingChannel]?.field;
+  const parentField = spec?.encodings[resolver.parentRoleId as ChartEncodingChannel]?.field;
   if (!keyField || !parentField) return [];
   const childKeys = new Set(rows
     .map((row) => row[parentField])
     .filter((value): value is string => value !== undefined && value !== "")
     .map(String));
-  const orderField = isPolarTreeChart(spec?.chartType)
-    ? spec?.encodings.theta?.field ?? spec?.encodings.angle?.field ?? keyField
-    : spec?.encodings.category?.field ?? keyField;
-  const values = rows
-    .filter((row) => !childKeys.has(String(row[keyField] ?? "")))
+  const orderField = resolver.orderRoleIds
+    .flatMap((roleId) => {
+      const candidate = spec?.encodings[roleId as ChartEncodingChannel];
+      return candidate ? [candidate.field] : [];
+    })[0]
+    ?? keyField;
+  const terminalRows = rows.filter((row) => !childKeys.has(String(row[keyField] ?? "")));
+  terminalRows.sort((left, right) => {
+    const order = String(left[orderField] ?? left[keyField] ?? "")
+      .localeCompare(String(right[orderField] ?? right[keyField] ?? ""), undefined, { numeric: true });
+    return order || String(left[keyField] ?? "").localeCompare(String(right[keyField] ?? ""), undefined, { numeric: true });
+  });
+  const values = terminalRows
     .map((row) => row[orderField] ?? row[keyField])
     .filter((value): value is string => value !== undefined && value !== "")
     .map(String);

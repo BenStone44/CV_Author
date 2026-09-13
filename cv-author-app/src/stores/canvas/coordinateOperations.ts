@@ -25,7 +25,7 @@ export function useCanvasCoordinateOperations(context: any) {
     normalizeChartTemplate,
     pointInBounds, pointToSegmentDistance, renderChartNode, renderSharedCoordinateComposition,
     reconcileRelationshipNodes, replaceDefaultDataBinding, selectedIds, semanticSelection,
-    seriesItemCategoricalFields, seriesItemMemberIds, setSelection, transformPoint,
+    seriesItemMemberIds, setSelection, transformPoint,
     viewPan, viewZoom,
     walkCanvasNodes, chartScalePosition, csvColumnDragMime, compositionEditLayout,
     candidates, compositionOptions, coordinateOptions, getLeafNodeTransform,
@@ -906,29 +906,13 @@ export function useCanvasCoordinateOperations(context: any) {
         && column?.type === payload.type && itemBinding) {
         const bounds = seriesItemDropBounds(node);
         if (pointInBounds(point, bounds)) {
-          const categoricalFields = seriesItemCategoricalFields(inputSpec);
-          const categoricalMode = categoricalFields.length > 0;
-          const quantitativeMode = (inputSpec.valueFields?.length ?? 0) > 0;
-          const chartContract = getChartTemplateContract(inputSpec.chartType);
-          const segmentContract = chartContract?.channels.find((channel: { channel: string }) => channel.channel === "segment");
-          const polarChart = chartContract?.coordinateSystem === "Polar" && !!segmentContract;
-          const polarSegmentField = inputSpec.encodings.segment?.field;
-          const polarMeasureSet = (inputSpec.angleFields?.length ?? 0) > 0;
-          const compatible = polarChart
-            ? polarMeasureSet
-              ? column.type === "quantitative"
-              : polarSegmentField
-                ? column.name === polarSegmentField
-                : segmentContract
-                  ? isDataColumnTypeCompatible(segmentContract.accepts, column.type)
-                  : false
-            : categoricalMode
-            ? categoricalFields.includes(column.name)
+          const categoricalMode = itemBinding.directFields.length > 0;
+          const quantitativeMode = itemBinding.foldFields.length > 0;
+          const compatible = categoricalMode
+            ? itemBinding.directFields.includes(column.name)
             : quantitativeMode
-              ? column.type === "quantitative"
-              : normalizeChartTemplate(spec.chartType) === "scatter"
-                ? column.type === "nominal" || column.type === "ordinal"
-                : column.type === "quantitative" || column.type === "nominal" || column.type === "ordinal";
+              ? isDataColumnTypeCompatible(itemBinding.foldAccepts, column.type)
+              : isDataColumnTypeCompatible(itemBinding.accepts, column.type);
           nearestZone = {
             type: "series-item",
             targetNodeId: node.id,

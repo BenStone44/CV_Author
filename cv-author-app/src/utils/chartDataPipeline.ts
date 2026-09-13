@@ -2,6 +2,8 @@ import { materializeChartStructure } from "./dimensionInference";
 import { getChartTemplateContract, normalizeBarChartVariant, normalizeChartTemplate } from "./chartTemplates";
 import { inferCsvPrimaryKey } from "./csvDataEngine";
 import { materializeChartDataTransforms } from "./chartDataTransforms";
+import { adaptLegacyWideBindings } from "../chart-blocks/bindings";
+import { getChartBlockSpecification } from "../chart-blocks/registry";
 import type { ChartEncoding, ChartEncodingChannel, ChartSpec, Dataset } from "../types";
 
 export const CSV_MEASURE_ID_FIELD = "__csv_measure__";
@@ -212,10 +214,24 @@ export function synchronizeChartEncodingTypes(spec: ChartSpec, dataset: Dataset)
       .filter((entry): entry is readonly [string, ChartEncoding] => !!entry[1]))
     : undefined;
   const seriesColumn = dataset.columns.find((item) => item.name === spec.series?.field);
+  const roleBindings = spec.roleBindings
+    ? Object.fromEntries(Object.entries(spec.roleBindings).map(([roleId, binding]) => [
+      roleId,
+      binding
+        ? {
+          ...binding,
+          fields: binding.fields
+            .map((field) => synchronizeEncodingType(field, dataset))
+            .filter((field): field is ChartEncoding => !!field),
+        }
+        : binding,
+    ])) as ChartSpec["roleBindings"]
+    : undefined;
 
   return {
     ...spec,
     encodings,
+    roleBindings,
     angleFields,
     parallelFields,
     valueFields,
@@ -229,13 +245,17 @@ export function synchronizeChartEncodingTypes(spec: ChartSpec, dataset: Dataset)
 
 function encodingsForChannel(spec: ChartSpec, channel: ChartEncodingChannel, role: string) {
   if (role === "series") {
-    return spec.seriesFields?.length
-      ? spec.seriesFields
-      : spec.series
-        ? [spec.series]
-        : spec.encodings[channel]
-          ? [spec.encodings[channel]!]
-          : [];
+    return spec.roleBindings?.series?.fields.length
+      ? spec.roleBindings.series.fields
+      : spec.encodings.series
+        ? [spec.encodings.series]
+        : spec.seriesFields?.length
+          ? spec.seriesFields
+          : spec.series
+            ? [spec.series]
+            : spec.encodings[channel]
+              ? [spec.encodings[channel]!]
+              : [];
   }
   if (channel === "y" && spec.valueFields?.length) return spec.valueFields;
   if (channel === "segment") {
@@ -324,12 +344,16 @@ export function prepareChartData(
 ) {
   const chartDataset = materializeGraphDataset(sourceDataset, spec);
   const filteredDataset = filterDatasetForChart(chartDataset, spec);
-  const transformedDataset = materializeChartDataTransforms(filteredDataset, spec.dataTransforms);
-  const materialized = materializeCsvValueSeries(transformedDataset, spec);
-  const dataset = materializeNumericBins(materialized.dataset, spec);
+  const adaptedSpec = adaptLegacyWideBindings(
+    spec,
+    filteredDataset,
+    getChartBlockSpecification(spec.chartType),
+  );
+  const transformedDataset = materializeChartDataTransforms(filteredDataset, adaptedSpec.dataTransforms);
+  const dataset = materializeNumericBins(transformedDataset, adaptedSpec);
   const synchronizedSpec = applyAutomaticAggregations(
     dataset,
-    synchronizeChartEncodingTypes(materialized.chartSpec, dataset),
+    synchronizeChartEncodingTypes(adaptedSpec, dataset),
   );
   return {
     dataset,

@@ -1373,6 +1373,83 @@ describe("composition selection hierarchy", () => {
     expect(second.width).toBe(secondWidth);
   });
 
+  it.each([
+    ["nw", -90, -55],
+    ["ne", 90, -55],
+    ["sw", -90, 55],
+    ["se", 90, 55],
+  ] as const)("keeps the Cartesian %s resize handle exactly under the pointer", (handleKey, dx, dy) => {
+    listeners.clear();
+    const canvasRef = coordinateCanvasRef();
+    Object.assign(canvasRef.value!, { clientWidth: 1800, clientHeight: 1000 });
+    const store = useCanvasStore(canvasRef);
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    const chart = lineChart(`exact-cartesian-resize-${handleKey}`, 300, false);
+    chart.width = 900;
+    chart.chartSpec = {
+      ...chart.chartSpec!,
+      plotArea: { x: 80, y: 40, width: 720, height: 320 },
+      renderer: { kind: "deterministic-chart", version: 3, status: "ready" },
+    };
+    chart.renderedContent = '<g data-chart-type="line" />';
+    store.canvasNodes.value = [chart];
+    store.selectedIds.value = [chart.id];
+
+    const startHandle = store.scaleHandles.value.find((handle) => handle.key === handleKey)!;
+    const oppositeKey = ({ nw: "se", ne: "sw", sw: "ne", se: "nw" } as const)[handleKey];
+    const startOpposite = store.scaleHandles.value.find((handle) => handle.key === oppositeKey)!;
+    store.onScaleHandlePointerDown(handleKey, pointerEvent(startHandle.x, startHandle.y));
+    listeners.get("pointermove")?.(pointerEvent(startHandle.x + dx * 0.35, startHandle.y + dy * 1.4));
+    listeners.get("pointermove")?.(pointerEvent(startHandle.x + dx, startHandle.y + dy));
+
+    const resizedHandle = store.scaleHandles.value.find((handle) => handle.key === handleKey)!;
+    const resizedOpposite = store.scaleHandles.value.find((handle) => handle.key === oppositeKey)!;
+    expect(resizedHandle.x).toBeCloseTo(startHandle.x + dx, 5);
+    expect(resizedHandle.y).toBeCloseTo(startHandle.y + dy, 5);
+    expect(resizedOpposite.x).toBeCloseTo(startOpposite.x, 5);
+    expect(resizedOpposite.y).toBeCloseTo(startOpposite.y, 5);
+
+    listeners.get("pointerup")?.(pointerEvent(startHandle.x + dx, startHandle.y + dy));
+  });
+
+  it("resizes a rotated Cartesian chart in its own axes without pointer drift", () => {
+    listeners.clear();
+    const canvasRef = coordinateCanvasRef();
+    Object.assign(canvasRef.value!, { clientWidth: 1800, clientHeight: 1000 });
+    const store = useCanvasStore(canvasRef);
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    const chart = lineChart("exact-rotated-cartesian-resize", 400, false);
+    chart.width = 900;
+    chart.rotation = 32;
+    chart.chartSpec = {
+      ...chart.chartSpec!,
+      plotArea: { x: 80, y: 40, width: 720, height: 320 },
+      renderer: { kind: "deterministic-chart", version: 3, status: "ready" },
+    };
+    chart.renderedContent = '<g data-chart-type="line" />';
+    store.canvasNodes.value = [chart];
+    store.selectedIds.value = [chart.id];
+
+    const startHandle = store.scaleHandles.value.find((handle) => handle.key === "se")!;
+    const startOpposite = store.scaleHandles.value.find((handle) => handle.key === "nw")!;
+    const radians = chart.rotation * Math.PI / 180;
+    const dx = Math.cos(radians) * 80 - Math.sin(radians) * 45;
+    const dy = Math.sin(radians) * 80 + Math.cos(radians) * 45;
+    store.onScaleHandlePointerDown("se", pointerEvent(startHandle.x, startHandle.y));
+    listeners.get("pointermove")?.(pointerEvent(startHandle.x + dx, startHandle.y + dy));
+
+    const resizedHandle = store.scaleHandles.value.find((handle) => handle.key === "se")!;
+    const resizedOpposite = store.scaleHandles.value.find((handle) => handle.key === "nw")!;
+    expect(resizedHandle.x).toBeCloseTo(startHandle.x + dx, 5);
+    expect(resizedHandle.y).toBeCloseTo(startHandle.y + dy, 5);
+    expect(resizedOpposite.x).toBeCloseTo(startOpposite.x, 5);
+    expect(resizedOpposite.y).toBeCloseTo(startOpposite.y, 5);
+
+    listeners.get("pointerup")?.(pointerEvent(startHandle.x + dx, startHandle.y + dy));
+  });
+
   it("defers geographic node position updates until the drag ends", () => {
     listeners.clear();
     const mapElement = {
@@ -1427,8 +1504,10 @@ describe("composition selection hierarchy", () => {
       clientY: 240,
     } as const;
     store.onCanvasNodePointerDown(child, pointerEvent(1000, 140));
-    listeners.get("pointermove")?.(pointerEvent(320, 240));
+    listeners.get("pointermove")?.(pointerEvent(500, 300));
+    expect(store.chartDrilldown.value).toEqual({ nodeId: map.id, level: "part" });
     listeners.get(deckglPointNestHoverEvent)?.({ detail: target });
+    listeners.get("pointermove")?.(pointerEvent(320, 240));
     listeners.get("pointerup")?.(pointerEvent(320, 240));
 
     const relationship = Object.values(store.chartRelationships.value.nestedRelationships)[0];
@@ -1519,8 +1598,10 @@ describe("composition selection hierarchy", () => {
       clientY: 240,
     } as const;
     store.onCanvasNodePointerDown(child, pointerEvent(1000, 140));
-    listeners.get("pointermove")?.(pointerEvent(320, 240));
+    listeners.get("pointermove")?.(pointerEvent(500, 300));
+    expect(store.chartDrilldown.value).toEqual({ nodeId: map.id, level: "part" });
     listeners.get(deckglPointNestHoverEvent)?.({ detail: target });
+    listeners.get("pointermove")?.(pointerEvent(320, 240));
     listeners.get("pointerup")?.(pointerEvent(320, 240));
 
     const relationships = Object.values(store.chartRelationships.value.nestedRelationships);
@@ -1545,6 +1626,84 @@ describe("composition selection hierarchy", () => {
         .sort((left, right) => left - right);
     }).sort((left, right) => left[0]! - right[0]!);
     expect(renderedValues).toEqual([[10, 20], [30, 40]]);
+  });
+
+  it("uses complete child data for every map point when nested filtering cannot match", () => {
+    const mapDataset: Dataset = {
+      id: "map-unmatched-parent-data",
+      name: "map-unmatched-parent-data",
+      columns: [
+        { name: "point", type: "nominal" },
+      ],
+      rows: [
+        { point: "geo-a" },
+        { point: "geo-b" },
+      ],
+    };
+    const childDataset: Dataset = {
+      id: "map-unmatched-child-data",
+      name: "map-unmatched-child-data",
+      columns: [
+        { name: "time", type: "temporal" },
+        { name: "value", type: "quantitative" },
+      ],
+      rows: [
+        { time: "2026-01-01", value: "7" },
+        { time: "2026-02-01", value: "9" },
+      ],
+    };
+    const geometry: GeometrySource = {
+      id: "map-unmatched-geometry",
+      name: "map-unmatched-geometry",
+      features: ["geo-a", "geo-b"].map((id) => ({
+        type: "Feature" as const,
+        id,
+        properties: { id },
+        geometry: { type: "Point" as const, coordinates: [0, 0] },
+      })),
+    };
+    useDatasetStore().datasets.value = [mapDataset, childDataset];
+    useDatasetStore().geometrySources.value = [geometry];
+
+    const map = lineChart("map-unmatched-parent", 100, false);
+    map.layerKind = "deckgl";
+    map.deckglLayerType = "ScatterplotLayer";
+    map.renderedContent = null;
+    map.deckglBinding = {
+      datasetId: mapDataset.id,
+      geometrySourceId: geometry.id,
+      idField: "point",
+      aggregation: "sum",
+    };
+    const child = cartesianChart("map-unmatched-child", 960, "SingleBarChart");
+    child.chartSpec = { ...child.chartSpec!, datasetId: childDataset.id };
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    store.canvasNodes.value = [map, child];
+
+    const target = {
+      layerId: map.id,
+      rowKey: "geo-a",
+      position: [0, 0],
+      radius: 9,
+      clientX: 320,
+      clientY: 240,
+    } as const;
+    store.onCanvasNodePointerDown(child, pointerEvent(1000, 140));
+    listeners.get("pointermove")?.(pointerEvent(500, 300));
+    listeners.get(deckglPointNestHoverEvent)?.({ detail: target });
+    listeners.get("pointermove")?.(pointerEvent(320, 240));
+    listeners.get("pointerup")?.(pointerEvent(320, 240));
+
+    const relationships = Object.values(store.chartRelationships.value.nestedRelationships);
+    expect(relationships).toHaveLength(2);
+    expect(relationships.every((relationship) => !relationship.inheritedFilterContexts?.length)).toBe(true);
+    const valuesByChild = relationships.map((relationship) => {
+      const nestedChild = store.canvasNodes.value.find((node) => node.id === relationship.childChartId);
+      return Array.from(nestedChild?.renderedContent?.matchAll(/data-value="([^"]+)"/g) ?? [], (match) => Number(match[1]))
+        .sort((left, right) => left - right);
+    });
+    expect(valuesByChild).toEqual([[7, 9], [7, 9]]);
   });
 
   it("selects and drags every member until the composition is entered", () => {
@@ -2075,6 +2234,67 @@ describe("generic Layer composition", () => {
     expect(store.availableDropZones.value.length).toBeGreaterThan(0);
     expect(store.availableDropZones.value.filter((zone) => zone.type === "layer")).toHaveLength(1);
     listeners.get("pointerup")?.(pointerEvent(source.x + 20, source.y + 20));
+  });
+
+  it("aligns incompatible Layer and Concat drops without linking their movement", () => {
+    const source = cartesianChart("align-only-source", 100, "LineGraph");
+    const target = cartesianChart("align-only-target", 950, "AreaChart");
+    source.chartSpec = {
+      ...source.chartSpec!,
+      encodings: {
+        x: { field: "series", type: "nominal" },
+        y: { field: "time", type: "temporal" },
+      },
+    };
+    const store = useCanvasStore(coordinateCanvasRef());
+    store.relationshipStore.dispatch({ type: "clear" });
+    useDatasetStore().datasets.value = [layerDataset];
+    store.canvasNodes.value = [source, target];
+
+    const plot = target.chartSpec!.plotArea!;
+    const layerPoint = {
+      x: target.x + plot.x + plot.width * 0.2,
+      y: target.y + plot.y + plot.height * 0.2,
+    };
+    store.onCanvasNodePointerDown(source, pointerEvent(source.x + 20, source.y + 20));
+    listeners.get("pointermove")?.(pointerEvent(layerPoint.x, layerPoint.y));
+    const layerZone = store.activeDropZone.value;
+    expect(layerZone).toMatchObject({ type: "layer", compatible: false });
+    listeners.get("pointerup")?.(pointerEvent(layerPoint.x, layerPoint.y));
+    expect(source.compositionSpec).toBeFalsy();
+    expect(target.compositionSpec).toBeFalsy();
+    const sourceLayerBounds = collectNodeSelectionBounds(source);
+    const targetLayerBounds = collectNodeSelectionBounds(target);
+    expect(sourceLayerBounds.minX + sourceLayerBounds.width / 2)
+      .toBeCloseTo(targetLayerBounds.minX + targetLayerBounds.width / 2);
+    expect(sourceLayerBounds.minY + sourceLayerBounds.height / 2)
+      .toBeCloseTo(targetLayerBounds.minY + targetLayerBounds.height / 2);
+
+    source.x = 100;
+    source.y = 100;
+    const availableConcat = store.compositionDropZones(source.id).find((zone) =>
+      zone.type === "concat"
+      && zone.direction === "horizontal"
+      && zone.concatPosition === "after");
+    expect(availableConcat).toMatchObject({ compatible: false });
+    const concatPoint = {
+      x: availableConcat!.bounds.minX + availableConcat!.bounds.width / 2,
+      y: availableConcat!.bounds.minY + availableConcat!.bounds.height / 2,
+    };
+    store.onCanvasNodePointerDown(source, pointerEvent(source.x + 20, source.y + 20));
+    listeners.get("pointermove")?.(pointerEvent(concatPoint.x, concatPoint.y));
+    const concatZone = store.activeDropZone.value;
+    expect(concatZone).toMatchObject({
+      type: "concat",
+      direction: "horizontal",
+      concatPosition: "after",
+      compatible: false,
+    });
+    listeners.get("pointerup")?.(pointerEvent(concatPoint.x, concatPoint.y));
+    expect(source.compositionSpec).toBeFalsy();
+    expect(target.compositionSpec).toBeFalsy();
+    expect(collectNodeSelectionBounds(source).minX)
+      .toBeCloseTo(collectNodeSelectionBounds(target).maxX + 10);
   });
 
   it("keeps a Layer root intact when it becomes a direct Concat member", () => {

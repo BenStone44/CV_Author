@@ -198,8 +198,10 @@ export function hasRequiredChartEncodings(spec: ChartSpec) {
   const contract = getChartTemplateContract(spec.chartType);
   if (!contract) return false;
   const chartType = spec.chartType.replace(/[\s_-]/g, "").toLowerCase();
-  const seriesField = spec.series?.field
+  const seriesField = spec.roleBindings?.series?.fields[0]?.field
+    ?? spec.series?.field
     ?? spec.seriesFields?.[0]?.field
+    ?? spec.encodings.series?.field
     ?? (spec.encodings.color?.type === "nominal" ? spec.encodings.color.field : undefined)
     ?? (chartType === "multilinechart" && (spec.valueFields?.length ?? 0) > 0 ? "__csv_measure__" : "");
   if (chartType === "multilinechart" && !seriesField) return false;
@@ -211,6 +213,7 @@ export function hasRequiredChartEncodings(spec: ChartSpec) {
         && mapping.channel === "y"
         && (spec.valueFields?.length ?? 0) > 1))
     .every((mapping) => !!spec.encodings[mapping.channel]
+      || (mapping.channel === "series" && !!seriesField)
       || requiredEncodingFallbacks[template][mapping.channel]?.(spec) === true);
 }
 

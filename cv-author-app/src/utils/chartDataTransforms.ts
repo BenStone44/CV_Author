@@ -2,6 +2,7 @@ import type {
   ChartBinAggregateTransform,
   ChartDataTransform,
   ChartNumericFilterTransform,
+  ChartFoldTransform,
   DataColumn,
   DataRow,
   Dataset,
@@ -104,6 +105,33 @@ function applyGroupValueOrder(
     .map((item) => item.row);
 }
 
+function applyFoldTransform(
+  materialized: MaterializedChartData,
+  transform: ChartFoldTransform,
+): MaterializedChartData {
+  const available = new Set(materialized.columns.map((column) => column.name));
+  if (transform.sourceFields.length < 2
+    || transform.sourceFields.some((field) => !available.has(field))) return materialized;
+  const rows = materialized.rows.flatMap((row) => transform.sourceFields.flatMap((sourceField) => {
+    const value = row[sourceField];
+    if (value === undefined || value.trim() === "") return [];
+    return [{
+      ...row,
+      [transform.keyOutputField]: sourceField,
+      [transform.valueOutputField]: value,
+    }];
+  }));
+  return {
+    columns: [
+      ...materialized.columns.filter((column) =>
+        column.name !== transform.keyOutputField && column.name !== transform.valueOutputField),
+      { name: transform.keyOutputField, type: "nominal" },
+      { name: transform.valueOutputField, type: "quantitative" },
+    ],
+    rows,
+  };
+}
+
 function createBinLabeler(values: number[], transform: ChartBinAggregateTransform) {
   const minimum = Math.min(...values);
   const maximum = Math.max(...values);
@@ -154,6 +182,8 @@ function applyTransform(
   transform: ChartDataTransform,
 ): MaterializedChartData {
   const available = new Map(materialized.columns.map((column) => [column.name, column]));
+
+  if (transform.kind === "fold") return applyFoldTransform(materialized, transform);
 
   if (transform.kind === "filter") {
     if (!available.has(transform.field)) return materialized;

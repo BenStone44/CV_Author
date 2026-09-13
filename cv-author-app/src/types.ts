@@ -205,12 +205,32 @@ export type ChartGroupValueOrderTransform = {
   limit?: number;
 };
 
+/**
+ * Turns an explicit set of source columns into chart-local key/value rows.
+ * The source columns remain raw CSV fields; both outputs are derived fields
+ * with stable lineage owned by this transform.
+ */
+export type ChartFoldTransform = {
+  id: string;
+  kind: "fold";
+  /** Semantic role whose multi-field selection owns this transform. */
+  sourceRoleId?: ChartEncodingChannel;
+  sourceFields: string[];
+  keyOutputField: string;
+  valueOutputField: string;
+  lineage: {
+    sourceFields: string[];
+    operation: "fold";
+  };
+};
+
 export type ChartDataTransform =
   | ChartValueFilterTransform
   | ChartNumericFilterTransform
   | ChartGroupAggregateTransform
   | ChartBinAggregateTransform
-  | ChartGroupValueOrderTransform;
+  | ChartGroupValueOrderTransform
+  | ChartFoldTransform;
 
 export type DatasetTable = {
   columns: DataColumn[];
@@ -251,6 +271,7 @@ export type StructuredEncodingChannel =
   | "date"
   | "category"
   | "segment"
+  | "series"
   | "dimensions";
 export type OptionalEncodingChannel = "color" | "size" | "shape";
 export type ChartEncodingChannel =
@@ -280,6 +301,24 @@ export type ChartEncoding = {
   field: string;
   type: DataColumnType;
 };
+
+/** Authored field binding. Fold source fields live only in its referenced transform. */
+export type ChartRoleBinding =
+  | {
+    mode: "field";
+    fields: ChartEncoding[];
+  }
+  | {
+    mode: "field-set";
+    materialization: "repeat";
+    fields: ChartEncoding[];
+  }
+  | {
+    mode: "derived";
+    materialization: "fold";
+    transformId: string;
+    fields: ChartEncoding[];
+  };
 
 export type ChartNumericFilter = {
   topN?: number;
@@ -363,6 +402,8 @@ export type LineSeriesShape = "solid" | "dashed" | "dotted";
 export type SeriesMemberStyle = {
   color?: string;
   strokeWidth?: number;
+  lineStyle?: LineSeriesShape;
+  /** Legacy alias retained when loading existing charts. */
   shape?: LineSeriesShape;
 };
 
@@ -418,6 +459,9 @@ export type LlmRendererState = {
 
 export type ChartSpec = {
   chartType: string;
+  /** Immutable template identity used to compile and validate this chart. */
+  blockId?: string;
+  blockRevision?: number;
   templateId?: ChartTemplateKind;
   datasetId: string;
   /** Built-in bindings are preview scaffolding until the author supplies fields. */
@@ -426,6 +470,8 @@ export type ChartSpec = {
   link?: boolean;
   axisSwapped?: boolean;
   encodings: Partial<Record<ChartEncodingChannel, ChartEncoding>>;
+  /** Canonical semantic-role bindings. Legacy binding fields below are read adapters only. */
+  roleBindings?: Partial<Record<ChartEncodingChannel, ChartRoleBinding>>;
   aggregations?: Partial<Record<ChartEncodingChannel, "sum" | "avg">>;
   /** Aggregations inferred from repeated visual keys during data preparation. */
   autoAggregations?: Partial<Record<ChartEncodingChannel, "sum" | "avg">>;
@@ -1233,6 +1279,13 @@ export type ScaleInteraction = {
   handle: ScaleHandle;
   startPoint: Point;
   startBounds: Bounds;
+  startFrame: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    rotation: number;
+  };
   itemIds: string[];
   snapshots: Record<
     string,

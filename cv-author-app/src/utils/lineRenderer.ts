@@ -187,13 +187,18 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
   const { chartId, width, height, minX, minY, coordinateGuide, chartSpec, dataset } = input;
   const xEncoding = cartesianAxisEncoding(chartSpec, "x");
   const yEncoding = cartesianAxisEncoding(chartSpec, "y");
-  const seriesEncodings = chartSpec.seriesFields?.length
-    ? chartSpec.seriesFields
-    : chartSpec.series
-      ? [chartSpec.series]
-      : chartSpec.encodings.color?.type === "nominal" || chartSpec.encodings.color?.type === "ordinal"
-        ? [chartSpec.encodings.color]
-        : [];
+  const canonicalSeries = chartSpec.roleBindings?.series?.fields;
+  const seriesEncodings = canonicalSeries?.length
+    ? canonicalSeries
+    : chartSpec.encodings.series
+      ? [chartSpec.encodings.series]
+      : chartSpec.seriesFields?.length
+        ? chartSpec.seriesFields
+        : chartSpec.series
+          ? [chartSpec.series]
+          : chartSpec.encodings.color?.type === "nominal" || chartSpec.encodings.color?.type === "ordinal"
+            ? [chartSpec.encodings.color]
+            : [];
   if (!xEncoding || !yEncoding) throw new Error("Line renderer requires both X and Y encodings.");
   if (seriesEncodings.some((encoding) => encoding.type !== "nominal" && encoding.type !== "ordinal")) {
     throw new Error("Line renderer series encoding must be nominal or ordinal.");
@@ -475,7 +480,7 @@ export function renderLineChart(input: LineRenderInput): LineRenderResult {
       && aggregatedSizeValue !== null && isLinearSizeMapping(lineConfig?.sizeMapping)
       ? mapSizeValue(aggregatedSizeValue, sizeDomain as [number, number], lineConfig.sizeMapping)
       : !isMultiLine && typeof lineConfig?.size === "number" ? lineConfig.size : tokens.lineWidth);
-    const lineStyle = memberStyle?.shape ?? "solid";
+    const lineStyle = memberStyle?.lineStyle ?? memberStyle?.shape ?? "solid";
     const dasharray = lineStyle === "dashed"
       ? `${lineWidth * 3} ${lineWidth * 2}`
       : lineStyle === "dotted" ? `${lineWidth} ${lineWidth * 1.8}` : "none";

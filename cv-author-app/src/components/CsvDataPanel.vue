@@ -473,6 +473,9 @@ function transformSummary(transform: ChartDataTransform) {
     const limit = transform.limit === undefined ? "" : ` · Top ${transform.limit}`;
     return `${transform.operation.toUpperCase()} ${transform.valueField} by ${transform.groupField} · ${direction}${limit}`;
   }
+  if (transform.kind === "fold") {
+    return `${transform.sourceFields.join(", ")} → ${transform.keyOutputField} / ${transform.valueOutputField}`;
+  }
   if (transform.mode === "group") {
     return `${transform.operation.toUpperCase()} ${transform.valueField} by ${transform.groupField} → ${transform.outputField}`;
   }

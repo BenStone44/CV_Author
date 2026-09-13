@@ -565,6 +565,17 @@ function onMapPointerMove(event: PointerEvent) {
   }));
 }
 
+function onMapPointerUp(event: PointerEvent) {
+  if (!props.nestDragSourceId) return;
+  const target = pickScatterplotPoint(event);
+  setHoveredPoint(target);
+  // Re-pick at the release coordinate. In particular, do not reuse the
+  // pre-zoom hover result after Mapbox has changed its projection.
+  window.dispatchEvent(new CustomEvent<DeckglPointTarget | null>(deckglPointNestHoverEvent, {
+    detail: target,
+  }));
+}
+
 function onMapPointerLeave() {
   if (!props.nestDragSourceId) return;
   setHoveredPoint(null);
@@ -1311,6 +1322,7 @@ onBeforeUnmount(() => {
     :style="{ width: `${width}px`, height: `${height}px` }"
     @pointerdown.capture="onMapPointerDown"
     @pointermove.capture="onMapPointerMove"
+    @pointerup.capture="onMapPointerUp"
     @pointerleave.capture="onMapPointerLeave"
     @dragover.capture="onMapDragOver"
     @drop.capture="onMapDrop"

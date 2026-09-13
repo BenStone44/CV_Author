@@ -212,18 +212,13 @@ const {
   onPolarAnglePointerDown,
   onPolarInnerRadiusPointerDown,
   setAxisBindingAggregation,
+  setRoleBindingFields,
   setSingleBarValueOrder,
   setAxisSwap,
   setChartAxisAppearance,
   clearSeriesBinding,
-  setChartSeries,
   setCompositionEncoding,
-  setSeriesFields,
   setChartEncoding,
-  setPolarSegmentFields,
-  setValueSeriesFields,
-  removeBarItemField,
-  setParallelFields,
   setChartDataTransforms,
   resetChartBindingsForDataset,
   setDeckglMapStyle,
@@ -233,7 +228,6 @@ const {
   setDeckglDataBinding,
   selectCanvasNode,
   updateAxisBindingMarkGroupConfig,
-  updateSelectedChartMarkGroupConfig,
   beginMarkConfigEdit,
   commitMarkConfigEdit,
   closeAxisBinding,
@@ -753,13 +747,8 @@ const seriesItemPresentations = computed(() => selectionScopeNodes.value.flatMap
   const presentation = createSeriesItemPresentation(node);
   return presentation ? [presentation] : [];
 }));
-const seriesItemOverlay = computed(() => {
-  if (selectedIds.value.length !== 1) return null;
-  return seriesItemPresentations.value.find((item: NonNullable<ReturnType<typeof createSeriesItemPresentation>>) =>
-    item.itemEditable && item.node.id === selectedIds.value[0]) ?? null;
-});
 const seriesItemLegends = computed(() => seriesItemPresentations.value.flatMap((item: NonNullable<ReturnType<typeof createSeriesItemPresentation>>) => {
-  if (!item.legendVisible || item.node.id === seriesItemOverlay.value?.node.id || item.members.length === 0) return [];
+  if (!item.legendVisible || item.members.length === 0) return [];
   const longestLabel = Math.max(...item.members.map((member) => member.label.length), 1);
   const height = item.members.length * 22;
   return [{
@@ -1487,7 +1476,7 @@ function openCompositionCandidates(type: CompositionType) {
         && (transform.purpose === "facet-clue"
           || transform.purpose === "nested-context"
           || (transform.purpose === undefined && transform.single)))
-      .map((transform) => transform.mode === "values" ? transform.field : "")
+      .map((transform) => transform.kind === "filter" && transform.mode === "values" ? transform.field : "")
       .filter(Boolean) ?? []));
     const existingFacetFields = new Set([
       node?.compositionSpec?.facetField,
@@ -1580,10 +1569,6 @@ function onCompositionKeyDown(event: KeyboardEvent) {
   }
 }
 
-function onEncodingChannelChange(channel: ChartEncodingChannel, field: string) {
-  setChartEncoding(channel, field);
-}
-
 function withEncodingNode(node: CanvasNode, action: () => void) {
   const previousTarget = axisBindingTarget.value;
   axisBindingTarget.value = {
@@ -1642,27 +1627,6 @@ function onMarkConfigEditStart(field: string) {
   beginMarkConfigEdit(node.id, role, field);
 }
 
-function onSeriesItemStyleChange(memberId: string, patch: { color?: string }) {
-  const node = selectedIds.value.length === 1 ? selectedNodes.value[0] : null;
-  if (!node?.chartSpec) return;
-  const current = node.chartSpec.markGroups?.[0]?.sharedConfig.seriesStyleMapping;
-  const legacy = node.chartSpec.markGroups?.[0]?.sharedConfig.seriesColorMapping;
-  const values = isSeriesStyleMapping(current)
-    ? current.values
-    : isCategoricalColorMapping(legacy)
-      ? Object.fromEntries(Object.entries(legacy.values).map(([member, color]) => [member, { color }]))
-      : {};
-  updateSelectedChartMarkGroupConfig({
-    seriesStyleMapping: {
-      type: "series-style",
-      values: {
-        ...values,
-        [memberId]: { ...values[memberId], ...patch },
-      },
-    },
-  });
-}
-
 function onCompositionEncodingChange(patch: Parameters<typeof setCompositionEncoding>[0]) {
   setCompositionEncoding(patch);
 }
@@ -1693,20 +1657,6 @@ function onCoordinateAxisReverse(axis: "x" | "y") {
   const node = axisBindingNode.value;
   if (!node) return;
   reverseCoordinateAxis(node, axis);
-}
-
-function onSeriesFieldChange(field: string) {
-  setChartSeries(field);
-}
-
-function onSeriesFieldsChange(fields: string[]) {
-  setSeriesFields(fields);
-}
-
-function removeSeriesCaptionItem(nodeId: string, field: string, event: Event) {
-  event.preventDefault();
-  event.stopPropagation();
-  removeBarItemField(nodeId, field);
 }
 
 onMounted(() => {

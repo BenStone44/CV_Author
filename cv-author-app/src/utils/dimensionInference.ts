@@ -381,13 +381,17 @@ function explicitRoleBinding(spec: ChartSpec): ChartRoleBinding {
   contract.channels.forEach((mapping) => {
     const role = mapping.role === "series" ? "series" : mapping.channel;
     const encodings = mapping.role === "series"
-      ? spec.seriesFields?.length
-        ? spec.seriesFields
-        : spec.series
-          ? [spec.series]
-          : spec.encodings[mapping.channel]
-            ? [spec.encodings[mapping.channel]!]
-            : []
+      ? spec.roleBindings?.series?.fields.length
+        ? spec.roleBindings.series.fields
+        : spec.encodings.series
+          ? [spec.encodings.series]
+          : spec.seriesFields?.length
+            ? spec.seriesFields
+            : spec.series
+              ? [spec.series]
+              : spec.encodings[mapping.channel]
+                ? [spec.encodings[mapping.channel]!]
+                : []
       : mapping.channel === "segment" && spec.angleFields?.length
         ? spec.angleFields
         : mapping.channel === "y" && spec.valueFields?.length

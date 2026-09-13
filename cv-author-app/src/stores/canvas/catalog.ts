@@ -7,6 +7,7 @@ import type {
   IconKind,
   SvgCandidate,
 } from "../../types";
+import { getChartBlockSpecification, getChartBlockTemplateByChartType } from "../../chart-blocks/registry";
 import { advancedTemplateDefinitions } from "../../utils/advancedChartCards";
 import {
   createDefaultDataCandidate,
@@ -97,6 +98,16 @@ export const implementedTemplateDefinitions: SvgCandidate[] = ([
   ...advancedTemplateDefinitions.filter((candidate) => !supportsDefaultChartData(candidate.chartType)),
   ...geographicLayerDefinitions,
 ] as SvgCandidate[])
+  .map((candidate) => {
+    const specification = getChartBlockSpecification(candidate.chartType);
+    if (!specification) return candidate;
+    return {
+      ...candidate,
+      coordinateSystem: specification.coordinateSystem,
+      defaultWidth: candidate.defaultWidth ?? specification.catalog.defaultSize.width,
+      unavailable: candidate.unavailable ?? specification.catalog.unavailable,
+    };
+  })
   // Catalog previews are geometry-only. Keep axis/mark labels out of the SVG
   // shown before a template is placed on the canvas.
   .map((candidate) => {
@@ -113,7 +124,13 @@ export const implementedTemplateDefinitions: SvgCandidate[] = ([
   .map(withUniformTemplatePreview);
 
 export function createUnboundChartSpec(chartType: string, datasetId: string): ChartSpec {
-  return { chartType, templateId: normalizeChartTemplate(chartType) ?? undefined, datasetId, encodings: {} };
+  const template = getChartBlockTemplateByChartType(chartType);
+  const spec = template?.createChartSpec(datasetId)
+    ?? { chartType, datasetId, encodings: {} };
+  return {
+    ...spec,
+    templateId: normalizeChartTemplate(chartType) ?? undefined,
+  };
 }
 
 export const coordinateOptions: Array<{ value: CoordinateSystem; label: string; icon: IconKind }> = [

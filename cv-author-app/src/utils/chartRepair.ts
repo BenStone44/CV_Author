@@ -357,10 +357,10 @@ export function analyzeChartSpecRepairs(dataset: Dataset, spec: ChartSpec): Char
     id: repairRoleId(template, channel.channel, channel.role),
     kind: derivedPolarSegments && channel.channel === "segment"
       ? "measure"
-      : derivedBarSegments && channel.channel === "color"
+      : derivedBarSegments && channel.channel === "series"
         ? "measure"
         : channel.role === "dimension" || channel.role === "series" ? "dimension" : channel.role,
-    accepts: (derivedBarSegments && channel.channel === "color")
+    accepts: (derivedBarSegments && channel.channel === "series")
       || (derivedPolarSegments && channel.channel === "segment")
       ? ["quantitative"]
       : channel.accepts,
@@ -370,23 +370,26 @@ export function analyzeChartSpecRepairs(dataset: Dataset, spec: ChartSpec): Char
       : channel.required ? 1 : 0,
     maxFields: derivedPolarSegments && channel.channel === "segment"
       ? spec.angleFields!.length
-      : derivedBarSegments && channel.channel === "color"
+      : derivedBarSegments && channel.channel === "series"
         ? spec.valueFields!.length
         : multiFieldBarSeries && channel.role === "series"
           ? dataset.columns.length
           : 1,
     requiresPartition: !(derivedPolarSegments && channel.channel === "segment")
-      && (channel.role === "dimension" || (channel.role === "series" && !(derivedBarSegments && channel.channel === "color"))),
+      && (channel.role === "dimension" || (channel.role === "series" && !(derivedBarSegments && channel.channel === "series"))),
     minCardinality: !(derivedPolarSegments && channel.channel === "segment")
       && (channel.role === "dimension" || channel.role === "series") ? 2 : undefined,
   }));
   const binding: ChartRoleBinding = {};
   template.channels.forEach((channel) => {
     const roleId = repairRoleId(template, channel.channel, channel.role);
-    const encoding = derivedBarSegments && channel.channel === "color"
+    const encoding = derivedBarSegments && channel.channel === "series"
       ? undefined
       : channel.role === "series"
-        ? (spec.seriesFields?.length ? spec.seriesFields[0] : spec.series) ?? spec.encodings[channel.channel]
+        ? spec.roleBindings?.series?.fields[0]
+          ?? spec.encodings.series
+          ?? (spec.seriesFields?.length ? spec.seriesFields[0] : spec.series)
+          ?? spec.encodings[channel.channel]
       : template.id === "pie" || template.id === "donut"
         ? channel.channel === "theta"
           ? spec.encodings.theta ?? spec.encodings.angle ?? spec.encodings.y
@@ -402,7 +405,7 @@ export function analyzeChartSpecRepairs(dataset: Dataset, spec: ChartSpec): Char
           : template.id === "contour" && channel.channel === "color"
             ? spec.encodings.color ?? spec.encodings.value
             : spec.encodings[channel.channel];
-    if (derivedBarSegments && channel.channel === "color") {
+    if (derivedBarSegments && channel.channel === "series") {
       binding[roleId] = spec.valueFields!.map((field) => field.field);
     } else if (derivedPolarSegments && channel.channel === "segment") {
       binding[roleId] = spec.angleFields!.map((field) => field.field);

@@ -4,7 +4,8 @@ import { arc, curveCatmullRomClosed, line as d3Line, pie } from "d3-shape";
 import type { CartesianCoordinateGuide, ChartEncoding, ChartSpec, Dataset, LayerSpec, NestedChildFrame, NestedSpec, ChartPlotArea, ChartPolarArea, ChartScaleSpec, CoordinateGuide, MarkGroupSharedConfig } from "../types";
 import { renderLineChart, type LineRenderInput } from "./lineRenderer";
 import { cartesianAxisEncoding, normalizeBarChartVariant, normalizeChartTemplate, physicalCartesianAxisEncoding } from "./chartTemplates";
-import { getChartContract, groupedScalarDimensionFields, resolveChartDataMode, type ChartRendererKey } from "./chartContracts";
+import { getChartContract, groupedScalarDimensionFields, resolveChartDataMode, type ChartContract, type ChartRendererKey } from "./chartContracts";
+import { getChartBlockSpecification } from "../chart-blocks/registry";
 import { resolvedPolarRadiusMode } from "./encodingConfig";
 import {
   defaultColorMapping,
@@ -56,6 +57,17 @@ const palette = globalPalette.categorical;
 
 function groupConfig(spec: ChartSpec, role: string) {
   return spec.markGroups?.find((group) => group.role === role)?.sharedConfig ?? {};
+}
+
+function seriesEncodings(spec: ChartSpec): ChartEncoding[] {
+  const canonical = spec.roleBindings?.series?.fields;
+  if (canonical?.length) return canonical;
+  if (spec.encodings.series) return [spec.encodings.series];
+  if (spec.seriesFields?.length) return spec.seriesFields;
+  if (spec.series) return [spec.series];
+  return spec.encodings.color?.type === "nominal" || spec.encodings.color?.type === "ordinal"
+    ? [spec.encodings.color]
+    : [];
 }
 
 function visualColor(
@@ -267,18 +279,18 @@ function renderBarChart(input: GenericRenderInput) {
   const yEncoding = input.chartSpec.encodings.y;
   if (!xEncoding || !yEncoding) throw new Error("Bar renderer requires both X and Y encodings.");
   if (yEncoding.type !== "quantitative") throw new Error("Bar renderer Y encoding must be quantitative.");
-  const variant = normalizeBarChartVariant(input.chartSpec.chartType) ?? "single";
-  const seriesEncodings = input.chartSpec.seriesFields?.length
-    ? input.chartSpec.seriesFields
-    : input.chartSpec.series
-      ? [input.chartSpec.series]
-      : input.chartSpec.encodings.color?.type === "nominal"
-        || input.chartSpec.encodings.color?.type === "ordinal"
-        ? [input.chartSpec.encodings.color]
-        : [];
+  const declaredVariant = normalizeBarChartVariant(input.chartSpec.chartType) ?? "single";
+  const resolvedSeriesEncodings = seriesEncodings(input.chartSpec);
+  const foldPresentation = getChartBlockSpecification(input.chartSpec.chartType)?.roles
+    .find((role) => role.id === "y")?.bindingModes
+    .find((mode) => mode.kind === "fold")?.presentation;
+  const variant = resolvedSeriesEncodings.length > 0
+    && foldPresentation === "grouped-series"
+    ? "grouped"
+    : declaredVariant;
   const categoryValues = Array.from(new Set(input.dataset.rows.map((row) => row[xEncoding.field] ?? "").filter(Boolean)));
-  const seriesValues = seriesEncodings.length > 0
-    ? Array.from(new Set(input.dataset.rows.map((row) => seriesEncodings
+  const seriesValues = resolvedSeriesEncodings.length > 0
+    ? Array.from(new Set(input.dataset.rows.map((row) => resolvedSeriesEncodings
       .map((encoding) => row[encoding.field] ?? "")
       .join(" / ")).filter(Boolean)))
     : ["__single__"];
@@ -286,7 +298,7 @@ function renderBarChart(input: GenericRenderInput) {
     input,
     xEncoding.field,
     yEncoding.field,
-    seriesEncodings.map((encoding) => encoding.field),
+    resolvedSeriesEncodings.map((encoding) => encoding.field),
   );
 
   const fontSize = Math.max(9, Math.min(input.chartSpec.styleTokens?.fontSize ?? 11, Math.min(input.width, input.height) * 0.045));
@@ -478,11 +490,7 @@ function renderRadialBarChart(input: GenericRenderInput) {
   if (!categoryEncoding || !valueEncoding) {
     throw new Error(`${circular ? "Circular" : "Radial"} Bar renderer requires ${circular && stacked ? "R and Theta" : `Category and ${circular ? "Theta" : "R"}`} encodings.`);
   }
-  const seriesEncoding = stacked
-    ? input.chartSpec.seriesFields?.[0]
-      ?? input.chartSpec.series
-      ?? input.chartSpec.encodings.color
-    : undefined;
+  const seriesEncoding = stacked ? seriesEncodings(input.chartSpec)[0] : undefined;
   const source = input.dataset.rows.flatMap((row, rowIndex) => {
     const category = (row[categoryEncoding.field] ?? "").trim();
     const value = Number((row[valueEncoding.field] ?? "").trim());
@@ -628,11 +636,7 @@ function renderRadarChart(input: GenericRenderInput) {
   const theta = input.chartSpec.encodings.theta ?? input.chartSpec.encodings.angle;
   const radius = input.chartSpec.encodings.radius;
   if (!theta || !radius) throw new Error("Radar renderer requires Axis and Value encodings.");
-  const seriesEncoding = input.chartSpec.seriesFields?.[0]
-    ?? input.chartSpec.series
-    ?? (input.chartSpec.encodings.color?.type === "nominal" || input.chartSpec.encodings.color?.type === "ordinal"
-      ? input.chartSpec.encodings.color
-      : undefined);
+  const seriesEncoding = seriesEncodings(input.chartSpec)[0];
   const rows = input.dataset.rows.flatMap((row, rowIndex) => {
     const axis = (row[theta.field] ?? "").trim();
     const value = Number((row[radius.field] ?? "").trim());
@@ -719,11 +723,7 @@ function renderPolarFacetLine(input: GenericRenderInput, cell: PolarFacetCell) {
   const angularGap = Math.min(2.5, cell.angleSpan * 0.06);
   const startAngle = (-270 + cell.startAngle + angularGap) * Math.PI / 180;
   const endAngle = (-270 + cell.startAngle + cell.angleSpan - angularGap) * Math.PI / 180;
-  const seriesEncoding = input.chartSpec.seriesFields?.[0]
-    ?? input.chartSpec.series
-    ?? (input.chartSpec.encodings.color?.type === "nominal" || input.chartSpec.encodings.color?.type === "ordinal"
-      ? input.chartSpec.encodings.color
-      : undefined);
+  const seriesEncoding = seriesEncodings(input.chartSpec)[0];
   const validRows = orderedPolarRows(input, xEncoding.field, xEncoding.type).flatMap((row, rowIndex) => {
     const x = (row[xEncoding.field] ?? "").trim();
     const y = Number((row[yEncoding.field] ?? "").trim());
@@ -1404,9 +1404,10 @@ export const deterministicChartPipelines: Record<ChartRendererKey, ChartPipeline
 };
 
 export function renderDeterministicChart(input: GenericRenderInput) {
-  const schema = getChartContract(input.chartSpec.chartType);
-  if (!schema) throw new Error(`Unsupported chart template: ${input.chartSpec.chartType}`);
-  const pipeline = deterministicChartPipelines[schema.renderer];
+  const block = getChartBlockSpecification(input.chartSpec.chartType);
+  const schema = (block?.data as ChartContract | undefined) ?? getChartContract(input.chartSpec.chartType);
+  if (!block || !schema) throw new Error(`Unsupported chart template: ${input.chartSpec.chartType}`);
+  const pipeline = deterministicChartPipelines[block.renderer.key as ChartRendererKey];
   if (input.polarFacetCell && (schema.family === "line" || schema.family === "area")) {
     requireCoordinateGuide(input, "Polar");
     return renderPolarFacetLine(input, input.polarFacetCell);
@@ -1425,7 +1426,10 @@ export function renderDeterministicChart(input: GenericRenderInput) {
       dataset: materializeGraphDataset(input.dataset, input.chartSpec),
     });
   }
-  const coordinateSystem = schema.coordinateSystem ?? pipeline.coordinateSystem;
+  const coordinateSystem = block.coordinateSystem ?? pipeline.coordinateSystem;
+  if (coordinateSystem === "Geographic") {
+    throw new Error(`Geographic block ${block.chartType} must render through the deck.gl viewport.`);
+  }
   if (coordinateSystem !== "CoordinateFree") requireCoordinateGuide(input, coordinateSystem);
   return pipeline.render({
     ...input,

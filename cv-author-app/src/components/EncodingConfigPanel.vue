@@ -5,7 +5,7 @@ import EncodingChannelField from "./EncodingChannelField.vue";
 import VisualMappingEditor from "./VisualMappingEditor.vue";
 import {
   getEncodingChannelConfigsForSpec,
-  hasDerivedValueSeries,
+  getMultiFieldRoleConfigsForSpec,
   resolvedEncodingField,
   resolvedSeriesField,
   resolveChartTemplateVariant,
@@ -29,8 +29,16 @@ import type {
   LinearColorMapping,
   LinearSizeMapping,
   MarkGroupSharedConfig,
+  SeriesMemberStyle,
   SeriesStyleMapping,
 } from "../types";
+import {
+  isGeneratedRoleBinding,
+  roleBindingMaterialization,
+  roleBindingSelectedFields,
+  type RoleSelectionMaterialization,
+} from "../chart-blocks/bindings";
+import { getChartBlockSpecification } from "../chart-blocks/registry";
 import { chartAxisLabelsVisible, chartAxisVisible } from "../utils/chartAxes";
 import {
   defaultColorMapping,
@@ -41,11 +49,6 @@ import {
   isSeriesStyleMapping,
   visualDomain,
 } from "../utils/visualMapping";
-import {
-  csvColumnDragMime,
-  decodeCsvColumnDragPayload,
-  getActiveCsvColumnDrag,
-} from "../utils/csvColumnDrag";
 import { RADIAL_DENDROGRAM_DEFAULT_LEAF_RADIUS } from "../utils/radialClusterLayout";
 import {
   isDirectionalHierarchyChart,
@@ -78,12 +81,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: [];
-  channelChange: [channel: ChartEncodingChannel, field: string];
-  seriesFieldChange: [field: string];
-  seriesFieldsChange: [fields: string[]];
-  valueSeriesFieldsChange: [fields: string[]];
-  segmentFieldsChange: [fields: string[]];
-  parallelFieldsChange: [fields: string[]];
+  roleBindingChange: [roleId: ChartEncodingChannel, fields: string[], materialization: RoleSelectionMaterialization];
   aggregationChange: [channel: ChartEncodingChannel, aggregation?: "sum" | "avg"];
   singleBarValueOrderChange: [direction: "source" | "ascending" | "descending", topN?: number];
   markConfigChange: [patch: MarkGroupSharedConfig];
@@ -105,8 +103,6 @@ const emit = defineEmits<{
 }>();
 
 const template = computed(() => normalizeChartTemplate(props.chartSpec.chartType));
-const fatherColumnNames = computed(() => new Set((props.fatherColumns ?? []).map((column) => column.name)));
-const columnDisplayLabel = (field: string) => fatherColumnNames.value.has(field) ? `father: ${field}` : field;
 const isCartesian = computed(() => getChartTemplateContract(props.chartSpec.chartType)?.coordinateSystem === "Cartesian");
 const axisSwapped = computed(() => props.chartSpec.axisSwapped === true);
 function isDiscreteAxis(axis: "x" | "y") {
@@ -119,6 +115,33 @@ const isChord = computed(() => normalizedChartType.value === "chord");
 const isHorizon = computed(() => normalizedChartType.value === "horizonchart");
 const isSingleBar = computed(() => normalizedChartType.value === "singlebarchart");
 const configs = computed(() => getEncodingChannelConfigsForSpec(props.chartSpec));
+const blockSpecification = computed(() => getChartBlockSpecification(props.chartSpec.chartType));
+const seriesPresentation = computed(() => blockSpecification.value?.seriesPresentation);
+const multiFieldRoleConfigs = computed(() => getMultiFieldRoleConfigsForSpec(props.chartSpec));
+const multiFieldRoleIds = computed(() => new Set(multiFieldRoleConfigs.value.map((role) => role.roleId)));
+const multiFieldRoleEditors = computed(() => multiFieldRoleConfigs.value.map((role) => ({
+  ...role,
+  selectedFields: props.chartSpec.defaultDataBinding ? [] : roleBindingSelectedFields(props.chartSpec, role.roleId),
+  materialization: roleBindingMaterialization(props.chartSpec, role.roleId),
+})));
+function isMultiFieldRole(channel: ChartEncodingChannel) {
+  return multiFieldRoleIds.value.has(channel);
+}
+function multiFieldRole(channel: ChartEncodingChannel) {
+  return multiFieldRoleEditors.value.find((candidate) => candidate.roleId === channel);
+}
+function selectedRoleFields(channel: ChartEncodingChannel) {
+  return props.chartSpec.defaultDataBinding ? [] : roleBindingSelectedFields(props.chartSpec, channel);
+}
+function derivedRoleLabel(channel: ChartEncodingChannel) {
+  if (!isGeneratedRoleBinding(props.chartSpec, channel)) return undefined;
+  const binding = props.chartSpec.roleBindings?.[channel];
+  if (binding?.mode !== "derived") return "Derived field";
+  const transform = props.chartSpec.dataTransforms?.find((candidate) => candidate.kind === "fold"
+    && candidate.id === binding.transformId);
+  const sourceRole = transform?.kind === "fold" ? transform.sourceRoleId : undefined;
+  return sourceRole ? `Derived from ${sourceRole.toUpperCase()}` : "Derived field";
+}
 function columnsForChannel(channel: ChartEncodingChannel) {
   return props.channelColumns?.[channel] ?? props.columns;
 }
@@ -136,31 +159,6 @@ const usesPolarAxisRows = computed(() => getChartTemplateContract(props.chartSpe
   && configs.value.some((config) => config.channel === "theta")
   && configs.value.some((config) => config.channel === "radius"));
 const isMultiLine = computed(() => resolveChartTemplateVariant(props.chartSpec) === "line-multi");
-const isExplicitMultiLine = computed(() => normalizedChartType.value === "multilinechart");
-const isGroupedBar = computed(() => template.value === "bar" && normalizedChartType.value.includes("grouped"));
-const barRequiresSegments = computed(() => {
-  if (template.value !== "bar") return false;
-  const variant = normalizedChartType.value;
-  return variant.includes("stacked");
-});
-const areaRequiresSeries = computed(() => {
-  if (template.value !== "area") return false;
-  const type = normalizedChartType.value;
-  return type.includes("stacked") || type.includes("stream") || type.includes("horizon");
-});
-const supportsBarValueSeries = computed(() => isGroupedBar.value || barRequiresSegments.value);
-const supportsSeriesItems = computed(() => template.value === "line"
-  || template.value === "area"
-  || supportsBarValueSeries.value);
-const seriesRole = computed(() => getChartTemplateContract(props.chartSpec.chartType)?.channels
-  .find((config) => config.role === "series"));
-const seriesItemsRequired = computed(() => supportsSeriesItems.value
-  && (seriesRole.value?.required === true || isExplicitMultiLine.value));
-const seriesItemLabel = computed(() => {
-  const label = seriesRole.value?.semanticLabel ?? "Series";
-  return label.replace(/\s+item$/i, "");
-});
-const isParallel = computed(() => template.value === "parallel");
 const isHierarchy = computed(() => template.value === "hierarchy");
 const isDirectionalHierarchy = computed(() => isDirectionalHierarchyChart(props.chartSpec.chartType));
 const treeDirection = computed(() => normalizeCartesianTreeDirection(props.markConfig.treeDirection));
@@ -189,12 +187,11 @@ const forceLinkStrength = computed(() => markNumber("linkStrength", 0.7));
 const forceCenterStrength = computed(() => markNumber("centerStrength", 0.08));
 const forceCollisionRadius = computed(() => markNumber("collisionRadius", 10));
 const standardConfigs = computed(() => configs.value.filter((config) => {
+  if (isGeneratedRoleBinding(props.chartSpec, config.channel)) return false;
+  if (isMultiFieldRole(config.channel)) return false;
   if ((isCartesian.value || isHorizon.value) && (config.channel === "x" || config.channel === "y")) return false;
-  if (isPolar.value && config.channel === "segment") return false;
   if (usesPolarAxisRows.value && config.channel === "theta") return false;
   if (usesPolarAxisRows.value && config.channel === "radius") return false;
-  if (isParallel.value && config.channel === "dimensions") return false;
-  if (supportsSeriesItems.value && config.role === "series" && template.value !== "scatter") return false;
   return true;
 }));
 const compactConfigs = computed(() => standardConfigs.value.filter((config) =>
@@ -211,26 +208,17 @@ const seriesMembers = computed(() => {
 });
 const selectedValueSeriesFields = computed(() => props.chartSpec.defaultDataBinding
   ? []
-  : props.chartSpec.valueFields?.map((encoding) => encoding.field) ?? []);
+  : roleBindingSelectedFields(props.chartSpec, "y"));
 const selectedSeriesFields = computed(() => props.chartSpec.defaultDataBinding
   ? []
-  : props.chartSpec.seriesFields?.map((encoding) => encoding.field)
-  ?? (props.chartSpec.series
-    ? [props.chartSpec.series.field]
-    : template.value === "scatter"
-      && (props.chartSpec.encodings.color?.type === "nominal" || props.chartSpec.encodings.color?.type === "ordinal")
-      ? [props.chartSpec.encodings.color.field]
-      : []));
+  : roleBindingMaterialization(props.chartSpec, "series") === "fold"
+    ? []
+    : roleBindingSelectedFields(props.chartSpec, "series"));
 const seriesItemMode = computed<"categorical" | "quantitative" | null>(() => {
   if (selectedSeriesFields.value.length > 0) return "categorical";
-  if (selectedValueSeriesFields.value.length > 0) return "quantitative";
+  if (roleBindingMaterialization(props.chartSpec, "y") === "fold") return "quantitative";
   return null;
 });
-const seriesItemColumns = computed(() => props.columns.filter((column) => template.value === "scatter"
-  ? column.type === "nominal" || column.type === "ordinal"
-  : column.type === "nominal" || column.type === "ordinal" || column.type === "quantitative"));
-const seriesItemDropState = ref<"idle" | "valid" | "invalid">("idle");
-const segmentDropState = ref<"idle" | "valid" | "invalid">("idle");
 const detailPanel = ref<"color" | "size" | null>(null);
 const openSlider = ref<string | null>(null);
 function toggleSlider(id: string) {
@@ -248,8 +236,6 @@ const seriesStyleMapping = computed<SeriesStyleMapping>(() => {
 });
 const legendVisible = computed(() => props.markConfig.legendVisible === true);
 const quantitativeColumns = computed(() => props.columns.filter((column) => column.type === "quantitative"));
-const parallelColumns = computed(() => props.columns.filter((column) =>
-  column.type === "quantitative" || column.type === "nominal" || column.type === "ordinal"));
 const aggregationEntries = computed(() => {
   const configured = Object.entries(props.chartSpec.aggregations ?? {})
     .flatMap(([channel, aggregation]) => {
@@ -281,42 +267,31 @@ const singleBarValueOrder = computed(() => {
 });
 const singleBarSortDirection = computed(() => singleBarValueOrder.value?.direction ?? "source");
 const singleBarTopN = computed(() => singleBarValueOrder.value?.limit);
-const selectedSegmentFields = computed(() => props.chartSpec.encodings.segment?.field
-  && !props.chartSpec.defaultDataBinding
-  ? [props.chartSpec.encodings.segment.field]
-  : props.chartSpec.defaultDataBinding
-    ? []
-    : props.chartSpec.angleFields?.map((encoding) => encoding.field) ?? []);
-const polarSegmentMode = computed<"categorical" | "quantitative" | null>(() => {
-  if (props.chartSpec.defaultDataBinding) return null;
-  if (props.chartSpec.encodings.segment?.field) return "categorical";
-  if ((props.chartSpec.angleFields?.length ?? 0) > 0) return "quantitative";
-  return null;
-});
 const hasPolarSegment = computed(() => configs.value.some((config) => config.channel === "segment"));
 const polarSegmentMembers = computed(() => {
   if (props.chartSpec.defaultDataBinding) return [];
+  if (roleBindingMaterialization(props.chartSpec, "theta") === "fold") {
+    return roleBindingSelectedFields(props.chartSpec, "theta").map((field) => ({ id: field, label: field }));
+  }
   const field = props.chartSpec.encodings.segment?.field;
   if (field) {
     return Array.from(new Set(props.rows.map((row) => row[field] ?? "").filter(Boolean)))
       .map((id) => ({ id, label: id }));
   }
-  return (props.chartSpec.angleFields ?? []).map((encoding) => ({
-    id: encoding.field,
-    label: encoding.field,
-  }));
+  return [];
 });
-const editableSeriesMembers = computed(() => seriesItemMode.value === "quantitative"
-  ? selectedValueSeriesFields.value.map((field) => ({ id: field, label: field }))
-  : isPolar.value && hasPolarSegment.value && !supportsSeriesItems.value
-    ? polarSegmentMembers.value
-    : seriesMembers.value);
-const polarSegmentColumns = computed(() => {
-  const config = configs.value.find((item) => item.channel === "segment");
-  if (!config) return [];
-  return props.columns.filter((column) => config.accepts.includes(column.type));
+const editableSeriesMembers = computed(() => {
+  if (seriesItemMode.value === "quantitative") {
+    return selectedValueSeriesFields.value.map((field) => ({ id: field, label: field }));
+  }
+  if (isPolar.value && hasPolarSegment.value && polarSegmentMembers.value.length > 0) return polarSegmentMembers.value;
+  if (seriesMembers.value.length > 0) return seriesMembers.value;
+  const seriesRole = blockSpecification.value?.roles.find((role) => role.id === "series");
+  return seriesPresentation.value && seriesRole?.required !== true
+    ? [{ id: "__single__", label: "Series" }]
+    : [];
 });
-const selectedParallelFields = computed(() => props.chartSpec.parallelFields?.map((encoding) => encoding.field) ?? []);
+const seriesItemProperties = computed(() => new Set(seriesPresentation.value?.itemProperties ?? ["color"]));
 const staticRadius = computed(() => typeof props.markConfig.outerRadius === "number"
   ? props.markConfig.outerRadius
   : 1);
@@ -329,7 +304,7 @@ const colorField = computed(() => displayedEncodingField("color"));
 const sizeField = computed(() => displayedEncodingField("size"));
 const colorColumn = computed(() => props.columns.find((column) => column.name === colorField.value));
 const supportsLegend = computed(() => (isPolar.value && hasPolarSegment.value && polarSegmentMembers.value.length > 0)
-  || supportsSeriesItems.value
+  || (seriesPresentation.value?.legend === true && editableSeriesMembers.value.length > 0)
   || (template.value === "scatter" && colorColumn.value?.type === "nominal"));
 const showColorMapping = computed(() => !!colorColumn.value && colorColumn.value.type !== "nominal");
 const colorDomain = computed(() => {
@@ -428,7 +403,7 @@ function seriesMemberColor(memberId: string, index: number) {
   return seriesStyleMapping.value.values[memberId]?.color
     ?? fallbackSeriesColors[index % fallbackSeriesColors.length]!;
 }
-function updateSeriesMemberStyle(memberId: string, patch: { color?: string }) {
+function updateSeriesMemberStyle(memberId: string, patch: Partial<SeriesMemberStyle>) {
   emit("markConfigChange", {
     seriesStyleMapping: {
       type: "series-style",
@@ -438,6 +413,14 @@ function updateSeriesMemberStyle(memberId: string, patch: { color?: string }) {
       },
     },
   });
+}
+function seriesMemberLineStyle(memberId: string) {
+  const style = seriesStyleMapping.value.values[memberId];
+  return style?.lineStyle ?? style?.shape ?? "solid";
+}
+function seriesMemberStrokeWidth(memberId: string) {
+  return seriesStyleMapping.value.values[memberId]?.strokeWidth
+    ?? Number(props.markConfig.strokeWidth ?? 2.5);
 }
 function axisChannel(channel: ChartEncodingChannel) {
   if (!axisSwapped.value || (channel !== "x" && channel !== "y")) return channel;
@@ -458,10 +441,7 @@ const axisRows = computed(() => (["x", "y"] as const).flatMap((axis) => {
 }));
 
 function isEncodingChannelDisabled(channel: ChartEncodingChannel) {
-  if (channel === "y") return hasDerivedValueSeries(props.chartSpec);
-  if (channel === "theta") return hasDerivedValueSeries(props.chartSpec, "theta");
-  if (channel === "radius") return hasDerivedValueSeries(props.chartSpec);
-  return false;
+  return isGeneratedRoleBinding(props.chartSpec, channel);
 }
 
 function displayedEncodingConfig(config: EncodingChannelConfig) {
@@ -512,137 +492,17 @@ function toggleDetailPanel(channel: "color" | "size") {
   detailPanel.value = detailPanel.value === channel ? null : channel;
 }
 
-function isSeriesItemDisabled(field: string) {
-  const column = props.columns.find((item) => item.name === field);
-  if (!column || !seriesItemMode.value) return false;
-  if (seriesItemMode.value === "categorical") {
-    // A categorical series/group/segment binding is exclusive; measure sets
-    // use the separate quantitative mode below and may contain multiple fields.
-    const categorical = column.type === "nominal" || column.type === "ordinal";
-    return (!categorical && !selectedSeriesFields.value.includes(field))
-      || (seriesRole.value?.categoricalExclusive === true && !selectedSeriesFields.value.includes(field))
-      || (seriesRole.value?.multiple !== true && !selectedSeriesFields.value.includes(field));
-  }
-  return column.type !== "quantitative";
-}
-
-function toggleSeriesItemField(field: string) {
-  const column = props.columns.find((item) => item.name === field);
-  if (!column || isSeriesItemDisabled(field)) return;
-  if (column.type === "quantitative") {
-    emit("valueSeriesFieldsChange", selectedValueSeriesFields.value.includes(field)
-      ? selectedValueSeriesFields.value.filter((item) => item !== field)
-      : [...selectedValueSeriesFields.value, field]);
-    return;
-  }
-  if (seriesRole.value?.multiple === true) {
-    emit("seriesFieldsChange", selectedSeriesFields.value.includes(field)
-      ? selectedSeriesFields.value.filter((item) => item !== field)
-      : [...selectedSeriesFields.value, field]);
-  } else {
-    emit("seriesFieldsChange", selectedSeriesFields.value.includes(field) ? [] : [field]);
-  }
-}
-
-function seriesItemDragColumn(event: DragEvent) {
-  const payload = decodeCsvColumnDragPayload(event.dataTransfer?.getData(csvColumnDragMime))
-    ?? getActiveCsvColumnDrag();
-  if (!payload || payload.datasetId !== props.chartSpec.datasetId) return null;
-  const column = props.columns.find((item) => item.name === payload.field && item.type === payload.type);
-  return column ?? null;
-}
-
-function onSeriesItemDragOver(event: DragEvent) {
-  const column = seriesItemDragColumn(event);
-  const compatible = !!column && !isSeriesItemDisabled(column.name);
-  seriesItemDropState.value = compatible ? "valid" : "invalid";
-  if (event.dataTransfer) event.dataTransfer.dropEffect = compatible ? "copy" : "none";
-}
-
-function onSeriesItemDragLeave(event: DragEvent) {
-  const current = event.currentTarget;
-  const related = event.relatedTarget;
-  if (current instanceof Element && related instanceof Node && current.contains(related)) return;
-  seriesItemDropState.value = "idle";
-}
-
-function onSeriesItemDrop(event: DragEvent) {
-  const column = seriesItemDragColumn(event);
-  seriesItemDropState.value = "idle";
-  if (!column || isSeriesItemDisabled(column.name)) return;
-  if (column.type === "quantitative") {
-    if (!selectedValueSeriesFields.value.includes(column.name)) {
-      emit("valueSeriesFieldsChange", [...selectedValueSeriesFields.value, column.name]);
-    }
-    return;
-  }
-  if (!selectedSeriesFields.value.includes(column.name)) {
-    emit("seriesFieldsChange", seriesRole.value?.multiple === true
-      ? [...selectedSeriesFields.value, column.name]
-      : [column.name]);
-  }
-}
-
-function toggleSegmentField(field: string) {
-  const column = props.columns.find((item) => item.name === field);
-  if (!column || isSegmentFieldDisabled(field)) return;
-  if (column.type === "quantitative") {
-    emit("segmentFieldsChange", selectedSegmentFields.value.includes(field)
-      ? selectedSegmentFields.value.filter((item) => item !== field)
-      : [...selectedSegmentFields.value, field]);
-  } else {
-    emit("segmentFieldsChange", selectedSegmentFields.value.includes(field) ? [] : [field]);
-  }
-}
-
-function isSegmentFieldDisabled(field: string) {
-  const column = props.columns.find((item) => item.name === field);
-  if (!column || !polarSegmentMode.value) return false;
-  if (polarSegmentMode.value === "categorical") return !selectedSegmentFields.value.includes(field);
-  return column.type !== "quantitative";
-}
-
-function segmentDragColumn(event: DragEvent) {
-  const payload = decodeCsvColumnDragPayload(event.dataTransfer?.getData(csvColumnDragMime))
-    ?? getActiveCsvColumnDrag();
-  if (!payload || payload.datasetId !== props.chartSpec.datasetId) return null;
-  const column = props.columns.find((item) => item.name === payload.field && item.type === payload.type);
-  if (!column) return null;
-  if (selectedSegmentFields.value.includes(column.name)) return column;
-  if (polarSegmentMode.value === "categorical") return null;
-  if (polarSegmentMode.value === "quantitative" && column.type !== "quantitative") return null;
-  const segmentConfig = configs.value.find((config) => config.channel === "segment");
-  return segmentConfig?.accepts.includes(column.type) ? column : null;
-}
-
-function onSegmentDragOver(event: DragEvent) {
-  const compatible = segmentDragColumn(event) !== null;
-  segmentDropState.value = compatible ? "valid" : "invalid";
-  if (event.dataTransfer) event.dataTransfer.dropEffect = compatible ? "copy" : "none";
-}
-
-function onSegmentDragLeave(event: DragEvent) {
-  const current = event.currentTarget;
-  const related = event.relatedTarget;
-  if (current instanceof Element && related instanceof Node && current.contains(related)) return;
-  segmentDropState.value = "idle";
-}
-
-function onSegmentDrop(event: DragEvent) {
-  const column = segmentDragColumn(event);
-  segmentDropState.value = "idle";
-  if (!column || selectedSegmentFields.value.includes(column.name)) return;
-  emit("segmentFieldsChange", [...selectedSegmentFields.value, column.name]);
-}
-
-function toggleParallelField(field: string) {
-  emit("parallelFieldsChange", selectedParallelFields.value.includes(field)
-    ? selectedParallelFields.value.filter((item) => item !== field)
-    : [...selectedParallelFields.value, field]);
-}
-
 function updateMappingDefaults(channel: ChartEncodingChannel, field: string) {
-  emit("channelChange", channel, field);
+  updateRoleFields(channel, field ? [field] : [], "direct");
+}
+
+function updateRoleFields(
+  channel: ChartEncodingChannel,
+  fields: string[],
+  materialization: RoleSelectionMaterialization,
+) {
+  emit("roleBindingChange", channel, fields, materialization);
+  const field = fields[0] ?? "";
   const column = props.columns.find((item) => item.name === field);
   if (channel === "color" && column && column.type !== "nominal" && !isLinearColorMapping(props.markConfig.colorMapping)) {
     emit("markConfigChange", { colorMapping: defaultColorMapping });
@@ -710,8 +570,17 @@ function updateSingleBarTopN(rawValue: string) {
             :columns="columnsForChannel('theta')"
             :father-columns="fatherColumns"
             :value="displayedEncodingField('theta')"
+            :values="selectedRoleFields('theta')"
+            :multiple="isMultiFieldRole('theta')"
+            :min-fields="multiFieldRole('theta')?.minFields"
+            :max-fields="multiFieldRole('theta')?.maxFields"
+            :materializations="multiFieldRole('theta')?.materializations"
+            :materialization="multiFieldRole('theta')?.materialization"
+            :direct-allowed="multiFieldRole('theta')?.directAllowed"
+            :derived-label="derivedRoleLabel('theta')"
             :disabled="isEncodingChannelDisabled('theta')"
             @change="updateMappingDefaults('theta', $event)"
+            @fields-change="(fields, materialization) => updateRoleFields('theta', fields, materialization)"
           />
           <div class="encoding-config__axis-controls">
             <label class="encoding-config__axis-toggle">
@@ -745,6 +614,8 @@ function updateSingleBarTopN(rawValue: string) {
               :columns="columnsForChannel('radius')"
               :father-columns="fatherColumns"
               :value="radiusField"
+              :values="selectedRoleFields('radius')"
+              :derived-label="derivedRoleLabel('radius')"
               :disabled="isEncodingChannelDisabled('radius')"
               @change="updateMappingDefaults('radius', $event)"
             />
@@ -845,8 +716,17 @@ function updateSingleBarTopN(rawValue: string) {
             :columns="columnsForChannel(row.bindingAxis)"
             :father-columns="fatherColumns"
             :value="displayedEncodingField(row.bindingAxis)"
+            :values="selectedRoleFields(row.bindingAxis)"
+            :multiple="isMultiFieldRole(row.bindingAxis)"
+            :min-fields="multiFieldRole(row.bindingAxis)?.minFields"
+            :max-fields="multiFieldRole(row.bindingAxis)?.maxFields"
+            :materializations="multiFieldRole(row.bindingAxis)?.materializations"
+            :materialization="multiFieldRole(row.bindingAxis)?.materialization"
+            :direct-allowed="multiFieldRole(row.bindingAxis)?.directAllowed"
+            :derived-label="derivedRoleLabel(row.bindingAxis)"
             :disabled="isEncodingChannelDisabled(row.bindingAxis)"
             @change="updateMappingDefaults(row.bindingAxis, $event)"
+            @fields-change="(fields, materialization) => updateRoleFields(row.bindingAxis, fields, materialization)"
           />
           <div class="encoding-config__axis-controls">
             <label class="encoding-config__axis-toggle">
@@ -893,8 +773,17 @@ function updateSingleBarTopN(rawValue: string) {
             :columns="columnsForChannel(config.channel)"
             :father-columns="fatherColumns"
             :value="displayedEncodingField(config.channel)"
+            :values="selectedRoleFields(config.channel)"
+            :multiple="isMultiFieldRole(config.channel)"
+            :min-fields="multiFieldRole(config.channel)?.minFields"
+            :max-fields="multiFieldRole(config.channel)?.maxFields"
+            :materializations="multiFieldRole(config.channel)?.materializations"
+            :materialization="multiFieldRole(config.channel)?.materialization"
+            :direct-allowed="multiFieldRole(config.channel)?.directAllowed"
+            :derived-label="derivedRoleLabel(config.channel)"
             :disabled="isEncodingChannelDisabled(config.channel)"
             @change="updateMappingDefaults(config.channel, $event)"
+            @fields-change="(fields, materialization) => updateRoleFields(config.channel, fields, materialization)"
           />
         </div>
       </template>
@@ -905,7 +794,16 @@ function updateSingleBarTopN(rawValue: string) {
             :columns="columnsForChannel(config.channel)"
             :father-columns="fatherColumns"
             :value="displayedEncodingField(config.channel)"
+            :values="selectedRoleFields(config.channel)"
+            :multiple="isMultiFieldRole(config.channel)"
+            :min-fields="multiFieldRole(config.channel)?.minFields"
+            :max-fields="multiFieldRole(config.channel)?.maxFields"
+            :materializations="multiFieldRole(config.channel)?.materializations"
+            :materialization="multiFieldRole(config.channel)?.materialization"
+            :direct-allowed="multiFieldRole(config.channel)?.directAllowed"
+            :derived-label="derivedRoleLabel(config.channel)"
             @change="updateMappingDefaults(config.channel, $event)"
+            @fields-change="(fields, materialization) => updateRoleFields(config.channel, fields, materialization)"
           />
           <div class="encoding-config__detail-control">
             <input
@@ -968,48 +866,11 @@ function updateSingleBarTopN(rawValue: string) {
       </div>
 
       <div
-        v-if="supportsSeriesItems"
-        class="encoding-config__segment-style-layout"
-        :class="{ 'encoding-config__segment-style-layout--split': editableSeriesMembers.length }"
-      >
-      <section
-        v-if="supportsSeriesItems"
-        class="encoding-config__angle encoding-config__series-drop"
-        :class="{
-          'is-drop-active': seriesItemDropState === 'valid',
-          'is-drop-invalid': seriesItemDropState === 'invalid',
-        }"
-        :aria-label="`${seriesItemLabel} fields`"
-        @dragover.stop.prevent="onSeriesItemDragOver"
-        @dragleave.stop="onSeriesItemDragLeave"
-        @drop.stop.prevent="onSeriesItemDrop"
-      >
-        <header class="encoding-config__series-header">
-          <span>
-            {{ seriesItemLabel }}
-            <abbr v-if="seriesItemsRequired" title="At least one required" aria-label="At least one required">*</abbr>
-          </span>
-        </header>
-        <label
-          v-for="column in seriesItemColumns"
-          :key="column.name"
-          :class="{ 'is-disabled': isSeriesItemDisabled(column.name) }"
-        >
-          <input
-            type="checkbox"
-            :checked="selectedSeriesFields.includes(column.name) || selectedValueSeriesFields.includes(column.name)"
-            :disabled="isSeriesItemDisabled(column.name)"
-            @change="toggleSeriesItemField(column.name)"
-          />
-          <span>{{ columnDisplayLabel(column.name) }}</span>
-        </label>
-      </section>
-
-      <div
-        v-if="supportsSeriesItems && (editableSeriesMembers.length || supportsLegend)"
+        v-if="editableSeriesMembers.length || supportsLegend"
         class="encoding-config__member-styles"
       >
-        <header v-if="supportsLegend">
+        <header>
+          <strong>Series appearance</strong>
           <label v-if="supportsLegend" class="encoding-config__legend-toggle">
             <span>Show legend</span>
             <input
@@ -1020,95 +881,43 @@ function updateSingleBarTopN(rawValue: string) {
           </label>
         </header>
         <div class="encoding-config__member-styles-grid">
-          <label v-for="(member, index) in editableSeriesMembers" :key="member.id">
+          <div v-for="(member, index) in editableSeriesMembers" :key="member.id" class="encoding-config__series-style-row">
             <span :title="member.label">{{ member.label }}</span>
             <input
+              v-if="seriesItemProperties.has('color')"
               type="color"
               list="frontend-color-palette"
               :value="seriesMemberColor(member.id, index)"
               :aria-label="`${member.label} series color`"
               @input="updateSeriesMemberStyle(member.id, { color: ($event.target as HTMLInputElement).value })"
             />
-          </label>
-        </div>
-      </div>
-      </div>
-
-      <p v-if="seriesItemMode === 'quantitative'" class="encoding-config__derived-series">
-        Series: selected measure names
-      </p>
-
-      <div
-        v-if="(isPolar && hasPolarSegment) || (!supportsSeriesItems && editableSeriesMembers.length)"
-        class="encoding-config__segment-style-layout"
-        :class="{ 'encoding-config__segment-style-layout--split': isPolar && hasPolarSegment && editableSeriesMembers.length }"
-      >
-        <section
-          v-if="isPolar && hasPolarSegment"
-          class="encoding-config__angle encoding-config__segment-drop"
-          :class="{
-            'is-drop-active': segmentDropState === 'valid',
-            'is-drop-invalid': segmentDropState === 'invalid',
-          }"
-          aria-label="Segment fields"
-          @dragover.stop.prevent="onSegmentDragOver"
-          @dragleave.stop="onSegmentDragLeave"
-          @drop.stop.prevent="onSegmentDrop"
-        >
-          <header class="encoding-config__series-header">
-            <span>Segment <abbr title="Required" aria-label="Required">*</abbr></span>
-          </header>
-          <label
-            v-for="column in polarSegmentColumns"
-            :key="column.name"
-            :class="{ 'is-disabled': isSegmentFieldDisabled(column.name) }"
-          >
+            <select
+              v-if="seriesItemProperties.has('lineStyle')"
+              :value="seriesMemberLineStyle(member.id)"
+              :aria-label="`${member.label} line style`"
+              @change="updateSeriesMemberStyle(member.id, { lineStyle: ($event.target as HTMLSelectElement).value as 'solid' | 'dashed' | 'dotted' })"
+            >
+              <option value="solid">Solid</option>
+              <option value="dashed">Dashed</option>
+              <option value="dotted">Dotted</option>
+            </select>
             <input
-              type="checkbox"
-              :checked="selectedSegmentFields.includes(column.name)"
-              :disabled="isSegmentFieldDisabled(column.name)"
-              @change="toggleSegmentField(column.name)"
+              v-if="seriesItemProperties.has('strokeWidth')"
+              type="number"
+              min="0.5"
+              max="16"
+              step="0.5"
+              :value="seriesMemberStrokeWidth(member.id)"
+              :aria-label="`${member.label} stroke width`"
+              @change="updateSeriesMemberStyle(member.id, { strokeWidth: Number(($event.target as HTMLInputElement).value) })"
             />
-            <span :title="columnDisplayLabel(column.name)">{{ columnDisplayLabel(column.name) }}</span>
-          </label>
-        </section>
-        <div v-if="!supportsSeriesItems && (editableSeriesMembers.length || supportsLegend)" class="encoding-config__member-styles">
-          <header v-if="supportsLegend">
-            <label v-if="supportsLegend" class="encoding-config__legend-toggle">
-              <span>Show legend</span>
-              <input
-                type="checkbox"
-                :checked="legendVisible"
-                @change="emit('markConfigChange', { legendVisible: ($event.target as HTMLInputElement).checked })"
-              />
-            </label>
-          </header>
-          <div class="encoding-config__member-styles-grid">
-            <label v-for="(member, index) in editableSeriesMembers" :key="member.id">
-              <span :title="member.label">{{ member.label }}</span>
-              <input
-                type="color"
-                list="frontend-color-palette"
-                :value="seriesMemberColor(member.id, index)"
-                :aria-label="`${member.label} series color`"
-                @input="updateSeriesMemberStyle(member.id, { color: ($event.target as HTMLInputElement).value })"
-              />
-            </label>
           </div>
         </div>
       </div>
 
-      <section v-if="isParallel" class="encoding-config__angle" aria-label="Parallel dimensions">
-        <span>Dimensions <abbr title="At least two required" aria-label="At least two required">*</abbr></span>
-        <label v-for="column in parallelColumns" :key="column.name">
-          <input
-            type="checkbox"
-            :checked="selectedParallelFields.includes(column.name)"
-            @change="toggleParallelField(column.name)"
-          />
-          <span>{{ columnDisplayLabel(column.name) }}</span>
-        </label>
-      </section>
+      <p v-if="multiFieldRoleEditors.some((role) => role.materialization === 'fold' && role.selectedFields.length > 1)" class="encoding-config__derived-series">
+        Series: selected measure names
+      </p>
 
       <template v-if="!compositionOnly">
       <section v-if="aggregationEntries.length" class="encoding-config__aggregation" aria-label="Aggregation">
@@ -1588,7 +1397,6 @@ function updateSingleBarTopN(rawValue: string) {
 .encoding-config__value-order input { width: 100%; min-width: 0; height: 30px; padding: 0 7px; border: 1px solid var(--frontend-control-border); border-radius: 5px; background: var(--frontend-surface-raised); color: #432818; font: inherit; font-size: var(--encoding-config-font-size); }
 .encoding-config__angle { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; padding-top: 2px; color: #99582a; font-size: var(--encoding-config-font-size); }
 .encoding-config__angle > span { grid-column: 1 / -1; }
-.encoding-config__series-header { display: flex; align-items: center; justify-content: space-between; grid-column: 1 / -1; gap: 8px; }
 .encoding-config__legend-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: transparent; color: #99582a; font-size: var(--encoding-config-font-size); white-space: nowrap; }
 .encoding-config__legend-toggle input { width: 12px; height: 12px; margin: 0; accent-color: var(--frontend-slider-thumb); }
 .encoding-config__angle abbr { color: #b42318; text-decoration: none; }
@@ -1628,13 +1436,17 @@ function updateSingleBarTopN(rawValue: string) {
 .encoding-config__segment-style-layout--split > .encoding-config__segment-drop { padding: 2px; border: 0; background: transparent; }
 .encoding-config__segment-style-layout--split > .encoding-config__member-styles { padding-top: 8px; border-top: 1px solid var(--frontend-border-subtle); }
 .encoding-config__member-styles { display: grid; width: 100%; min-width: 0; gap: 5px; justify-items: stretch; }
-.encoding-config__member-styles header { display: flex; width: 100%; min-height: 24px; align-items: center; }
+.encoding-config__member-styles header { display: flex; width: 100%; min-height: 24px; align-items: center; justify-content: space-between; gap: 8px; }
 .encoding-config__member-styles-grid { display: grid; width: 100%; max-width: 100%; gap: 4px; }
-.encoding-config__member-styles label { display: grid; grid-template-columns: minmax(0, 1fr) 38px; justify-content: stretch; align-items: center; gap: 10px; }
+.encoding-config__series-style-row { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, auto); justify-content: stretch; align-items: center; gap: 6px; }
 .encoding-config__member-styles header { color: #99582a; font-size: var(--encoding-config-font-size); }
 .encoding-config__member-styles header span:first-child { color: #432818; font-size: var(--encoding-config-font-size); font-weight: 650; }
-.encoding-config__member-styles label > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.encoding-config__series-style-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .encoding-config__member-styles input[type="color"] { width: 38px; height: 28px; padding: 2px; border: 1px solid var(--frontend-control-border); border-radius: 5px; background: var(--frontend-surface-canvas); }
+.encoding-config__series-style-row select,
+.encoding-config__series-style-row input[type="number"] { height: 28px; border: 1px solid var(--frontend-control-border); border-radius: 5px; background: var(--frontend-surface-raised); color: #432818; font: inherit; }
+.encoding-config__series-style-row select { width: 72px; }
+.encoding-config__series-style-row input[type="number"] { width: 52px; padding: 0 4px; }
 .encoding-config__static input[type="color"] { width: 38px; height: 28px; padding: 2px; border: 1px solid var(--frontend-control-border); border-radius: 5px; background: var(--frontend-surface-canvas); }
 .encoding-config__static input[type="range"] { width: 100%; accent-color: var(--frontend-control-accent); }
 .encoding-config__static output { min-width: 40px; color: #99582a; font-variant-numeric: tabular-nums; text-align: right; }
