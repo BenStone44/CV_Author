@@ -1566,19 +1566,14 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
    * describe the complete nested object.
    */
   function collectSelectionBoundsWithNestedChildren(node: CanvasNode, visited = new Set<string>()): Bounds {
-    const usesStableCartesianFrame = node.coordinateGuide?.type === "Cartesian"
-      && !!node.chartSpec?.plotArea
-      && !isCartesianTreeChart(node.chartSpec.chartType);
-    const ownBounds = () => usesStableCartesianFrame
-      ? collectNodeSelectionBounds(node)
-      : collectRenderedNodeSelectionBounds(node);
+    const ownBounds = () => collectRenderedNodeSelectionBounds(node);
     if (visited.has(node.id)) return ownBounds();
     visited.add(node.id);
     let bounds = ownBounds();
     // The live occupancy group already encloses SVG nested children and every
     // descendant of a Facet/Layer/Concat root. Only the deterministic fallback
     // needs to merge relationship-owned children separately.
-    if (renderedNodeLocalSelectionBounds(node) && !usesStableCartesianFrame) return bounds;
+    if (renderedNodeLocalSelectionBounds(node)) return bounds;
     Object.values(chartRelationships.value.nestedRelationships).forEach((relationship) => {
       if (relationship.status !== "active" || relationship.parentChartId !== node.id) return;
       const child = findCanvasNode(relationship.childChartId);
@@ -1637,11 +1632,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       const geometry = getPolarSelectionGeometry(node);
       if (geometry) return nodeLocalBoundsFrame(node, geometry.bounds);
     }
-    const visualBounds = node.coordinateGuide?.type === "Cartesian"
-      && node.chartSpec?.plotArea
-      && !isCartesianTreeChart(node.chartSpec.chartType)
-      ? getNodeSelectionBounds(node)
-      : renderedNodeLocalSelectionBounds(node) ?? getNodeSelectionBounds(node);
+    const visualBounds = renderedNodeLocalSelectionBounds(node) ?? getNodeSelectionBounds(node);
     return nodeLocalBoundsFrame(node, visualBounds);
   });
   const selectionPolarOutlines = computed(() => {
