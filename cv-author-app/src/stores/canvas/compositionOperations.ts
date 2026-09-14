@@ -1705,6 +1705,11 @@ export function useCanvasCompositionOperations(context: any) {
     };
   }
 
+  function cartesianPlotBounds(node: CanvasNode): Bounds | null {
+    if (node.coordinateGuide?.type !== "Cartesian" || !node.chartSpec?.plotArea) return null;
+    return localRectDropGeometry(node, node.chartSpec.plotArea).bounds;
+  }
+
   function polarSectorGeometry(node: CanvasNode, model: ReturnType<typeof createPolarCoordinateSystemModel>, innerRadius: number, outerRadius: number, startDegrees: number, endDegrees: number) {
     if (!model) return null;
     const span = Math.max(Math.abs(endDegrees - startDegrees), 1);
@@ -2961,14 +2966,31 @@ export function useCanvasCompositionOperations(context: any) {
     if (zone.type !== "layer" && zone.type !== "concat") return false;
     const sourceBounds = collectRenderedNodeSelectionBounds(source);
     const targetBounds = collectRenderedNodeSelectionBounds(target);
+    const sourcePlotBounds = cartesianPlotBounds(source);
+    const targetPlotBounds = cartesianPlotBounds(target);
+    // Cartesian relationships are expressed by their plot rectangles, while
+    // placement along the concat direction still uses full rendered occupancy
+    // so axes, labels, and marks cannot overlap. Fall back as a pair for
+    // composite and non-Cartesian nodes that do not expose a direct plot area.
+    const sourceAlignmentBounds = sourcePlotBounds && targetPlotBounds
+      ? sourcePlotBounds
+      : sourceBounds;
+    const targetAlignmentBounds = sourcePlotBounds && targetPlotBounds
+      ? targetPlotBounds
+      : targetBounds;
     const gap = COMPOSITION_DROP_ZONE_GAP_PX / Math.max(viewZoom.value, 0.25);
     let dx = 0;
     let dy = 0;
-    if (zone.type === "layer" || zone.direction === "radial" || zone.direction === "angular") {
+    if (zone.type === "layer") {
+      dx = targetAlignmentBounds.minX + targetAlignmentBounds.width / 2
+        - (sourceAlignmentBounds.minX + sourceAlignmentBounds.width / 2);
+      dy = targetAlignmentBounds.minY + targetAlignmentBounds.height / 2
+        - (sourceAlignmentBounds.minY + sourceAlignmentBounds.height / 2);
+    } else if (zone.direction === "radial" || zone.direction === "angular") {
       dx = targetBounds.minX + targetBounds.width / 2 - (sourceBounds.minX + sourceBounds.width / 2);
       dy = targetBounds.minY + targetBounds.height / 2 - (sourceBounds.minY + sourceBounds.height / 2);
     } else if (zone.direction === "vertical") {
-      dx = targetBounds.minX - sourceBounds.minX;
+      dx = targetAlignmentBounds.minX - sourceAlignmentBounds.minX;
       dy = zone.concatPosition === "before"
         ? targetBounds.minY - gap - sourceBounds.maxY
         : targetBounds.maxY + gap - sourceBounds.minY;
@@ -2976,7 +2998,7 @@ export function useCanvasCompositionOperations(context: any) {
       dx = zone.concatPosition === "before"
         ? targetBounds.minX - gap - sourceBounds.maxX
         : targetBounds.maxX + gap - sourceBounds.minX;
-      dy = targetBounds.minY - sourceBounds.minY;
+      dy = targetAlignmentBounds.minY - sourceAlignmentBounds.minY;
     }
     const compositionId = source.compositionSpec?.id;
     const moved = compositionId
