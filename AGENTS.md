@@ -44,7 +44,7 @@ Treat the following paths as read-only on this branch unless the user explicitly
 - `cv-author-app/public/deckgl-examples/`
 - `cv-author-app/public/geodata/`
 
-Do not use this branch to fix or refactor the editor. Put such work on `master`, then rebase the website branch if the website needs the updated editor.
+Do not originate editor fixes or refactors on this branch. Implement and commit them on `master` first, then synchronize the focused `master` commit into this website branch when it needs the updated editor.
 
 ## Excluded Content
 
