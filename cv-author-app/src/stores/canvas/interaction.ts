@@ -1333,6 +1333,15 @@ export function useCanvasInteraction(context: any) {
     item.x = target.center.x - rotatedOffset.x - item.width * item.scaleX / 2;
     item.y = target.center.y - rotatedOffset.y - item.height * item.scaleY / 2;
 
+    // The final plot-centering translation happens after the renderer-backed
+    // Concat layout above. Replay that layout once with the settled member
+    // frame so every companion follows the shared-axis translation instead
+    // of being left aligned to the preceding render pass.
+    if (cartesianConcat) {
+      const owner = findCanvasNode(item.coordinateSystem?.ownerNodeId ?? "") ?? item;
+      renderSharedCoordinateComposition(owner);
+    }
+
     (["x", "y"] as const).forEach((channel) => {
       const binding = bindingForChartChannel(item.id, channel);
       if (!binding) return;
