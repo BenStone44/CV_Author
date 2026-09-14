@@ -127,7 +127,6 @@ export function useCanvasCompositionOperations(context: any) {
     replaceSelectionScopeNodes,
     resolveNestedRelationship,
     resolveNestedFilterContexts,
-    renderedNodeLocalSelectionBounds,
     resolveSemanticMarkMatch,
     restoreRelationships,
     retainSharedFacetClues,
@@ -219,14 +218,29 @@ export function useCanvasCompositionOperations(context: any) {
     return { channels, index: 0, count: 1 };
   }
 
-  function renderedInteractionArea(node: CanvasNode): ChartPlotArea {
-    const bounds = renderedNodeLocalSelectionBounds(node) ?? getNodeSelectionBounds(node);
-    return {
-      x: bounds.minX,
-      y: bounds.minY,
-      width: bounds.width,
-      height: bounds.height,
+  function cartesianInteractionArea(node: CanvasNode): ChartPlotArea {
+    const localMinX = node.kind === "leaf" ? node.contentMinX : 0;
+    const localMinY = node.kind === "leaf" ? node.contentMinY : 0;
+    const plotArea = node.chartSpec?.plotArea;
+    return plotArea ? { ...plotArea } : {
+      x: localMinX,
+      y: localMinY,
+      width: node.width,
+      height: node.height,
     };
+  }
+
+  function cartesianCompositionPlotBounds(nodes: CanvasNode[]): Bounds | null {
+    const chartNodes = (node: CanvasNode): CanvasNode[] => {
+      if (node.chartSpec && node.coordinateGuide?.type === "Cartesian") return [node];
+      return node.kind === "group" ? node.children.flatMap(chartNodes) : [];
+    };
+    return nodes
+      .flatMap(chartNodes)
+      .reduce<Bounds | null>((bounds, chart) => {
+        const plotBounds = cartesianPlotBounds(chart);
+        return plotBounds ? mergeBounds(bounds, plotBounds) : bounds;
+      }, null);
   }
 
   function attachParentCompositionContext(
@@ -1686,13 +1700,39 @@ export function useCanvasCompositionOperations(context: any) {
     return beginCompositionEditing(member.compositionSpec);
   }
 
+  function dropScopeParentForNode(
+    nodeId: string,
+    nodes = getSelectionScopeNodes(),
+    parent?: CanvasGroupNode,
+  ): CanvasGroupNode | undefined {
+    for (const candidate of nodes) {
+      if (candidate.id === nodeId) return parent;
+      if (candidate.kind !== "group") continue;
+      const nestedParent = dropScopeParentForNode(nodeId, candidate.children, candidate);
+      if (nestedParent) return nestedParent;
+    }
+    return undefined;
+  }
+
+  function nodeLocalToDropScopePoint(node: CanvasNode, point: Point) {
+    const scopeGroupId = editingGroupPath.value.at(-1);
+    let current = node;
+    let resolved = point;
+    while (true) {
+      resolved = nodeLocalToSelectionScopePoint(current, resolved);
+      const parent = dropScopeParentForNode(current.id);
+      if (!parent || parent.id === scopeGroupId) return resolved;
+      current = parent;
+    }
+  }
+
   function localRectDropGeometry(node: CanvasNode, rect: ChartPlotArea) {
     const outline = [
       { x: rect.x, y: rect.y },
       { x: rect.x + rect.width, y: rect.y },
       { x: rect.x + rect.width, y: rect.y + rect.height },
       { x: rect.x, y: rect.y + rect.height },
-    ].map((corner) => nodeLocalToSelectionScopePoint(node, corner));
+    ].map((corner) => nodeLocalToDropScopePoint(node, corner));
     const xs = outline.map(({ x }) => x);
     const ys = outline.map(({ y }) => y);
     const minX = Math.min(...xs);
@@ -2059,13 +2099,15 @@ export function useCanvasCompositionOperations(context: any) {
       const members = composition.members
         .map((member) => findCanvasNode(member.nodeId))
         .filter((member): member is CanvasNode => !!member);
-      const bounds = node.kind === "group"
-        ? collectRenderedNodeSelectionBounds(node)
-        : getCanvasNodeListBounds(members.length > 0 ? members : [node]);
-      if (!bounds) return false;
       const cartesian = (composition.type === "facet"
         ? composition.facetCoordinateSystem ?? firstChartNode(node)?.coordinateGuide?.type
         : firstChartNode(node)?.coordinateGuide?.type) === "Cartesian";
+      const bounds = cartesian
+        ? cartesianCompositionPlotBounds(members.length > 0 ? members : [node])
+        : node.kind === "group"
+          ? collectRenderedNodeSelectionBounds(node)
+          : getCanvasNodeListBounds(members.length > 0 ? members : [node]);
+      if (!bounds) return false;
       const gap = cartesian
         ? COMPOSITION_DROP_ZONE_GAP_PX / Math.max(viewZoom.value, 0.25)
         : 0;
@@ -2089,12 +2131,14 @@ export function useCanvasCompositionOperations(context: any) {
       const targetChart = members.find((member) => !!member.chartSpec)
         ?? firstChartNode(outerCompositionTarget);
       if (!targetChart?.chartSpec) return null;
-      const bounds = outerCompositionTarget.kind === "group"
-        ? collectRenderedNodeSelectionBounds(outerCompositionTarget)
-        : getCanvasNodeListBounds(members.length > 0 ? members : [outerCompositionTarget]);
       const outerCoordinateType = composition.type === "facet"
         ? composition.facetCoordinateSystem ?? targetChart.coordinateGuide?.type ?? "Cartesian"
         : targetChart.coordinateGuide?.type ?? "Cartesian";
+      const bounds = outerCoordinateType === "Cartesian"
+        ? cartesianCompositionPlotBounds(members.length > 0 ? members : [outerCompositionTarget])
+        : outerCompositionTarget.kind === "group"
+          ? collectRenderedNodeSelectionBounds(outerCompositionTarget)
+          : getCanvasNodeListBounds(members.length > 0 ? members : [outerCompositionTarget]);
       if (bounds
         && outerCoordinateType === "Polar"
         && outerCompositionTarget.coordinateGuide?.type === "Polar") {
@@ -2466,10 +2510,10 @@ export function useCanvasCompositionOperations(context: any) {
         width: target.width,
         height: target.height,
       };
-      // Portals follow the same live occupancy rectangle as selection. This
-      // includes hierarchy labels and any other rendered marks that extend
-      // beyond a chart's declared plot area.
-      const interactionArea = renderedInteractionArea(target);
+      // Cartesian structural composition belongs to the plane enclosed by
+      // the X/Y axes. Marks may be sparse or extend beyond that plane, but
+      // only Nested uses mark-level geometry for its drop target.
+      const interactionArea = cartesianInteractionArea(target);
       const inside = localPoint.x >= plotArea.x
         && localPoint.x <= plotArea.x + plotArea.width
         && localPoint.y >= plotArea.y
@@ -2548,15 +2592,16 @@ export function useCanvasCompositionOperations(context: any) {
         const cornerBottom = localPoint.y >= plotBottom + gapY && localPoint.y <= plotBottom + gapY + edgeSizeY;
         const horizontalBoundary = cornerLeft ? "left" : cornerRight ? "right" : null;
         const verticalBoundary = cornerTop ? "top" : cornerBottom ? "bottom" : null;
+        const targetPlotBounds = cartesianPlotBounds(target) ?? collectNodeSelectionBounds(target);
         const horizontalNeighbor = cornerLeft
-          ? horizontalNeighbors.find(({ node }) => collectNodeSelectionBounds(node).maxX <= collectNodeSelectionBounds(target).minX + 1)
+          ? horizontalNeighbors.find(({ node }) => (cartesianPlotBounds(node) ?? collectNodeSelectionBounds(node)).maxX <= targetPlotBounds.minX + 1)
           : cornerRight
-            ? horizontalNeighbors.find(({ node }) => collectNodeSelectionBounds(node).minX >= collectNodeSelectionBounds(target).maxX - 1)
+            ? horizontalNeighbors.find(({ node }) => (cartesianPlotBounds(node) ?? collectNodeSelectionBounds(node)).minX >= targetPlotBounds.maxX - 1)
             : undefined;
         const verticalNeighbor = cornerTop
-          ? verticalNeighbors.find(({ node }) => collectNodeSelectionBounds(node).maxY <= collectNodeSelectionBounds(target).minY + 1)
+          ? verticalNeighbors.find(({ node }) => (cartesianPlotBounds(node) ?? collectNodeSelectionBounds(node)).maxY <= targetPlotBounds.minY + 1)
           : cornerBottom
-            ? verticalNeighbors.find(({ node }) => collectNodeSelectionBounds(node).minY >= collectNodeSelectionBounds(target).maxY - 1)
+            ? verticalNeighbors.find(({ node }) => (cartesianPlotBounds(node) ?? collectNodeSelectionBounds(node)).minY >= targetPlotBounds.maxY - 1)
             : undefined;
         if (horizontalBoundary && verticalBoundary
           && specificationAllowsDrop(target, source, "concat", horizontalBoundary)
@@ -2720,13 +2765,15 @@ export function useCanvasCompositionOperations(context: any) {
         const members = composition.members
           .map((member) => findCanvasNode(member.nodeId))
           .filter((member): member is CanvasNode => !!member);
-        const bounds = target.kind === "group"
-          ? collectRenderedNodeSelectionBounds(target)
-          : getCanvasNodeListBounds(members.length > 0 ? members : [target]);
-        if (!bounds) return;
         const outerCoordinateType = composition.type === "facet"
           ? composition.facetCoordinateSystem ?? firstChartNode(target)?.coordinateGuide?.type
           : firstChartNode(target)?.coordinateGuide?.type;
+        const bounds = outerCoordinateType === "Cartesian"
+          ? cartesianCompositionPlotBounds(members.length > 0 ? members : [target])
+          : target.kind === "group"
+            ? collectRenderedNodeSelectionBounds(target)
+            : getCanvasNodeListBounds(members.length > 0 ? members : [target]);
+        if (!bounds) return;
         if (outerCoordinateType === "Polar" && target.coordinateGuide?.type === "Polar") {
           const model = createPolarCoordinateSystemModel(target, viewZoom.value);
           const occupied = getPolarOccupiedGeometry(target);
@@ -2836,7 +2883,7 @@ export function useCanvasCompositionOperations(context: any) {
       if (chart.coordinateGuide.type !== "Cartesian") {
         return;
       }
-      const interactionArea = renderedInteractionArea(chart);
+      const interactionArea = cartesianInteractionArea(chart);
       const edgeX = Math.min(interactionArea.width * 0.22, Math.max(18 / Math.max(viewZoom.value * Math.abs(chart.scaleX), 0.25), 12));
       const edgeY = Math.min(interactionArea.height * 0.22, Math.max(18 / Math.max(viewZoom.value * Math.abs(chart.scaleY), 0.25), 12));
       const gapX = COMPOSITION_DROP_ZONE_GAP_PX / Math.max(viewZoom.value * Math.abs(chart.scaleX), 0.25);
