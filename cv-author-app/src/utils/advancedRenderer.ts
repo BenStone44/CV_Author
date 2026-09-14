@@ -512,19 +512,11 @@ function renderArea(input: GenericRenderInput) {
   const valuePosition = (value: number) => areaValuePosition(valueScale, value);
   const area = axisSwapped
     ? d3Area<[number, number]>()
-      .y((_, index) => index === 0
-        ? progressionScale.range[0]
-        : index === table.length + 1
-          ? progressionScale.range[1]
-          : progressionPosition(String(table[index - 1]?.x ?? "")))
+      .y((_, index) => progressionPosition(String(table[index]?.x ?? "")))
       .x0((point) => valuePosition(point[0]))
       .x1((point) => valuePosition(point[1]))
     : d3Area<[number, number]>()
-      .x((_, index) => index === 0
-        ? progressionScale.range[0]
-        : index === table.length + 1
-          ? progressionScale.range[1]
-          : progressionPosition(String(table[index - 1]?.x ?? "")))
+      .x((_, index) => progressionPosition(String(table[index]?.x ?? "")))
       .y0((point) => valuePosition(point[0]))
       .y1((point) => valuePosition(point[1]));
   area.curve(curveBasis);
