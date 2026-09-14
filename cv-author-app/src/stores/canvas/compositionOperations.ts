@@ -2642,8 +2642,6 @@ export function useCanvasCompositionOperations(context: any) {
         });
       }
 
-      if (!inside) continue;
-
       const layerEligibility = specificationDropEligibility(target, source, "layer");
       if (!layerEligibility.targetArea) continue;
 
@@ -2654,12 +2652,7 @@ export function useCanvasCompositionOperations(context: any) {
       const layerInsetPx = layerGeometry?.kind === "body-inset"
         ? layerGeometry.insetPx
         : LAYER_DROP_ZONE_INSET_PX;
-      const completeLayerArea = insetPlotArea({
-        x: plotArea.x,
-        y: plotArea.y,
-        width: plotArea.width,
-        height: plotArea.height,
-      },
+      const completeLayerArea = insetPlotArea(interactionArea,
         layerInsetPx / Math.max(viewZoom.value * Math.abs(target.scaleX), 0.25),
         layerInsetPx / Math.max(viewZoom.value * Math.abs(target.scaleY), 0.25),
       );
@@ -2791,14 +2784,6 @@ export function useCanvasCompositionOperations(context: any) {
       }
       const chart = target.chartSpec ? target : firstChartNode(target);
       if (!chart?.chartSpec || !chart.coordinateGuide) return;
-      const localMinX = chart.kind === "leaf" ? chart.contentMinX : 0;
-      const localMinY = chart.kind === "leaf" ? chart.contentMinY : 0;
-      const plotArea = chart.chartSpec.plotArea ?? {
-        x: localMinX,
-        y: localMinY,
-        width: chart.width,
-        height: chart.height,
-      };
       if (chart.coordinateGuide.type === "Polar") {
         const model = createPolarCoordinateSystemModel(chart, viewZoom.value);
         const occupied = getPolarOccupiedGeometry(chart);
@@ -2863,10 +2848,10 @@ export function useCanvasCompositionOperations(context: any) {
         { x: interactionArea.x + interactionArea.width + gapX + edgeX / 2, y: centerY },
         { x: centerX, y: interactionArea.y - gapY - edgeY / 2 },
         { x: centerX, y: interactionArea.y + interactionArea.height + gapY + edgeY / 2 },
-        { x: plotArea.x + plotArea.width * 0.28, y: plotArea.y + plotArea.height / 6 },
-        { x: plotArea.x + plotArea.width * 0.28, y: plotArea.y + plotArea.height / 2 },
-        { x: plotArea.x + plotArea.width * 0.28, y: plotArea.y + plotArea.height * 5 / 6 },
-        { x: plotArea.x + plotArea.width / 2, y: plotArea.y + plotArea.height / 2 },
+        { x: interactionArea.x + interactionArea.width * 0.28, y: interactionArea.y + interactionArea.height / 6 },
+        { x: interactionArea.x + interactionArea.width * 0.28, y: interactionArea.y + interactionArea.height / 2 },
+        { x: interactionArea.x + interactionArea.width * 0.28, y: interactionArea.y + interactionArea.height * 5 / 6 },
+        { x: interactionArea.x + interactionArea.width / 2, y: interactionArea.y + interactionArea.height / 2 },
       ].forEach((probe) => probes.push(nodeLocalToSelectionScopePoint(chart, probe)));
     });
 
@@ -2982,10 +2967,8 @@ export function useCanvasCompositionOperations(context: any) {
     let dx = 0;
     let dy = 0;
     if (zone.type === "layer") {
-      dx = targetAlignmentBounds.minX + targetAlignmentBounds.width / 2
-        - (sourceAlignmentBounds.minX + sourceAlignmentBounds.width / 2);
-      dy = targetAlignmentBounds.minY + targetAlignmentBounds.height / 2
-        - (sourceAlignmentBounds.minY + sourceAlignmentBounds.height / 2);
+      dx = targetBounds.minX + targetBounds.width / 2 - (sourceBounds.minX + sourceBounds.width / 2);
+      dy = targetBounds.minY + targetBounds.height / 2 - (sourceBounds.minY + sourceBounds.height / 2);
     } else if (zone.direction === "radial" || zone.direction === "angular") {
       dx = targetBounds.minX + targetBounds.width / 2 - (sourceBounds.minX + sourceBounds.width / 2);
       dy = targetBounds.minY + targetBounds.height / 2 - (sourceBounds.minY + sourceBounds.height / 2);

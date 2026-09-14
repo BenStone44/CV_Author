@@ -1249,9 +1249,15 @@ export function useCanvasInteraction(context: any) {
     const item = getSelectionNode(si.itemIds[0]!);
     const snap = si.snapshots[si.itemIds[0]!];
     if (!item || !snap || item.coordinateGuide?.type !== "Cartesian" || !item.chartSpec?.plotArea) return false;
-    // Composite and Nested roots have relationship-owned layout. Their direct
-    // members continue through the existing group resize path.
-    if (item.compositionSpec || nestedSelectionRelationships(item.id).length > 0) return false;
+    // A direct Cartesian Concat member can use the exact renderer-backed path:
+    // shared-coordinate layout is replayed after every render below. Closed
+    // Layer/Facet roots and Nested instances retain relationship-owned layout.
+    const cartesianConcat = item.compositionSpec?.type === "concat"
+      && (item.compositionSpec.direction === "horizontal" || item.compositionSpec.direction === "vertical")
+      ? item.compositionSpec
+      : null;
+    if ((item.compositionSpec && !cartesianConcat)
+      || nestedSelectionRelationships(item.id).length > 0) return false;
 
     const target = resizeTargetFrame(currentPoint, si, canvasBounds, editableAxis);
     const widthRatio = target.width / Math.max(si.startFrame.width, 0.0001);
@@ -1274,7 +1280,10 @@ export function useCanvasInteraction(context: any) {
     item.coordinateGuide.yScale = snap.coordinateScales?.y ?? 1;
 
     const render = () => {
-      if (item.layerSpec) renderSemanticNode(item);
+      if (cartesianConcat) {
+        const owner = findCanvasNode(item.coordinateSystem?.ownerNodeId ?? "") ?? item;
+        renderSharedCoordinateComposition(owner);
+      } else if (item.layerSpec) renderSemanticNode(item);
       else renderChartNode(item);
     };
     render();
@@ -1356,7 +1365,16 @@ export function useCanvasInteraction(context: any) {
     const maxScaleX = Math.max(availW / start.width, 0.01);
     const maxScaleY = Math.max(availH / start.height, 0.01);
     const editableAxis = si.itemIds
-      .map((id) => concatEditableAxis(getSelectionNode(id)))
+      .map((id) => {
+        const item = getSelectionNode(id);
+        const composition = item?.compositionSpec;
+        if (item?.coordinateGuide?.type === "Cartesian" && composition?.type === "concat") {
+          return composition.direction === "horizontal"
+            ? "x"
+            : composition.direction === "vertical" ? "y" : null;
+        }
+        return concatEditableAxis(item);
+      })
       .find((axis): axis is "x" | "y" => !!axis);
     if (updateExactCartesianScaleInteraction(currentPoint, si, canvasBounds, editableAxis)) return;
     const uniformMinScale = Math.max(minScaleX, minScaleY);
