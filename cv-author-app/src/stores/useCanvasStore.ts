@@ -1582,6 +1582,24 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     });
     return bounds;
   }
+  function collectCartesianCoordinateBounds(node: CanvasNode): Bounds | null {
+    const isCartesian = node.coordinateGuide?.type === "Cartesian"
+      || node.coordinateSystem?.type === "Cartesian";
+    if (!isCartesian) return null;
+    return collectNodeSelectionBounds(node, 0, 0, 1, 1, (candidate) => {
+      const plot = candidate.coordinateGuide?.type === "Cartesian"
+        ? candidate.chartSpec?.plotArea
+        : undefined;
+      return plot ? {
+        minX: plot.x,
+        minY: plot.y,
+        maxX: plot.x + plot.width,
+        maxY: plot.y + plot.height,
+        width: plot.width,
+        height: plot.height,
+      } : null;
+    });
+  }
   function nestedBoundsForSemanticMark(nodeId: string, rowKey?: string, markGroupId?: string): Bounds | null {
     let bounds: Bounds | null = null;
     Object.values(chartRelationships.value.nestedRelationships).forEach((relationship) => {
@@ -1606,7 +1624,10 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     let bounds: Bounds | null = null;
     selectedIds.value.forEach((id) => {
       const node = getSelectionNode(id);
-      if (node) bounds = mergeBounds(bounds, collectSelectionBoundsWithNestedChildren(node));
+      if (node) bounds = mergeBounds(
+        bounds,
+        collectCartesianCoordinateBounds(node) ?? collectSelectionBoundsWithNestedChildren(node),
+      );
     });
     return bounds;
   });
@@ -1625,6 +1646,27 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const bounds = selectionBounds.value;
     const node = selectedIds.value.length === 1 ? getSelectionNode(selectedIds.value[0]!) : null;
     if (!bounds || !node) return bounds ? { x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height, rotation: 0 } : null;
+    if (node.coordinateGuide?.type === "Cartesian" && node.chartSpec?.plotArea) {
+      const plot = node.chartSpec.plotArea;
+      return nodeLocalBoundsFrame(node, {
+        minX: plot.x,
+        minY: plot.y,
+        maxX: plot.x + plot.width,
+        maxY: plot.y + plot.height,
+        width: plot.width,
+        height: plot.height,
+      });
+    }
+    if (node.coordinateSystem?.type === "Cartesian") {
+      const coordinateBounds = collectCartesianCoordinateBounds(node);
+      if (coordinateBounds) return {
+        x: coordinateBounds.minX,
+        y: coordinateBounds.minY,
+        width: coordinateBounds.width,
+        height: coordinateBounds.height,
+        rotation: 0,
+      };
+    }
     if (nestedSelectionRelationships(node.id).length > 0) {
       return { x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height, rotation: 0 };
     }
@@ -4673,7 +4715,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     activeDropZone, availableDropZones, axisBindingTarget, beginCompositionEditing, bindingForChartChannel,
     canConfigureSelectionComposition, canEnterSelection, canRemoveSelectionComposition,
     canvasRef, chartDrilldown, chartRelationships, clamp, clearCompositionDropZoneSchedule,
-    collectNodeSelectionBounds, commitCompositionDrop, compositionDropZoneAtPoint, compositionDropZones,
+    collectCartesianCoordinateBounds, collectNodeSelectionBounds, commitCompositionDrop,
+    compositionDropZoneAtPoint, compositionDropZones,
     compositionDragSourceId, concatEditableAxis, captureCanvasHistory, deckglPointDropTarget,
     concatCompositionForNode, concatLinkId, concatLinksFor,
     coordinateTargets, coordinateTransformItemIds, dispatchRelationship, dragTestStage,

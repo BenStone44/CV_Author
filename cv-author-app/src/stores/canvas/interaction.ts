@@ -35,6 +35,7 @@ export function useCanvasInteraction(context: any) {
     clamp,
     clearCompositionDropZoneSchedule,
     commitCompositionDrop,
+    collectCartesianCoordinateBounds,
     collectNodeSelectionBounds,
     compositionDropZoneAtPoint,
     compositionDropZones,
@@ -929,8 +930,30 @@ export function useCanvasInteraction(context: any) {
     // frames. Moving a member still moves the complete concat unit, while a
     // resize handle edits only the explicitly selected direct member.
     const itemIds = coordinateTransformItemIds(selectedIds.value, { expandConcat: false });
-    const snapshots = Object.fromEntries(itemIds.map((id) => {
-      const item = getSelectionNode(id);
+    const selected = selectedIds.value.length === 1 ? getSelectionNode(selectedIds.value[0]!) : null;
+    const primaryChart = selected?.coordinateGuide?.type === "Cartesian" && selected.chartSpec
+      ? selected
+      : selected?.coordinateSystem?.type === "Cartesian"
+        ? findCanvasNode(selected.coordinateSystem.ownerNodeId) ?? firstChartNode(selected)
+        : null;
+    const composition = primaryChart?.compositionSpec;
+    const coordinateResize = primaryChart
+      && (composition?.type === "layer" || composition?.type === "concat")
+      ? {
+        primaryChartId: primaryChart.id,
+        rootNodeId: selected && selected.id !== primaryChart.id ? selected.id : undefined,
+        xTargetIds: coordinateTargets(primaryChart.id, "x").map((node) => node.id),
+        yTargetIds: coordinateTargets(primaryChart.id, "y").map((node) => node.id),
+      }
+      : undefined;
+    const snapshotIds = Array.from(new Set([
+      ...itemIds,
+      ...(coordinateResize?.xTargetIds ?? []),
+      ...(coordinateResize?.yTargetIds ?? []),
+      ...(coordinateResize?.rootNodeId ? [coordinateResize.rootNodeId] : []),
+    ]));
+    const snapshots = Object.fromEntries(snapshotIds.map((id) => {
+      const item = findCanvasNode(id);
       return [id, {
         x: item?.x ?? 0,
         y: item?.y ?? 0,
@@ -962,6 +985,7 @@ export function useCanvasInteraction(context: any) {
       startBounds: selectionBounds.value,
       startFrame: { ...selectionFrame.value },
       itemIds,
+      coordinateResize,
       snapshots,
       scopeGroupId,
       historyCommitted: false,
@@ -1233,6 +1257,144 @@ export function useCanvasInteraction(context: any) {
     };
   }
 
+  function updateCartesianCompositionScaleInteraction(
+    currentPoint: Point,
+    si: ScaleInteraction,
+    canvasBounds: { minX: number; minY: number; maxX: number; maxY: number },
+  ) {
+    const resize = si.coordinateResize;
+    const primary = resize ? findCanvasNode(resize.primaryChartId) : null;
+    if (!resize || !primary || primary.coordinateGuide?.type !== "Cartesian") return false;
+    const composition = primary.compositionSpec;
+    if (composition?.type !== "layer" && composition?.type !== "concat") return false;
+
+    const target = resizeTargetFrame(currentPoint, si, canvasBounds);
+    const widthRatio = target.width / Math.max(si.startFrame.width, 0.0001);
+    const heightRatio = target.height / Math.max(si.startFrame.height, 0.0001);
+    const xTargetIds = new Set(resize.xTargetIds);
+    const yTargetIds = new Set(resize.yTargetIds);
+    const affectedIds = new Set([...xTargetIds, ...yTargetIds]);
+
+    affectedIds.forEach((id) => {
+      const member = findCanvasNode(id);
+      const snap = si.snapshots[id];
+      if (!member || !snap || member.coordinateGuide?.type !== "Cartesian") return;
+      const localMinX = member.kind === "leaf" ? member.contentMinX : 0;
+      const localMinY = member.kind === "leaf" ? member.contentMinY : 0;
+      member.x = snap.x;
+      member.y = snap.y;
+      member.width = xTargetIds.has(id)
+        ? Math.max(snap.width * Math.abs(snap.scaleX) * widthRatio, 1)
+        : snap.width;
+      member.height = yTargetIds.has(id)
+        ? Math.max(snap.height * Math.abs(snap.scaleY) * heightRatio, 1)
+        : snap.height;
+      member.scaleX = Math.sign(snap.scaleX) || 1;
+      member.scaleY = Math.sign(snap.scaleY) || 1;
+      if (snap.coordinateOrigin) {
+        member.coordinateGuide.origin = {
+          x: xTargetIds.has(id)
+            ? localMinX + (snap.coordinateOrigin.x - localMinX) * widthRatio
+            : snap.coordinateOrigin.x,
+          y: yTargetIds.has(id)
+            ? localMinY + (snap.coordinateOrigin.y - localMinY) * heightRatio
+            : snap.coordinateOrigin.y,
+        };
+      }
+      member.coordinateGuide.xScale = snap.coordinateScales?.x ?? 1;
+      member.coordinateGuide.yScale = snap.coordinateScales?.y ?? 1;
+    });
+
+    const root = resize.rootNodeId ? findCanvasNode(resize.rootNodeId) : null;
+    const rootSnap = resize.rootNodeId ? si.snapshots[resize.rootNodeId] : null;
+    if (root && rootSnap) {
+      root.x = rootSnap.x;
+      root.y = rootSnap.y;
+      root.width = Math.max(rootSnap.width * Math.abs(rootSnap.scaleX) * widthRatio, 1);
+      root.height = Math.max(rootSnap.height * Math.abs(rootSnap.scaleY) * heightRatio, 1);
+      root.scaleX = Math.sign(rootSnap.scaleX) || 1;
+      root.scaleY = Math.sign(rootSnap.scaleY) || 1;
+    }
+
+    const owner = findCanvasNode(primary.coordinateSystem?.ownerNodeId ?? "") ?? primary;
+    const render = () => renderSharedCoordinateComposition(owner);
+    const applyPrimaryScaleToTargets = (channel: "x" | "y", value: number) => {
+      const targetIds = channel === "x" ? xTargetIds : yTargetIds;
+      targetIds.forEach((id) => {
+        const member = findCanvasNode(id);
+        if (member?.coordinateGuide?.type !== "Cartesian") return;
+        if (channel === "x") member.coordinateGuide.xScale = value;
+        else member.coordinateGuide.yScale = value;
+      });
+    };
+    const calibrate = () => {
+      const plot = primary.chartSpec?.plotArea;
+      if (!plot || primary.coordinateGuide?.type !== "Cartesian") return false;
+      const correctionX = target.width / Math.max(plot.width * Math.abs(primary.scaleX), 0.0001);
+      const correctionY = target.height / Math.max(plot.height * Math.abs(primary.scaleY), 0.0001);
+      if (Math.abs(correctionX - 1) <= 0.000001 && Math.abs(correctionY - 1) <= 0.000001) return false;
+      applyPrimaryScaleToTargets(
+        "x",
+        Math.max(0.001, (primary.coordinateGuide.xScale ?? 1) * correctionX),
+      );
+      applyPrimaryScaleToTargets(
+        "y",
+        Math.max(0.001, (primary.coordinateGuide.yScale ?? 1) * correctionY),
+      );
+      return true;
+    };
+
+    render();
+    if (calibrate()) render();
+    if (calibrate()) render();
+
+    if (root) {
+      const bounds = collectCartesianCoordinateBounds(root);
+      if (bounds) {
+        root.x += target.center.x - (bounds.minX + bounds.width / 2);
+        root.y += target.center.y - (bounds.minY + bounds.height / 2);
+      }
+    } else {
+      const plot = primary.chartSpec?.plotArea;
+      if (plot) {
+        const localMinX = primary.kind === "leaf" ? primary.contentMinX : 0;
+        const localMinY = primary.kind === "leaf" ? primary.contentMinY : 0;
+        const localPlotCenter = { x: plot.x + plot.width / 2, y: plot.y + plot.height / 2 };
+        const localFrameCenter = { x: localMinX + primary.width / 2, y: localMinY + primary.height / 2 };
+        const localOffset = {
+          x: (localPlotCenter.x - localFrameCenter.x) * primary.scaleX,
+          y: (localPlotCenter.y - localFrameCenter.y) * primary.scaleY,
+        };
+        const radians = primary.rotation * Math.PI / 180;
+        const rotatedOffset = {
+          x: localOffset.x * Math.cos(radians) - localOffset.y * Math.sin(radians),
+          y: localOffset.x * Math.sin(radians) + localOffset.y * Math.cos(radians),
+        };
+        primary.x = target.center.x - rotatedOffset.x - primary.width * primary.scaleX / 2;
+        primary.y = target.center.y - rotatedOffset.y - primary.height * primary.scaleY / 2;
+      }
+    }
+    render();
+
+    const axisScales = new Map<string, number>();
+    (["x", "y"] as const).forEach((channel) => {
+      const targetIds = channel === "x" ? xTargetIds : yTargetIds;
+      targetIds.forEach((id) => {
+        const member = findCanvasNode(id);
+        const binding = bindingForChartChannel(id, channel);
+        if (!member || !binding || member.coordinateGuide?.type !== "Cartesian") return;
+        axisScales.set(
+          binding.axisId,
+          channel === "x" ? member.coordinateGuide.xScale ?? 1 : member.coordinateGuide.yScale ?? 1,
+        );
+      });
+    });
+    axisScales.forEach((scale, axisId) => {
+      dispatchRelationship({ type: "update-axis", axisId, changes: { config: { scale } } });
+    });
+    return true;
+  }
+
   /**
    * Cartesian corner resize is solved against one immutable pointerdown
    * snapshot. The renderer may choose responsive margins, so resize the node
@@ -1373,6 +1535,7 @@ export function useCanvasInteraction(context: any) {
     const minScaleY = Math.max(minH / start.height, 0.01);
     const maxScaleX = Math.max(availW / start.width, 0.01);
     const maxScaleY = Math.max(availH / start.height, 0.01);
+    if (updateCartesianCompositionScaleInteraction(currentPoint, si, canvasBounds)) return;
     const editableAxis = si.itemIds
       .map((id) => {
         const item = getSelectionNode(id);

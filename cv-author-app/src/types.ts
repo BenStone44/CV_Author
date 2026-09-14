@@ -1287,6 +1287,12 @@ export type ScaleInteraction = {
     rotation: number;
   };
   itemIds: string[];
+  coordinateResize?: {
+    primaryChartId: string;
+    rootNodeId?: string;
+    xTargetIds: string[];
+    yTargetIds: string[];
+  };
   snapshots: Record<
     string,
     {
