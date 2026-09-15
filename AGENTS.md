@@ -213,12 +213,12 @@ Current Dendrogram Profiles preview record (captured 2026-09-15):
 
 - Published and verified on `2026-09-15` at `https://visbricks.github.io/`.
 - Public repository and branch: `VisBricks/visbricks.github.io`, `main`.
-- Deployment commit: `fe4de535aa2d2af039275bbb99d91502c392a00d` (`Publish six gallery cases and self-contained example assets`).
+- Deployment commit: `11161403630971581423a3bcc3304cdc814dac3e` (`Publish API catalog and polar concat improvements`).
 - Authentication used the repository-scoped deploy key; both author and committer are `VisBricks <visbricks-site@users.noreply.github.com>`. The update preserved public history and did not publish development repository history.
-- GitHub's `pages build and deployment` workflow [34920222219](https://github.com/VisBricks/visbricks.github.io/actions/runs/34920222219) succeeded for this exact commit.
-- Staged and live browser verification passed for the homepage, Gallery, all six detail pages, Tutorials, editor entry, all six prepared starters, and all six completed cases. Completed cases reached their explicit ready state and exposed valid serialized SVG. Desktop and mobile Gallery layouts and starter links passed.
-- The live homepage, Gallery manifest, third-party license file, and every Gallery case's metadata, preview, and data download matched the staged production bytes.
-- Type checking and a fresh production build passed. The 88 published files include case-owned configuration and data, plus runtime third-party license notices. Nine obsolete public assets were backed up outside the publishing checkout and removed from the release. Build chunk-size warnings remain.
+- GitHub's `pages build and deployment` workflow [34937923699](https://github.com/VisBricks/visbricks.github.io/actions/runs/34937923699) succeeded for this exact commit.
+- Staged and live browser verification passed for the homepage, Gallery, Shared Hierarchy detail, Tutorials, API reference, editor entry, all six prepared starters, and all six completed cases. Completed cases reached their explicit ready state and exposed valid serialized SVG; Shared Hierarchy remains the second Gallery card.
+- All 169 non-hidden public files matched the staged production bytes during live verification, including the homepage, API catalog and block assets, Gallery case metadata/data/previews, editor bundles, and third-party license notice. Eleven obsolete hashed assets were backed up outside the publishing checkout, removed from the release, and confirmed unavailable on the live site.
+- Type checking and a fresh production build passed. The release publishes the API catalog, homepage chart imagery, Gallery editor guidance, and the real Facet/drop-zone Polar Concat with working radial handles and a refreshed editor-rendered preview. Build chunk-size warnings remain.
 - User-approved identity exception: the user explicitly approved retaining the existing Mapbox style URLs and public client token, including their map-account identifiers. This exception applies to the unchanged map configuration; it does not permit publishing other personal identifiers or development credentials. The rest of the scoped audit found no known personal/development identifiers or source maps. Do not describe this release as fully anonymous.
 - Public `case.json` preview source URLs were normalized to the production origin and internal source-branch fields removed from the release artifacts. Internal release notes and local verification scripts were not published.
 
