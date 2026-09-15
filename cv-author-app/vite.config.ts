@@ -74,6 +74,7 @@ export default defineConfig({
       input: {
         home: resolve(appDirectory, 'index.html'),
         gallery: resolve(appDirectory, 'gallery/index.html'),
+        galleryExample: resolve(appDirectory, 'gallery/example/index.html'),
         tutorials: resolve(appDirectory, 'tutorials/index.html'),
         editor: resolve(appDirectory, 'editor/index.html'),
       },

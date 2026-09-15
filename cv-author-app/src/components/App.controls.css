@@ -1135,11 +1135,6 @@
     top: 12px;
     width: min(220px, calc(100% - 24px));
   }
-  .nested-position-editor {
-    left: 12px;
-    right: 244px;
-    width: min(680px, calc(100% - 256px));
-  }
   .dimension-decision-control {
     top: 12px;
     left: 12px;
@@ -1183,14 +1178,5 @@
     top: 58px;
     right: auto;
     left: 12px;
-  }
-  .nested-position-editor {
-    left: 12px;
-    right: 244px;
-    width: calc(100% - 256px);
-    min-width: 260px;
-  }
-  .nested-position-workspace {
-    padding: 14px 2px;
   }
 }

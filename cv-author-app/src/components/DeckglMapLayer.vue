@@ -3,7 +3,7 @@
 // stack assembled at runtime; the normalized layer data is validated before
 // reaching this rendering boundary.
 // @ts-nocheck
-import { computed, onBeforeUnmount, onMounted, onUpdated, ref, toRaw } from "vue";
+import { nextTick, computed, onBeforeUnmount, onMounted, onUpdated, ref, toRaw } from "vue";
 import mapboxgl from "mapbox-gl";
 import { MapboxOverlay } from "@deck.gl/mapbox";
 import {
@@ -63,10 +63,14 @@ import { isCsvColumnDrag } from "../utils/csvColumnDrag";
 import { resolveDeckglNumericAccessor } from "../utils/deckglAccessors";
 import { isGraphLinkTemplateDrag } from "../utils/deckglDropRouting";
 import { nestedCalloutGeometry } from "../utils/nestedCallout";
+import { nestedDecorationsMarkup } from "../utils/nestedDecorations";
 import { frontendPalette, globalPalette } from "../config/global";
 import { deckglLightMapStyleUrl } from "../utils/geographicLayerCards";
 
+import { registerGeographicExporter } from "../utils/geographicExport";
+
 const props = defineProps<{
+  nodeId?: string;
   layerType: string;
   config: GeographicLayerConfig;
   binding?: GeographicLayerBinding;
@@ -104,6 +108,7 @@ const emit = defineEmits<{
 
 const mapShell = ref<HTMLDivElement | null>(null);
 const mapContainer = ref<HTMLDivElement | null>(null);
+let unregisterExporter: (() => void) | undefined;
 let map: mapboxgl.Map | null = null;
 let overlay: MapboxOverlay | null = null;
 let initialViewFitted = false;
@@ -623,64 +628,42 @@ function onMapDrop(event: DragEvent) {
   emit("pointDrop", target);
 }
 
-function nestedOverlayTransform(nested: DeckglNestedOverlay) {
+function nestedOverlayChildFrame(nested: DeckglNestedOverlay) {
   const point = map?.project(nestedPointPosition(nested));
-  if (!point) return "translate(-10000 -10000)";
-  const parameters = nested.parameters;
-  const anchorX = point.x + (parameters.parentAnchor.x - 0.5) * nested.parentRadius * 2 + parameters.offset.x;
-  const anchorY = point.y + (parameters.parentAnchor.y - 0.5) * nested.parentRadius * 2 + parameters.offset.y;
-  const scaleX = parameters.scale.x;
-  const scaleY = parameters.scale.y;
-  const childX = anchorX - parameters.childAnchor.x * nested.width * scaleX;
-  const childY = anchorY - parameters.childAnchor.y * nested.height * scaleY;
-  return `translate(${childX} ${childY}) rotate(${parameters.rotation} ${nested.width * scaleX / 2} ${nested.height * scaleY / 2}) scale(${scaleX} ${scaleY})`;
-}
-
-function deckglNestedCalloutGeometry(nested: DeckglNestedOverlay) {
-  const point = map?.project(nestedPointPosition(nested));
-  if (!point || !nested.parameters.callout?.enabled) return null;
-  const parameters = nested.parameters;
-  const anchorX = point.x + (parameters.parentAnchor.x - 0.5) * nested.parentRadius * 2 + parameters.offset.x;
-  const anchorY = point.y + (parameters.parentAnchor.y - 0.5) * nested.parentRadius * 2 + parameters.offset.y;
-  const childX = anchorX - parameters.childAnchor.x * nested.width * parameters.scale.x;
-  const childY = anchorY - parameters.childAnchor.y * nested.height * parameters.scale.y;
-  return nestedCalloutGeometry({
-    x: childX,
-    y: childY,
-    width: nested.width,
-    height: nested.height,
-    scaleX: parameters.scale.x,
-    scaleY: parameters.scale.y,
-    rotation: parameters.rotation,
-  }, parameters);
-}
-
-function deckglNestedCalloutFrame(nested: DeckglNestedOverlay) {
-  return deckglNestedCalloutGeometry(nested)?.frame ?? {
-    x: -10000,
-    y: -10000,
-    width: 0,
-    height: 0,
-    center: { x: -10000, y: -10000 },
-    rotation: 0,
+  if (!point) return null;
+  const p = nested.parameters;
+  const width = nested.width * p.scale.x;
+  const height = nested.height * p.scale.y;
+  const angle = p.rotation * Math.PI / 180;
+  const vx = (p.childAnchor.x - 0.5) * width;
+  const vy = (p.childAnchor.y - 0.5) * height;
+  return {
+    x: point.x + (p.parentAnchor.x - 0.5) * nested.parentRadius * 2 + p.offset.x - vx * Math.cos(angle) + vy * Math.sin(angle) - width / 2,
+    y: point.y + (p.parentAnchor.y - 0.5) * nested.parentRadius * 2 + p.offset.y - vx * Math.sin(angle) - vy * Math.cos(angle) - height / 2,
+    width: nested.width, height: nested.height,
+    scaleX: p.scale.x, scaleY: p.scale.y, rotation: p.rotation,
   };
 }
 
-function deckglNestedCalloutArrowPath(nested: DeckglNestedOverlay) {
-  return deckglNestedCalloutGeometry(nested)?.arrowPath ?? "";
+function nestedOverlayTransform(nested: DeckglNestedOverlay, scaleContent = true) {
+  const frame = nestedOverlayChildFrame(nested);
+  if (!frame) return "translate(-10000 -10000)";
+  return `translate(${frame.x} ${frame.y}) rotate(${frame.rotation} ${frame.width * frame.scaleX / 2} ${frame.height * frame.scaleY / 2})${scaleContent ? ` scale(${frame.scaleX} ${frame.scaleY})` : ""}`;
+}
+
+function deckglNestedCalloutGeometry(nested: DeckglNestedOverlay) {
+  const frame = nestedOverlayChildFrame(nested);
+  return frame ? nestedCalloutGeometry(frame, nested.parameters) : null;
+}
+
+function deckglNestedCalloutPath(nested: DeckglNestedOverlay) {
+  return deckglNestedCalloutGeometry(nested)?.outlinePath ?? "";
 }
 
 function updateDeckglNestedCallout(element: SVGGElement, nested: DeckglNestedOverlay) {
   const geometry = deckglNestedCalloutGeometry(nested);
-  const rect = element.querySelector<SVGRectElement>(".deckgl-nested-callout__frame");
-  const arrow = element.querySelector<SVGPathElement>(".deckgl-nested-callout__arrow");
-  if (!geometry || !rect || !arrow) return;
-  rect.setAttribute("x", String(geometry.frame.x));
-  rect.setAttribute("y", String(geometry.frame.y));
-  rect.setAttribute("width", String(geometry.frame.width));
-  rect.setAttribute("height", String(geometry.frame.height));
-  rect.setAttribute("transform", `rotate(${geometry.frame.rotation} ${geometry.frame.center.x} ${geometry.frame.center.y})`);
-  arrow.setAttribute("d", geometry.arrowPath);
+  const outline = element.querySelector<SVGPathElement>(".deckgl-nested-callout__frame");
+  if (geometry && outline) outline.setAttribute("d", geometry.outlinePath);
 }
 
 function updateNestedOverlayProjection() {
@@ -697,6 +680,10 @@ function updateNestedOverlayProjection() {
   shell.querySelectorAll<SVGGElement>("[data-nested-callout-id]").forEach((element) => {
     const nested = overlays.get(element.dataset.nestedCalloutId ?? "");
     if (nested) updateDeckglNestedCallout(element, nested);
+  });
+  shell.querySelectorAll<SVGGElement>("[data-nested-decoration-id]").forEach((element) => {
+    const nested = overlays.get(element.dataset.nestedDecorationId ?? "");
+    if (nested) element.setAttribute("transform", nestedOverlayTransform(nested, false));
   });
 }
 
@@ -1127,6 +1114,7 @@ function nestedOverlayInputs() {
     nested.parameters.retainParent,
     nested.parameters.callout?.enabled ?? false,
     nested.parameters.callout?.scale ?? null,
+    JSON.stringify(nested.parameters.decorations ?? []),
   ]);
 }
 
@@ -1172,8 +1160,54 @@ function componentInputSnapshot() {
 
 let previousInput = componentInputSnapshot();
 
+async function exportRenderedContents(): Promise<string> {
+  const activeMap = map;
+  const activeOverlay = overlay;
+  if (!activeMap || !activeOverlay) throw new Error("Map renderer unavailable");
+  const deadline = Date.now() + 20000;
+  while (!activeMap.loaded()) {
+    if (Date.now() > deadline) throw new Error("Map did not finish rendering");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  // Read each WebGL canvas inside its own render callback, before its buffer is cleared.
+  const basemap = await new Promise<string>((resolve) => {
+    activeMap.once("render", () => resolve(activeMap.getCanvas().toDataURL("image/png")));
+    activeMap.triggerRepaint();
+  });
+  const marks = await new Promise<string>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error("Map overlay export timed out")), 10000);
+    activeOverlay.setProps({ onAfterRender: () => {
+      const canvas = activeOverlay.getCanvas();
+      if (!canvas) return;
+      window.clearTimeout(timer);
+      const data = canvas.toDataURL("image/png");
+      activeOverlay.setProps({ onAfterRender: () => {} });
+      resolve(data);
+    } });
+    activeMap.triggerRepaint();
+  });
+  updateNestedOverlayProjection();
+  await nextTick();
+  const liveNested = mapShell.value?.querySelector(".deckgl-nested-overlay");
+  const nestedCopy = liveNested?.cloneNode(true) as SVGElement | undefined;
+  // Preserve the renderer's CSS-owned message-frame appearance in standalone SVG.
+  const styledShapes = ".deckgl-nested-callout__frame";
+  const liveShapes = liveNested?.querySelectorAll(styledShapes);
+  nestedCopy?.querySelectorAll(styledShapes).forEach((shape, index) => {
+    const original = liveShapes?.[index];
+    if (!original) return;
+    const style = getComputedStyle(original);
+    for (const property of ["fill", "stroke", "stroke-width", "stroke-linejoin"]) {
+      shape.setAttribute(property, style.getPropertyValue(property));
+    }
+  });
+  const nested = nestedCopy?.innerHTML ?? "";
+  return `<image width="${props.width}" height="${props.height}" href="${basemap}"/><image width="${props.width}" height="${props.height}" href="${marks}"/>${nested}`;
+}
+
 onMounted(() => {
   if (!mapContainer.value) return;
+  if (props.nodeId) unregisterExporter = registerGeographicExporter(props.nodeId, exportRenderedContents);
   mapboxgl.accessToken = mapboxToken;
   const exampleView = exampleViewStates[props.layerType] ?? exampleViewStates.ScatterplotLayer!;
   const savedView = props.mapViewState;
@@ -1303,6 +1337,7 @@ onUpdated(() => {
 });
 
 onBeforeUnmount(() => {
+  unregisterExporter?.();
   if (userViewState) emitCurrentViewState();
   if (viewStateCommitTimer !== null) window.clearTimeout(viewStateCommitTimer);
   viewStateCommitTimer = null;
@@ -1359,21 +1394,18 @@ onBeforeUnmount(() => {
           :data-nested-callout-id="nested.relationshipId"
         >
           <path
-            class="deckgl-nested-callout__arrow"
-            :d="deckglNestedCalloutArrowPath(nested)"
-            vector-effect="non-scaling-stroke"
-          />
-          <rect
             class="deckgl-nested-callout__frame"
-            :x="deckglNestedCalloutFrame(nested).x"
-            :y="deckglNestedCalloutFrame(nested).y"
-            :width="deckglNestedCalloutFrame(nested).width"
-            :height="deckglNestedCalloutFrame(nested).height"
-            :transform="`rotate(${deckglNestedCalloutFrame(nested).rotation} ${deckglNestedCalloutFrame(nested).center.x} ${deckglNestedCalloutFrame(nested).center.y})`"
-            rx="8"
+            :d="deckglNestedCalloutPath(nested)"
             vector-effect="non-scaling-stroke"
           />
         </g>
+        <g
+          v-if="nested.parameters.decorations?.length"
+          :data-nested-decoration-id="nested.relationshipId"
+          :transform="nestedOverlayTransform(nested, false)"
+          pointer-events="none"
+          v-html="nestedDecorationsMarkup({ x: 0, y: 0, width: nested.width, height: nested.height, scaleX: nested.parameters.scale.x, scaleY: nested.parameters.scale.y, rotation: 0 }, nested.parameters.decorations)"
+        />
         <g
           class="deckgl-nested-overlay__child"
           :data-nested-relationship-id="nested.relationshipId"
@@ -1438,8 +1470,7 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-.deckgl-nested-callout__frame,
-.deckgl-nested-callout__arrow {
+.deckgl-nested-callout__frame {
   fill: rgba(255, 255, 255, 0.94);
   stroke: #99582a;
   stroke-width: 1.5;

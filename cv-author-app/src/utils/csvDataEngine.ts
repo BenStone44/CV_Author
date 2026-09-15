@@ -86,17 +86,22 @@ function completeValueCount(row: Dataset["rows"][number], fields: string[]) {
 
 export function profileCsvColumns(dataset: Dataset): CsvColumnProfile[] {
   return dataset.columns.map((column) => {
-    const values = dataset.rows
-      .map((row) => rawValue(row, column.name))
-      .filter((value) => value !== missingValue);
-    const distinctCount = new Set(values).size;
+    const values = new Set<string>();
+    let nonEmptyCount = 0;
+    for (const row of dataset.rows) {
+      const value = rawValue(row, column.name);
+      if (value === missingValue) continue;
+      values.add(value);
+      nonEmptyCount += 1;
+    }
+    const distinctCount = values.size;
     return {
       field: column.name,
       rowCount: dataset.rows.length,
-      nonEmptyCount: values.length,
-      missingCount: dataset.rows.length - values.length,
+      nonEmptyCount,
+      missingCount: dataset.rows.length - nonEmptyCount,
       distinctCount,
-      cardinalityRatio: values.length ? distinctCount / values.length : 0,
+      cardinalityRatio: nonEmptyCount ? distinctCount / nonEmptyCount : 0,
     };
   });
 }
@@ -151,7 +156,9 @@ function grainStatistics(
   const groups = new Map<string, Dataset["rows"]>();
   rows.forEach((row) => {
     const key = tupleKey(row, keyFields);
-    groups.set(key, [...(groups.get(key) ?? []), row]);
+    const group = groups.get(key);
+    if (group) group.push(row);
+    else groups.set(key, [row]);
   });
   const groupedRows = Array.from(groups.values());
   const valueSignatures = groupedRows.map((groupRows) => new Set(
@@ -244,16 +251,19 @@ function conflictConstraints(
   const groups = new Map<string, Dataset["rows"]>();
   rows.forEach((row) => {
     const key = tupleKey(row, keyFields);
-    groups.set(key, [...(groups.get(key) ?? []), row]);
+    const group = groups.get(key);
+    if (group) group.push(row);
+    else groups.set(key, [row]);
   });
   const constraints: string[][] = [];
   let conflictPairCount = 0;
   Array.from(groups.values()).forEach((groupRows) => {
+    const valueKeys = groupRows.map((row) => tupleKey(row, valueFields));
     for (let leftIndex = 0; leftIndex < groupRows.length; leftIndex += 1) {
       for (let rightIndex = leftIndex + 1; rightIndex < groupRows.length; rightIndex += 1) {
         const left = groupRows[leftIndex]!;
         const right = groupRows[rightIndex]!;
-        if (tupleKey(left, valueFields) === tupleKey(right, valueFields)) continue;
+        if (valueKeys[leftIndex] === valueKeys[rightIndex]) continue;
         conflictPairCount += 1;
         constraints.push(candidateFields.filter((field) => rawValue(left, field) !== rawValue(right, field)));
       }

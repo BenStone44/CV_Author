@@ -12,7 +12,7 @@ import {
 import { hexbin } from "d3-hexbin";
 import Papa from "papaparse";
 import type { Dataset, SvgCandidate } from "../types";
-import diamondsCsv from "../../../data/d3_hexbin_diamonds.csv?raw";
+import diamondsCsv from "../../public/site/gallery/cases/_editor-samples/data/d3_hexbin_diamonds.csv?raw";
 import { renderDefaultChartSvg, stripSvgTextElements } from "./defaultChartData";
 import { globalGradientColor } from "./visualMapping";
 import {

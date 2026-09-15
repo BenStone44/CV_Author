@@ -16,21 +16,21 @@ import {
   Upload,
   X,
 } from "@lucide/vue";
-import case1Csv from "../../../data/case1.csv?raw";
-import case2Csv from "../../../data/case2.csv?raw";
-import case3Csv from "../../../data/case3.csv?raw";
-import chordPolarLineNodesCsv from "../../../data/chord_polar_line_nodes.csv?raw";
-import chordPolarLineLinksCsv from "../../../data/chord_polar_line_links.csv?raw";
-import academicScoresCsv from "../../../data/academic_scores.csv?raw";
-import academicScoresWideCsv from "../../../data/academic_scores_wide.csv?raw";
-import treeNodesCsv from "../../../data/tree_nodes.csv?raw";
-import deepTreeCsv from "../../../data/tree.csv?raw";
-import graphNodesCsv from "../../../data/nodes.csv?raw";
-import graphEdgesCsv from "../../../data/edges.csv?raw";
-import case2GraphNodesCsv from "../../../data/case2_graph_nodes.csv?raw";
-import case2GraphLinksCsv from "../../../data/case2_graph_links.csv?raw";
-import hexbinGraphNodesCsv from "../../../data/hexbin_graph_nodes.csv?raw";
-import hexbinGraphLinksCsv from "../../../data/hexbin_graph_links.csv?raw";
+import case1Csv from "../../public/site/gallery/cases/_editor-samples/data/case1.csv?raw";
+import case2Csv from "../../public/site/gallery/cases/geographic-network/data/case2.csv?raw";
+import case3Csv from "../../public/site/gallery/cases/_editor-samples/data/case3.csv?raw";
+import chordPolarLineNodesCsv from "../../public/site/gallery/cases/polar-facet/data/chord_polar_line_nodes.csv?raw";
+import chordPolarLineLinksCsv from "../../public/site/gallery/cases/polar-facet/data/chord_polar_line_links.csv?raw";
+import academicScoresCsv from "../../public/site/gallery/cases/_editor-samples/data/academic_scores.csv?raw";
+import academicScoresWideCsv from "../../public/site/gallery/cases/academic-scores/data/academic_scores_wide.csv?raw";
+import treeNodesCsv from "../../public/site/gallery/cases/tree-leaf-axis/data/tree_nodes.csv?raw";
+import deepTreeCsv from "../../public/site/gallery/cases/shared-hierarchy/data/tree.csv?raw";
+import graphNodesCsv from "../../public/site/gallery/cases/_editor-samples/data/nodes.csv?raw";
+import graphEdgesCsv from "../../public/site/gallery/cases/_editor-samples/data/edges.csv?raw";
+import case2GraphNodesCsv from "../../public/site/gallery/cases/geographic-network/data/case2_graph_nodes.csv?raw";
+import case2GraphLinksCsv from "../../public/site/gallery/cases/geographic-network/data/case2_graph_links.csv?raw";
+import hexbinGraphNodesCsv from "../../public/site/gallery/cases/_editor-samples/data/hexbin_graph_nodes.csv?raw";
+import hexbinGraphLinksCsv from "../../public/site/gallery/cases/_editor-samples/data/hexbin_graph_links.csv?raw";
 import { useDatasetStore } from "../stores/useDatasetStore";
 import type {
   ChartDataTransform,
@@ -38,7 +38,6 @@ import type {
   ChartSpec,
   DataColumnType,
   Dataset,
-  DatasetTable,
 } from "../types";
 import { materializeChartDataTransforms } from "../utils/chartDataTransforms";
 import {
@@ -51,6 +50,7 @@ import {
 const previewRowLimit = 250;
 
 const props = defineProps<{
+  loadPresets?: boolean;
   chartId?: string;
   chartName?: string;
   chartSpec?: ChartSpec | null;
@@ -83,6 +83,7 @@ const {
   importGraphDataset,
   getDataset,
   setActiveDataset,
+  renameDataset,
   setColumnType,
   geometrySources,
   activeGeometrySource,
@@ -135,8 +136,8 @@ const geographicJoinStatus = computed(() => {
   return { matched, total: values.length, unmatched: values.length - matched };
 });
 const localGeometryBindings = [
-  { datasetName: "case2.csv", field: "incident_zip", sourceName: "nyc-zip-boundaries.geojson", path: "/geodata/nyc-zip-boundaries.geojson" },
-  { datasetName: "geo", field: "point", sourceName: "nyc-zip-boundaries.geojson", path: "/geodata/nyc-zip-boundaries.geojson" },
+  { datasetName: "case2.csv", field: "incident_zip", sourceName: "nyc-zip-boundaries.geojson", path: "/site/gallery/cases/geographic-network/data/nyc-zip-boundaries.geojson" },
+  { datasetName: "geo", field: "point", sourceName: "nyc-zip-boundaries.geojson", path: "/site/gallery/cases/geographic-network/data/nyc-zip-boundaries.geojson" },
 ] as const;
 const localGeometryLoading = new Map<string, Promise<void>>();
 const chartDataset = computed(() => props.chartSpec ? getDataset(props.chartSpec.datasetId) : null);
@@ -148,17 +149,21 @@ const transformRows = computed(() => transformedChartDataset.value?.rows ?? []);
 const transforms = computed(() => props.chartSpec?.dataTransforms ?? []);
 const canEditChartTransforms = computed(() => !!props.chartId && !!chartDataset.value && transformColumns.value.length > 0);
 const headers = computed(() => columns.value.map((column) => column.name));
-const rows = computed(() =>
-  activeDataset.value?.rows.map((row) => headers.value.map((header) => row[header] ?? "")) ?? [],
-);
-const previewRows = computed(() => rows.value.slice(0, previewRowLimit));
+const rows = computed(() => activeDataset.value?.rows ?? []);
+const previewRows = computed(() => rows.value.slice(0, previewRowLimit)
+  .map((row) => headers.value.map((header) => row[header] ?? "")));
 const graphTables = computed(() => {
   const graph = activeDataset.value?.graph;
   if (!graph) return [];
   return [
     { key: "nodes" as const, label: "Nodes", table: graph.nodes },
     { key: "edges" as const, label: "Edges", table: graph.edges },
-  ];
+  ].map((entry) => {
+    const headers = entry.table.columns.map((column) => column.name);
+    const previewRows = entry.table.rows.slice(0, previewRowLimit)
+      .map((row) => headers.map((header) => row[header] ?? ""));
+    return { ...entry, headers, previewRows };
+  });
 });
 const hasData = computed(() => isGraph.value || headers.value.length > 0);
 const selectedColumn = computed(() =>
@@ -211,18 +216,6 @@ const tableStatus = computed(() => {
   const columnLabel = headers.value.length === 1 ? "column" : "columns";
   return `${rows.value.length} ${rowLabel} / ${headers.value.length} ${columnLabel}`;
 });
-function tableHeaders(table: DatasetTable) {
-  return table.columns.map((column) => column.name);
-}
-
-function tableRows(table: DatasetTable) {
-  const tableHeaderNames = tableHeaders(table);
-  return table.rows.map((row) => tableHeaderNames.map((header) => row[header] ?? ""));
-}
-
-function tablePreviewRows(table: DatasetTable) {
-  return tableRows(table).slice(0, previewRowLimit);
-}
 const fieldColumnWidth = computed(() => {
   const fieldNames = isGraph.value
     ? graphTables.value.flatMap(({ table }) => table.columns.map((column) => column.name))
@@ -585,7 +578,7 @@ async function ensurePresetDatasets() {
     (dataset) => dataset.name === "case2_graph_nodes.csv + case2_graph_links.csv",
   );
   if (legacyGeoDataset) {
-    legacyGeoDataset.name = "geo";
+    renameDataset(legacyGeoDataset.id, "geo");
   } else if (!datasets.value.some((dataset) => dataset.name === "geo")) {
     await importGraphDataset(
       new File([case2GraphNodesCsv], "case2_graph_nodes.csv", { type: "text/csv" }),
@@ -648,7 +641,7 @@ async function syncLocalGeometry(dataset: Dataset) {
 onMounted(() => {
   window.addEventListener("resize", updateExpandedWidth);
   window.addEventListener("keydown", onWindowKeydown);
-  void ensurePresetDatasets();
+  if (props.loadPresets !== false) void ensurePresetDatasets();
 });
 onBeforeUnmount(() => {
   window.removeEventListener("resize", updateExpandedWidth);
@@ -949,7 +942,7 @@ onUpdated(() => {
             <tr>
               <th class="data-table__row-number" scope="col">#</th>
               <th
-                v-for="(header, columnIndex) in tableHeaders(graphTable.table)"
+                v-for="(header, columnIndex) in graphTable.headers"
                 :key="`${columnIndex}-${header}`"
                 scope="col"
                 :title="header"
@@ -978,7 +971,7 @@ onUpdated(() => {
           </thead>
           <tbody>
             <tr
-              v-for="(row, rowIndex) in tablePreviewRows(graphTable.table)"
+              v-for="(row, rowIndex) in graphTable.previewRows"
               :key="rowIndex"
             >
               <th class="data-table__row-number" scope="row">
@@ -1002,7 +995,7 @@ onUpdated(() => {
             <tr>
               <th class="data-table__field-name" scope="col">Field</th>
               <th
-                v-for="(_, rowIndex) in tablePreviewRows(graphTable.table)"
+                v-for="(_, rowIndex) in graphTable.previewRows"
                 :key="rowIndex"
                 scope="col"
               >
@@ -1037,7 +1030,7 @@ onUpdated(() => {
                 </select>
               </th>
               <td
-                v-for="(row, rowIndex) in tablePreviewRows(graphTable.table)"
+                v-for="(row, rowIndex) in graphTable.previewRows"
                 :key="rowIndex"
                 :title="row[columnIndex]"
               >

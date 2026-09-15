@@ -8,6 +8,7 @@
     "dev:api": "./.venv/bin/python -m uvicorn server_python.app.main:app --host 127.0.0.1 --port 8787 --env-file .env",
     "dev:all": "run-p dev:api dev",
     "capture:deckgl-thumbnails": "node scripts/capture-deckgl-thumbnails.mjs",
+    "capture:gallery-preview": "node scripts/capture-gallery-preview.mjs",
     "build": "run-p type-check \"build-only {@}\" --",
     "test": "vitest run",
     "preview": "vite preview",

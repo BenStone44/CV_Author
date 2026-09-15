@@ -1,3 +1,7 @@
+import { runGalleryCase } from "../utils/galleryCaseLoader";
+import { deckglLightMapStyleUrl } from "../utils/geographicLayerCards";
+import { captureGeographicContent } from "../utils/geographicExport";
+import { sharedHierarchyChartSpec } from "../utils/sharedHierarchyCase";
 import {
   ref,
   shallowRef,
@@ -96,7 +100,7 @@ import {
   cloneCanvasNode,
   collectNodeBounds,
   collectNodeSelectionBounds,
-  createCanvasNodesSvgMarkup,
+  createCanvasNodesSvgMarkup as serializeCanvasNodesSvgMarkup,
   cloneChartSpec,
   getNodeSelectionBounds,
   getPolarOccupiedGeometry,
@@ -123,10 +127,12 @@ export function isDeckglPointNestedChartCandidate(candidate: SvgCandidate) {
     && normalizeChartTemplate(candidate.chartType) !== null;
 }
 export { getDimensionChartUpgradeOptions } from "../utils/chartTemplates";
-import { materializeGraphDataset, prepareChartData, rowMatchesChartFilters } from "../utils/chartDataPipeline";
+import { createChartFilterPredicate, materializeGraphDataset, prepareChartData } from "../utils/chartDataPipeline";
+import { normalizeNestedDecorations } from "../utils/nestedDecorations";
 import { materializeChartDataTransforms } from "../utils/chartDataTransforms";
 import { resolveChartDataMode } from "../utils/chartContracts";
 import {
+  adaptLegacyWideBindings,
   roleBindingMaterialization,
   roleBindingSelectedFields,
   type RoleSelectionMaterialization,
@@ -162,10 +168,12 @@ import {
 import { canonicalGeoJsonJoinId, geoJsonFeatureIds } from "../utils/geoJsonGeometry";
 import { geographicGraphLineRecords } from "../utils/geographicGraphLinks";
 import {
+  CHORD_POLAR_LINE_DATASET_ID,
   createDefaultChartSpec,
   defaultChartDataset,
   defaultChartSpecWithAppearance,
   isDefaultChartDataSpec,
+  MATRIX_PIE_NETWORK_DATASET_ID,
   replaceDefaultDataBinding,
   supportsDefaultChartData,
 } from "../utils/defaultChartData";
@@ -272,7 +280,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     duration: number;
     recordedAt: number;
   };
-  const selectionDiagnosticLog = typeof window === "undefined"
+  const selectionDiagnosticLog = !import.meta.env.DEV || typeof window === "undefined"
     ? null
     : ((window as Window & { __CV_AUTHOR_SELECTION_LOG__?: SelectionDiagnosticEntry[] }).__CV_AUTHOR_SELECTION_LOG__
       ??= []);
@@ -472,7 +480,17 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       "[data-selection-occupancy-node-id]",
     ));
     const next = new Map<string, Bounds>();
-    const measuredBox = (element: SVGGraphicsElement): Bounds | null => {
+    // Composite ancestors share leaf occupancy elements. Measure each leaf
+    // once per synchronization pass, without retaining stale browser geometry.
+    const boxes = new Map<SVGGraphicsElement, Bounds | null>();
+    const matrices = new Map<SVGGraphicsElement, DOMMatrix | null>();
+    const measuredMatrix = (element: SVGGraphicsElement) => {
+      if (!matrices.has(element)) {
+        matrices.set(element, typeof element.getCTM === "function" ? element.getCTM() : null);
+      }
+      return matrices.get(element) ?? null;
+    };
+    const readBox = (element: SVGGraphicsElement): Bounds | null => {
       if (typeof element.getBBox !== "function") return null;
       try {
         const box = element.getBBox({ fill: true, stroke: true, markers: true, clipped: true });
@@ -490,6 +508,10 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         return null;
       }
     };
+    const measuredBox = (element: SVGGraphicsElement) => {
+      if (!boxes.has(element)) boxes.set(element, readBox(element));
+      return boxes.get(element) ?? null;
+    };
     elements.forEach((element) => {
       const nodeId = element.dataset.selectionOccupancyNodeId;
       if (!nodeId) return;
@@ -503,7 +525,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       // transparent hit targets cannot leak into the root occupancy. Resolve
       // only descendant occupancy groups into the root node's local space.
       const owner = element.closest<SVGGraphicsElement>("[data-node-id]");
-      const ownerMatrix = typeof element.getCTM === "function" ? element.getCTM() : null;
+      const ownerMatrix = measuredMatrix(element);
       const inverseOwner = ownerMatrix ? invertMatrix(ownerMatrix) : null;
       if (!owner || owner.dataset.nodeId !== nodeId || !inverseOwner) return;
       let bounds: Bounds | null = null;
@@ -512,7 +534,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           && descendant.dataset.selectionOccupancyComposite !== "true")
         .forEach((descendant) => {
           const descendantBounds = measuredBox(descendant);
-          const descendantMatrix = typeof descendant.getCTM === "function" ? descendant.getCTM() : null;
+          const descendantMatrix = measuredMatrix(descendant);
           if (!descendantBounds || !descendantMatrix) return;
           const matrix = multiplyMatrix(inverseOwner, descendantMatrix);
           const points = [
@@ -624,6 +646,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         retainParent: relationships.every((item) =>
           (item.parameters as Partial<RelativeNestedParameters>).retainParent !== false),
         callout: normalizeNestedCallout(parameters.callout),
+        rotation: parameters.rotation ?? 0,
+        decorations: normalizeNestedDecorations(parameters.decorations),
       },
     };
   });
@@ -1550,6 +1574,36 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       }];
     }),
   );
+  function createCanvasNodesSvgMarkup(nodes: CanvasNode[], bounds: Bounds) {
+    const decorations = new Map(Object.values(chartRelationships.value.nestedRelationships)
+      .filter((relationship) => relationship.status === "active")
+      .map((relationship) => [relationship.childChartId, normalizeNestedDecorations((relationship.parameters as Partial<RelativeNestedParameters>).decorations)] as const));
+    const markup = serializeCanvasNodesSvgMarkup(nodes, bounds, decorations);
+    const hiddenParents = Object.values(chartRelationships.value.nestedRelationships)
+      .filter((relationship) => relationship.status === "active"
+        && (relationship.parameters as Partial<RelativeNestedParameters>).retainParent === false);
+    if (!hiddenParents.length) return markup;
+    // The live canvas suppresses replaced parent marks in CanvasNodeView.
+    // Apply the same visibility to the serialized renderer output as well.
+    const root = new DOMParser().parseFromString(markup, "image/svg+xml").documentElement;
+    hiddenParents.forEach((relationship) => {
+      const marks = Array.from(root.querySelectorAll<SVGElement>("[data-mark-role]"))
+        .filter((mark) => mark.getAttribute("data-chart-id") === relationship.parentChartId
+          && (!relationship.parentMarkGroupId || mark.getAttribute("data-mark-group-id") === relationship.parentMarkGroupId));
+      marks.forEach((mark, index) => {
+        const roleIndex = marks.slice(0, index).filter((candidate) => candidate.getAttribute("data-mark-role") === mark.getAttribute("data-mark-role")).length;
+        if (relationship.parentDataKey && !markMatchesNestedDataKey(mark, relationship.parentDataKey, roleIndex)) return;
+        const targets = mark.getAttribute("data-mark-role") === "node" && mark.querySelector('[data-mark-role="node-label"]')
+          ? Array.from(mark.querySelectorAll<SVGElement>("circle, rect, path")) : [mark];
+        targets.forEach((target) => {
+          target.setAttribute("visibility", "hidden");
+          target.setAttribute("aria-hidden", "true");
+        });
+      });
+    });
+    return new XMLSerializer().serializeToString(root);
+  }
+
   const nestedRenderedChildIds = computed<ReadonlySet<string>>(() => {
     const ids = new Set(nestedRenderPlacements.value.map((placement) => placement.child.id));
     Object.values(chartRelationships.value.nestedRelationships).forEach((relationship) => {
@@ -1563,8 +1617,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
    * Nested children are rendered inside their parent's mark layer but remain
    * separate canvas nodes. Include their resolved footprints in the parent
    * selection bounds so resize, alignment, and the visible selection frame
-   * describe the complete nested object.
-   */
+  * describe the complete nested object.
+  */
   function collectSelectionBoundsWithNestedChildren(node: CanvasNode, visited = new Set<string>()): Bounds {
     const ownBounds = () => collectRenderedNodeSelectionBounds(node);
     if (visited.has(node.id)) return ownBounds();
@@ -2125,7 +2179,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const dataTransforms = node.chartSpec?.dataTransforms;
     const effectiveDataTransforms = transformsWithNestedContext(node, dataTransforms);
     const filteredDataset = node.chartSpec
-      ? { ...sourceDataset, rows: sourceDataset.rows.filter((row) => rowMatchesChartFilters(row, node.chartSpec!)) }
+      ? { ...sourceDataset, rows: sourceDataset.rows.filter(createChartFilterPredicate(node.chartSpec!)) }
       : sourceDataset;
     const dataset = node.chartSpec
       ? materializeChartDataTransforms(filteredDataset, effectiveDataTransforms)
@@ -3317,7 +3371,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     resolveNestedRelationship, resolveNestedFilterContexts, resolveSemanticMarkMatch,
     restoreRelationships, retainSharedFacetClues, retireMergedCompositions,
     repeatableCompositionMembers, repeatableCompositionNodes, repeatableCompositionPairNodes,
-    rowMatchesChartFilters, sameChannels, scheduleNestedChildLayout,
+    createChartFilterPredicate, sameChannels, scheduleNestedChildLayout,
     selectedIds, selectedNodes, semanticSelection, semanticMarkElements, semanticSelectionBounds,
     selectionBounds,
     setImportNotice, setSelection, standaloneCoordinateSystem, sharedChannelEncodingsAreCompatible,
@@ -3331,7 +3385,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     createLayer, createDeckglLayer, createStructuralComposition, executeComposition,
     beginNestedRelationshipDraft, ensureCommittedNestedRelationship, createNestedPie,
     nestedPieValueFields, applyNestedPiesToNode, closeNestedBinding, confirmNestedBinding,
-    openNestedPositionEditor, updateNestedPosition, updateNestedChildScale, updateNestedCallout, resetNestedPosition,
+    openNestedPositionEditor, applyNestedAppearance, updateNestedPosition, updateNestedChildScale, updateNestedCallout, resetNestedPosition,
     closeNestedPositionEditor, scatterPointDropZone, nestedTargetWouldCreateCycle,
     semanticItemDropZone, enterNestedDropLevel, enterCompositionDropLevel,
     localRectDropGeometry, polarSectorGeometry, polarCompositionDropZoneAtPoint,
@@ -4314,376 +4368,221 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
   });
   setImportNoticeImplementation = setImportNoticeFromImport;
 
+  /** Use the same monthly table for the tree and both per-node chart batches. */
+  async function loadDendrogramProfilesCase(compose: boolean) {
+    return runGalleryCase("tree-leaf-axis", {
+      MAX_ZOOM,
+      MIN_ZOOM,
+      axisBindingTarget,
+      boundsFromNodeFrame,
+      canvasNodes,
+      canvasRef,
+      chartDrilldown,
+      chartRelationships,
+      clamp,
+      closeNestedPositionEditor,
+      commitCompositionDrop,
+      compositionDropZoneAtPoint,
+      createCanvasItem,
+      editingCompositionId,
+      enterNestedDropLevel,
+      findCanvasNode,
+      implementedTemplateDefinitions,
+      mergeBounds,
+      nestedDropPath,
+      nextTick,
+      nodeLocalToSelectionScopePoint,
+      openNestedPositionEditor,
+      registerChartRelationship,
+      renderChartNode,
+      scheduleNestedChildLayout,
+      setActiveDataset,
+      setSelection,
+      toSelectionScopePoint,
+      updateNestedChildScale,
+      updateNestedPosition,
+      useDatasetStore,
+      viewPan,
+      viewZoom
+    }, compose);
+  }
+
+  /** Replay catalog Link drop, geographic Layer and point Nested operations. */
+  async function loadGeographicNetworkCase(compose: boolean) {
+    return runGalleryCase("geographic-network", {
+      MAX_ZOOM,
+      MIN_ZOOM,
+      adaptLegacyWideBindings,
+      canvasNodes,
+      canvasRef,
+      chartRelationships,
+      clamp,
+      closeNestedPositionEditor,
+      createCanvasItem,
+      createDeckglLayer,
+      deckglLightMapStyleUrl,
+      findCanvasNode,
+      getChartBlockSpecification,
+      hasRequiredChartEncodings,
+      implementedTemplateDefinitions,
+      materializeGraphDataset,
+      nestCanvasNodeOnDeckglPoint,
+      nextTick,
+      onCanvasDrop,
+      openNestedPositionEditor,
+      registerChartRelationship,
+      renderChartNode,
+      setActiveDataset,
+      setDeckglConfig,
+      setDeckglDataBinding,
+      setDeckglEncoding,
+      setSelection,
+      updateNestedCallout,
+      updateNestedPosition,
+      useDatasetStore,
+      viewPan,
+      viewZoom
+    }, compose);
+  }
+
+  async function exportRenderedGeographicSvg() {
+    await nextTick();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const nodes = getSelectionScopeNodes().filter((node) => !nestedRenderedChildIds.value.has(node.id)
+      && (!node.deckglLayerStack?.length || node.deckglLayerStack[0] === node.id));
+    const exported: CanvasNode[] = [];
+    for (const node of nodes) exported.push(node.layerKind === "deckgl"
+      ? { ...node, renderedContent: await captureGeographicContent(node.id) } : node);
+    const bounds = exported.reduce<Bounds | null>((current, node) => mergeBounds(current,
+      boundsFromNodeFrame(node.x, node.y, node.width, node.height, node.scaleX, node.scaleY, node.rotation)), null);
+    return bounds ? createCanvasNodesSvgMarkup(exported, bounds) : null;
+  }
+
+  /** Replay the real angular Concat: a shared center/R depth scale and two 180° halves. */
+  async function loadSharedHierarchyCase(datasetId: string, compose = true) {
+    return runGalleryCase("shared-hierarchy", {
+      sharedHierarchyChartSpec,
+      MAX_ZOOM,
+      MIN_ZOOM,
+      boundsFromNodeFrame,
+      canvasNodes,
+      canvasRef,
+      clamp,
+      createCanvasItem,
+      executeComposition,
+      findCanvasNode,
+      getDataset,
+      getSelectionScopeNodes,
+      implementedTemplateDefinitions,
+      mergeBounds,
+      nextTick,
+      registerChartRelationship,
+      renderChartNode,
+      setActiveDataset,
+      setSelection,
+      viewPan,
+      viewZoom
+    }, datasetId, compose);
+  }
+
   /** Build the graph-backed Chord + per-node Circular Stacked Bar Facet case. */
-  async function loadChordCircularStackedFacetCase(datasetId: string) {
-    const dataset = getDataset(datasetId);
-    const chordCandidate = implementedTemplateDefinitions.find((candidate) =>
-      candidate.chartType === "Chord");
-    const circularStackedCandidate = implementedTemplateDefinitions.find((candidate) =>
-      candidate.chartType === "CircularStackedBarChart");
-    if (!dataset?.graph || !chordCandidate || !circularStackedCandidate
-      || canvasNodes.value.length > 0) {
-      return false;
-    }
-    setActiveDataset(datasetId);
-
-    const createdChord = (await createCanvasItem(chordCandidate, { x: 520, y: 430 }, false))?.[0];
-    const chord = createdChord ? findCanvasNode(createdChord.id) : null;
-    const createdCircularStacked = (await createCanvasItem(
-      circularStackedCandidate,
-      { x: 940, y: 430 },
-      false,
-    ))?.[0];
-    const circularStacked = createdCircularStacked
-      ? findCanvasNode(createdCircularStacked.id)
-      : null;
-    if (!chord?.chartSpec || !circularStacked?.chartSpec) return false;
-
-    chord.name = "Chord — regional energy flow";
-    chord.chartSpec = {
-      ...chord.chartSpec,
-      datasetId,
-      encodings: {
-        key: { field: "node_id", type: "nominal" },
-        source: { field: "source", type: "nominal" },
-        target: { field: "target", type: "nominal" },
-        value: { field: "flow_twh", type: "quantitative" },
-      },
-      dataTransforms: undefined,
-      filters: undefined,
-      renderer: undefined,
-      scales: undefined,
-      plotArea: undefined,
-      polarArea: undefined,
-    };
-    circularStacked.name = "Circular Stacked Bar Facet — weekly generation mix";
-    circularStacked.chartSpec = {
-      ...circularStacked.chartSpec,
-      datasetId,
-      encodings: {
-        theta: { field: "generation_gwh", type: "quantitative" },
-        radius: { field: "week", type: "ordinal" },
-        color: { field: "energy_source", type: "nominal" },
-      },
-      series: { field: "energy_source", type: "nominal" },
-      seriesFields: [{ field: "energy_source", type: "nominal" }],
-      dataTransforms: [{
-        id: "case:circular-stacked:six-weeks",
-        kind: "filter",
-        mode: "values",
-        field: "week",
-        values: [
-          "2025-01-01",
-          "2025-02-26",
-          "2025-04-23",
-          "2025-06-18",
-          "2025-08-13",
-          "2025-10-08",
-        ],
-        single: false,
-        purpose: "filter",
-      }],
-      filters: undefined,
-      defaultDataBinding: undefined,
-      valueFields: undefined,
-      axes: {
-        theta: { visible: false, labelsVisible: false },
-        radius: { visible: false, labelsVisible: false },
-      },
-      renderer: undefined,
-      scales: undefined,
-      plotArea: undefined,
-      polarArea: undefined,
-    };
-    renderChartNode(chord);
-    renderChartNode(circularStacked);
-    registerChartRelationship(chord);
-    registerChartRelationship(circularStacked);
-
-    setSelection([circularStacked.id]);
-    if (!createFacetFromFields(circularStacked.id, {
-      coordinateSystem: "Polar",
-      thetaField: "node_id",
-    })) return false;
-    const facetRoot = getSelectionScopeNodes().find((node) =>
-      node.kind === "group" && node.compositionSpec?.type === "facet");
-    if (!facetRoot || !concatNodesAreCompatible([chord, facetRoot], "radial", "angle")) {
-      return false;
-    }
-
-    setSelection([chord.id, facetRoot.id]);
-    if (!executeComposition("concat", false, ["angle"], "radial")) return false;
-
-    const facetGeometry = getPolarOccupiedGeometry(facetRoot);
-    const chordGeometry = getPolarOccupiedGeometry(chord);
-    if (!facetGeometry || !chordGeometry) return false;
-    const sharedCenter = nodeLocalToSelectionScopePoint(facetRoot, facetGeometry.origin);
-    const facetScale = Math.min(Math.abs(facetRoot.scaleX), Math.abs(facetRoot.scaleY));
-    const facetOuterRadius = facetGeometry.outerRadius * facetScale;
-    const chordScale = facetOuterRadius * 0.46 / Math.max(chordGeometry.outerRadius, 1);
-    const chordLocalMinX = chord.kind === "leaf" ? chord.contentMinX : 0;
-    const chordLocalMinY = chord.kind === "leaf" ? chord.contentMinY : 0;
-    chord.scaleX = chordScale;
-    chord.scaleY = chordScale;
-    chord.x = sharedCenter.x - (chordGeometry.origin.x - chordLocalMinX) * chordScale;
-    chord.y = sharedCenter.y - (chordGeometry.origin.y - chordLocalMinY) * chordScale;
-    setSelection([]);
-
-    const bounds = getCanvasNodeListBounds(getSelectionScopeNodes());
-    const viewport = canvasRef.value?.getBoundingClientRect();
-    if (bounds && viewport && bounds.width > 0 && bounds.height > 0) {
-      const padding = 56;
-      const zoom = clamp(Math.min(
-        (viewport.width - padding * 2) / bounds.width,
-        (viewport.height - padding * 2) / bounds.height,
-        1,
-      ), MIN_ZOOM, MAX_ZOOM);
-      viewZoom.value = zoom;
-      viewPan.value = {
-        x: (viewport.width - bounds.width * zoom) / 2 - bounds.minX * zoom,
-        y: (viewport.height - bounds.height * zoom) / 2 - bounds.minY * zoom,
-      };
-    }
-    return true;
+  async function loadChordCircularStackedFacetCase(datasetId: string, compose = true) {
+    return runGalleryCase("polar-facet", {
+      MAX_ZOOM,
+      MIN_ZOOM,
+      canvasNodes,
+      canvasRef,
+      clamp,
+      concatNodesAreCompatible,
+      createCanvasItem,
+      createFacetFromFields,
+      executeComposition,
+      findCanvasNode,
+      getCanvasNodeListBounds,
+      getDataset,
+      getPolarOccupiedGeometry,
+      getSelectionScopeNodes,
+      implementedTemplateDefinitions,
+      nodeLocalToSelectionScopePoint,
+      registerChartRelationship,
+      renderChartNode,
+      setActiveDataset,
+      setSelection,
+      viewPan,
+      viewZoom
+    }, datasetId, compose);
   }
 
   /** Build a graph-derived heatmap with a weighted force overlay and marginal stacked bars. */
-  async function loadMatrixPieNetworkCase(datasetId: string) {
-    const dataset = getDataset(datasetId);
-    const matrixCandidate = implementedTemplateDefinitions.find((candidate) =>
-      candidate.chartType === "MatrixDiagram");
-    const stackedBarCandidate = implementedTemplateDefinitions.find((candidate) =>
-      candidate.chartType === "StackedBarChart");
-    if (!dataset?.graph || !matrixCandidate || !stackedBarCandidate
-      || canvasNodes.value.length > 0) {
-      return false;
-    }
-    setActiveDataset(datasetId);
+  async function loadMatrixPieNetworkCase(datasetId: string, compose = true) {
+    return runGalleryCase("matrix-network", {
+      MAX_ZOOM,
+      MIN_ZOOM,
+      adaptLegacyWideBindings,
+      boundsFromNodeFrame,
+      canvasNodes,
+      canvasRef,
+      clamp,
+      createCanvasItem,
+      executeComposition,
+      findCanvasNode,
+      getChartBlockSpecification,
+      getDataset,
+      globalPalette,
+      implementedTemplateDefinitions,
+      mergeBounds,
+      nextTick,
+      registerChartRelationship,
+      renderChartNode,
+      setActiveDataset,
+      setSelection,
+      viewPan,
+      viewZoom
+    }, datasetId, compose);
+  }
 
-    const createdMatrix = (await createCanvasItem(matrixCandidate, { x: 820, y: 610 }, false))?.[0];
-    const createdTopBar = (await createCanvasItem(stackedBarCandidate, { x: 820, y: 190 }, false))?.[0];
-    const createdLeftBar = (await createCanvasItem(stackedBarCandidate, { x: 260, y: 610 }, false))?.[0];
-    const matrix = createdMatrix ? findCanvasNode(createdMatrix.id) : null;
-    const topBar = createdTopBar ? findCanvasNode(createdTopBar.id) : null;
-    const leftBar = createdLeftBar ? findCanvasNode(createdLeftBar.id) : null;
-    if (!matrix?.chartSpec || !topBar?.chartSpec || !leftBar?.chartSpec) return false;
+  /** Place data-bound Gallery blocks without composing them for the visitor. */
+  async function loadGalleryStarter(starterId: string, preferredDatasetId?: string, compose = false) {
+    if (starterId === "polar-facet") return loadChordCircularStackedFacetCase(CHORD_POLAR_LINE_DATASET_ID, compose);
+    if (starterId === "matrix-network") return loadMatrixPieNetworkCase(MATRIX_PIE_NETWORK_DATASET_ID, compose);
+    if (starterId === "shared-hierarchy") return preferredDatasetId ? loadSharedHierarchyCase(preferredDatasetId, compose) : false;
+    if (starterId === "tree-leaf-axis") return loadDendrogramProfilesCase(compose);
+    if (starterId === "geographic-network") return loadGeographicNetworkCase(compose);
+    return loadAcademicScoresCase(starterId, preferredDatasetId, compose);
+  }
 
-    const valueFields = ["channel_a", "channel_b", "channel_c", "channel_d", "channel_e"];
-    const componentColors = [
-      globalPalette.categorical[0]!,
-      globalPalette.categorical[1]!,
-      globalPalette.categorical[2]!,
-      globalPalette.categorical[3]!,
-      globalPalette.categorical[4]!,
-    ];
-    const seriesColors = Object.fromEntries(valueFields.map((field, index) => [
-      field,
-      { color: componentColors[index]! },
-    ]));
-    const resetFrame = (node: CanvasNode, x: number, y: number, width: number, height: number) => {
-      node.x = x;
-      node.y = y;
-      node.width = width;
-      node.height = height;
-      node.scaleX = 1;
-      node.scaleY = 1;
-    };
-    resetFrame(matrix, 350, 300, 920, 920);
-    resetFrame(topBar, 350, 40, 920, 220);
-    resetFrame(leftBar, 1310, 300, 300, 920);
-    if (matrix.coordinateGuide?.type === "Cartesian") matrix.coordinateGuide.yDirection = 1;
-    if (leftBar.coordinateGuide?.type === "Cartesian") leftBar.coordinateGuide.yDirection = 1;
+  async function loadAcademicScoresCase(starterId: string, preferredDatasetId?: string, compose = false) {
+    return runGalleryCase("academic-scores", {
+      MAX_ZOOM,
+      MIN_ZOOM,
+      adaptLegacyWideBindings,
+      applyNestedPiesToNode,
+      canvasNodes,
+      canvasRef,
+      clamp,
+      createCanvasItem,
+      createDefaultChartSpec,
+      executeComposition,
+      findCanvasNode,
+      getCanvasNodeListBounds,
+      getChartBlockSpecification,
+      getDataset,
+      hasRequiredChartEncodings,
+      implementedTemplateDefinitions,
+      nextTick,
+      registerChartRelationship,
+      renderChartNode,
+      resolveChartEncodingIssues,
+      setSelection,
+      viewPan,
+      viewZoom
+    }, starterId, preferredDatasetId, compose);
+  }
 
-    matrix.name = "Graph-derived heatmap — weighted force network";
-    matrix.chartSpec = {
-      ...matrix.chartSpec,
-      datasetId,
-      link: true,
-      encodings: {
-        x: { field: "column_group", type: "ordinal" },
-        y: { field: "row_group", type: "ordinal" },
-        color: { field: "heat_value", type: "quantitative" },
-        key: { field: "id", type: "nominal" },
-        source: { field: "source", type: "nominal" },
-        target: { field: "target", type: "nominal" },
-        value: { field: "weight", type: "quantitative" },
-        size: { field: "weight", type: "quantitative" },
-      },
-      series: { field: "dominant_component", type: "nominal" },
-      aggregations: undefined,
-      dataTransforms: undefined,
-      filters: undefined,
-      defaultDataBinding: undefined,
-      axes: {
-        x: { visible: false, labelsVisible: false },
-        y: { visible: false, labelsVisible: false },
-      },
-      markGroups: [
-        {
-          id: `mark-group:${matrix.id}:cell`,
-          chartId: matrix.id,
-          role: "cell",
-          memberKeys: [],
-          sharedConfig: {
-            opacity: 0.94,
-            colorMapping: {
-              type: "linear",
-              domain: [0, 25],
-              stops: globalPalette.gradient.map((color, index) => ({
-                offset: index / Math.max(1, globalPalette.gradient.length - 1),
-                color,
-              })),
-            },
-          },
-          allowOverrides: true,
-        },
-        {
-          id: `mark-group:${matrix.id}:node`,
-          chartId: matrix.id,
-          role: "node",
-          memberKeys: [],
-          sharedConfig: {
-            layoutXField: "layout_x",
-            layoutYField: "layout_y",
-            layoutNormalized: true,
-            nodeShape: "pie",
-            pieFields: valueFields.join(","),
-            nodeLabelsVisible: false,
-            sizeMapping: {
-              type: "linear",
-              stops: [{ offset: 0, size: 8 }, { offset: 1, size: 24 }],
-            },
-            colorMapping: {
-              type: "categorical",
-              values: Object.fromEntries(valueFields.map((field, index) => [
-                field,
-                componentColors[index]!,
-              ])),
-            },
-          },
-          allowOverrides: true,
-        },
-        {
-          id: `mark-group:${matrix.id}:link`,
-          chartId: matrix.id,
-          role: "link",
-          memberKeys: [],
-          sharedConfig: {
-            color: "#ffffff",
-            opacity: 0.24,
-            internalOpacity: 0.12,
-            internalWidth: 2,
-            crossOpacity: 0.22,
-            crossWidth: 3,
-            radialOpacity: 0.62,
-            radialWidth: 4.8,
-          },
-          allowOverrides: true,
-        },
-      ],
-      renderer: undefined,
-      scales: undefined,
-      plotArea: undefined,
-    };
-    matrix.nestedSpec = null;
-
-    topBar.name = "Top marginal — stacked totals by column";
-    topBar.chartSpec = {
-      ...topBar.chartSpec,
-      datasetId,
-      axisSwapped: false,
-      encodings: {
-        x: { field: "column_group", type: "ordinal" },
-        y: { field: "heat_value", type: "quantitative" },
-      },
-      valueFields: valueFields.map((field) => ({ field, type: "quantitative" as const })),
-      markGroups: [{
-        id: `mark-group:${topBar.id}:bar`,
-        chartId: topBar.id,
-        role: "bar",
-        memberKeys: [],
-        sharedConfig: { seriesStyleMapping: { type: "series-style", values: seriesColors } },
-        allowOverrides: true,
-      }],
-      axes: {
-        x: { visible: false, labelsVisible: false },
-        y: { visible: false, labelsVisible: false },
-      },
-      series: undefined,
-      seriesFields: undefined,
-      dataTransforms: undefined,
-      filters: undefined,
-      defaultDataBinding: undefined,
-      renderer: undefined,
-      scales: undefined,
-      plotArea: undefined,
-    };
-
-    leftBar.name = "Right marginal — stacked totals by row";
-    leftBar.chartSpec = {
-      ...leftBar.chartSpec,
-      datasetId,
-      axisSwapped: true,
-      encodings: {
-        x: { field: "row_group", type: "ordinal" },
-        y: { field: "heat_value", type: "quantitative" },
-      },
-      valueFields: valueFields.map((field) => ({ field, type: "quantitative" as const })),
-      markGroups: [{
-        id: `mark-group:${leftBar.id}:bar`,
-        chartId: leftBar.id,
-        role: "bar",
-        memberKeys: [],
-        sharedConfig: { seriesStyleMapping: { type: "series-style", values: seriesColors } },
-        allowOverrides: true,
-      }],
-      axes: {
-        x: { visible: false, labelsVisible: false },
-        y: { visible: false, labelsVisible: false },
-      },
-      series: undefined,
-      seriesFields: undefined,
-      dataTransforms: undefined,
-      filters: undefined,
-      defaultDataBinding: undefined,
-      renderer: undefined,
-      scales: undefined,
-      plotArea: undefined,
-    };
-
-    [matrix, topBar, leftBar].forEach((node) => {
-      renderChartNode(node);
-      registerChartRelationship(node);
-    });
-    if (!matrix.renderedContent || !topBar.renderedContent || !leftBar.renderedContent) return false;
-
-    setSelection([matrix.id, topBar.id]);
-    if (!executeComposition("concat", false, ["x"], "vertical", "before", matrix.id, topBar.id)) {
-      return false;
-    }
-    setSelection([matrix.id, leftBar.id]);
-    if (!executeComposition("concat", false, ["y"], "horizontal", "after", matrix.id, leftBar.id)) {
-      return false;
-    }
-    [matrix, topBar, leftBar].forEach((node) => {
-      if (!node.chartSpec) return;
-      node.chartSpec = {
-        ...node.chartSpec,
-        axes: {
-          x: { visible: false, labelsVisible: false },
-          y: { visible: false, labelsVisible: false },
-        },
-      };
-    });
-    setSelection([]);
-
-    await nextTick();
-    if (typeof requestAnimationFrame === "function") {
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    }
-    const bounds = canvasNodes.value.reduce<Bounds | null>((current, node) => mergeBounds(
-      current,
-      boundsFromNodeFrame(
+  function exportCanvasSvgMarkup(useFullNodeFrames = false) {
+    const nodes = getSelectionScopeNodes();
+    const bounds = useFullNodeFrames
+      ? nodes.reduce<Bounds | null>((current, node) => mergeBounds(current, boundsFromNodeFrame(
         node.x,
         node.y,
         node.width,
@@ -4691,23 +4590,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
         node.scaleX,
         node.scaleY,
         node.rotation,
-      ),
-    ), null);
-    const viewport = canvasRef.value?.getBoundingClientRect();
-    if (bounds && viewport && bounds.width > 0 && bounds.height > 0) {
-      const padding = 48;
-      const zoom = clamp(Math.min(
-        (viewport.width - padding * 2) / bounds.width,
-        (viewport.height - padding * 2) / bounds.height,
-        1,
-      ), MIN_ZOOM, MAX_ZOOM);
-      viewZoom.value = zoom;
-      viewPan.value = {
-        x: (viewport.width - bounds.width * zoom) / 2 - bounds.minX * zoom,
-        y: (viewport.height - bounds.height * zoom) / 2 - bounds.minY * zoom,
-      };
-    }
-    return true;
+      )), null)
+      : getCanvasNodeListBounds(nodes);
+    return bounds ? createCanvasNodesSvgMarkup(nodes, bounds) : null;
   }
 
   // --- pointer / interaction ---
@@ -5842,6 +5727,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     updateNestedPosition,
     updateNestedChildScale,
     updateNestedCallout,
+    applyNestedAppearance,
     resetNestedPosition,
     closeNestedPositionEditor,
     groupSelectedItems,
@@ -5850,6 +5736,12 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     reorderSelectedNodes,
     alignSelection,
     resetCanvasZoom,
+    exportCanvasSvgMarkup,
+    loadDendrogramProfilesCase,
+    loadGeographicNetworkCase,
+    exportRenderedGeographicSvg,
+    loadSharedHierarchyCase,
+    loadGalleryStarter,
     loadChordCircularStackedFacetCase,
     loadMatrixPieNetworkCase,
   };

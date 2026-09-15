@@ -11,6 +11,7 @@ import {
 import { getCanvasObjectHitTargetBounds } from "../../utils/canvasUtils";
 import { chartDataPreparationKey, mergeSharedScale } from "./renderingData";
 import { normalizeNestedCallout } from "../../utils/nestedCallout";
+import { nestedDecorationBounds, normalizeNestedDecorations } from "../../utils/nestedDecorations";
 
 export function useCanvasRendering(context: any) {
   const {
@@ -644,13 +645,36 @@ export function useCanvasRendering(context: any) {
         const height = Math.abs(scaledWidth * Math.sin(rotation)) + Math.abs(scaledHeight * Math.cos(rotation));
         if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return [];
         const callout = normalizeNestedCallout(parameters.callout);
-        const framedWidth = callout.enabled ? width * callout.scale : width;
-        const framedHeight = callout.enabled ? height * callout.scale : height;
+        let framedWidth = callout.enabled ? width * callout.scale : width;
+        let framedHeight = callout.enabled ? height * callout.scale : height;
+        const decorations = normalizeNestedDecorations(parameters.decorations);
+        const childWidth = Math.abs(child.width * scaleX);
+        const childHeight = Math.abs(child.height * scaleY);
+        for (const decoration of decorations) {
+          const box = nestedDecorationBounds(decoration, childWidth, childHeight);
+          const tail = decoration.kind === "bubble" ? Math.min(box.width, box.height) * 0.2 : 0;
+          const extentX = Math.max(Math.abs(box.x - childWidth / 2), Math.abs(box.x + box.width - childWidth / 2)) * 2 + decoration.strokeWidth;
+          const extentY = Math.max(Math.abs(box.y - childHeight / 2), Math.abs(box.y + box.height + tail - childHeight / 2)) * 2 + decoration.strokeWidth;
+          framedWidth = Math.max(framedWidth, Math.abs(extentX * Math.cos(rotation)) + Math.abs(extentY * Math.sin(rotation)));
+          framedHeight = Math.max(framedHeight, Math.abs(extentX * Math.sin(rotation)) + Math.abs(extentY * Math.cos(rotation)));
+        }
+        // Match the Nested resolver: offsets locate the child anchor, while
+        // the occupied footprint may be off-center inside its canvas frame.
+        const localMinX = child.kind === "leaf" ? child.contentMinX : 0;
+        const localMinY = child.kind === "leaf" ? child.contentMinY : 0;
+        const occupiedX = ((hitBounds.minX + hitBounds.maxX) / 2 - localMinX
+          - (parameters.childAnchor?.x ?? 0.5) * child.width) * scaleX;
+        const occupiedY = ((hitBounds.minY + hitBounds.maxY) / 2 - localMinY
+          - (parameters.childAnchor?.y ?? 0.5) * child.height) * scaleY;
+        const offset = {
+          x: (parameters.offset?.x ?? 0) + occupiedX * Math.cos(rotation) - occupiedY * Math.sin(rotation),
+          y: (parameters.offset?.y ?? 0) + occupiedX * Math.sin(rotation) + occupiedY * Math.cos(rotation),
+        };
         const childType = child.chartSpec?.chartType?.replace(/[\s_-]/g, "").toLowerCase() ?? "";
         // Cartesian tree links use the child's actual bounding box so their
         // endpoints are the left/right (or top/bottom) center of that box.
         // Polar parents retain circular routing around their occupied radius.
-        const circular = !callout.enabled
+        const circular = !callout.enabled && decorations.length === 0
           && !isCartesianTreeChart(parent.chartSpec?.chartType)
           && (
             !!polarBounds
@@ -665,6 +689,7 @@ export function useCanvasRendering(context: any) {
           ...(circular
             ? { radius: Math.abs((polarBounds?.outerRadius ?? Math.max(hitBounds.width, hitBounds.height) / 2) * Math.max(Math.abs(scaleX), Math.abs(scaleY))) }
             : {}),
+          offset,
           width: framedWidth,
           height: framedHeight,
         }];

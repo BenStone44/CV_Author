@@ -3,6 +3,7 @@ import type { CanvasNode, EncodingChannel, NestedRenderPlacement, Point } from "
 import { getCanvasObjectHitTargetBounds, getNodeTransform, getLeafNodeTransform, getPolarOccupiedGeometry } from "../utils/canvasUtils";
 import { CanvasCoordinateSystemLayer } from "./CartesianCoordinateSystem";
 import { nestedCalloutGeometry } from "../utils/nestedCallout";
+import { nestedDecorationsMarkup } from "../utils/nestedDecorations";
 
 function arrowHead(end: Point, direction: Point, size: number) {
   const perpendicular = { x: -direction.y, y: direction.x };
@@ -399,18 +400,8 @@ export const CanvasNodeView: any = defineComponent({
           "pointer-events": "none",
         }, [
           h("path", {
-            class: "nested-callout__arrow",
-            d: callout.arrowPath,
-            "vector-effect": "non-scaling-stroke",
-          }),
-          h("rect", {
             class: "nested-callout__frame",
-            x: callout.frame.x,
-            y: callout.frame.y,
-            width: callout.frame.width,
-            height: callout.frame.height,
-            rx: 8,
-            transform: `rotate(${callout.frame.rotation} ${callout.frame.center.x} ${callout.frame.center.y})`,
+            d: callout.outlinePath,
             "vector-effect": "non-scaling-stroke",
           }),
         ]) : null;
@@ -421,6 +412,11 @@ export const CanvasNodeView: any = defineComponent({
           transform: matrixTransform(multiplyMatrix(inverseAncestor, inverseParent)),
         }, [
           calloutNode,
+          placement.parameters.decorations?.length ? h("g", {
+            "data-nested-decorations": placement.relationshipId,
+            "pointer-events": "none",
+            innerHTML: nestedDecorationsMarkup(child, placement.parameters.decorations),
+          }) : null,
           h(NodeView, {
             key: child.id,
             node: child,

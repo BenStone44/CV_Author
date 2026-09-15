@@ -410,7 +410,12 @@ export function useCanvasImportOperations(context: any) {
     setImportNotice(countTemplateNodes(template.nodes) > 1 ? `${name}: imported ${countTemplateNodes(template.nodes)} SVG tree nodes.` : `${name}: imported as a single SVG node.`);
     return nextItems;
   }
-  async function createCanvasItem(candidate: SvgCandidate, point: Point, recordHistory = true) {
+  async function createCanvasItem(
+    candidate: SvgCandidate,
+    point: Point,
+    recordHistory = true,
+    preferredDatasetId?: string,
+  ) {
     loadingDrop.value = true;
     try {
       const template = candidate.svgMarkup
@@ -446,7 +451,8 @@ export function useCanvasImportOperations(context: any) {
         !!candidate.compositionType,
         candidate.coordinateSystem,
         candidate.renderMode === "static-layer" ? undefined : candidate.chartType,
-        activeDataset.value?.id
+        preferredDatasetId
+          ?? activeDataset.value?.id
           ?? (templateFamily === "flow" && candidate.chartType.replace(/[\s_-]/g, "").toLowerCase() === "chord"
             ? defaultDatasetForChartType(candidate.chartType).id
             : undefined),

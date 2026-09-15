@@ -25,7 +25,7 @@ export type NestedCalloutGeometry = {
     rotation: number;
   };
   parentAnchor: Point;
-  arrowPath: string;
+  outlinePath: string;
 };
 
 export function normalizeNestedCallout(value: Partial<NestedCalloutSpec> | null | undefined): NestedCalloutSpec {
@@ -88,29 +88,46 @@ export function nestedCalloutGeometry(
     x: parentAnchor.x - center.x,
     y: parentAnchor.y - center.y,
   }, -child.rotation);
-  const dx = Math.abs(towardParent.x) < 0.0001 && Math.abs(towardParent.y) < 0.0001
-    ? 0
-    : towardParent.x;
-  const dy = Math.abs(towardParent.x) < 0.0001 && Math.abs(towardParent.y) < 0.0001
-    ? -1
-    : towardParent.y;
   const halfWidth = width / 2;
   const halfHeight = height / 2;
-  const edgeFactor = Math.min(
-    Math.abs(dx) > 0.0001 ? halfWidth / Math.abs(dx) : Number.POSITIVE_INFINITY,
-    Math.abs(dy) > 0.0001 ? halfHeight / Math.abs(dy) : Number.POSITIVE_INFINITY,
-  );
-  const edgeLocal = { x: dx * edgeFactor, y: dy * edgeFactor };
-  const edgeVector = rotate(edgeLocal, child.rotation);
-  const edge = { x: center.x + edgeVector.x, y: center.y + edgeVector.y };
-  const length = Math.max(Math.hypot(parentAnchor.x - center.x, parentAnchor.y - center.y), 0.0001);
-  const tangent = {
-    x: -(parentAnchor.y - center.y) / length,
-    y: (parentAnchor.x - center.x) / length,
+  const radius = Math.min(8, halfWidth / 2, halfHeight / 2);
+  const outside = Math.abs(towardParent.x) > halfWidth || Math.abs(towardParent.y) > halfHeight;
+  const horizontal = Math.abs(towardParent.x) / halfWidth > Math.abs(towardParent.y) / halfHeight;
+  const tailSide = !outside ? -1 : horizontal ? (towardParent.x > 0 ? 1 : 3) : (towardParent.y > 0 ? 2 : 0);
+  const edgeFactor = outside ? Math.min(
+    towardParent.x ? halfWidth / Math.abs(towardParent.x) : Infinity,
+    towardParent.y ? halfHeight / Math.abs(towardParent.y) : Infinity,
+  ) : 0;
+  const edgePoint = { x: towardParent.x * edgeFactor, y: towardParent.y * edgeFactor };
+  const absolute = (point: Point) => {
+    const rotated = rotate(point, child.rotation);
+    return pathPoint({ x: center.x + rotated.x, y: center.y + rotated.y });
   };
-  const halfBase = Math.max(4, Math.min(10, Math.min(width, height) * 0.08));
-  const first = { x: edge.x + tangent.x * halfBase, y: edge.y + tangent.y * halfBase };
-  const second = { x: edge.x - tangent.x * halfBase, y: edge.y - tangent.y * halfBase };
+  const path = [`M ${absolute({ x: -halfWidth + radius, y: -halfHeight })}`];
+  // Traverse the rounded rectangle clockwise. Replace one segment of its
+  // perimeter with the two sides of the tail, leaving no internal base seam.
+  const edge = (side: number, start: Point, end: Point) => {
+    if (side === tailSide) {
+      const length = Math.hypot(end.x - start.x, end.y - start.y);
+      const unit = { x: (end.x - start.x) / length, y: (end.y - start.y) / length };
+      const halfBase = Math.min(10, Math.min(width, height) * 0.08, length / 4);
+      const projection = (edgePoint.x - start.x) * unit.x + (edgePoint.y - start.y) * unit.y;
+      const position = Math.max(halfBase, Math.min(length - halfBase, projection));
+      const at = (distance: number) => absolute({ x: start.x + unit.x * distance, y: start.y + unit.y * distance });
+      path.push(`L ${at(position - halfBase)} L ${pathPoint(parentAnchor)} L ${at(position + halfBase)}`);
+    }
+    path.push(`L ${absolute(end)}`);
+  };
+  const corner = (control: Point, end: Point) => path.push(`Q ${absolute(control)} ${absolute(end)}`);
+  edge(0, { x: -halfWidth + radius, y: -halfHeight }, { x: halfWidth - radius, y: -halfHeight });
+  corner({ x: halfWidth, y: -halfHeight }, { x: halfWidth, y: -halfHeight + radius });
+  edge(1, { x: halfWidth, y: -halfHeight + radius }, { x: halfWidth, y: halfHeight - radius });
+  corner({ x: halfWidth, y: halfHeight }, { x: halfWidth - radius, y: halfHeight });
+  edge(2, { x: halfWidth - radius, y: halfHeight }, { x: -halfWidth + radius, y: halfHeight });
+  corner({ x: -halfWidth, y: halfHeight }, { x: -halfWidth, y: halfHeight - radius });
+  edge(3, { x: -halfWidth, y: halfHeight - radius }, { x: -halfWidth, y: -halfHeight + radius });
+  corner({ x: -halfWidth, y: -halfHeight }, { x: -halfWidth + radius, y: -halfHeight });
+  path.push("Z");
   return {
     frame: {
       x: center.x - width / 2,
@@ -121,6 +138,6 @@ export function nestedCalloutGeometry(
       rotation: child.rotation,
     },
     parentAnchor,
-    arrowPath: `M ${pathPoint(first)} L ${pathPoint(parentAnchor)} L ${pathPoint(second)} Z`,
+    outlinePath: path.join(" "),
   };
 }

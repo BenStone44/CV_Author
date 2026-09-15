@@ -1,3 +1,4 @@
+import { descending, extent, quickselect } from "d3-array";
 import { materializeChartStructure } from "./dimensionInference";
 import { getChartTemplateContract, normalizeBarChartVariant, normalizeChartTemplate } from "./chartTemplates";
 import { inferCsvPrimaryKey } from "./csvDataEngine";
@@ -20,24 +21,36 @@ export function rowMatchesChartFilters(
     .every(([field, values]) => values.includes(row[field] ?? ""));
 }
 
+export function createChartFilterPredicate(spec: ChartSpec) {
+  // Compile once per chart view, rather than rebuilding entries for each row.
+  const selections = Object.entries(spec.filters ?? {});
+  const valueFilters = Object.entries(spec.valueFilters ?? {})
+    .map(([field, values]) => [field, new Set(values)] as const);
+  return (row: Dataset["rows"][number]) => selections.every(([field, value]) => row[field] === value)
+    && valueFilters.every(([field, values]) => values.has(row[field] ?? ""));
+}
+
 export function filterDatasetForChart(dataset: Dataset, spec: ChartSpec): Dataset {
   const hasFilters = Object.keys(spec.filters ?? {}).length > 0
     || Object.keys(spec.valueFilters ?? {}).length > 0;
   let rows = hasFilters
-    ? dataset.rows.filter((row) => rowMatchesChartFilters(row, spec))
+    ? dataset.rows.filter(createChartFilterPredicate(spec))
     : dataset.rows;
   for (const [field, filter] of Object.entries(spec.numericFilters ?? {})) {
     const topN = normalizePositiveInteger(filter.topN);
     if (!topN) continue;
-    const values = Array.from(new Set(rows
-      .map((row) => Number(row[field] ?? ""))
-      .filter(Number.isFinite)))
-      .sort((left, right) => right - left)
-      .slice(0, topN);
-    const allowed = new Set(values.map(String));
+    const distinct = new Set<number>();
+    for (const row of rows) {
+      const value = Number(row[field] ?? "");
+      if (Number.isFinite(value)) distinct.add(value);
+    }
+    const values = Array.from(distinct);
+    if (topN < values.length) quickselect(values, topN - 1, 0, values.length - 1, descending);
+    // Legacy Top N selects distinct values, including every tied source row.
+    const allowed = new Set(values.slice(0, topN));
     rows = rows.filter((row) => {
       const numeric = Number(row[field] ?? "");
-      return Number.isFinite(numeric) && allowed.has(String(numeric));
+      return Number.isFinite(numeric) && allowed.has(numeric);
     });
   }
   if (rows.length === dataset.rows.length && !hasFilters && Object.keys(spec.numericFilters ?? {}).length === 0) return dataset;
@@ -93,10 +106,11 @@ export function materializeNumericBins(dataset: Dataset, spec: ChartSpec): Datas
   if (binFields.length === 0) return dataset;
   let rows = dataset.rows;
   binFields.forEach(([field, binCount]) => {
-    const values = rows.map((row) => Number(row[field] ?? "")).filter(Number.isFinite);
-    if (values.length === 0) return;
-    const min = Math.min(...values);
-    const max = Math.max(...values);
+    const [min, max] = extent(rows, (row) => {
+      const value = Number(row[field] ?? "");
+      return Number.isFinite(value) ? value : undefined;
+    });
+    if (min === undefined || max === undefined) return;
     const width = max === min ? 1 : (max - min) / binCount;
     rows = rows.map((row) => {
       const numeric = Number(row[field] ?? "");

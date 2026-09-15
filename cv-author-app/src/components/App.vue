@@ -7,7 +7,9 @@ import {
   onUpdated,
   ref,
 } from "vue";
-import { ArrowLeftRight, ArrowUp, Check, ChevronDown, Move, RotateCcw, SlidersHorizontal, X } from "@lucide/vue";
+import { ArrowLeftRight, ArrowUp, Check, ChevronDown, Move, SlidersHorizontal, X } from "@lucide/vue";
+import NestedConfigEditor from "./NestedConfigEditor.vue";
+import { SHARED_HIERARCHY_CASE_ID } from "../utils/sharedHierarchyCase";
 import { CanvasNodeView } from "./CanvasNodeView";
 import DeckglMapLayer from "./DeckglMapLayer.vue";
 import DeckglEncodingConfigPanel from "./DeckglEncodingConfigPanel.vue";
@@ -52,7 +54,8 @@ import {
 } from "../utils/chartTemplateCategories";
 import { deckglExampleImageUrl, getGeographicLayerFamily } from "../utils/geographicLayerCards";
 import { getChartTemplateContract } from "../utils/chartTemplates";
-import { nestedCalloutGeometry, normalizeNestedCallout } from "../utils/nestedCallout";
+import { normalizeNestedCallout } from "../utils/nestedCallout";
+import { normalizeNestedDecorations } from "../utils/nestedDecorations";
 import { selectionActionPositionsAbove } from "../utils/selectionControls";
 import {
   cartesianTreeDirection,
@@ -67,6 +70,7 @@ import {
   MATRIX_PIE_NETWORK_DATASET_ID,
   matrixPieNetworkDataset,
 } from "../utils/defaultChartData";
+import academicScoresWideCsv from "../../public/site/gallery/cases/academic-scores/data/academic_scores_wide.csv?raw";
 
 const EMPTY_SELECTION_IDS: string[] = [];
 const NESTED_MAX_DIAMETER = 360;
@@ -74,22 +78,55 @@ const CHORD_CIRCULAR_STACKED_CASE = "chord-circular-stacked-facet-concat";
 const LEGACY_CHORD_POLAR_LINE_CASE = "chord-polar-line-facet-concat";
 const MATRIX_FORCE_HEATMAP_CASE = "matrix-force-heatmap-marginal-bars";
 const LEGACY_MATRIX_PIE_NETWORK_CASE = "matrix-pie-network-marginal-bars";
+const ACADEMIC_SCORES_CASE = "academic-scores-nested-concat";
 const requestedCase = typeof window === "undefined"
   ? null
   : new URLSearchParams(window.location.search).get("case");
+const requestedStarterValue = typeof window === "undefined"
+  ? null
+  : new URLSearchParams(window.location.search).get("starter");
+const galleryStarterIds = new Set([
+  "academic-scores",
+  "polar-facet",
+  "matrix-network",
+  "shared-hierarchy",
+  "tree-leaf-axis",
+]);
+const requestedStarter = requestedStarterValue && galleryStarterIds.has(requestedStarterValue)
+  ? requestedStarterValue
+  : null;
 const isChordCircularStackedCase = requestedCase === CHORD_CIRCULAR_STACKED_CASE
   || requestedCase === LEGACY_CHORD_POLAR_LINE_CASE;
 const isMatrixPieNetworkCase = requestedCase === MATRIX_FORCE_HEATMAP_CASE
   || requestedCase === LEGACY_MATRIX_PIE_NETWORK_CASE;
+const isAcademicScoresCase = requestedCase === ACADEMIC_SCORES_CASE;
+const isSharedHierarchyCase = requestedCase === SHARED_HIERARCHY_CASE_ID;
+const isDendrogramGallery = requestedCase === "dendrogram-nested-radial-area"
+  || new URLSearchParams(window.location.search).get("starter") === "tree-leaf-axis";
+const isGeographicGallery = requestedCase === "geographic-network-layer-nested-bars"
+  || new URLSearchParams(window.location.search).get("starter") === "geographic-network";
 const datasetStore = useDatasetStore();
-if (isChordCircularStackedCase) {
+const starterDatasets = requestedStarter === "polar-facet"
+  ? [chordPolarLineDataset]
+  : requestedStarter === "matrix-network"
+    ? [matrixPieNetworkDataset]
+    : [];
+if (starterDatasets.length > 0) {
+  const starterDatasetIds = new Set(starterDatasets.map((dataset) => dataset.id));
+  datasetStore.datasets.value = [
+    ...datasetStore.datasets.value.filter((dataset) => !starterDatasetIds.has(dataset.id)),
+    ...starterDatasets,
+  ];
+  datasetStore.setActiveDataset(starterDatasets[0]!.id);
+}
+if (!requestedStarter && isChordCircularStackedCase) {
   datasetStore.datasets.value = [
     ...datasetStore.datasets.value.filter((dataset) => dataset.id !== CHORD_POLAR_LINE_DATASET_ID),
     chordPolarLineDataset,
   ];
   datasetStore.setActiveDataset(CHORD_POLAR_LINE_DATASET_ID);
 }
-if (isMatrixPieNetworkCase) {
+if (!requestedStarter && isMatrixPieNetworkCase) {
   datasetStore.datasets.value = [
     ...datasetStore.datasets.value.filter((dataset) => dataset.id !== MATRIX_PIE_NETWORK_DATASET_ID),
     matrixPieNetworkDataset,
@@ -250,16 +287,20 @@ const {
   applyDimensionFacet,
   confirmNestedBinding,
   closeNestedBinding: closeNestedBindingInStore,
-  updateNestedPosition,
+  applyNestedAppearance,
   updateNestedChildScale,
-  updateNestedCallout,
-  resetNestedPosition,
   closeNestedPositionEditor,
   applyInputColumnIntent,
   closeDimensionDropDecision,
   reorderSelectedNodes,
   alignSelection,
   resetCanvasZoom,
+  exportCanvasSvgMarkup,
+  loadDendrogramProfilesCase,
+  loadGeographicNetworkCase,
+  exportRenderedGeographicSvg,
+  loadSharedHierarchyCase,
+  loadGalleryStarter,
   loadChordCircularStackedFacetCase,
   loadMatrixPieNetworkCase,
 } = useCanvasStore(canvasRef);
@@ -430,6 +471,7 @@ function deckglNestedOverlays(node: CanvasNode): DeckglNestedOverlay[] {
         rotation: parameters.rotation ?? 0,
         retainParent: parameters.retainParent,
         callout: normalizeNestedCallout(parameters.callout),
+        decorations: normalizeNestedDecorations(parameters.decorations),
       },
     }];
   });
@@ -873,35 +915,7 @@ function closeNestedBinding() {
 }
 
 type AlignmentMode = "left" | "center-x" | "right" | "top" | "center-y" | "bottom";
-type NestedAnchorSide = "parentAnchor" | "childAnchor";
-
-const nestedAnchorOptions = [
-  { x: 0, y: 0, label: "Top left" },
-  { x: 0.5, y: 0, label: "Top center" },
-  { x: 1, y: 0, label: "Top right" },
-  { x: 0, y: 0.5, label: "Middle left" },
-  { x: 0.5, y: 0.5, label: "Center" },
-  { x: 1, y: 0.5, label: "Middle right" },
-  { x: 0, y: 1, label: "Bottom left" },
-  { x: 0.5, y: 1, label: "Bottom center" },
-  { x: 1, y: 1, label: "Bottom right" },
-] as const;
-
-const nestedPreviewGeometry = {
-  previewCenterY: 128,
-  offsetScale: 2,
-};
-const nestedPreviewDrag = ref<{
-  pointerId: number;
-  startClientX: number;
-  startClientY: number;
-  startOffsetX: number;
-  startOffsetY: number;
-  minDeltaX: number;
-  maxDeltaX: number;
-  minDeltaY: number;
-  maxDeltaY: number;
-} | null>(null);
+const nestedConfigRef = ref<InstanceType<typeof NestedConfigEditor> | null>(null);
 type NestedElementPreview = {
   content: string;
   viewBox: string;
@@ -987,6 +1001,15 @@ function nestedMarkAtDataKey(elements: Element[], dataKey: string) {
 function nestedParentMarkPreview(): NestedElementPreview | null {
   const editor = nestedPositionEditor.value;
   const parent = editor?.parent;
+  if (parent?.layerKind === "deckgl") {
+    const configuredRadius = Number(deckglLayerConfig(parent).size ?? 8);
+    const radius = Number.isFinite(configuredRadius) ? Math.max(configuredRadius, 1) : 8;
+    const diameter = radius * 2;
+    return {
+      content: `<circle cx="${radius}" cy="${radius}" r="${radius}" fill="#64748b"/>`,
+      viewBox: `0 0 ${diameter} ${diameter}`, width: diameter, height: diameter,
+    };
+  }
   const fullPreview = nestedElementPreview(parent);
   if (!editor || !parent || !fullPreview || !editor.parentDataKey || typeof DOMParser === "undefined") return null;
   const document = new DOMParser().parseFromString(
@@ -1023,226 +1046,13 @@ function nestedParentMarkPreview(): NestedElementPreview | null {
 }
 
 const nestedParentPreview = computed(nestedParentMarkPreview);
-const nestedChildPreview = computed(() => nestedElementPreview(nestedPositionEditor.value?.child, true));
-const nestedPreviewScale = computed(() => {
-  const editor = nestedPositionEditor.value;
-  if (!editor) return 1;
-  const parentPreview = nestedParentPreview.value;
-  const parentMaxDimension = Math.max(parentPreview?.width ?? editor.parent.width, parentPreview?.height ?? editor.parent.height, 1);
-  const childMaxDimension = Math.max(
-    editor.child.width * editor.parameters.scale.x,
-    editor.child.height * editor.parameters.scale.y,
-    1,
-  );
-  return 156 / Math.max(parentMaxDimension, childMaxDimension);
-});
-const nestedParentPreviewSize = computed(() => {
-  const editor = nestedPositionEditor.value;
-  const preview = nestedParentPreview.value;
-  const width = (preview?.width ?? editor?.parent.width ?? 120) * nestedPreviewScale.value;
-  const height = (preview?.height ?? editor?.parent.height ?? 120) * nestedPreviewScale.value;
-  const minDimension = 52;
-  const minimumScale = minDimension / Math.max(width, height, 1);
-  return minimumScale > 1
-    ? { width: width * minimumScale, height: height * minimumScale }
-    : { width, height };
-});
-const nestedParentPreviewStyle = computed(() => {
-  const size = nestedParentPreviewSize.value;
-  return {
-    width: `${size.width}px`,
-    height: `${size.height}px`,
-    left: `calc(50% - ${size.width / 2}px)`,
-    top: `${nestedPreviewGeometry.previewCenterY - size.height / 2}px`,
-  };
-});
-const nestedChildPreviewSize = computed(() => {
-  const editor = nestedPositionEditor.value;
-  if (!editor) return { width: 108, height: 68 };
-  const width = editor.child.width * editor.parameters.scale.x * nestedPreviewScale.value;
-  const height = editor.child.height * editor.parameters.scale.y * nestedPreviewScale.value;
-  const minDimension = 42;
-  const minimumScale = minDimension / Math.max(width, height, 1);
-  return minimumScale > 1
-    ? { width: width * minimumScale, height: height * minimumScale }
-    : { width, height };
-});
-const nestedChildScaleRatio = computed(() => {
-  const editor = nestedPositionEditor.value;
-  if (!editor) return 0;
-  return Math.max(
-    editor.child.width * editor.parameters.scale.x,
-    editor.child.height * editor.parameters.scale.y,
-  ) / NESTED_MAX_DIAMETER;
-});
-const nestedChildPreviewStyle = computed(() => {
-  const parameters = nestedPositionEditor.value?.parameters;
-  if (!parameters) return undefined;
-  const geometry = nestedPreviewGeometry;
-  const childSize = nestedChildPreviewSize.value;
-  const parentSize = nestedParentPreviewSize.value;
-  return {
-    left: `calc(50% - ${parentSize.width / 2}px + ${
-      parameters.parentAnchor.x * parentSize.width
-      - parameters.childAnchor.x * childSize.width
-      + parameters.offset.x * geometry.offsetScale
-    }px)`,
-    top: `${geometry.previewCenterY - parentSize.height / 2
-      + parameters.parentAnchor.y * parentSize.height
-      - parameters.childAnchor.y * childSize.height
-      + parameters.offset.y * geometry.offsetScale}px`,
-    width: `${childSize.width}px`,
-    height: `${childSize.height}px`,
-  };
-});
-const nestedCalloutPreviewGeometry = computed(() => {
-  const editor = nestedPositionEditor.value;
-  if (!editor?.parameters.callout.enabled) return null;
-  const childSize = nestedChildPreviewSize.value;
-  return nestedCalloutGeometry({
-    x: 0,
-    y: 0,
-    width: childSize.width,
-    height: childSize.height,
-    scaleX: 1,
-    scaleY: 1,
-    rotation: 0,
-  }, {
-    ...editor.parameters,
-    parentAnchor: { ...editor.parameters.parentAnchor },
-    childAnchor: { ...editor.parameters.childAnchor },
-    offset: {
-      x: editor.parameters.offset.x * nestedPreviewGeometry.offsetScale,
-      y: editor.parameters.offset.y * nestedPreviewGeometry.offsetScale,
-    },
-    scale: { x: 1, y: 1 },
-    rotation: 0,
-  });
-});
-const nestedOffsetGuideStyle = computed(() => {
-  const parameters = nestedPositionEditor.value?.parameters;
-  if (!parameters) return undefined;
-  const geometry = nestedPreviewGeometry;
-  const offsetX = parameters.offset.x * geometry.offsetScale;
-  const offsetY = parameters.offset.y * geometry.offsetScale;
-  const parentSize = nestedParentPreviewSize.value;
-  return {
-    left: `calc(50% - ${parentSize.width / 2}px + ${parameters.parentAnchor.x * parentSize.width}px)`,
-    top: `${geometry.previewCenterY - parentSize.height / 2 + parameters.parentAnchor.y * parentSize.height}px`,
-    width: `${Math.hypot(offsetX, offsetY)}px`,
-    transform: `rotate(${Math.atan2(offsetY, offsetX) * 180 / Math.PI}deg)`,
-  };
-});
-
-function alignNestedPosition(mode: AlignmentMode) {
-  const parameters = nestedPositionEditor.value?.parameters;
-  if (!parameters) return;
-  const parentAnchor = { ...parameters.parentAnchor };
-  const childAnchor = { ...parameters.childAnchor };
-  const offset = { ...parameters.offset };
-  if (mode === "left" || mode === "center-x" || mode === "right") {
-    const x = mode === "left" ? 0 : mode === "right" ? 1 : 0.5;
-    parentAnchor.x = x;
-    childAnchor.x = x;
-    offset.x = 0;
-  } else {
-    const y = mode === "top" ? 0 : mode === "bottom" ? 1 : 0.5;
-    parentAnchor.y = y;
-    childAnchor.y = y;
-    offset.y = 0;
-  }
-  updateNestedPosition({ parentAnchor, childAnchor, offset });
-}
-
+const nestedChildPreview = computed(() => nestedElementPreview(nestedPositionEditor.value?.child));
 function onCanvasToolbarAlign(mode: AlignmentMode) {
   if (nestedPositionEditor.value) {
-    alignNestedPosition(mode);
+    nestedConfigRef.value?.align(mode);
     return;
   }
   alignSelection(mode);
-}
-
-function selectNestedAnchor(side: NestedAnchorSide, anchor: { x: number; y: number }) {
-  if (side === "parentAnchor") updateNestedPosition({ parentAnchor: anchor });
-  else updateNestedPosition({ childAnchor: anchor });
-}
-
-function setNestedParentRetention(event: Event) {
-  updateNestedPosition({ retainParent: (event.currentTarget as HTMLInputElement).checked });
-}
-
-function setNestedChildScale(event: Event) {
-  const editor = nestedPositionEditor.value;
-  const ratio = Number((event.currentTarget as HTMLInputElement).value);
-  if (!editor || !Number.isFinite(ratio)) return;
-  updateNestedChildScale(editor.child.id, ratio);
-}
-
-function toggleNestedCallout() {
-  const callout = nestedPositionEditor.value?.parameters.callout;
-  if (!callout) return;
-  updateNestedCallout({ enabled: !callout.enabled });
-}
-
-function setNestedCalloutScale(event: Event) {
-  const scale = Number((event.currentTarget as HTMLInputElement).value);
-  if (!Number.isFinite(scale)) return;
-  updateNestedCallout({ scale });
-}
-
-function isNestedAnchorSelected(side: NestedAnchorSide, anchor: { x: number; y: number }) {
-  const selected = nestedPositionEditor.value?.parameters[side];
-  return selected?.x === anchor.x && selected.y === anchor.y;
-}
-
-function nestedAnchorOptionStyle(anchor: { x: number; y: number }) {
-  return {
-    left: `${anchor.x * 100}%`,
-    top: `${anchor.y * 100}%`,
-  };
-}
-
-function onNestedPreviewPointerDown(event: PointerEvent) {
-  const offset = nestedPositionEditor.value?.parameters.offset;
-  if (!offset || event.button !== 0) return;
-  const child = event.currentTarget as HTMLElement;
-  const preview = child.parentElement;
-  if (!preview) return;
-  child.setPointerCapture(event.pointerId);
-  const childRect = child.getBoundingClientRect();
-  const previewRect = preview.getBoundingClientRect();
-  const visibleHandle = 18;
-  nestedPreviewDrag.value = {
-    pointerId: event.pointerId,
-    startClientX: event.clientX,
-    startClientY: event.clientY,
-    startOffsetX: offset.x,
-    startOffsetY: offset.y,
-    minDeltaX: previewRect.left + visibleHandle - childRect.right,
-    maxDeltaX: previewRect.right - visibleHandle - childRect.left,
-    minDeltaY: previewRect.top + visibleHandle - childRect.bottom,
-    maxDeltaY: previewRect.bottom - visibleHandle - childRect.top,
-  };
-}
-
-function onNestedPreviewPointerMove(event: PointerEvent) {
-  const drag = nestedPreviewDrag.value;
-  if (!drag || drag.pointerId !== event.pointerId) return;
-  const deltaX = Math.max(drag.minDeltaX, Math.min(event.clientX - drag.startClientX, drag.maxDeltaX));
-  const deltaY = Math.max(drag.minDeltaY, Math.min(event.clientY - drag.startClientY, drag.maxDeltaY));
-  updateNestedPosition({
-    offset: {
-      x: drag.startOffsetX + deltaX / nestedPreviewGeometry.offsetScale,
-      y: drag.startOffsetY + deltaY / nestedPreviewGeometry.offsetScale,
-    },
-  });
-}
-
-function onNestedPreviewPointerUp(event: PointerEvent) {
-  if (nestedPreviewDrag.value?.pointerId !== event.pointerId) return;
-  const target = event.currentTarget as HTMLElement;
-  if (target.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId);
-  nestedPreviewDrag.value = null;
 }
 
 function isScatterChartType(chartType: string) {
@@ -1659,7 +1469,80 @@ function onCoordinateAxisReverse(axis: "x" | "y") {
   reverseCoordinateAxis(node, axis);
 }
 
+async function loadAcademicScoresWideData(compose = false) {
+  const dataset = await datasetStore.importDataset(new File(
+    [academicScoresWideCsv],
+    "academic_scores_wide.csv",
+    { type: "text/csv" },
+  ));
+  return dataset ? loadGalleryStarter("academic-scores", dataset.id, compose) : false;
+}
+
+async function loadSharedHierarchyExample(compose: boolean) {
+  try {
+    const response = await fetch("/site/gallery/cases/shared-hierarchy/data/tree.csv");
+    if (!response.ok) throw new Error(`Hierarchy CSV request failed: ${response.status}`);
+    const dataset = await datasetStore.importDataset(new File([await response.text()], "tree.csv", { type: "text/csv" }));
+    return dataset ? loadSharedHierarchyCase(dataset.id, compose) : false;
+  } catch (error) {
+    document.documentElement.dataset.galleryStarterError = String(error);
+    return false;
+  }
+}
+
+async function loadRequestedGalleryStarter(starterId: string) {
+  if (starterId === "shared-hierarchy") return loadSharedHierarchyExample(false);
+  return starterId === "academic-scores"
+    ? loadAcademicScoresWideData()
+    : loadGalleryStarter(starterId);
+}
+
+function exposeRenderedCaseSvg() {
+  const svg = exportCanvasSvgMarkup(true);
+  if (!svg) return false;
+  (window as Window & { __VISBRICKS_CASE_SVG__?: string }).__VISBRICKS_CASE_SVG__ = svg;
+  return true;
+}
+
 onMounted(() => {
+  if (isDendrogramGallery) {
+    const starter = new URLSearchParams(window.location.search).get("starter") === "tree-leaf-axis";
+    document.documentElement.dataset[starter ? "starterId" : "caseId"] = starter ? "tree-leaf-axis" : "dendrogram-nested-radial-area";
+    document.documentElement.dataset[starter ? "starterStatus" : "caseStatus"] = "loading";
+    void nextTick(async () => {
+      try {
+        if (!await loadDendrogramProfilesCase(!starter)) throw new Error("Dendrogram case setup failed");
+        if (!starter) {
+          const svg = exportCanvasSvgMarkup(true);
+          if (!svg) throw new Error("Dendrogram export unavailable");
+          (window as Window & { __VISBRICKS_CASE_SVG__?: string }).__VISBRICKS_CASE_SVG__ = svg;
+        }
+        document.documentElement.dataset[starter ? "starterStatus" : "caseStatus"] = "ready";
+      } catch (error) {
+        document.documentElement.dataset.galleryStarterError = String(error);
+        document.documentElement.dataset[starter ? "starterStatus" : "caseStatus"] = "error";
+      }
+    });
+  }
+  const geoStarter = new URLSearchParams(window.location.search).get("starter") === "geographic-network";
+  if (geoStarter || requestedCase === "geographic-network-layer-nested-bars") {
+    document.documentElement.dataset[geoStarter ? "starterId" : "caseId"] = geoStarter ? "geographic-network" : "geographic-network-layer-nested-bars";
+    document.documentElement.dataset[geoStarter ? "starterStatus" : "caseStatus"] = "loading";
+    void nextTick(async () => {
+      try {
+        if (!await loadGeographicNetworkCase(!geoStarter)) throw new Error("Geographic case setup failed");
+        if (!geoStarter) {
+          const svg = await exportRenderedGeographicSvg();
+          if (!svg) throw new Error("Geographic export unavailable");
+          (window as Window & { __VISBRICKS_CASE_SVG__?: string }).__VISBRICKS_CASE_SVG__ = svg;
+        }
+        document.documentElement.dataset[geoStarter ? "starterStatus" : "caseStatus"] = "ready";
+      } catch (error) {
+        document.documentElement.dataset.galleryStarterError = String(error);
+        document.documentElement.dataset[geoStarter ? "starterStatus" : "caseStatus"] = "error";
+      }
+    });
+  }
   syncRenderedNodeSelectionBounds();
   if (typeof IntersectionObserver === "function" && canvasRef.value) {
     deckglVisibilityObserver = new IntersectionObserver(updateDeckglLayerVisibility, {
@@ -1674,22 +1557,46 @@ onMounted(() => {
   window.addEventListener("click", closeTemplateCategoryMenu);
   window.addEventListener("resize", positionNestedBindingPopup);
   window.addEventListener("resize", closeTemplateCategoryMenu);
-  if (isChordCircularStackedCase) {
+  if (requestedStarter && !isDendrogramGallery) {
+    document.documentElement.dataset.starterId = requestedStarter;
+    document.documentElement.dataset.starterStatus = "loading";
+    void nextTick(async () => {
+      const loaded = await loadRequestedGalleryStarter(requestedStarter);
+      await nextTick();
+      document.documentElement.dataset.starterStatus = loaded ? "ready" : "error";
+    });
+  } else if (isSharedHierarchyCase) {
+    document.documentElement.dataset.caseId = SHARED_HIERARCHY_CASE_ID;
+    document.documentElement.dataset.caseStatus = "loading";
+    void nextTick(async () => {
+      const loaded = await loadSharedHierarchyExample(true);
+      await nextTick();
+      document.documentElement.dataset.caseStatus = loaded && exposeRenderedCaseSvg() ? "ready" : "error";
+    });
+  } else if (isAcademicScoresCase) {
+    document.documentElement.dataset.caseId = requestedCase;
+    document.documentElement.dataset.caseStatus = "loading";
+    void nextTick(async () => {
+      const loaded = await loadAcademicScoresWideData(true);
+      await nextTick();
+      document.documentElement.dataset.caseStatus = loaded && exposeRenderedCaseSvg() ? "ready" : "error";
+    });
+  } else if (isChordCircularStackedCase) {
     document.documentElement.dataset.caseId = requestedCase;
     document.documentElement.dataset.caseStatus = "loading";
     void nextTick(async () => {
       const loaded = await loadChordCircularStackedFacetCase(CHORD_POLAR_LINE_DATASET_ID);
       await nextTick();
-      document.documentElement.dataset.caseStatus = loaded ? "ready" : "error";
+      document.documentElement.dataset.caseStatus = loaded && exposeRenderedCaseSvg() ? "ready" : "error";
     });
   }
-  if (isMatrixPieNetworkCase) {
+  if (!requestedStarter && isMatrixPieNetworkCase) {
     document.documentElement.dataset.caseId = requestedCase;
     document.documentElement.dataset.caseStatus = "loading";
     void nextTick(async () => {
       const loaded = await loadMatrixPieNetworkCase(MATRIX_PIE_NETWORK_DATASET_ID);
       await nextTick();
-      document.documentElement.dataset.caseStatus = loaded ? "ready" : "error";
+      document.documentElement.dataset.caseStatus = loaded && exposeRenderedCaseSvg() ? "ready" : "error";
     });
   }
 });

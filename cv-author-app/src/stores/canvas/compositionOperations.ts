@@ -18,6 +18,8 @@ import type {
   SvgCandidate,
 } from "../../types";
 import { normalizeNestedCallout } from "../../utils/nestedCallout";
+import { normalizeNestedAppearance } from "../../utils/nestedDecorations";
+import type { NestedAppearanceDraft } from "../../types";
 import { getChartBlockSpecification } from "../../chart-blocks/registry";
 import { evaluateBlockComposition } from "../../chart-blocks/composition";
 import { resolveBlockSurface } from "../../chart-blocks/spatial";
@@ -134,7 +136,7 @@ export function useCanvasCompositionOperations(context: any) {
     repeatableCompositionMembers,
     repeatableCompositionNodes,
     repeatableCompositionPairNodes,
-    rowMatchesChartFilters,
+    createChartFilterPredicate,
     sameChannels,
     scheduleNestedChildLayout,
     selectedIds,
@@ -1239,7 +1241,7 @@ export function useCanvasCompositionOperations(context: any) {
       || !radiusField
       || !quantitative.has(radiusField)
     ) return false;
-    const groupRows = dataset.rows.filter((row) => rowMatchesChartFilters(row, node.chartSpec!));
+    const groupRows = dataset.rows.filter(createChartFilterPredicate(node.chartSpec!));
     const groupDataset = { ...dataset, rows: groupRows };
     const pointGroupMemberKeys = groupRows.map((row, index) =>
       csvRowKey(groupDataset, row, index),
@@ -1384,6 +1386,26 @@ export function useCanvasCompositionOperations(context: any) {
     scheduleNestedChildLayout(nestedPositionRelationshipIds.value);
   }
 
+  function applyNestedAppearance(draft: NestedAppearanceDraft) {
+    const relationships = nestedPositionRelationshipIds.value
+      .map((id) => chartRelationships.value.nestedRelationships[id])
+      .filter((relationship): relationship is NestedRelationship =>
+        !!relationship && relationship.status === "active" && relationship.relationType === "relative-position");
+    if (!relationships.length) return false;
+    const appearance = normalizeNestedAppearance(draft);
+    pushCanvasHistory();
+    for (const relationship of relationships) {
+      dispatchRelationship({
+        type: "update-nested", relationshipId: relationship.id,
+        changes: { parameters: { ...relationship.parameters, ...appearance } as RelativeNestedParameters },
+      });
+    }
+    // One committed transaction and one layout pass for the entire batch.
+    scheduleNestedChildLayout(relationships.map((relationship) => relationship.id));
+    closeNestedPositionEditor();
+    return true;
+  }
+
   function updateNestedChildScale(childNodeId: string, sizeRatio: number) {
     const child = findCanvasNode(childNodeId);
     if (!child) return;
@@ -1480,7 +1502,7 @@ export function useCanvasCompositionOperations(context: any) {
     const xScale = spec?.scales?.x;
     const yScale = spec?.scales?.y;
     if (!spec || !dataset || !xEncoding || !yEncoding || !xScale || !yScale) return null;
-    const rows = dataset.rows.filter((row) => rowMatchesChartFilters(row, spec));
+    const rows = dataset.rows.filter(createChartFilterPredicate(spec));
     const xPosition = chartScalePosition(xScale);
     const yPosition = chartScalePosition(yScale);
     const localMinX = node.kind === "leaf" ? node.contentMinX : 0;
@@ -3253,6 +3275,7 @@ export function useCanvasCompositionOperations(context: any) {
     closeNestedBinding,
     confirmNestedBinding,
     openNestedPositionEditor,
+    applyNestedAppearance,
     updateNestedPosition,
     updateNestedChildScale,
     updateNestedCallout,

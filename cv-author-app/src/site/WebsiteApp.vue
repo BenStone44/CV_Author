@@ -1,59 +1,26 @@
 <script setup lang="ts">
-const galleryAssetPath = '/site/gallery'
-const areaPreview = `${galleryAssetPath}/area-chart-block-dense-preview.png`
-const chordPreview = `${galleryAssetPath}/chord-polar-line-facet-concat.png`
-const matrixPreview = `${galleryAssetPath}/matrix-pie-network-marginal-bars.png`
-const radialPreview = `${galleryAssetPath}/sunburst-radial-dendrogram-shared-r.png`
-const treePreview = `${galleryAssetPath}/tree-leaf-labels-black.png`
+import type { GalleryItem } from './galleryCases'
 
-type SitePage = 'home' | 'gallery' | 'tutorials'
+const { galleryItems } = defineProps<{ galleryItems: GalleryItem[] }>()
+const galleryCasePath = '/site/gallery/cases'
 
-type GalleryItem = {
-  title: string
-  description: string
-  image: string
-  tags: string[]
-}
+type SitePage = 'home' | 'gallery' | 'galleryDetail' | 'tutorials'
 
 const normalizedPath = window.location.pathname.replace(/\/+$/, '')
-const page: SitePage = normalizedPath.endsWith('/gallery')
-  ? 'gallery'
-  : normalizedPath.endsWith('/tutorials')
-    ? 'tutorials'
-    : 'home'
+const page: SitePage = normalizedPath.endsWith('/gallery/example')
+  ? 'galleryDetail'
+  : normalizedPath.endsWith('/gallery')
+    ? 'gallery'
+    : normalizedPath.endsWith('/tutorials')
+      ? 'tutorials'
+      : 'home'
 
-const galleryItems: GalleryItem[] = [
-  {
-    title: 'Dense Area Composition',
-    description: 'A layered area-chart block composed from reusable visual units.',
-    image: areaPreview,
-    tags: ['Cartesian', 'Layer'],
-  },
-  {
-    title: 'Polar Facet Concat',
-    description: 'Chord and polar line views joined through explicit shared channels.',
-    image: chordPreview,
-    tags: ['Polar', 'Facet', 'Concat'],
-  },
-  {
-    title: 'Matrix, Pie & Network',
-    description: 'A multiview arrangement built by composing heterogeneous chart blocks.',
-    image: matrixPreview,
-    tags: ['Matrix', 'Nested'],
-  },
-  {
-    title: 'Shared Hierarchy Depth',
-    description: 'Sunburst and radial dendrogram views aligned on one hierarchy scale.',
-    image: radialPreview,
-    tags: ['Hierarchy', 'Polar'],
-  },
-  {
-    title: 'Tree & Leaf Axis',
-    description: 'A Cartesian tree exposing its ordered terminal leaves as a shared axis.',
-    image: treePreview,
-    tags: ['Tree', 'Cartesian'],
-  },
-]
+const requestedGallerySlug = new URLSearchParams(window.location.search).get('example')
+const selectedGalleryItem = galleryItems.find((item) => item.slug === requestedGallerySlug) ?? galleryItems[0]!
+const galleryDetailHref = (item: GalleryItem) => `/gallery/example/?example=${encodeURIComponent(item.slug)}`
+const galleryCardTags = (item: GalleryItem) => [...item.blocks, ...item.coordinateSystems]
+
+if (page === 'galleryDetail') document.title = `${selectedGalleryItem.title} · VisBricks Gallery`
 
 const tutorials = [
   {
@@ -89,7 +56,7 @@ const tutorials = [
 
       <nav class="site-nav" aria-label="Primary navigation">
         <a href="/" :aria-current="page === 'home' ? 'page' : undefined">Home</a>
-        <a href="/gallery/" :aria-current="page === 'gallery' ? 'page' : undefined">Gallery</a>
+        <a href="/gallery/" :aria-current="page === 'gallery' || page === 'galleryDetail' ? 'page' : undefined">Gallery</a>
         <a href="/tutorials/" :aria-current="page === 'tutorials' ? 'page' : undefined">Tutorials</a>
       </nav>
 
@@ -116,8 +83,8 @@ const tutorials = [
           <div class="visual-card visual-card-area">
             <span class="card-label">AREA</span>
             <svg viewBox="0 0 260 120" role="img" aria-label="Layered area chart">
-              <path d="M8 102 C45 84 54 91 82 62 C110 33 133 83 160 52 C191 17 214 52 252 24 L252 112 L8 112 Z" fill="#ff775f" opacity=".9" />
-              <path d="M8 106 C38 70 67 94 94 76 C122 58 143 84 174 64 C204 44 226 70 252 52 L252 112 L8 112 Z" fill="#ffd05b" opacity=".88" />
+              <path d="M8 102 C45 84 54 91 82 62 C110 33 133 83 160 52 C191 17 214 52 252 24 L252 112 L8 112 Z" fill="var(--site-rust)" opacity=".9" />
+              <path d="M8 106 C38 70 67 94 94 76 C122 58 143 84 174 64 C204 44 226 70 252 52 L252 112 L8 112 Z" fill="var(--site-cream)" opacity=".88" />
             </svg>
           </div>
           <div class="visual-card visual-card-donut">
@@ -167,7 +134,7 @@ const tutorials = [
           <a class="text-link" href="/gallery/">View the gallery <span aria-hidden="true">→</span></a>
         </div>
         <div class="featured-grid">
-          <a v-for="item in galleryItems.slice(0, 3)" :key="item.title" class="gallery-card" href="/gallery/">
+          <a v-for="item in galleryItems.slice(0, 3)" :key="item.title" class="gallery-card" :href="galleryDetailHref(item)">
             <div class="gallery-image"><img :src="item.image" :alt="item.title"></div>
             <div class="gallery-card-copy">
               <h3>{{ item.title }}</h3>
@@ -194,23 +161,108 @@ const tutorials = [
     <main v-else-if="page === 'gallery'" class="subpage">
       <section class="page-intro section-wrap">
         <p class="section-kicker">GALLERY</p>
-        <h1>Compositions made<br>from complete chart blocks.</h1>
-        <p>Explore examples across Cartesian, Polar, Tree, and heterogeneous coordinate systems.</p>
+        <h1>Choose the pieces.<br>Compose the result.</h1>
+        <p>Browse finished compositions, then open any example to inspect its blocks, source-file shape, and preset bindings.</p>
       </section>
-      <section class="gallery-page-grid section-wrap" aria-label="VisBricks examples">
-        <article v-for="item in galleryItems" :key="item.title" class="gallery-card gallery-card-large">
-          <div class="gallery-image"><img :src="item.image" :alt="item.title"></div>
-          <div class="gallery-card-copy">
-            <div>
-              <h2>{{ item.title }}</h2>
-              <p>{{ item.description }}</p>
-            </div>
-            <ul class="tag-list" aria-label="Composition types">
-              <li v-for="tag in item.tags" :key="tag">{{ tag }}</li>
-            </ul>
+      <section class="gallery-overview-grid section-wrap" aria-label="VisBricks examples">
+        <a
+          v-for="item in galleryItems"
+          :key="item.title"
+          class="gallery-overview-card"
+          :href="galleryDetailHref(item)"
+          :aria-label="`View ${item.title} example`"
+        >
+          <div class="gallery-overview-image">
+            <img :src="item.image" :alt="`${item.title} finished composition preview`">
           </div>
-        </article>
+          <div class="gallery-overview-copy">
+            <ul class="tag-list gallery-overview-tags" aria-label="Chart and coordinate-system types">
+              <li v-for="tag in galleryCardTags(item)" :key="tag">{{ tag }}</li>
+            </ul>
+            <span class="overview-link">View example <span aria-hidden="true">→</span></span>
+          </div>
+        </a>
       </section>
+    </main>
+
+    <main v-else-if="page === 'galleryDetail'" class="subpage gallery-detail-page">
+      <article class="section-wrap">
+        <a class="back-link" href="/gallery/"><span aria-hidden="true">←</span> Back to gallery</a>
+        <div class="gallery-detail-hero">
+          <div class="gallery-detail-image">
+            <span class="gallery-item-number">{{ selectedGalleryItem.number }}</span>
+            <img :src="selectedGalleryItem.image" :alt="`${selectedGalleryItem.title} finished composition preview`">
+          </div>
+          <div class="gallery-detail-intro">
+            <ul class="tag-list" aria-label="Composition types">
+              <li v-for="tag in selectedGalleryItem.tags" :key="tag">{{ tag }}</li>
+            </ul>
+            <p class="section-kicker">GALLERY STARTER</p>
+            <h1>{{ selectedGalleryItem.title }}</h1>
+            <p>{{ selectedGalleryItem.description }}</p>
+            <div class="detail-intro-action">
+              <a class="button button-primary" :href="selectedGalleryItem.tryHref">Try in editor <span aria-hidden="true">→</span></a>
+              <a v-if="selectedGalleryItem.caseHref" class="button button-secondary" :href="selectedGalleryItem.caseHref">View completed case <span aria-hidden="true">→</span></a>
+              <span>Data and bindings are prepared for you.</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="gallery-detail-content">
+          <section class="detail-section">
+            <p class="detail-section-label">01 · BLOCKS</p>
+            <div>
+              <h2>What is already on the canvas</h2>
+              <p>These complete visualization units open separately in the editor, so you can choose how to compose them.</p>
+              <ul class="detail-block-list">
+                <li v-for="block in selectedGalleryItem.blocks" :key="block"><span aria-hidden="true"></span>{{ block }}</li>
+              </ul>
+            </div>
+          </section>
+
+          <section class="detail-section">
+            <p class="detail-section-label">02 · DATA</p>
+            <div>
+              <h2>Source-file format</h2>
+              <div class="detail-file-card">
+                <span>{{ selectedGalleryItem.file.type }}</span>
+                <strong>{{ selectedGalleryItem.file.name }}</strong>
+                <div>
+                  <p>{{ selectedGalleryItem.file.description }}</p>
+                  <ul class="detail-file-links" aria-label="Case data files">
+                    <li v-for="fileName in selectedGalleryItem.file.files" :key="fileName">
+                      <a :href="`${galleryCasePath}/${selectedGalleryItem.slug}/data/${fileName}`" download>{{ fileName }}</a>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="detail-section">
+            <p class="detail-section-label">03 · BINDING</p>
+            <div>
+              <h2>Fields selected for you</h2>
+              <p>The starter applies these bindings before the editor opens.</p>
+              <dl class="detail-binding-list">
+                <div v-for="binding in selectedGalleryItem.bindings" :key="`${binding.field}-${binding.role}`">
+                  <dt>{{ binding.field }}</dt>
+                  <dd>{{ binding.role }}</dd>
+                </div>
+              </dl>
+            </div>
+          </section>
+
+          <section class="detail-compose-card">
+            <div>
+              <p class="detail-section-label">COMPOSITION IDEA</p>
+              <h2>Now make it yours.</h2>
+              <p>{{ selectedGalleryItem.composition }}</p>
+            </div>
+            <a class="button button-light" :href="selectedGalleryItem.tryHref">Open this starter <span aria-hidden="true">→</span></a>
+          </section>
+        </div>
+      </article>
     </main>
 
     <main v-else class="subpage tutorial-page">

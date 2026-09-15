@@ -1,4 +1,4 @@
-import { computed, ref } from "vue";
+import { computed, ref, shallowRef } from "vue";
 import Papa from "papaparse";
 import type {
   DataColumn,
@@ -38,12 +38,14 @@ type ParsedCsv = {
 
 // Datasets are session-scoped. Keep the store focused on the live source of
 // truth and let callers import/load data explicitly when a new session starts.
-const datasets = ref<Dataset[]>([]);
+// Imported tables are immutable snapshots. Replace the collection or dataset
+// at explicit edit boundaries; do not proxy every CSV cell or GeoJSON point.
+const datasets = shallowRef<Dataset[]>([]);
 const activeDatasetId = ref<string | null>(datasets.value[0]?.id ?? null);
 const parseError = ref("");
 const parseWarning = ref("");
 const isLoading = ref(false);
-const geometrySources = ref<GeometrySource[]>([]);
+const geometrySources = shallowRef<GeometrySource[]>([]);
 const activeGeometrySourceId = ref<string | null>(null);
 
 const activeDataset = computed(() =>
@@ -84,6 +86,7 @@ function normalizeHeaders(sourceHeaders: string[], columnCount: number) {
 function parseFile(file: File) {
   return new Promise<ParsedCsv>((resolve, reject) => {
     Papa.parse<unknown[]>(file, {
+      worker: Papa.WORKERS_SUPPORTED,
       skipEmptyLines: "greedy",
       complete: (result) => resolve({ data: result.data, errors: result.errors }),
       error: reject,
@@ -350,6 +353,11 @@ function setActiveDataset(datasetId: string) {
   if (getDataset(datasetId)) activeDatasetId.value = datasetId;
 }
 
+function renameDataset(datasetId: string, name: string) {
+  datasets.value = datasets.value.map((dataset) =>
+    dataset.id === datasetId && dataset.name !== name ? { ...dataset, name } : dataset);
+}
+
 function setColumnType(
   datasetId: string,
   columnName: string,
@@ -388,6 +396,7 @@ export function useDatasetStore() {
     activeDatasetId,
     getDataset,
     setActiveDataset,
+    renameDataset,
     setColumnType,
     parseError,
     parseWarning,

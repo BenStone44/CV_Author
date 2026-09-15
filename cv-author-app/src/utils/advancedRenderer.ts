@@ -150,7 +150,7 @@ function nestedChildFrame(
     markGroupId?: string;
   },
 ) {
-  return input.nestedChildFrames?.find((frame) => {
+  const frames = input.nestedChildFrames?.filter((frame) => {
     if (frame.parentMarkGroupId && values.markGroupId && frame.parentMarkGroupId !== values.markGroupId) return false;
     const identity = nestedMarkIdentity(frame.parentDataKey);
     const legacyDirectKey = !!frame.parentDataKey && !frame.parentDataKey.trim().startsWith("{");
@@ -165,6 +165,17 @@ function nestedChildFrame(
       && (identity.role === undefined || identity.role === values.role)
       && (identity.fallbackIndex === undefined || identity.fallbackIndex === values.index);
   });
+  if (!frames?.length) return undefined;
+  if (frames.length === 1) return frames[0];
+  // All children attached to one mark form one occupied node. Route links
+  // around their union, including each child's placement offset.
+  const left = Math.min(...frames.map((frame) => (frame.offset?.x ?? 0) - frame.width / 2));
+  const right = Math.max(...frames.map((frame) => (frame.offset?.x ?? 0) + frame.width / 2));
+  const top = Math.min(...frames.map((frame) => (frame.offset?.y ?? 0) - frame.height / 2));
+  const bottom = Math.max(...frames.map((frame) => (frame.offset?.y ?? 0) + frame.height / 2));
+  return { ...frames[0]!, shape: "rect" as const, radius: undefined,
+    offset: { x: (left + right) / 2, y: (top + bottom) / 2 },
+    width: right - left, height: bottom - top };
 }
 
 /** Return the point where a link exits/enters an embedded rectangular child. */
@@ -193,8 +204,11 @@ function rectangleLinkEndpoint(
 function nestedFrameLinkEndpoint(
   point: { x: number; y: number },
   toward: { x: number; y: number },
-  frame: { shape?: "circle" | "rect"; radius?: number; width: number; height: number },
+  frame: { shape?: "circle" | "rect"; radius?: number; width: number; height: number; offset?: { x: number; y: number } },
 ) {
+  const offset = frame.offset ?? { x: 0, y: 0 };
+  point = { x: point.x + offset.x, y: point.y + offset.y };
+  toward = { x: toward.x + offset.x, y: toward.y + offset.y };
   if (frame.shape === "circle" && Number.isFinite(frame.radius) && (frame.radius ?? 0) > 0) {
     const dx = toward.x - point.x;
     const dy = toward.y - point.y;
@@ -204,7 +218,7 @@ function nestedFrameLinkEndpoint(
   return rectangleLinkEndpoint(point, toward, frame.width, frame.height);
 }
 
-function nestedFrameExtent(frame: { shape?: "circle" | "rect"; radius?: number; width: number; height: number }) {
+function nestedFrameExtent(frame: { shape?: "circle" | "rect"; radius?: number; width: number; height: number; offset?: { x: number; y: number } }) {
   if (frame.shape === "circle" && Number.isFinite(frame.radius) && (frame.radius ?? 0) > 0) return frame.radius!;
   return Math.hypot(Math.max(0, frame.width) / 2, Math.max(0, frame.height) / 2);
 }

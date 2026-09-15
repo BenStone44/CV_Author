@@ -832,6 +832,32 @@ export type NestedCalloutSpec = {
   scale: number;
 };
 
+export type NestedDecoration = {
+  id: string;
+  kind: "rounded-rect" | "circle" | "bubble";
+  /** Position and size relative to the child's unrotated frame. */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fill: string;
+  stroke: string;
+  strokeWidth: number;
+  cornerRadius: number;
+  opacity: number;
+};
+
+export type NestedAppearanceDraft = {
+  parentAnchor: NestedAnchor;
+  childAnchor: NestedAnchor;
+  offset: Point;
+  scale: Point;
+  rotation: number;
+  retainParent: boolean;
+  callout: NestedCalloutSpec;
+  decorations: NestedDecoration[];
+};
+
 export type RelativeNestedParameters = {
   parentAnchor: NestedAnchor;
   childAnchor: NestedAnchor;
@@ -841,6 +867,7 @@ export type RelativeNestedParameters = {
   retainParent?: boolean;
   /** Relationship-owned message frame; never persisted into the child chart. */
   callout?: NestedCalloutSpec;
+  decorations?: NestedDecoration[];
   batchId?: string;
   sourceChildId?: string;
   sourceChildName?: string;
@@ -1053,6 +1080,8 @@ export type NestedChildFrame = {
   parentMarkGroupId?: string;
   shape?: "circle" | "rect";
   radius?: number;
+  /** Occupied-frame center relative to the parent mark center. */
+  offset?: Point;
   width: number;
   height: number;
 };

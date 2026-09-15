@@ -1,3 +1,4 @@
+import { extent, quickselect } from "d3-array";
 import type {
   ChartBinAggregateTransform,
   ChartDataTransform,
@@ -19,6 +20,7 @@ type TransformCacheEntry = {
 };
 
 const transformCache = new WeakMap<object, TransformCacheEntry[]>();
+const transformCacheLimit = 8;
 
 function transformSignature(transforms: ChartDataTransform[]) {
   return JSON.stringify(transforms);
@@ -34,14 +36,22 @@ function numericValue(row: DataRow, field: string) {
 function applyNumericFilter(rows: DataRow[], transform: ChartNumericFilterTransform) {
   if (transform.operator === "top" || transform.operator === "bottom") {
     const count = Math.max(1, Math.floor(transform.value));
-    const retainedIndexes = new Set(rows
-      .map((row, index) => ({ index, value: numericValue(row, transform.field) }))
-      .filter((item): item is { index: number; value: number } => item.value !== null)
-      .sort((left, right) => transform.operator === "top"
-        ? right.value - left.value || left.index - right.index
-        : left.value - right.value || left.index - right.index)
-      .slice(0, count)
-      .map((item) => item.index));
+    const values = rows.map((row) => numericValue(row, transform.field));
+    const candidates: number[] = [];
+    values.forEach((value, index) => {
+      if (value !== null) candidates.push(index);
+    });
+    // Partition only the requested rows; tie-breaking still uses source order.
+    if (count < candidates.length) {
+      quickselect(candidates, count - 1, 0, candidates.length - 1, (a, b) => {
+        const left = Number(a);
+        const right = Number(b);
+        return (transform.operator === "top"
+          ? values[right]! - values[left]!
+          : values[left]! - values[right]!) || left - right;
+      });
+    }
+    const retainedIndexes = new Set(candidates.slice(0, count));
     return rows.filter((_, index) => retainedIndexes.has(index));
   }
 
@@ -97,12 +107,9 @@ function applyGroupValueOrder(
   const ordered = transform.direction === "source"
     ? [...retained].sort((left, right) => left[1].sourceIndex - right[1].sourceIndex)
     : [...retained].sort(byValue(transform.direction));
-  const position = new Map(ordered.map(([group], index) => [group, index]));
-  return rows
-    .map((row, sourceIndex) => ({ row, sourceIndex, groupIndex: position.get(row[transform.groupField] ?? "") }))
-    .filter((item): item is { row: DataRow; sourceIndex: number; groupIndex: number } => item.groupIndex !== undefined)
-    .sort((left, right) => left.groupIndex - right.groupIndex || left.sourceIndex - right.sourceIndex)
-    .map((item) => item.row);
+  const groupedRows = new Map<string, DataRow[]>(ordered.map(([group]) => [group, []]));
+  for (const row of rows) groupedRows.get(row[transform.groupField] ?? "")?.push(row);
+  return Array.from(groupedRows.values()).flat();
 }
 
 function applyFoldTransform(
@@ -133,8 +140,8 @@ function applyFoldTransform(
 }
 
 function createBinLabeler(values: number[], transform: ChartBinAggregateTransform) {
-  const minimum = Math.min(...values);
-  const maximum = Math.max(...values);
+  // Avoid spreading large columns into function arguments (engine stack limit).
+  const [minimum = 0, maximum = 0] = extent(values);
   const parameter = Math.max(1, transform.parameter);
 
   if (transform.method === "fixed-width") {
@@ -187,10 +194,11 @@ function applyTransform(
 
   if (transform.kind === "filter") {
     if (!available.has(transform.field)) return materialized;
-    const rows = transform.mode === "values"
-      ? materialized.rows.filter((row) => transform.values.includes(row[transform.field] ?? ""))
-      : applyNumericFilter(materialized.rows, transform);
-    return { ...materialized, rows };
+    if (transform.mode === "values") {
+      const allowed = new Set(transform.values);
+      return { ...materialized, rows: materialized.rows.filter((row) => allowed.has(row[transform.field] ?? "")) };
+    }
+    return { ...materialized, rows: applyNumericFilter(materialized.rows, transform) };
   }
 
   if (transform.kind === "order") {
@@ -201,21 +209,24 @@ function applyTransform(
   if (transform.mode === "group") {
     const groupColumn = available.get(transform.groupField);
     if (!groupColumn || !available.has(transform.valueField)) return materialized;
-    const groups = new Map<string, number[]>();
+    const groups = new Map<string, { sum: number; count: number }>();
     materialized.rows.forEach((row) => {
       const groupValue = row[transform.groupField] ?? "";
-      const values = groups.get(groupValue) ?? [];
+      const accumulator = groups.get(groupValue) ?? { sum: 0, count: 0 };
       const value = numericValue(row, transform.valueField);
-      if (value !== null) values.push(value);
-      groups.set(groupValue, values);
+      if (value !== null) {
+        accumulator.sum += value;
+        accumulator.count += 1;
+      }
+      groups.set(groupValue, accumulator);
     });
-    const rows = Array.from(groups, ([groupValue, values]) => ({
+    const rows = Array.from(groups, ([groupValue, accumulator]) => ({
       [transform.groupField]: groupValue,
-      [transform.outputField]: values.length === 0
+      [transform.outputField]: accumulator.count === 0
         ? ""
         : String(transform.operation === "sum"
-          ? values.reduce((sum, value) => sum + value, 0)
-          : values.reduce((sum, value) => sum + value, 0) / values.length),
+          ? accumulator.sum
+          : accumulator.sum / accumulator.count),
     }));
     return {
       columns: [groupColumn, { name: transform.outputField, type: "quantitative" }],
@@ -250,11 +261,15 @@ function retainedPrimaryKey(dataset: Dataset) {
   const fields = dataset.primaryKey ?? [];
   if (fields.length === 0 || dataset.rows.length === 0) return inferCsvPrimaryKey(dataset);
   const available = new Set(dataset.columns.map((column) => column.name));
-  const keys = dataset.rows.map((row) => fields.map((field) => row[field]?.trim() ?? ""));
-  const remainsUnique = fields.every((field) => available.has(field))
-    && keys.every((values) => values.every(Boolean))
-    && new Set(keys.map((values) => JSON.stringify(values))).size === dataset.rows.length;
-  return remainsUnique ? fields : inferCsvPrimaryKey(dataset);
+  if (!fields.every((field) => available.has(field))) return inferCsvPrimaryKey(dataset);
+  const keys = new Set<string>();
+  for (const row of dataset.rows) {
+    const values = fields.map((field) => row[field]?.trim() ?? "");
+    const key = JSON.stringify(values);
+    if (!values.every(Boolean) || keys.has(key)) return inferCsvPrimaryKey(dataset);
+    keys.add(key);
+  }
+  return fields;
 }
 
 export function materializeChartDataTransforms(
@@ -277,6 +292,7 @@ export function materializeChartDataTransforms(
   const result = { ...transformed, primaryKey: retainedPrimaryKey(transformed) };
   const entries = transformCache.get(dataset as object) ?? [];
   entries.push({ rows: dataset.rows, columns: dataset.columns, signature, result });
+  if (entries.length > transformCacheLimit) entries.shift();
   transformCache.set(dataset as object, entries);
   return result;
 }

@@ -1,0 +1,46 @@
+export type GalleryItem = {
+  slug: string
+  number: string
+  title: string
+  description: string
+  image: string
+  tags: string[]
+  blocks: string[]
+  coordinateSystems: string[]
+  file: {
+    type: string
+    name: string
+    description: string
+    files: string[]
+  }
+  bindings: Array<{
+    field: string
+    role: string
+  }>
+  composition: string
+  tryHref: string
+  caseHref?: string
+}
+
+/** Read the same case-owned metadata used by downloads and editor recordings. */
+export async function loadGalleryItems(): Promise<GalleryItem[]> {
+  const base = '/site/gallery/cases'
+  const read = async (path: string) => {
+    const response = await fetch(path)
+    if (!response.ok) throw new Error(`Gallery asset unavailable: ${path}`)
+    return response.json()
+  }
+  const slugs: string[] = await read(`${base}/index.json`)
+  return Promise.all(slugs.map(async (slug) => {
+    const entry = await read(`${base}/${slug}/case.json`)
+    if (entry.slug !== slug || typeof entry.starter !== 'string' || typeof entry.completedCase !== 'string' || !entry.gallery) {
+      throw new Error(`Invalid Gallery case metadata: ${slug}`)
+    }
+    return {
+      ...entry.gallery, slug,
+      image: `${base}/${slug}/${entry.preview.path}?v=${entry.preview.sha256.slice(0, 12)}`,
+      tryHref: `/editor/?starter=${entry.starter}`,
+      caseHref: `/editor/?case=${entry.completedCase}`,
+    }
+  }))
+}
