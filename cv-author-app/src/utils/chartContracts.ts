@@ -1006,9 +1006,6 @@ export const coreChartBlockSpecifications = coreChartBlockTemplates
 export const chartContracts = Object.fromEntries(coreChartBlockSpecifications
   .map((specification) => [specification.chartType, specification.data])) as typeof chartContractData;
 
-/** Compatibility export for the former encoding-schema module. */
-export const chartEncodingSchemas = chartContracts;
-
 function normalizedName(value: string) {
   return value.replace(/[\s_-]/g, "").toLowerCase();
 }
@@ -1067,10 +1064,6 @@ export function getChartContract(chartType: string): ChartContract | null {
   const fallback = familyFallbacks[family];
   return { ...fallback, chartType, label: chartType };
 }
-
-/** Resolve the contract for an exact chart type or its chart family. */
-/** Compatibility name retained for consumers of the old schema module. */
-export const getChartEncodingSchema = getChartContract;
 
 export const chartTemplateContracts = Object.fromEntries(
   (Object.keys(familyFallbacks) as ChartTemplateKind[]).map((family) => [family, familyFallbacks[family]]),
