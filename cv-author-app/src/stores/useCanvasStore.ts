@@ -5719,6 +5719,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     createCompositionCandidate,
     createLayer,
     createDeckglLayer,
+    concatCompositionForNode,
     concatNodesAreCompatible,
     executeComposition,
     createNestedPie,

@@ -1356,7 +1356,7 @@
                 :view-zoom="selectionOverlayZoom"
                 :show-axis="false"
                 :interactive="true"
-                :use-composite-radius="editingCompositionId !== node.compositionSpec?.id"
+                :use-composite-radius="useCompositePolarRadius(node)"
                 :scale-channels="polarScaleChannels(node)"
                 :class="{ 'coordinate-control--drag-source': !!activeDropZone && compositionDragSourceId === node.id }"
                 :on-angle-pointer-down="onPolarAnglePointerDown"

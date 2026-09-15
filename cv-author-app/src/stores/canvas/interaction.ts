@@ -18,6 +18,11 @@ import type {
   ScaleInteraction,
 } from "../../types";
 import { deckglPointNestHoverEvent } from "../../types";
+import {
+  normalizedPolarRadialBoundaries,
+  polarConcatAxisLayout,
+  updatedPolarRadialBoundary,
+} from "../../utils/polarConcatLayout";
 
 export function useCanvasInteraction(context: any) {
   const {
@@ -42,6 +47,7 @@ export function useCanvasInteraction(context: any) {
     compositionDragSourceId,
     captureCanvasHistory,
     deckglPointDropTarget,
+    concatCompositionForNode,
     concatEditableAxis,
     concatLinkId,
     concatLinksFor,
@@ -1029,10 +1035,14 @@ export function useCanvasInteraction(context: any) {
     if (event.button !== 0 || !guide) return;
     if (guide.type === "Cartesian" && axis !== "x" && axis !== "y") return;
     if (guide.type === "Polar" && axis !== "radius" && axis !== "ring") return;
+    const polarComposition = guide.type === "Polar"
+      ? concatCompositionForNode(node) ?? node.compositionSpec
+      : node.compositionSpec;
     if (guide.type === "Polar"
-      && (node.compositionSpec?.type === "layer" || node.compositionSpec?.type === "concat")
-      && editingCompositionId.value !== node.compositionSpec.id
-      && !node.compositionSpec.sharedChannels.includes(axis)) return;
+      && (polarComposition?.type === "layer" || polarComposition?.type === "concat")
+      && editingCompositionId.value !== polarComposition.id
+      && !polarComposition.sharedChannels.includes(axis)
+      && !(polarComposition.type === "concat" && axis === "radius")) return;
     if (guide.type === "Cartesian"
       && node.compositionSpec?.type === "concat"
       && editingCompositionId.value === node.compositionSpec.id
@@ -1744,6 +1754,8 @@ export function useCanvasInteraction(context: any) {
     const node = findCanvasNode(ci.nodeId);
     const guide = node?.coordinateGuide;
     if (!node || !guide) return;
+    if (guide.type === "Polar" && ci.axis === "radius"
+      && updatePolarConcatBoundary(node, "outer", currentPoint)) return;
     const localStart = toNodeLocalPoint(node, ci.startPoint);
     const localCurrent = toNodeLocalPoint(node, currentPoint);
     const horizontal = ci.axis === "x"
@@ -1757,13 +1769,25 @@ export function useCanvasInteraction(context: any) {
       ? (localCurrent.x - localStart.x) * direction
       : (localCurrent.y - localStart.y) * direction;
     const nextScale = clamp(ci.startScale + delta / span, Math.max(1 / span, 0.001), 1.5);
-    const targets = coordinateTargets(node.id, ci.axis);
+    const repeatableComposition = concatCompositionForNode(node) ?? node.compositionSpec;
+    const targets = guide.type === "Polar"
+      && ci.axis === "radius"
+      && repeatableComposition?.type === "concat"
+      ? Array.from(new Map(
+        repeatableComposition.members
+          .map((member) => findCanvasNode(member.nodeId))
+          .filter((member): member is CanvasNode => !!member)
+          .flatMap((member) => walkCanvasNodes([member]))
+          .filter((member) => member.coordinateGuide?.type === "Polar")
+          .map((member) => [member.id, member]),
+      ).values())
+      : coordinateTargets(node.id, ci.axis);
     const axisIds = new Set<string>();
     targets.forEach((member) => {
       const binding = bindingForChartChannel(member.id, ci.axis);
       if (binding) axisIds.add(binding.axisId);
     });
-    if (!node.compositionSpec || editingCompositionId.value !== node.compositionSpec.id) {
+    if (!repeatableComposition || editingCompositionId.value !== repeatableComposition.id) {
       axisIds.forEach((axisId) => {
         dispatchRelationship({
           type: "update-axis",
@@ -1783,8 +1807,8 @@ export function useCanvasInteraction(context: any) {
     if (guide.type === "Polar" && ci.axis === "radius" && node.compositionSpec?.type === "facet") {
       guide.radiusScale = nextScale;
     }
-    if ((node.compositionSpec?.type === "layer" || node.compositionSpec?.type === "concat")
-      && editingCompositionId.value !== node.compositionSpec.id) {
+    if ((repeatableComposition?.type === "layer" || repeatableComposition?.type === "concat")
+      && editingCompositionId.value !== repeatableComposition.id) {
       const owner = findCanvasNode(node.coordinateSystem?.ownerNodeId ?? "") ?? node;
       renderSharedCoordinateComposition(owner);
     } else {
@@ -1815,6 +1839,7 @@ export function useCanvasInteraction(context: any) {
     const node = findCanvasNode(pi.nodeId);
     const guide = node?.coordinateGuide;
     if (!node || guide?.type !== "Polar") return;
+    if (updatePolarConcatBoundary(node, "inner", currentPoint)) return;
     const geometry = getPolarOccupiedGeometry(node);
     if (!geometry || geometry.outerRadius <= 0) return;
     const localPoint = toNodeLocalPoint(node, currentPoint);
@@ -1829,6 +1854,47 @@ export function useCanvasInteraction(context: any) {
       if (member.coordinateGuide?.type === "Polar") member.coordinateGuide.innerRadiusRatio = innerRatio;
     });
     renderCoordinateTargets(node, targets);
+  }
+
+  function updatePolarConcatBoundary(
+    node: CanvasNode,
+    edge: "inner" | "outer",
+    currentPoint: Point,
+  ) {
+    const composition = concatCompositionForNode(node);
+    if (composition?.type !== "concat") return false;
+    const directMembers = composition.members
+      .map((member) => findCanvasNode(member.nodeId))
+      .filter((member): member is CanvasNode => !!member);
+    const directMember = directMembers.find((member) =>
+      member.id === node.id || walkCanvasNodes([member]).some((descendant) => descendant.id === node.id));
+    if (!directMember?.coordinateGuide || directMember.coordinateGuide.type !== "Polar") return false;
+    const memberIds = directMembers.map((member) => member.id);
+    const radial = polarConcatAxisLayout(memberIds, concatLinksFor(composition), "radial");
+    if (radial.count <= 1) return false;
+    const radialIndex = radial.positions.get(directMember.id);
+    if (radialIndex === undefined) return false;
+    const boundaryIndex = edge === "inner" ? radialIndex : radialIndex + 1;
+    // The outermost edge changes the whole Polar frame through radiusScale.
+    // Every internal edge belongs to both adjacent Concat members.
+    if (boundaryIndex >= radial.count) return false;
+    const boundaries = normalizedPolarRadialBoundaries(composition, radial.count);
+    const geometry = getPolarOccupiedGeometry(directMember);
+    if (!geometry || geometry.outerRadius <= 0) return false;
+    const currentOuterRatio = Math.max(boundaries[radialIndex + 1] ?? 1, 0.0001);
+    const totalRadius = geometry.outerRadius / currentOuterRatio;
+    const localPoint = toNodeLocalPoint(directMember, currentPoint);
+    const requestedRatio = Math.hypot(
+      localPoint.x - geometry.origin.x,
+      localPoint.y - geometry.origin.y,
+    ) / Math.max(totalRadius, 0.0001);
+    composition.polarRadialBoundaries = updatedPolarRadialBoundary(
+      boundaries,
+      boundaryIndex,
+      requestedRatio,
+    );
+    renderSharedCoordinateComposition(directMember);
+    return true;
   }
   function finalizeMarqueeSelection(mi: MarqueeInteraction) {
     const bounds = normalizeBounds(mi.startPoint, mi.currentPoint);

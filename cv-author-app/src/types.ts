@@ -604,6 +604,8 @@ export type CompositionSpec = {
   concatLinks?: ConcatLinkSpec[];
   polarAngleSpan?: number;
   polarAngleOffset?: number;
+  /** Ordered radial Concat boundaries, from the center to the shared outer radius. */
+  polarRadialBoundaries?: number[];
   /** Maximum rendered outer radius across Polar composition members. */
   polarOuterRadius?: number;
   /** Shared hierarchy depth scale for Sunburst/Radial Dendrogram R concat. */

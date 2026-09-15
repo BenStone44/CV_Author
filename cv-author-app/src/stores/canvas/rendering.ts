@@ -12,6 +12,7 @@ import { getCanvasObjectHitTargetBounds } from "../../utils/canvasUtils";
 import { chartDataPreparationKey, mergeSharedScale } from "./renderingData";
 import { normalizeNestedCallout } from "../../utils/nestedCallout";
 import { nestedDecorationBounds, normalizeNestedDecorations } from "../../utils/nestedDecorations";
+import { normalizedPolarRadialBoundaries, polarConcatAxisLayout } from "../../utils/polarConcatLayout";
 
 export function useCanvasRendering(context: any) {
   const {
@@ -181,54 +182,21 @@ export function useCanvasRendering(context: any) {
       .filter((member): member is CanvasNode => !!member);
     if (orderedMembers.length === 0) return;
     const memberIds = new Set(orderedMembers.map((member) => member.id));
-    // Project the concat graph onto one polar axis. Links in the other axis
+    const orderedMemberIds = orderedMembers.map((member) => member.id);
+    const links = concatLinksFor(composition);
+    // Project the concat graph onto each polar axis. Links in the other axis
     // keep their endpoints aligned so radial and angular concats can combine.
-    const positionsFor = (direction: "radial" | "angular") => {
-      const links = concatLinksFor(composition).filter((link) =>
-        link.direction === direction
-        && memberIds.has(link.targetNodeId)
-        && memberIds.has(link.sourceNodeId),
-      );
-      const adjacency = new Map<string, Array<{ nodeId: string; delta: number }>>();
-      orderedMembers.forEach((member) => adjacency.set(member.id, []));
-      links.forEach((link) => {
-        const delta = link.position === "after" ? 1 : -1;
-        adjacency.get(link.targetNodeId)?.push({ nodeId: link.sourceNodeId, delta });
-        adjacency.get(link.sourceNodeId)?.push({ nodeId: link.targetNodeId, delta: -delta });
-      });
-      const positions = new Map<string, number>();
-      let maximumComponentSize = 1;
-      orderedMembers.forEach((member) => {
-        if (positions.has(member.id)) return;
-        const rawPositions = new Map<string, number>([[member.id, 0]]);
-        const queue = [member.id];
-        while (queue.length > 0) {
-          const currentId = queue.shift()!;
-          const currentPosition = rawPositions.get(currentId)!;
-          adjacency.get(currentId)?.forEach(({ nodeId, delta }) => {
-            if (rawPositions.has(nodeId)) return;
-            rawPositions.set(nodeId, currentPosition + delta);
-            queue.push(nodeId);
-          });
-        }
-        const component = orderedMembers
-          .filter((candidate) => rawPositions.has(candidate.id))
-          .sort((left, right) => (rawPositions.get(left.id)! - rawPositions.get(right.id)!)
-            || orderedMembers.indexOf(left) - orderedMembers.indexOf(right));
-        component.forEach((candidate, index) => positions.set(candidate.id, index));
-        maximumComponentSize = Math.max(maximumComponentSize, component.length);
-      });
-      return { positions, count: maximumComponentSize };
-    };
-    const radial = positionsFor("radial");
-    const angular = positionsFor("angular");
+    const radial = polarConcatAxisLayout(orderedMemberIds, links, "radial");
+    const angular = polarConcatAxisLayout(orderedMemberIds, links, "angular");
+    const radialBoundaries = normalizedPolarRadialBoundaries(composition, radial.count);
+    composition.polarRadialBoundaries = radialBoundaries;
     const memberCharts = (member: CanvasNode) => member.chartSpec
       ? [member]
       : walkCanvasNodes([member]).filter((candidate) => !!candidate.chartSpec);
     const normalizedChartType = (member: CanvasNode) => member.chartSpec?.chartType
       .replace(/[\s_-]/g, "")
       .toLowerCase() ?? "";
-    const radiusLinks = concatLinksFor(composition).filter((link) =>
+    const radiusLinks = links.filter((link) =>
       link.direction === "angular"
       && link.sharedChannels.includes("radius")
       && memberIds.has(link.targetNodeId)
@@ -286,8 +254,8 @@ export function useCanvasRendering(context: any) {
       const angularIndex = angular.positions.get(member.id)!;
       guide.angleSpan = angularSpan;
       guide.angleOffset = baseAngleOffset + angularSpan * angularIndex;
-      guide.innerRadiusRatio = radialIndex / radial.count;
-      guide.outerRadiusRatio = (radialIndex + 1) / radial.count;
+      guide.innerRadiusRatio = radialBoundaries[radialIndex] ?? radialIndex / radial.count;
+      guide.outerRadiusRatio = radialBoundaries[radialIndex + 1] ?? (radialIndex + 1) / radial.count;
       if (member.kind === "group" && !member.chartSpec && member.compositionSpec?.type !== "concat") {
         const syncDescendantGuides = (parent: CanvasNode, originInParent: Point) => {
           if (parent.kind !== "group") return;

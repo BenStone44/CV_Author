@@ -184,6 +184,7 @@ const {
   contextMenu,
   draggedCandidateId,
   compositionDragSourceId,
+  concatCompositionForNode,
   activeDropZone,
   availableDropZones,
   compositionEnterTransition,
@@ -1446,10 +1447,24 @@ function polarScaleChannels(node: CanvasNode): CoordinateChannel[] {
   if (composition?.type === "facet" && composition.facetCoordinateSystem === "Polar") {
     return ["angle", "radius"];
   }
+  const concat = concatCompositionForNode(node);
+  if (concat && editingCompositionId.value !== concat.id) {
+    return Array.from(new Set([
+      ...concat.sharedChannels.filter((channel): channel is CoordinateChannel =>
+        channel === "angle" || channel === "radius"),
+      "radius" as const,
+    ]));
+  }
   if (!composition || editingCompositionId.value === composition.id) return ["angle", "radius"];
   return composition.sharedChannels.filter((channel): channel is CoordinateChannel =>
     channel === "angle" || channel === "radius",
   );
+}
+
+function useCompositePolarRadius(node: CanvasNode) {
+  const concat = concatCompositionForNode(node);
+  if (concat) return false;
+  return editingCompositionId.value !== node.compositionSpec?.id;
 }
 
 function onAxisSwap(swapped: boolean) {

@@ -9,6 +9,21 @@ import { chartAxisVisible } from "../utils/chartAxes";
 
 const POLAR_CONTROL_RADIUS_GAP = 4;
 const POLAR_RADIAL_TICK_RATIOS = [0.25, 0.5, 0.75, 1] as const;
+const INNER_RADIUS_CHART_TYPES = new Set([
+  "donutchart",
+  "radialbarchart",
+  "radialstackedbarchart",
+  "radialrectbarchart",
+  "radialrectstackedbarchart",
+  "circularbarchart",
+  "circularstackedbarchart",
+]);
+
+export function polarNodeHasAdjustableInnerRadius(node: CanvasNode): boolean {
+  const normalizedType = node.chartSpec?.chartType.replace(/[\s_-]/g, "").toLowerCase();
+  if (normalizedType && INNER_RADIUS_CHART_TYPES.has(normalizedType)) return true;
+  return node.kind === "group" && node.children.some(polarNodeHasAdjustableInnerRadius);
+}
 
 export type PolarCoordinateSystemModel = {
   origin: Point;
@@ -184,6 +199,7 @@ export const PolarCoordinateSystem = defineComponent({
         ? "radius"
         : scaleChannels.includes("ring") ? "ring" : null;
       const showRadiusControl = radialScaleAxis !== null;
+      const showInnerRadiusControl = showRadiusControl && polarNodeHasAdjustableInnerRadius(props.node);
       const showAngleControl = scaleChannels.includes("angle");
       const guide = props.node.coordinateGuide;
       const showThetaLine = guide?.type === "Polar" && chartAxisVisible(props.node.chartSpec, guide, "theta");
@@ -306,7 +322,7 @@ export const PolarCoordinateSystem = defineComponent({
           h("circle", { class: "polar-coordinate-radius-hit-target", cx: 0, cy: 0, r: 10 }),
           h("circle", { class: "polar-coordinate-radius-handle", cx: 0, cy: 0, r: 7 }),
         ])] : []),
-        ...(interactive && showRadiusControl && props.onInnerRadiusPointerDown ? [h("g", {
+        ...(interactive && showInnerRadiusControl && props.onInnerRadiusPointerDown ? [h("g", {
           class: "polar-coordinate-inner-radius-control",
           transform: `translate(${model.innerRadiusControlPoint.x} ${model.innerRadiusControlPoint.y}) scale(${1 / model.renderedScale})`,
           "pointer-events": "all",
