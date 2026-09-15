@@ -9,6 +9,8 @@
     "dev:all": "run-p dev:api dev",
     "capture:deckgl-thumbnails": "node scripts/capture-deckgl-thumbnails.mjs",
     "capture:gallery-preview": "node scripts/capture-gallery-preview.mjs",
+    "generate:site-api": "node scripts/generate-site-api.mjs",
+    "prebuild": "npm run generate:site-api",
     "build": "run-p type-check \"build-only {@}\" --",
     "test": "vitest run",
     "preview": "vite preview",

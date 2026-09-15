@@ -209,7 +209,26 @@
         "role": "Node Pie slices · Stacked Bar series"
       }
     ],
-    "composition": "Overlay the weighted Pie-node Force Network on the Matrix, concatenate one Stacked Bar above on shared X, then concatenate the axis-swapped Stacked Bar on the right on shared Y."
+    "composition": "Overlay the weighted Pie-node Force Network on the Matrix, concatenate one Stacked Bar above on shared X, then concatenate the axis-swapped Stacked Bar on the right on shared Y.",
+    "editorHelp": {
+      "introduction": "The large Matrix already contains the weighted Pie-node network. Two separate Stacked Bars are prepared: a wide top marginal and a tall right marginal.",
+      "steps": [
+        {
+          "title": "Attach the top marginal",
+          "source": "Wide Stacked Bar above the Matrix",
+          "target": "Drop strip just outside the Matrix’s top edge",
+          "action": "Hold the wide Stacked Bar and drag it toward the top edge of the Matrix. Place the pointer in the outer top strip and release when Concat · share X highlights.",
+          "result": "The top bar aligns with the Matrix columns through column_group."
+        },
+        {
+          "title": "Attach the right marginal",
+          "source": "Tall Stacked Bar to the right of the Matrix",
+          "target": "Drop strip just outside the Matrix’s right edge",
+          "action": "Drag the tall Stacked Bar toward the Matrix’s right edge, keeping the pointer level with the Matrix body and away from the corner. Release when Concat · share Y highlights.",
+          "result": "The right bar aligns with the Matrix rows through row_group; the Pie network remains inside the Matrix."
+        }
+      ]
+    }
   },
   "preview": {
     "path": "preview.svg",

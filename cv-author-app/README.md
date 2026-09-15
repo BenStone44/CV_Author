@@ -72,9 +72,10 @@ The production site is split into focused static entries:
 - `/`: product landing page
 - `/gallery/`: visualization composition gallery
 - `/tutorials/`: guided introductions
+- `/api/`: composition and Chart Block specification reference
 - `/editor/`: the complete VisBricks authoring application
 
-Vite builds all four entries together. The editor remains isolated from the public website shell, so website design work does not alter the canvas application's component hierarchy.
+Vite builds all five entries together. The editor remains isolated from the public website shell, so website design work does not alter the canvas application's component hierarchy. Backend requests below `/api/` continue to use the development proxy, while the exact `/api/` path serves the static reference page.
 
 ### Repeatable Anonymous Publishing Procedure
 
@@ -214,7 +215,19 @@ npm run capture:gallery-preview -- --base-url=http://localhost:5173 --case=dendr
 
 The recorded preview digest is in `case.json` and `AGENTS.md`. Include this detail route, starter, completed case, preview, and CSV download in the next authorized production verification.
 
+## API reference
+
+The `/api/` page has two sections: four composition types with coordinate-system-specific support, followed by the complete family and Chart Block reference. Run `npm run generate:site-api` after a registry or catalog change. The generator reads the editor registry and catalog at build time, then writes a website-owned JSON snapshot and preview assets under `public/site/api/`; the website never imports editor runtime modules.
+
+`npm run prebuild` runs this generator automatically. Keep generated `chart-blocks.json` and block images in source control so the static site can load the reference without the editor or API service. Verify the generated block count against `getChartBlockSpecifications()` and confirm every image path resolves before publishing.
+
 ## Case-owned data and configuration
+
+### Gallery editor Help
+
+Gallery starter and completed-case entries show a website-owned **Help · How to create** bar at the top of the editor. Starters open the guide automatically; completed cases keep it collapsed. The guide stays available while editing and links to the counterpart in a new tab.
+
+Maintain each guide in `gallery.editorHelp` in its case's `case.json`. Each numbered step names the source block, the destination, the pointer movement and release cue, and the expected result. Match visible editor labels (for example, `Enter`, `Nested`, and `Concat · share X`); document any required settings as explicit steps. `src/site/GalleryEditorHelp.vue` and `src/site/editorHelp.ts` own the presentation, mounted separately by `editor/index.html` without importing editor state or changing case configuration.
 
 All deployable example data now lives in `public/site/gallery/cases/`:
 

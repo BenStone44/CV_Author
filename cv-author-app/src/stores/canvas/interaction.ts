@@ -1809,7 +1809,9 @@ export function useCanvasInteraction(context: any) {
     }
     if ((repeatableComposition?.type === "layer" || repeatableComposition?.type === "concat")
       && editingCompositionId.value !== repeatableComposition.id) {
-      const owner = findCanvasNode(node.coordinateSystem?.ownerNodeId ?? "") ?? node;
+      const owner = guide.type === "Polar" && repeatableComposition.type === "concat"
+        ? polarConcatRenderOwner(node, repeatableComposition)
+        : findCanvasNode(node.coordinateSystem?.ownerNodeId ?? "") ?? node;
       renderSharedCoordinateComposition(owner);
     } else {
       renderCoordinateTargets(node, targets);
@@ -1893,8 +1895,28 @@ export function useCanvasInteraction(context: any) {
       boundaryIndex,
       requestedRatio,
     );
-    renderSharedCoordinateComposition(directMember);
+    renderSharedCoordinateComposition(polarConcatRenderOwner(directMember, composition));
     return true;
+  }
+
+  function polarConcatRenderOwner(
+    node: CanvasNode,
+    composition: NonNullable<CanvasNode["compositionSpec"]>,
+  ) {
+    const ancestor = [...(node.compositionAncestors ?? [])].reverse().find((context) =>
+      context.compositionSpec.id === composition.id);
+    const ownerId = ancestor?.coordinateSystem?.ownerNodeId
+      ?? (node.parentCompositionSpec?.id === composition.id
+        ? node.parentCoordinateSystem?.ownerNodeId
+        : undefined)
+      ?? (node.compositionSpec?.id === composition.id
+        ? node.coordinateSystem?.ownerNodeId
+        : undefined);
+    return findCanvasNode(ownerId ?? "")
+      ?? composition.members
+        .map((member) => findCanvasNode(member.nodeId))
+        .find((member): member is CanvasNode => member?.compositionSpec?.id === composition.id)
+      ?? node;
   }
   function finalizeMarqueeSelection(mi: MarqueeInteraction) {
     const bounds = normalizeBounds(mi.startPoint, mi.currentPoint);

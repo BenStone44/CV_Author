@@ -76,13 +76,14 @@ export default defineConfig({
         gallery: resolve(appDirectory, 'gallery/index.html'),
         galleryExample: resolve(appDirectory, 'gallery/example/index.html'),
         tutorials: resolve(appDirectory, 'tutorials/index.html'),
+        apiReference: resolve(appDirectory, 'api/index.html'),
         editor: resolve(appDirectory, 'editor/index.html'),
       },
     },
   },
   server: {
     proxy: {
-      '/api': 'http://127.0.0.1:8787',
+      '^/api/(?!$)': 'http://127.0.0.1:8787',
     },
     fs: {
       allow: [fileURLToPath(new URL('..', import.meta.url))],

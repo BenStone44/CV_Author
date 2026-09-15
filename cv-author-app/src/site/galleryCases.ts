@@ -20,6 +20,16 @@ export type GalleryItem = {
   composition: string
   tryHref: string
   caseHref?: string
+  editorHelp?: {
+    introduction: string
+    steps: Array<{
+      title: string
+      source: string
+      target: string
+      action: string
+      result: string
+    }>
+  }
 }
 
 /** Read the same case-owned metadata used by downloads and editor recordings. */

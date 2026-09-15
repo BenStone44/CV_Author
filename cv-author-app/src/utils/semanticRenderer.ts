@@ -568,8 +568,11 @@ function renderRadialBarChart(input: GenericRenderInput) {
     let markEndAngle = layoutStartAngle;
     if (angularLayout) {
       const ringInset = ringThickness * circularRingGapRatio / 2;
-      const ringInner = innerRadius + ringThickness * categoryIndex + ringInset;
-      const ringOuter = innerRadius + ringThickness * (categoryIndex + 1) - ringInset;
+      const touchesConcatBoundary = input.polarConcatDirection === "radial";
+      const ringInner = innerRadius + ringThickness * categoryIndex
+        + (touchesConcatBoundary && categoryIndex === 0 ? 0 : ringInset);
+      const ringOuter = innerRadius + ringThickness * (categoryIndex + 1)
+        - (touchesConcatBoundary && categoryIndex === categories.length - 1 ? 0 : ringInset);
       const startAngle = angularScale(startValue);
       const endAngle = angularScale(endValue);
       markStartAngle = startAngle;

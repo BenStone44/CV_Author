@@ -1997,7 +1997,8 @@ function renderChord(input: GenericRenderInput) {
     const target = nameIndex.get(link.target)!;
     row[target] = (row[target] ?? 0) + link.value;
   });
-  const baseRadius = Math.max(12, Math.min(area.width, area.height) * 0.5 - 30);
+  const baseRadius = Math.max(12,
+    (Math.min(area.width, area.height) * 0.5 - 30) * (guide?.radiusScale ?? 1));
   const outerRatio = Math.max(0.01, Math.min(guide?.outerRadiusRatio ?? 1, 1));
   const outerRadius = Math.max(12, baseRadius * outerRatio);
   const chordBand = Math.max(7, Math.min(20, outerRadius * 0.22));

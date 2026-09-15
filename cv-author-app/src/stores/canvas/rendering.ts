@@ -233,6 +233,21 @@ export function useCanvasRendering(context: any) {
       composition.sharedHierarchyOuterRadius = undefined;
     }
     const ownerOrigin = nodeLocalToSelectionScopePoint(owner, owner.coordinateGuide.origin);
+    const hasClosedCompositeMember = orderedMembers.some((member) =>
+      member.kind === "group" && !member.chartSpec && member.compositionSpec?.type !== "concat");
+    const localRadialBases = new Map(orderedMembers.flatMap((member) => {
+      const geometry = getPolarOccupiedGeometry(member);
+      const outerRatio = member.coordinateGuide?.type === "Polar"
+        ? Math.max(member.coordinateGuide.outerRadiusRatio ?? 1, 0.0001)
+        : 1;
+      return geometry?.outerRadius
+        ? [[member.id, geometry.outerRadius / outerRatio] as const]
+        : [];
+    }));
+    const ownerRadialBase = localRadialBases.get(owner.id);
+    const ownerWorldRadialBase = ownerRadialBase
+      ? ownerRadialBase * Math.min(Math.abs(owner.scaleX), Math.abs(owner.scaleY))
+      : null;
     const totalAngleSpan = Math.max(1, Math.min(
       composition.polarAngleSpan ?? owner.coordinateGuide.angleSpan ?? 360,
       360,
@@ -242,11 +257,18 @@ export function useCanvasRendering(context: any) {
     orderedMembers.forEach((member) => {
       const guide = member.coordinateGuide;
       if (guide?.type !== "Polar") return;
-      member.width = owner.width;
-      member.height = owner.height;
-      member.scaleX = owner.scaleX;
-      member.scaleY = owner.scaleY;
-      guide.origin = { ...owner.coordinateGuide!.origin };
+      const memberRadialBase = localRadialBases.get(member.id);
+      if (hasClosedCompositeMember && ownerWorldRadialBase && memberRadialBase) {
+        const scale = ownerWorldRadialBase / Math.max(memberRadialBase, 0.0001);
+        member.scaleX = (Math.sign(owner.scaleX) || 1) * scale;
+        member.scaleY = (Math.sign(owner.scaleY) || 1) * scale;
+      } else {
+        member.width = owner.width;
+        member.height = owner.height;
+        member.scaleX = owner.scaleX;
+        member.scaleY = owner.scaleY;
+        guide.origin = { ...owner.coordinateGuide!.origin };
+      }
       guide.radiusScale = owner.coordinateGuide?.radiusScale;
       guide.ringScale = owner.coordinateGuide?.ringScale;
       setPolarNodeOrigin(member, ownerOrigin, owner.rotation);
@@ -268,6 +290,8 @@ export function useCanvasRendering(context: any) {
               childGuide.angleOffset = guide.angleOffset;
               childGuide.innerRadiusRatio = guide.innerRadiusRatio;
               childGuide.outerRadiusRatio = guide.outerRadiusRatio;
+              childGuide.radiusScale = guide.radiusScale;
+              childGuide.ringScale = guide.ringScale;
             }
             syncDescendantGuides(child, originInChild);
           });
@@ -536,10 +560,25 @@ export function useCanvasRendering(context: any) {
       if (applyAxisVisibility) syncCartesianConcatAxisVisibility(owner, members);
     }
     if (renderingCoordinateSystem(owner)?.type === "Polar") {
-      const outerRadius = Math.max(
+      let outerRadius = Math.max(
         0,
         ...members.map((member) => getPolarOccupiedGeometry(member)?.outerRadius ?? 0),
       );
+      if (type === "concat" && composition.direction === "radial") {
+        const directMembers = composition.members
+          .map((member) => findCanvasNode(member.nodeId))
+          .filter((member): member is CanvasNode => !!member);
+        const radial = polarConcatAxisLayout(directMembers.map((member) => member.id), concatLinksFor(composition), "radial");
+        const boundaries = normalizedPolarRadialBoundaries(composition, radial.count);
+        const directOwner = directMembers.find((member) => member.id === owner.id
+          || walkCanvasNodes([member]).some((descendant) => descendant.id === owner.id));
+        const ownerIndex = directOwner ? radial.positions.get(directOwner.id) : undefined;
+        const ownerGeometry = directOwner ? getPolarOccupiedGeometry(directOwner) : null;
+        const ownerOuterRatio = ownerIndex === undefined ? 0 : boundaries[ownerIndex + 1] ?? 0;
+        if (ownerGeometry && ownerOuterRatio > 0) {
+          outerRadius = ownerGeometry.outerRadius / ownerOuterRatio;
+        }
+      }
       const sharedOuterRadius = outerRadius > 0 ? outerRadius : undefined;
       if (owner.compositionSpec?.type === "layer" || owner.compositionSpec?.type === "concat") {
         members.forEach((member) => {
@@ -1009,6 +1048,7 @@ export function useCanvasRendering(context: any) {
       : undefined;
     node.llmRenderer = null;
     try {
+      const concatDirection = concatCompositionForNode(node)?.direction;
       const result = renderDeterministicChart({
         chartId: node.id,
         width: node.width,
@@ -1020,9 +1060,8 @@ export function useCanvasRendering(context: any) {
         dataset: renderableDataset,
         polarRadiusDomain: sourcePieRadiusDomain(renderingInputSpec, renderDataset),
         polarFacetCell: polarFacetCellForNode(node, composition),
-        polarConcatDirection: composition?.type === "concat"
-          && (composition.direction === "radial" || composition.direction === "angular")
-          ? composition.direction
+        polarConcatDirection: concatDirection === "radial" || concatDirection === "angular"
+          ? concatDirection
           : undefined,
         sharedHierarchyLevelCount: composition?.type === "concat"
           ? composition.sharedHierarchyLevelCount

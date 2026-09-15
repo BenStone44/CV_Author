@@ -1796,7 +1796,8 @@ export function useCanvasCompositionOperations(context: any) {
   }
 
   function polarCompositionDropZoneAtPoint(target: CanvasNode, source: CanvasNode, point: Point): ChartDropZone | null {
-    if (target.coordinateGuide?.type !== "Polar" || !target.chartSpec || !source.chartSpec) return null;
+    const sourceChart = source.chartSpec ? source : firstChartNode(source);
+    if (target.coordinateGuide?.type !== "Polar" || !target.chartSpec || !sourceChart?.chartSpec) return null;
     const model = createPolarCoordinateSystemModel(target, viewZoom.value);
     const occupiedGeometry = getPolarOccupiedGeometry(target);
     if (!model || !occupiedGeometry) return null;
@@ -1823,10 +1824,10 @@ export function useCanvasCompositionOperations(context: any) {
       Math.abs(target.scaleY),
       0.0001,
     ) * Math.max(viewZoom.value, 0.0001);
-    const innerEligibility = specificationDropEligibility(target, source, "concat", "inner");
-    const outerEligibility = specificationDropEligibility(target, source, "concat", "outer");
-    const startEligibility = specificationDropEligibility(target, source, "concat", "start");
-    const endEligibility = specificationDropEligibility(target, source, "concat", "end");
+    const innerEligibility = specificationDropEligibility(target, sourceChart, "concat", "inner");
+    const outerEligibility = specificationDropEligibility(target, sourceChart, "concat", "outer");
+    const startEligibility = specificationDropEligibility(target, sourceChart, "concat", "start");
+    const endEligibility = specificationDropEligibility(target, sourceChart, "concat", "end");
     const radialGeometry = [outerEligibility, innerEligibility]
       .map((eligibility) => eligibility.targetArea?.geometry)
       .find((geometry) => geometry?.kind === "outside-annulus");
@@ -1882,7 +1883,11 @@ export function useCanvasCompositionOperations(context: any) {
       const nodes = repeatableCompositionPairNodes(source, target, type, direction);
       return nodes?.length
         && nodes.every(isPolarCompositionChart)
-        && nodes.every((node) => getChartTemplateContract(node.chartSpec!.chartType)?.coordinateSystem === "Polar")
+        && nodes.every((node) => {
+          const chart = node.chartSpec ? node : firstChartNode(node);
+          return chart?.chartSpec
+            && getChartTemplateContract(chart.chartSpec.chartType)?.coordinateSystem === "Polar";
+        })
         ? nodes
         : null;
     };
@@ -1936,7 +1941,7 @@ export function useCanvasCompositionOperations(context: any) {
       };
     }
     if (distance >= chartInnerRadius && distance <= chartOuterRadius && inAngle) {
-      const layerEligibility = specificationDropEligibility(target, source, "layer");
+      const layerEligibility = specificationDropEligibility(target, sourceChart, "layer");
       if (!layerEligibility.targetArea) return null;
       const nodes = polarNodesFor("layer");
       const layerGeometry = layerEligibility.targetArea?.geometry;
