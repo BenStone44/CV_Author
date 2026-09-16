@@ -1403,6 +1403,7 @@ export const deterministicChartPipelines: Record<ChartRendererKey, ChartPipeline
   boxplot: { coordinateSystem: "Cartesian", render: renderAdvancedChart },
   contour: { coordinateSystem: "Cartesian", render: renderAdvancedChart },
   hexbin: { coordinateSystem: "Cartesian", render: renderAdvancedChart },
+  wordcloud: { coordinateSystem: "CoordinateFree", render: renderAdvancedChart },
   flow: { coordinateSystem: "CoordinateFree", render: renderAdvancedChart },
 };
 

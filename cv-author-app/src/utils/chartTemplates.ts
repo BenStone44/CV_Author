@@ -142,6 +142,7 @@ export const templateBindingContracts: Record<ChartTemplateKind, TemplateBinding
   boxplot: { templateId: "boxplot", slots: [], unresolvedDimensionPolicies, compiler: "bar" },
   contour: { templateId: "contour", slots: [], unresolvedDimensionPolicies, compiler: "scatter" },
   hexbin: { templateId: "hexbin", slots: [], unresolvedDimensionPolicies, compiler: "scatter" },
+  wordcloud: { templateId: "wordcloud", slots: [], unresolvedDimensionPolicies, compiler: "matrix" },
   flow: { templateId: "flow", slots: [], unresolvedDimensionPolicies, compiler: "matrix" },
 };
 
@@ -189,6 +190,7 @@ const requiredEncodingFallbacks: Record<
     color: (spec) => !!spec.encodings.value,
   },
   hexbin: {},
+  wordcloud: {},
   flow: {},
 };
 
@@ -268,6 +270,7 @@ const channelSlotMappings: Record<ChartTemplateKind, Partial<Record<ChartEncodin
   boxplot: {},
   contour: { x: "x", y: "y" },
   hexbin: { x: "x", y: "y" },
+  wordcloud: { x: "category", y: "value" },
   flow: {},
 };
 

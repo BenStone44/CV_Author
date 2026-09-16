@@ -1563,11 +1563,84 @@ function renderHexbin(input: GenericRenderInput) {
   const bins = layout(points);
   const maximum = Math.max(1, ...bins.map((bin) => bin.length));
   const color = scaleSequential((value) => globalGradientColor(value, [0, 1])).domain([0, maximum / 2]);
+  const colorEncoding = input.chartSpec.encodings.color;
+  const colorValues = colorEncoding
+    ? points.map((point) => point.row[colorEncoding.field] ?? "")
+    : [];
+  const colorCategories = colorEncoding && colorEncoding.type !== "quantitative"
+    ? Array.from(new Set(colorValues))
+    : [];
+  const categoricalColor = scaleOrdinal<string, string>()
+    .domain(colorCategories)
+    .range(globalPalette.categorical);
+  const quantitativeColor = colorEncoding?.type === "quantitative"
+    ? scaleSequential((value) => globalGradientColor(value, [0, 1])).domain(finiteDomain(colorValues.map(Number)))
+    : null;
   const marks = bins.map((bin) => {
     const indices = bin.map((point) => point.rowIndex);
-    return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="hexagon" data-mark-group-id="mark-group:${esc(input.chartId)}:hexagon" data-count="${bin.length}" data-row-indices="${indices.join(",")}" transform="translate(${bin.x} ${bin.y})" d="${layout.hexagon()}" fill="${color(bin.length)}" stroke="black"><title>${bin.length}</title></path>`;
+    const binColorValues = colorEncoding ? bin.map((point) => point.row[colorEncoding.field] ?? "") : [];
+    const category = colorEncoding && colorEncoding.type !== "quantitative"
+      ? Array.from(new Set(binColorValues)).sort((left, right) =>
+        binColorValues.filter((value) => value === right).length - binColorValues.filter((value) => value === left).length)[0] ?? ""
+      : "";
+    const numericValues = colorEncoding?.type === "quantitative"
+      ? binColorValues.map(Number).filter(Number.isFinite)
+      : [];
+    const fill = category
+      ? categoricalColor(category)
+      : quantitativeColor && numericValues.length
+        ? quantitativeColor(numericValues.reduce((sum, value) => sum + value, 0) / numericValues.length)
+        : color(bin.length);
+    return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="hexagon" data-mark-group-id="mark-group:${esc(input.chartId)}:hexagon" data-count="${bin.length}" data-category-key="${esc(category)}" data-row-indices="${indices.join(",")}" transform="translate(${bin.x} ${bin.y})" d="${layout.hexagon()}" fill="${fill}" stroke="white" stroke-width="0.8"><title>${category ? `${esc(category)} · ` : ""}${bin.length}</title></path>`;
   }).join("");
-  return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="hexbin" data-radius="${configuredRadius}" data-scale="linear-linear" data-source-row-count="${points.length}" data-renderer="observable-hexbin@2">${marks}</g>`, plotArea: area, scales: { x: { type: "linear", domain: xDomain, range: [area.x, area.x + area.width] }, y: { type: "linear", domain: yDomain, range: [area.y + area.height, area.y] } } };
+  return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="hexbin" data-radius="${configuredRadius}" data-scale="linear-linear" data-color-mode="${colorEncoding ? esc(colorEncoding.type) : "count"}" data-source-row-count="${points.length}" data-renderer="observable-hexbin@3">${marks}</g>`, plotArea: area, scales: { x: { type: "linear", domain: xDomain, range: [area.x, area.x + area.width] }, y: { type: "linear", domain: yDomain, range: [area.y + area.height, area.y] } } };
+}
+
+function renderWordCloud(input: GenericRenderInput) {
+  const wordEncoding = input.chartSpec.encodings.x;
+  const weightEncoding = input.chartSpec.encodings.y;
+  if (!wordEncoding || !weightEncoding) throw new Error("Word Cloud requires Word and Weight encodings.");
+  const area = plotArea(input, 8);
+  const totals = new Map<string, number>();
+  input.dataset.rows.forEach((row) => {
+    const word = (row[wordEncoding.field] ?? "").trim();
+    const weight = Math.max(0, Number(row[weightEncoding.field] ?? "") || 0);
+    if (word) totals.set(word, (totals.get(word) ?? 0) + weight);
+  });
+  const words = Array.from(totals, ([word, weight]) => ({ word, weight }))
+    .sort((left, right) => right.weight - left.weight || left.word.localeCompare(right.word))
+    .slice(0, 36);
+  if (!words.length) throw new Error("Word Cloud requires at least one non-empty word.");
+  const extent = finiteDomain(words.map((item) => item.weight), [0, 1]);
+  const font = scaleLinear().domain(extent).range([9, Math.max(16, Math.min(38, area.height * 0.28))]).clamp(true);
+  const palette = globalPalette.categorical;
+  const boxes: Array<{ x: number; y: number; width: number; height: number }> = [];
+  const marks = words.flatMap((item, index) => {
+    const fontSize = font(item.weight);
+    const width = Math.max(fontSize, item.word.length * fontSize * 0.58);
+    const height = fontSize * 1.08;
+    let placed: { x: number; y: number; width: number; height: number } | null = null;
+    for (let attempt = 0; attempt < 180 && !placed; attempt += 1) {
+      const angle = attempt * 0.62 + index * 1.7;
+      const radius = 2.4 * Math.sqrt(attempt) * Math.min(area.width, area.height) / 32;
+      const cx = area.x + area.width / 2 + Math.cos(angle) * radius;
+      const cy = area.y + area.height / 2 + Math.sin(angle) * radius * 0.62;
+      const candidate = { x: cx - width / 2, y: cy - height / 2, width, height };
+      const inside = candidate.x >= area.x && candidate.y >= area.y
+        && candidate.x + candidate.width <= area.x + area.width
+        && candidate.y + candidate.height <= area.y + area.height;
+      const overlaps = boxes.some((box) => candidate.x < box.x + box.width + 2
+        && candidate.x + candidate.width + 2 > box.x
+        && candidate.y < box.y + box.height + 2
+        && candidate.y + candidate.height + 2 > box.y);
+      if (inside && !overlaps) placed = candidate;
+    }
+    if (!placed) return [];
+    boxes.push(placed);
+    const color = palette[index % palette.length] ?? "#334155";
+    return [`<text data-chart-id="${esc(input.chartId)}" data-mark-role="point" data-mark-group-id="mark-group:${esc(input.chartId)}:word" data-category-key="${esc(item.word)}" data-weight="${item.weight}" x="${placed.x + placed.width / 2}" y="${placed.y + placed.height * 0.78}" text-anchor="middle" font-size="${fontSize}" font-weight="${index < 4 ? 700 : 500}" fill="${color}"><title>${esc(item.word)} · ${formatTick(item.weight)}</title>${esc(item.word)}</text>`];
+  }).join("");
+  return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="word-cloud" data-word-count="${boxes.length}" data-renderer="deterministic-word-cloud@1" font-family="sans-serif">${marks}</g>`, plotArea: area };
 }
 
 function flowLinks(input: GenericRenderInput) {
@@ -2106,6 +2179,7 @@ export function renderAdvancedChart(input: GenericRenderInput) {
   if (type.includes("boxplot") || type.includes("boxandwhisker")) return renderBoxplot(input);
   if (type.includes("contour")) return renderContour(input);
   if (type.includes("hexbin")) return renderHexbin(input);
+  if (type.includes("wordcloud")) return renderWordCloud(input);
   if (type.includes("chord")) return renderChord(input);
   if (type.includes("sankey")) return renderSankey(input);
   throw new Error(`Unsupported advanced chart template: ${input.chartSpec.chartType}`);

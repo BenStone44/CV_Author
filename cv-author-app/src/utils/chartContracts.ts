@@ -151,6 +151,7 @@ const familyDefaults: Record<ChartTemplateKind, SchemaDefaults> = {
   boxplot: { id: "boxplot", family: "boxplot", renderer: "boxplot", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "box", aggregationPolicy: "allowed", dataMode: "distribution", nestedContext: "none", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
   contour: { id: "contour", family: "contour", renderer: "contour", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "contour", aggregationPolicy: "allowed", dataMode: "derived", nestedContext: "none", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
   hexbin: { id: "hexbin", family: "hexbin", renderer: "hexbin", rendererVersion: 1, coordinateSystem: "Cartesian", markRole: "hexagon", aggregationPolicy: "allowed", dataMode: "derived", nestedContext: "none", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: ["x", "y"], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
+  wordcloud: { id: "wordcloud", family: "wordcloud", renderer: "wordcloud", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "point", aggregationPolicy: "allowed", dataMode: "grouped-scalar", nestedContext: "bound-dimensions", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: [], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
   flow: { id: "flow", family: "flow", renderer: "flow", rendererVersion: 1, coordinateSystem: "CoordinateFree", markRole: "link", aggregationPolicy: "allowed", dataMode: "grouped-scalar", nestedContext: "bound-dimensions", requiresFunctionalDependency: false, requiresIndependentDimensions: true, allowFieldReuse: false, supportsLayerComposition: true, shareableChannels: [], unusedDimensionStrategies: commonStrategies, dimensionUpgrades: [] },
 };
 
@@ -522,6 +523,12 @@ const chartContractData = {
   Hexbin: defineSchema("Hexbin", "Hexbin", "hexbin", [
     { channel: "x", label: "X", role: "dimension", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
     { channel: "y", label: "Y", role: "dimension", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
+    { channel: "color", label: "User type", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" },
+  ]),
+  WordCloud: defineSchema("WordCloud", "Word Cloud", "wordcloud", [
+    { channel: "x", label: "Word", semanticLabel: "Word", role: "dimension", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound" },
+    { channel: "y", label: "Weight", semanticLabel: "Weight", role: "measure", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
+    { channel: "color", label: "Color", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" },
   ]),
   Chord: defineSchema("Chord", "Chord", "flow", [
     { channel: "key", label: "Node ID", role: "dimension", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Not bound" },
@@ -611,6 +618,7 @@ const chartTypeFamilies: Record<SupportedChartType, readonly BlockFamilyId[]> = 
   MultipleBoxplot: ["boxplot"],
   Contour: ["heatmap"],
   Hexbin: ["point", "heatmap"],
+  WordCloud: ["wordcloud"],
   Chord: ["chord"],
   Sankey: ["sankey"],
   ForceDirectedGraph: ["network"],
@@ -649,6 +657,7 @@ const candidateIds: Partial<Record<SupportedChartType, string>> = {
   ForceDirectedGraph: "builtin-template:force-directed-graph",
   GraphLink: "builtin-template:graph-link",
   GraphLinkPolar: "builtin-template:graph-link-polar",
+  WordCloud: "builtin-template:word-cloud",
 };
 
 const familyOrders: Partial<Record<BlockFamilyId, readonly SupportedChartType[]>> = {
@@ -1021,6 +1030,7 @@ const familyMatchers: Array<readonly [ChartTemplateKind, (value: string) => bool
   ["boxplot", (value) => value.includes("boxplot") || value.includes("boxandwhisker")],
   ["contour", (value) => value.includes("contour")],
   ["hexbin", (value) => value.includes("hexbin")],
+  ["wordcloud", (value) => value.includes("wordcloud")],
   ["flow", (value) => value.includes("chord") || value.includes("sankey")],
   ["area", (value) => value.includes("area") || value.includes("streamgraph") || value.includes("horizon")],
   ["scatter", (value) => value.includes("scatter")],
@@ -1045,6 +1055,7 @@ const familyFallbacks: Record<ChartTemplateKind, ChartEncodingSchema> = {
   boxplot: chartContracts.Boxplot,
   contour: chartContracts.Contour,
   hexbin: chartContracts.Hexbin,
+  wordcloud: chartContracts.WordCloud,
   flow: chartContracts.Chord,
 };
 

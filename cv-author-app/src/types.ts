@@ -295,6 +295,7 @@ export type ChartTemplateKind =
   | "boxplot"
   | "contour"
   | "hexbin"
+  | "wordcloud"
   | "flow";
 
 export type ChartEncoding = {

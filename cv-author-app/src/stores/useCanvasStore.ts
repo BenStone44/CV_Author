@@ -3044,6 +3044,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
       seriesKey?: string;
       rowValue?: string;
       columnValue?: string;
+      source?: string;
+      target?: string;
     } = {};
     try {
       identity = JSON.parse(parentDataKey) as typeof identity;
@@ -3071,6 +3073,14 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     }
     if (parentYField && identity.rowValue !== undefined) {
       markValuesByField.set(parentYField, identity.rowValue);
+    }
+    const parentSourceField = parentSpec.encodings.source?.field;
+    const parentTargetField = parentSpec.encodings.target?.field;
+    if (parentSourceField && identity.source !== undefined) {
+      markValuesByField.set(parentSourceField, identity.source);
+    }
+    if (parentTargetField && identity.target !== undefined) {
+      markValuesByField.set(parentTargetField, identity.target);
     }
     if (parentDimensionFields.length === 1 && identity.categoryKey !== undefined) {
       markValuesByField.set(parentDimensionFields[0]!, identity.categoryKey);

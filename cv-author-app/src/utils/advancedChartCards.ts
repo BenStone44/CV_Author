@@ -220,6 +220,7 @@ export const advancedTemplateSvgs = {
   MultipleBoxplot: () => boxplotTemplateSvg(true),
   Contour: observableContourTemplateSvg,
   Hexbin: observableHexbinTemplateSvg,
+  WordCloud: frame(`<g font-family="sans-serif" text-anchor="middle"><text x="160" y="84" font-size="34" font-weight="700" fill="${advancedPalette[0]!}">insight</text><text x="83" y="116" font-size="22" font-weight="600" fill="${advancedPalette[1]!}">people</text><text x="221" y="119" font-size="25" font-weight="600" fill="${advancedPalette[2]!}">change</text><text x="105" y="61" font-size="17" fill="${advancedPalette[3]!}">community</text><text x="240" y="57" font-size="15" fill="${advancedPalette[4]!}">future</text><text x="160" y="143" font-size="14" fill="${advancedPalette[5]!}">evidence</text></g>`),
   // Keep the legacy fallback on the same data-backed renderer as the catalog.
   Chord: () => renderDefaultChartSvg("Chord") ?? frame(""),
   Sankey: frame(`<g data-palette="global"><defs><linearGradient id="sg1" x1="0" x2="1"><stop stop-color="${advancedPalette[0]!}"/><stop offset="1" stop-color="${advancedPalette[2]!}"/></linearGradient><linearGradient id="sg2" x1="0" x2="1"><stop stop-color="${advancedPalette[1]!}"/><stop offset="1" stop-color="${advancedPalette[3]!}"/></linearGradient></defs><g fill="none" stroke-opacity="0.5"><path d="M42 39C115 39 115 75 190 75S252 43 286 43" stroke="url(#sg1)" stroke-width="22"/><path d="M42 123C115 123 115 102 190 102S252 130 286 130" stroke="url(#sg2)" stroke-width="18"/><path d="M42 56C116 56 116 121 190 121S251 66 286 66" stroke="url(#sg1)" stroke-width="10"/></g><g stroke="#000"><rect x="27" y="25" width="15" height="45" fill="${advancedPalette[0]!}"/><rect x="27" y="108" width="15" height="36" fill="${advancedPalette[1]!}"/><rect x="190" y="61" width="15" height="72" fill="${advancedPalette[2]!}"/><rect x="286" y="29" width="15" height="52" fill="${advancedPalette[3]!}"/><rect x="286" y="115" width="15" height="31" fill="${advancedPalette[4]!}"/></g><g font-size="8"><text x="46" y="49">source</text><text x="46" y="129">supply</text><text x="209" y="99">process</text><text x="282" y="54" text-anchor="end">use</text><text x="282" y="134" text-anchor="end">loss</text></g></g>`),
@@ -248,6 +249,7 @@ const definitions: Array<[keyof typeof advancedTemplateSvgs, string, string, Svg
   ["MultipleBoxplot", "Multiple Box Plot", "MultipleBoxplot", "Cartesian"],
   ["Contour", "Contour", "Contour", "Cartesian"],
   ["Hexbin", "Hexbin", "Hexbin", "Cartesian"],
+  ["WordCloud", "Word Cloud", "WordCloud", "CoordinateFree"],
   ["Chord", "Chord", "Chord", "Polar"],
   ["Sankey", "Sankey", "Sankey", "CoordinateFree"],
 ];

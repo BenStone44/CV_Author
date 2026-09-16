@@ -22,6 +22,7 @@ const familyDefinitions: ReadonlyArray<{ id: BlockFamilyId; label: string }> = [
   { id: "sankey", label: "Sankey" },
   { id: "calendar", label: "Calendar" },
   { id: "boxplot", label: "Boxplot" },
+  { id: "wordcloud", label: "Word cloud" },
   { id: "geographic-point", label: "Geographic point" },
   { id: "geographic-line", label: "Geographic line" },
   { id: "geographic-area", label: "Geographic area" },

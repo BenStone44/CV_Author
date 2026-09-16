@@ -39,6 +39,7 @@ export type ChartTemplateVariant =
   | "boxplot"
   | "contour"
   | "hexbin"
+  | "wordcloud"
   | "flow"
   | "unknown";
 

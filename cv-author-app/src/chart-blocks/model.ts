@@ -22,6 +22,7 @@ export type BlockFamilyId =
   | "sankey"
   | "calendar"
   | "boxplot"
+  | "wordcloud"
   | "geographic-point"
   | "geographic-line"
   | "geographic-area";
