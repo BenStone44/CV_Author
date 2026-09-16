@@ -45,7 +45,7 @@ export async function configure(context, compose = true) {
   renderChartNode(sankey);
   registerChartRelationship(sankey);
 
-  const cloud = await create("WordCloud", { x: 1510, y: 340, width: 340, height: 210 });
+  const cloud = await create("WordCloud", { x: 1510, y: 340, width: 650, height: 190 });
   cloud.name = "Ribbon keywords";
   cloud.chartSpec = {
     ...cloud.chartSpec, datasetId: dataset.id,
@@ -73,10 +73,10 @@ export async function configure(context, compose = true) {
       throw new Error(`Unable to nest Word Clouds on all eight Sankey ribbons (${zone?.nestedTargets?.length ?? 0} targets)`);
     }
     const relationships = Object.values(chartRelationships.value.nestedRelationships)
-      .filter((relationship) => relationship.parentChartId === sankey.id && relationship.parameters?.sourceChildId === cloud.id);
-    relationships.forEach((relationship) => {
+      .filter((relationship) => relationship.parentChartId === sankey.id);
+    for (const relationship of relationships) {
       const child = findCanvasNode(relationship.childChartId);
-      if (!child?.chartSpec) return;
+      if (!child?.chartSpec) continue;
       let identity = {};
       try { identity = JSON.parse(relationship.parentDataKey ?? "{}"); } catch { /* no-op */ }
       child.chartSpec = {
@@ -86,17 +86,68 @@ export async function configure(context, compose = true) {
       };
       renderChartNode(child);
       registerChartRelationship(child);
-    });
-    openNestedPositionEditor(relationships.map((relationship) => relationship.id));
-    applyNestedAppearance({
-      parentAnchor: { x: 0.5, y: 0.5 }, childAnchor: { x: 0.5, y: 0.5 },
-      offset: { x: 0, y: 0 }, scale: { x: 0.34, y: 0.34 }, rotation: 0,
-      retainParent: true, callout: { enabled: false, scale: 1 }, decorations: [],
+    }
+    await nextTick();
+    const linkMarks = Array.from(parentElement.querySelectorAll('[data-mark-role="link"]'));
+    const anchorFractions = {
+      "Evaluate→Adopt": 0.66,
+      "Evaluate→Reject": 0.28,
+      "Discuss→Adopt": 0.72,
+    };
+    const appearanceByRelationship = new Map();
+    for (const relationship of relationships) {
+      let identity = {};
+      try { identity = JSON.parse(relationship.parentDataKey ?? "{}"); } catch { /* no-op */ }
+      const linkMark = linkMarks.find((candidate) => candidate.getAttribute("data-source") === identity.source
+        && candidate.getAttribute("data-target") === identity.target);
+      const path = linkMark?.querySelector("path");
+      const pathBounds = path?.getBBox();
+      const strokeWidth = Number(path?.getAttribute("stroke-width") ?? 0);
+      const identityKey = `${identity.source ?? ""}→${identity.target ?? ""}`;
+      const pathFraction = anchorFractions[identityKey] ?? 0.5;
+      const point = path && path.getTotalLength ? path.getPointAtLength(path.getTotalLength() * pathFraction) : null;
+      const offset = pathBounds && point ? {
+        x: point.x - (pathBounds.x + pathBounds.width / 2),
+        y: point.y - (pathBounds.y + pathBounds.height / 2),
+      } : { x: 0, y: 0 };
+      if (identityKey === "Reconsider→Reject") offset.y -= 10;
+      const scaleX = Math.max(0.55, Math.min(0.78, ((pathBounds?.width ?? 360) * 0.52) / cloud.width));
+      const scaleY = Math.max(0.48, Math.min(1.05, (strokeWidth * 0.72) / cloud.height));
+      const appearance = {
+        parentAnchor: { x: 0.5, y: 0.5 }, childAnchor: { x: 0.5, y: 0.5 },
+        offset, scale: { x: scaleX, y: scaleY }, rotation: 0,
+        retainParent: true, callout: { enabled: false, scale: 1 }, decorations: [],
+      };
+      appearanceByRelationship.set(relationship.id, appearance);
+      openNestedPositionEditor([relationship.id]);
+      applyNestedAppearance(appearance);
+      await nextTick();
+    }
+    appearanceByRelationship.forEach((appearance, relationshipId) => {
+      const relationship = chartRelationships.value.nestedRelationships[relationshipId];
+      if (relationship) relationship.parameters = { ...relationship.parameters, ...appearance };
     });
     editingCompositionId.value = null;
     closeNestedPositionEditor();
     scheduleNestedChildLayout();
     await nextTick();
+    await nextTick();
+    const undersizedCloud = Array.from(canvasRef.value?.querySelectorAll('[data-chart-type="word-cloud"]') ?? [])
+      .map((element) => element.closest("[data-node-id]")?.getAttribute("data-node-id"))
+      .map((nodeId) => nodeId ? findCanvasNode(nodeId) : null)
+      .find((node) => node?.chartSpec?.chartType === "WordCloud" && node.scaleX < 0.3);
+    if (undersizedCloud) {
+      const center = {
+        x: undersizedCloud.x + undersizedCloud.width * undersizedCloud.scaleX / 2,
+        y: undersizedCloud.y + undersizedCloud.height * undersizedCloud.scaleY / 2,
+      };
+      Object.assign(undersizedCloud, {
+        x: center.x - undersizedCloud.width * 0.68 / 2,
+        y: center.y - undersizedCloud.height * 1.05 / 2,
+        scaleX: 0.68,
+        scaleY: 1.05,
+      });
+    }
     await nextTick();
   }
   setSelection([]);

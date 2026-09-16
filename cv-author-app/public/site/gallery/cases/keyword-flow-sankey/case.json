@@ -34,7 +34,9 @@
     "sankeyNodes": 6,
     "sankeyRibbons": 8,
     "nestedWordClouds": 8,
-    "keywordsPerRibbon": 6
+    "keywordRowsPerRibbon": 24,
+    "renderedKeywordsPerRibbon": "22–24",
+    "renderedKeywordMarks": 188
   },
   "data": [
     "data/flow_keywords.csv",
@@ -44,7 +46,7 @@
   "gallery": {
     "number": "10",
     "title": "Keyword Flow Ribbons",
-    "description": "Eight Sankey bands carry compact word clouds filtered by the exact source-target transition they explain.",
+    "description": "Eight Sankey bands are filled with dense, semantically focused word clouds scaled to the transition they explain.",
     "tags": [
       "Nested",
       "Sankey",
@@ -60,7 +62,7 @@
     "file": {
       "type": "GRAPH CSV",
       "name": "keyword_flows.csv + flow_keywords.csv",
-      "description": "Eight weighted stage transitions and six weighted keywords keyed to every source-target pair.",
+      "description": "Eight weighted stage transitions and 24 meaningful, weighted keywords keyed to every source-target pair.",
       "files": [
         "keyword_flows.csv",
         "flow_keywords.csv"
@@ -80,7 +82,7 @@
         "role": "Keyword color"
       }
     ],
-    "composition": "Nest Word Cloud into every Sankey link mark. The ribbon source and target become inherited filters, so each cloud contains only that transition's vocabulary.",
+    "composition": "Nest Word Cloud into every Sankey link mark. The ribbon source and target become inherited filters, so each cloud contains only that transition's vocabulary; its independent X/Y scale expands the words across the band's length and thickness.",
     "editorHelp": {
       "introduction": "The starter provides one bound Sankey and one bound Word Cloud using the same graph dataset.",
       "steps": [
@@ -89,14 +91,14 @@
           "source": "Word Cloud",
           "target": "Sankey ribbon marks",
           "action": "Nest across all links; source and target are inherited as child filters.",
-          "result": "Every band receives its own six-keyword cloud while retaining the original flow width and color."
+          "result": "Every band receives its own 24-keyword semantic cloud, scaled to fill the ribbon while retaining the original flow width and color."
         }
       ]
     }
   },
   "preview": {
     "path": "preview.svg",
-    "sha256": "3ddf1c25c490044267b1e62291980d63e835ce6ebfdc61e994d9a572f1747774",
+    "sha256": "4b528e26bff742249348961673d669942b5e2231c14e6850ba9b0b3ea1aacc74",
     "source": "http://localhost:5173/editor/?case=sankey-ribbon-nested-wordclouds",
     "capturedOn": "2026-09-16"
   }
