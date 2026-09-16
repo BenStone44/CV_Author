@@ -2,7 +2,7 @@
   width: fit-content;
   padding: 3px 6px;
   border-radius: 4px;
-  background: #ffe6a7;
+  background: var(--frontend-control-accent);
   color: var(--frontend-control-accent-strong);
   font-size: calc(10px * var(--frontend-font-scale));
   font-weight: 700;
@@ -14,7 +14,7 @@
 }
 .recommendation-option-card > span:not(.recommendation-option-card__strategy) {
   min-height: 34px;
-  color: #fefae0;
+  color: var(--frontend-surface-canvas);
   font-size: calc(11px * var(--frontend-font-scale));
   line-height: 1.45;
 }

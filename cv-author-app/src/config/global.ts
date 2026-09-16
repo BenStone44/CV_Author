@@ -42,22 +42,22 @@ export const globalPalette = {
  * categorical fallback used by chart controls.
  */
 export const frontendPalette = {
-  lightest: "#fefae0",
+  lightest: "#fffef7",
   surface: {
-    canvas: "#fefae0",
-    panel: "#fefae0",
-    raised: "#fefae0",
-    soft: "#fff3d0",
+    canvas: "#fffef7",
+    panel: "#fffef7",
+    raised: "#fffbee",
+    soft: "#fefae0",
     sidebar: "#fefae0",
   },
   text: {
     primary: "#432818",
     secondary: "#99582a",
     muted: "#728196",
-    inverse: "#fefae0",
+    inverse: "#fffef7",
   },
   control: {
-    accent: "#ffe6a7",
+    accent: "#fefae0",
     accentStrong: "#99582a",
     sliderTrack: "#bc6c25",
     sliderThumb: "#606c38",
@@ -75,7 +75,7 @@ export const frontendPalette = {
     data: "#fefae0",
     chart: "#fefae0",
     composition: "#f3faf7",
-    inspector: "#fff3d0",
+    inspector: "#fffbee",
   },
   series: [
     "#432818",

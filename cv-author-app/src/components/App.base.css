@@ -10,7 +10,7 @@
       rgb(var(--frontend-light-rgb) / 0.95),
       rgb(var(--frontend-light-rgb) / 0.68)
     ),
-    linear-gradient(135deg, var(--frontend-surface-soft) 0%, var(--frontend-surface-panel) 48%, #ffe6a7 100%);
+    linear-gradient(135deg, var(--frontend-surface-soft) 0%, var(--frontend-surface-panel) 48%, var(--frontend-control-accent) 100%);
 }
 .sidebar {
   --browser-panel-height: 220px;
@@ -1122,7 +1122,7 @@
   border-left: 1px solid var(--frontend-border-subtle);
 }
 .facet-direction-control .facet-direction-control__button--active {
-  background: #ffe6a7;
+  background: var(--frontend-control-accent);
   color: var(--frontend-text-primary);
   font-weight: 700;
 }
@@ -1225,7 +1225,7 @@
 }
 
 .facet-coordinate-mode button.is-active {
-  background: #ffe6a7;
+  background: var(--frontend-control-accent);
   color: var(--frontend-text-primary);
   font-weight: 700;
 }

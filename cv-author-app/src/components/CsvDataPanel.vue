@@ -1473,7 +1473,7 @@ onUpdated(() => {
 
 .data-panel__icon-button--active {
   border-color: var(--frontend-border-strong);
-  background: #ffe6a7;
+  background: var(--frontend-control-accent);
   color: #432818;
 }
 
@@ -1588,7 +1588,7 @@ onUpdated(() => {
   justify-content: space-between;
   gap: 10px;
   padding: 9px 12px 7px;
-  background: #ffe6a7;
+  background: var(--frontend-control-accent);
 }
 
 .graph-table-section__header h3 {
@@ -1649,7 +1649,7 @@ onUpdated(() => {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: #fefae0;
+  background: var(--frontend-surface-raised);
   color: #432818;
   font-weight: 700;
 }
@@ -1722,7 +1722,7 @@ onUpdated(() => {
   width: 42px;
   min-width: 42px !important;
   max-width: 42px !important;
-  background: #ffe6a7;
+  background: var(--frontend-control-accent);
   color: #99582a;
   font-weight: 500;
   text-align: right !important;
@@ -1730,7 +1730,7 @@ onUpdated(() => {
 
 .data-table thead .data-table__row-number {
   z-index: 3;
-  background: #fefae0;
+  background: var(--frontend-surface-raised);
 }
 
 .data-table__field-name {
@@ -1740,7 +1740,7 @@ onUpdated(() => {
   width: var(--data-table-field-width);
   min-width: var(--data-table-field-width) !important;
   max-width: var(--data-table-field-width) !important;
-  background: #ffe6a7;
+  background: var(--frontend-control-accent);
   color: #432818;
   font-weight: 700;
 }
@@ -1767,19 +1767,19 @@ onUpdated(() => {
   position: sticky;
   left: 0;
   z-index: 4;
-  background: #ffe6a7;
+  background: var(--frontend-control-accent);
   background-clip: padding-box;
 }
 
 .graph-table-section .data-table thead .data-table__row-number,
 .graph-table-section .data-table thead .data-table__field-name {
   z-index: 5;
-  background: #fefae0;
+  background: var(--frontend-surface-raised);
 }
 
 .data-table thead .data-table__field-name {
   z-index: 3;
-  background: #fefae0;
+  background: var(--frontend-surface-raised);
 }
 
 .data-table--transposed .data-table__field-name span,
@@ -2126,7 +2126,7 @@ onUpdated(() => {
 }
 
 .transform-value-list label:hover {
-  background: #ffe6a7;
+  background: var(--frontend-control-accent);
 }
 
 .transform-value-list label span {
