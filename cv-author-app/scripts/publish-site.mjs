@@ -298,7 +298,9 @@ async function verifyBrowser(buildDir, cases, local, releaseSha = "") {
       await page.waitForSelector("main h1", { timeout: 20_000 });
     });
     await verifyPage("/gallery/", async (page) => {
-      await page.waitForFunction(() => document.body.textContent?.includes("Shared Hierarchy"), null, { timeout: 20_000 });
+      await page.waitForFunction((expected) => (
+        document.querySelectorAll('a[href*="/gallery/example/"]').length === expected
+      ), cases.length, { timeout: 20_000 });
       const links = await page.locator('a[href*="/gallery/example/"]').evaluateAll((elements) =>
         elements.map((element) => element.getAttribute("href")));
       if (!links[1]?.includes("example=shared-hierarchy")) throw new Error("Shared Hierarchy is not the second Gallery card.");
