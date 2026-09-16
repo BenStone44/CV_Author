@@ -1,0 +1,112 @@
+{
+  "slug": "retweet-community-hexbin",
+  "starter": "retweet-community-hexbin",
+  "completedCase": "retweet-community-hexbin-links",
+  "status": "complete",
+  "blocks": [
+    {
+      "chartType": "Hexbin",
+      "bindings": {
+        "x": "x",
+        "y": "y",
+        "color": "community",
+        "shape": "user_type"
+      }
+    },
+    {
+      "chartType": "GraphLink",
+      "bindings": {
+        "source": "source",
+        "target": "target",
+        "value": "weight",
+        "color": "relation_type"
+      }
+    }
+  ],
+  "composition": [
+    {
+      "type": "layer",
+      "sharedChannels": [
+        "x",
+        "y"
+      ],
+      "target": "Hexbin",
+      "source": "GraphLink"
+    }
+  ],
+  "expectedRender": {
+    "users": 512,
+    "hexagons": 512,
+    "communities": 4,
+    "userTypes": 3,
+    "retweetLinks": 348
+  },
+  "data": [
+    "data/retweet_users.csv",
+    "data/retweet_links.csv"
+  ],
+  "configuration": "configure.js",
+  "gallery": {
+    "number": "09",
+    "title": "Retweet Community Honeycomb",
+    "description": "A tightly packed one-user-per-hex social map, partitioned into colored communities and crossed by real retweet links.",
+    "tags": [
+      "Layer",
+      "Hexbin",
+      "Graph Link"
+    ],
+    "blocks": [
+      "Hexbin",
+      "Graph Link"
+    ],
+    "coordinateSystems": [
+      "Cartesian"
+    ],
+    "file": {
+      "type": "GRAPH CSV",
+      "name": "retweet_users.csv + retweet_links.csv",
+      "description": "512 users on an exact honeycomb lattice with community and user-role labels, plus local and cross-community retweet edges.",
+      "files": [
+        "retweet_users.csv",
+        "retweet_links.csv"
+      ]
+    },
+    "bindings": [
+      {
+        "field": "x · y",
+        "role": "One user at each packed hex position"
+      },
+      {
+        "field": "community",
+        "role": "Hex fill, forming four contiguous regions"
+      },
+      {
+        "field": "user_type",
+        "role": "Hex border style for Opinion leader, Retweeter, or Receiver"
+      },
+      {
+        "field": "source · target · weight",
+        "role": "Retweet relationship, endpoints, and strength"
+      }
+    ],
+    "composition": "Layer Graph Link over a fully packed Hexbin on shared X and Y scales. Community controls fill; user_type independently controls the role border.",
+    "editorHelp": {
+      "introduction": "The starter places the packed Hexbin and bound retweet Graph Link separately.",
+      "steps": [
+        {
+          "title": "Overlay retweet paths",
+          "source": "Graph Link",
+          "target": "Hexbin",
+          "action": "Create a Cartesian Layer sharing X and Y.",
+          "result": "Links connect the exact user hexes without changing the honeycomb community layout."
+        }
+      ]
+    }
+  },
+  "preview": {
+    "path": "preview.svg",
+    "sha256": "43bc9411e8c2b255721b48cfffe880461e8b8133e525ecb402b899f5b80fd147",
+    "source": "http://localhost:5173/editor/?case=retweet-community-hexbin-links",
+    "capturedOn": "2026-09-16"
+  }
+}

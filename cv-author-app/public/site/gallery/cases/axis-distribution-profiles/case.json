@@ -1,0 +1,118 @@
+{
+  "slug": "axis-distribution-profiles",
+  "starter": "axis-distribution-profiles",
+  "completedCase": "parallel-axis-nested-distributions",
+  "status": "complete",
+  "blocks": [
+    {
+      "chartType": "ParallelCoordinatesPlot",
+      "bindings": {
+        "dimensions": [
+          "efficiency",
+          "quality",
+          "adoption",
+          "resilience",
+          "satisfaction"
+        ],
+        "color": "segment"
+      }
+    },
+    {
+      "chartType": "SingleBoxplot",
+      "bindings": {
+        "y": "one metric per target axis"
+      }
+    },
+    {
+      "chartType": "LineGraph",
+      "bindings": {
+        "x": "sample_index",
+        "y": "one metric per target axis"
+      }
+    }
+  ],
+  "composition": [
+    {
+      "type": "nested",
+      "parent": "ParallelCoordinatesPlot axis",
+      "child": "SingleBoxplot",
+      "target": "all five axes"
+    },
+    {
+      "type": "nested",
+      "parent": "ParallelCoordinatesPlot axis",
+      "child": "LineGraph",
+      "target": "above all five axes"
+    }
+  ],
+  "expectedRender": {
+    "parallelPaths": 48,
+    "parallelAxes": 5,
+    "nestedBoxplots": 5,
+    "nestedLineCharts": 5
+  },
+  "data": [
+    "data/multivariate_profiles.csv"
+  ],
+  "configuration": "configure.js",
+  "gallery": {
+    "number": "07",
+    "title": "Axis Distribution Profiles",
+    "description": "A five-axis portfolio view where every axis carries its own distribution box and an observation line above it.",
+    "tags": [
+      "Nested",
+      "Parallel Coordinates",
+      "Box Plot"
+    ],
+    "blocks": [
+      "Parallel Coordinates",
+      "Single Box Plot",
+      "Line Chart"
+    ],
+    "coordinateSystems": [
+      "Coordinate Free",
+      "Cartesian"
+    ],
+    "file": {
+      "type": "WIDE CSV",
+      "name": "multivariate_profiles.csv",
+      "description": "48 portfolio observations with five comparable metrics and three segments.",
+      "files": [
+        "multivariate_profiles.csv"
+      ]
+    },
+    "bindings": [
+      {
+        "field": "efficiency · quality · adoption · resilience · satisfaction",
+        "role": "Parallel axes and per-axis child Y"
+      },
+      {
+        "field": "sample_index",
+        "role": "Nested Line Chart X"
+      },
+      {
+        "field": "segment",
+        "role": "Parallel path color"
+      }
+    ],
+    "composition": "Nest one Box Plot at the center of each Parallel Coordinates axis, then nest a metric-specific Line Chart above every axis with rounded frames.",
+    "editorHelp": {
+      "introduction": "The starter places three fully bound blocks independently.",
+      "steps": [
+        {
+          "title": "Populate every axis",
+          "source": "Box Plot and Line Chart",
+          "target": "Parallel Coordinates axis marks",
+          "action": "Nest each source across all five axis targets and assign the matching metric field.",
+          "result": "Every axis shows both its distribution and its ordered observation profile."
+        }
+      ]
+    }
+  },
+  "preview": {
+    "path": "preview.svg",
+    "sha256": "201411102174598630855c432dffadbc653af2605412435935a69459c54af7d4",
+    "source": "http://localhost:5173/editor/?case=parallel-axis-nested-distributions",
+    "capturedOn": "2026-09-16"
+  }
+}

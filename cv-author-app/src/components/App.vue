@@ -91,6 +91,16 @@ const galleryStarterIds = new Set([
   "matrix-network",
   "shared-hierarchy",
   "tree-leaf-axis",
+  "axis-distribution-profiles",
+  "adaptive-network-profiles",
+  "retweet-community-hexbin",
+  "keyword-flow-sankey",
+  "athlete-performance-radar",
+  "forest-carbon-rings",
+  "climate-risk-dashboard",
+  "customer-journey-constellation",
+  "research-collaboration-network",
+  "island-logistics-map",
 ]);
 const requestedStarter = requestedStarterValue && galleryStarterIds.has(requestedStarterValue)
   ? requestedStarterValue
@@ -105,6 +115,19 @@ const isDendrogramGallery = requestedCase === "dendrogram-nested-radial-area"
   || new URLSearchParams(window.location.search).get("starter") === "tree-leaf-axis";
 const isGeographicGallery = requestedCase === "geographic-network-layer-nested-bars"
   || new URLSearchParams(window.location.search).get("starter") === "geographic-network";
+const showcaseCaseSlugs = new Map([
+  ["parallel-axis-nested-distributions", "axis-distribution-profiles"],
+  ["force-network-typed-nested-charts", "adaptive-network-profiles"],
+  ["retweet-community-hexbin-links", "retweet-community-hexbin"],
+  ["sankey-ribbon-nested-wordclouds", "keyword-flow-sankey"],
+  ["athlete-performance-radar-angular-concat", "athlete-performance-radar"],
+  ["forest-carbon-rings-angular-concat", "forest-carbon-rings"],
+  ["climate-risk-dashboard-nested-concat", "climate-risk-dashboard"],
+  ["customer-journey-constellation-nested-concat", "customer-journey-constellation"],
+  ["research-collaboration-network-nested-profiles", "research-collaboration-network"],
+  ["island-logistics-map-layer-nested-bars", "island-logistics-map"],
+]);
+const showcaseCaseSlug = requestedCase ? showcaseCaseSlugs.get(requestedCase) : undefined;
 const datasetStore = useDatasetStore();
 const starterDatasets = requestedStarter === "polar-facet"
   ? [chordPolarLineDataset]
@@ -304,6 +327,7 @@ const {
   loadGalleryStarter,
   loadChordCircularStackedFacetCase,
   loadMatrixPieNetworkCase,
+  loadShowcaseGalleryCase,
 } = useCanvasStore(canvasRef);
 function deckglLayerOwner(node: CanvasNode) {
   const stack = node.deckglLayerStack;
@@ -1603,6 +1627,39 @@ onMounted(() => {
       const loaded = await loadChordCircularStackedFacetCase(CHORD_POLAR_LINE_DATASET_ID);
       await nextTick();
       document.documentElement.dataset.caseStatus = loaded && exposeRenderedCaseSvg() ? "ready" : "error";
+    });
+  } else if (showcaseCaseSlug) {
+    document.documentElement.dataset.caseId = requestedCase ?? "";
+    document.documentElement.dataset.caseStatus = "loading";
+    void nextTick(async () => {
+      try {
+        const loaded = await loadShowcaseGalleryCase(showcaseCaseSlug, true);
+        await nextTick();
+        let svg: string | null = null;
+        if (showcaseCaseSlug === "island-logistics-map") {
+          for (let attempt = 0; attempt < 3 && !svg; attempt += 1) {
+            try {
+              svg = await exportRenderedGeographicSvg();
+            } catch (error) {
+              if (attempt === 2) throw error;
+              window.dispatchEvent(new Event("resize"));
+              await nextTick();
+              await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            }
+          }
+        } else {
+          svg = exportCanvasSvgMarkup(true);
+        }
+        if (!loaded || !svg) throw new Error(
+          document.documentElement.dataset.galleryStarterError
+            ?? `Gallery case export unavailable: ${showcaseCaseSlug}`,
+        );
+        (window as Window & { __VISBRICKS_CASE_SVG__?: string }).__VISBRICKS_CASE_SVG__ = svg;
+        document.documentElement.dataset.caseStatus = "ready";
+      } catch (error) {
+        document.documentElement.dataset.galleryStarterError = String(error);
+        document.documentElement.dataset.caseStatus = "error";
+      }
     });
   }
   if (!requestedStarter && isMatrixPieNetworkCase) {

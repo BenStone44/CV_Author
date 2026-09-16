@@ -4551,6 +4551,61 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     }, datasetId, compose);
   }
 
+  /** Load a website-owned Gallery case without adding case data to editor stores. */
+  async function loadShowcaseGalleryCase(slug: string, compose = true) {
+    return runGalleryCase(slug, {
+      MAX_ZOOM,
+      MIN_ZOOM,
+      adaptLegacyWideBindings,
+      applyNestedAppearance,
+      applyNestedPiesToNode,
+      axisBindingTarget,
+      boundsFromNodeFrame,
+      canvasNodes,
+      canvasRef,
+      chartDrilldown,
+      chartRelationships,
+      clamp,
+      closeNestedPositionEditor,
+      commitCompositionDrop,
+      compositionDropZoneAtPoint,
+      createCanvasItem,
+      createDeckglLayer,
+      deckglLightMapStyleUrl,
+      editingCompositionId,
+      enterNestedDropLevel,
+      executeComposition,
+      findCanvasNode,
+      getCanvasNodeListBounds,
+      getChartBlockSpecification,
+      getDataset,
+      hasRequiredChartEncodings,
+      implementedTemplateDefinitions,
+      materializeGraphDataset,
+      mergeBounds,
+      nestCanvasNodeOnDeckglPoint,
+      nestedDropPath,
+      nextTick,
+      nodeLocalToSelectionScopePoint,
+      openNestedPositionEditor,
+      registerChartRelationship,
+      renderChartNode,
+      scheduleNestedChildLayout,
+      setActiveDataset,
+      setDeckglConfig,
+      setDeckglDataBinding,
+      setDeckglEncoding,
+      setSelection,
+      toSelectionScopePoint,
+      updateNestedCallout,
+      updateNestedChildScale,
+      updateNestedPosition,
+      useDatasetStore,
+      viewPan,
+      viewZoom,
+    }, compose);
+  }
+
   /** Place data-bound Gallery blocks without composing them for the visitor. */
   async function loadGalleryStarter(starterId: string, preferredDatasetId?: string, compose = false) {
     if (starterId === "polar-facet") return loadChordCircularStackedFacetCase(CHORD_POLAR_LINE_DATASET_ID, compose);
@@ -4558,7 +4613,9 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (starterId === "shared-hierarchy") return preferredDatasetId ? loadSharedHierarchyCase(preferredDatasetId, compose) : false;
     if (starterId === "tree-leaf-axis") return loadDendrogramProfilesCase(compose);
     if (starterId === "geographic-network") return loadGeographicNetworkCase(compose);
-    return loadAcademicScoresCase(starterId, preferredDatasetId, compose);
+    return starterId === "academic-scores"
+      ? loadAcademicScoresCase(starterId, preferredDatasetId, compose)
+      : loadShowcaseGalleryCase(starterId, compose);
   }
 
   async function loadAcademicScoresCase(starterId: string, preferredDatasetId?: string, compose = false) {
@@ -5755,5 +5812,6 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     loadGalleryStarter,
     loadChordCircularStackedFacetCase,
     loadMatrixPieNetworkCase,
+    loadShowcaseGalleryCase,
   };
 }
