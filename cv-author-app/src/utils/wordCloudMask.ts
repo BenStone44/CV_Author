@@ -95,7 +95,7 @@ export function sampleSvgWordCloudMask(
   scopeElement: SVGGraphicsElement,
   maximumDimension = 240,
 ): WordCloudMask | null {
-  if (!elements.length || bounds.width <= 0 || bounds.height <= 0) return null;
+  if (!elements.length || bounds.width <= 0) return null;
   const scopeMatrix = scopeElement.getScreenCTM();
   if (!scopeMatrix) return null;
   const inverseScope = invertMatrix(domMatrix(scopeMatrix));

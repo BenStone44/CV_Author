@@ -5522,7 +5522,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           bounds = semanticSelectionBounds(targetGeometryMarks, scopeGroupId);
           targetBoundsCache.set(boundsCacheKey, bounds);
         }
-        if (!bounds || bounds.width <= 0 || bounds.height <= 0) return;
+        if (!bounds || bounds.width <= 0) return;
         const existingWordGroup = child.chartSpec?.markGroups?.find((group) => group.role === "word");
         const shapeAdaptiveWordCloud = normalizeChartTemplate(child.chartSpec?.chartType ?? "") === "wordcloud"
           && String(existingWordGroup?.sharedConfig.layout ?? "shape") !== "rectangle";
@@ -5592,6 +5592,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
             renderChartNode(child);
           }
         }
+        if (bounds.height <= 0) return;
         const parentFrame = {
           x: bounds.minX,
           y: bounds.minY,
