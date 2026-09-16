@@ -306,7 +306,9 @@ async function verifyBrowser(buildDir, cases, local, releaseSha = "") {
       if (!links[1]?.includes("example=shared-hierarchy")) throw new Error("Shared Hierarchy is not the second Gallery card.");
     });
     await verifyPage("/gallery/example/?example=shared-hierarchy", async (page) => {
-      await page.waitForFunction(() => document.body.textContent?.includes("Shared Hierarchy"), null, { timeout: 20_000 });
+      await page.waitForSelector("main h1", { timeout: 20_000 });
+      const starterHref = await page.locator('a[href*="starter=shared-hierarchy"]').first().getAttribute("href");
+      if (!starterHref) throw new Error("Shared Hierarchy detail page has no matching starter link.");
     });
     await verifyPage("/tutorials/", async (page) => page.waitForSelector("main h1", { timeout: 20_000 }));
     await verifyPage("/api/", async (page) => page.waitForSelector("main h1", { timeout: 20_000 }));
