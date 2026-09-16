@@ -5,11 +5,14 @@ import type {
   Point,
   AbsoluteNodeFrame,
   ChartSpec,
+  ChartPlotArea,
   NestedDecoration,
 } from "../types";
 import { getChartContract } from "./chartContracts";
+import { chartAxisLabelsVisible, chartAxisVisible } from "./chartAxes";
 import { RADIAL_DENDROGRAM_SELECTION_PADDING } from "./radialClusterLayout";
 import { nestedDecorationBounds, nestedDecorationsMarkup, normalizeNestedDecorations } from "./nestedDecorations";
+import { isCartesianTreeChart } from "./treeLayout";
 
 export function clamp(value: number, min: number, max: number) {
   if (max < min) return min;
@@ -356,8 +359,7 @@ export function getNodeSelectionBounds(node: CanvasNode): Bounds {
   const plotArea = node.chartSpec?.plotArea;
   const selectionBounds = node.chartSpec?.selectionBounds;
   if (node.renderedContent && (plotArea || selectionBounds)) {
-    const chartType = normalizeChartType(node.chartSpec?.chartType ?? "");
-    if (selectionBounds && (chartType === "dendrogram" || chartType === "forcedirectedgraph")) {
+    if (selectionBounds && !nodeHasVisibleCartesianAxes(node)) {
       return {
         minX: selectionBounds.x,
         minY: selectionBounds.y,
@@ -394,8 +396,68 @@ export function getNodeSelectionBounds(node: CanvasNode): Bounds {
   };
 }
 
-function normalizeChartType(chartType: string) {
-  return chartType.replace(/[\s_-]/g, "").toLowerCase();
+/** Whether a chart currently renders any Cartesian axis line or label. */
+export function nodeHasVisibleCartesianAxes(node: CanvasNode) {
+  const guide = node.coordinateGuide;
+  if (guide?.type !== "Cartesian"
+    || guide.showAllAxes === false
+    || isCartesianTreeChart(node.chartSpec?.chartType)) return false;
+  return (["x", "y"] as const).some((channel) =>
+    chartAxisVisible(node.chartSpec, guide, channel)
+    || chartAxisLabelsVisible(node.chartSpec, guide, channel));
+}
+
+export function boundsCenteredAt(bounds: Bounds, center: Point): Bounds {
+  if (Math.abs((bounds.minX + bounds.maxX) / 2 - center.x) < 1e-9
+    && Math.abs((bounds.minY + bounds.maxY) / 2 - center.y) < 1e-9) return bounds;
+  const halfWidth = Math.max(center.x - bounds.minX, bounds.maxX - center.x, 0);
+  const halfHeight = Math.max(center.y - bounds.minY, bounds.maxY - center.y, 0);
+  return {
+    minX: center.x - halfWidth,
+    minY: center.y - halfHeight,
+    maxX: center.x + halfWidth,
+    maxY: center.y + halfHeight,
+    width: halfWidth * 2,
+    height: halfHeight * 2,
+  };
+}
+
+/**
+ * Local geometry used by both the visible selection frame and Nested anchor
+ * resolution. Visible Cartesian axes own the plot plane; otherwise the marks
+ * own the frame. Polar frames are always symmetric about their true origin,
+ * including annuli and partial-angle charts.
+ */
+export function getNodeAnchorBounds(node: CanvasNode, renderedMarkBounds?: Bounds | null): Bounds {
+  const polar = getPolarOccupiedGeometry(node);
+  if (polar) {
+    return boundsCenteredAt(renderedMarkBounds ?? polar.bounds, polar.origin);
+  }
+  if (nodeHasVisibleCartesianAxes(node) && node.chartSpec?.plotArea) {
+    const plot = node.chartSpec.plotArea;
+    return {
+      minX: plot.x,
+      minY: plot.y,
+      maxX: plot.x + plot.width,
+      maxY: plot.y + plot.height,
+      width: plot.width,
+      height: plot.height,
+    };
+  }
+  return renderedMarkBounds ?? getNodeSelectionBounds(node);
+}
+
+/** Converts anchor geometry from SVG-local coordinates to node-frame space. */
+export function getNodeNestedAnchorBounds(node: CanvasNode, renderedMarkBounds?: Bounds | null): ChartPlotArea {
+  const bounds = getNodeAnchorBounds(node, renderedMarkBounds);
+  const localMinX = node.kind === "leaf" ? node.contentMinX : 0;
+  const localMinY = node.kind === "leaf" ? node.contentMinY : 0;
+  return {
+    x: bounds.minX - localMinX,
+    y: bounds.minY - localMinY,
+    width: bounds.width,
+    height: bounds.height,
+  };
 }
 
 /**

@@ -917,6 +917,12 @@ export type NestedElementFrame = {
   scaleX: number;
   scaleY: number;
   rotation: number;
+  /**
+   * Optional node-local rectangle used for Nested anchors. Coordinates are
+   * relative to the node frame, not the SVG viewBox. The resolved transform
+   * still positions the full node frame.
+   */
+  anchorBounds?: ChartPlotArea;
 };
 
 export type ResolvedNestedTransform = {

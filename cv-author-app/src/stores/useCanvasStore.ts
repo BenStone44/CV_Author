@@ -97,12 +97,16 @@ import {
   normalizeBounds,
   mergeBounds,
   boundsFromNodeFrame,
+  boundsCenteredAt,
   cloneCanvasNode,
   collectNodeBounds,
   collectNodeSelectionBounds,
   createCanvasNodesSvgMarkup as serializeCanvasNodesSvgMarkup,
   cloneChartSpec,
   getNodeSelectionBounds,
+  getNodeAnchorBounds,
+  getNodeNestedAnchorBounds,
+  nodeHasVisibleCartesianAxes,
   getPolarOccupiedGeometry,
   getPolarSelectionGeometry,
   getLeafNodeTransform,
@@ -1643,16 +1647,20 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (!isCartesian) return null;
     return collectNodeSelectionBounds(node, 0, 0, 1, 1, (candidate) => {
       const plot = candidate.coordinateGuide?.type === "Cartesian"
+        && nodeHasVisibleCartesianAxes(candidate)
         ? candidate.chartSpec?.plotArea
         : undefined;
-      return plot ? {
+      if (plot) return {
         minX: plot.x,
         minY: plot.y,
         maxX: plot.x + plot.width,
         maxY: plot.y + plot.height,
         width: plot.width,
         height: plot.height,
-      } : null;
+      };
+      return candidate.coordinateGuide?.type === "Cartesian"
+        ? renderedNodeLocalSelectionBounds(candidate)
+        : null;
     });
   }
   function nestedBoundsForSemanticMark(nodeId: string, rowKey?: string, markGroupId?: string): Bounds | null {
@@ -1679,10 +1687,19 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     let bounds: Bounds | null = null;
     selectedIds.value.forEach((id) => {
       const node = getSelectionNode(id);
-      if (node) bounds = mergeBounds(
-        bounds,
-        collectCartesianCoordinateBounds(node) ?? collectSelectionBoundsWithNestedChildren(node),
-      );
+      if (!node) return;
+      let nodeBounds = collectCartesianCoordinateBounds(node) ?? collectSelectionBoundsWithNestedChildren(node);
+      if (getPolarSelectionGeometry(node)) {
+        const anchorFrame = nodeLocalBoundsFrame(
+          node,
+          getNodeAnchorBounds(node, renderedNodeLocalSelectionBounds(node)),
+        );
+        nodeBounds = boundsCenteredAt(nodeBounds, {
+          x: anchorFrame.x + anchorFrame.width / 2,
+          y: anchorFrame.y + anchorFrame.height / 2,
+        });
+      }
+      bounds = mergeBounds(bounds, nodeBounds);
     });
     return bounds;
   });
@@ -1702,15 +1719,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const node = selectedIds.value.length === 1 ? getSelectionNode(selectedIds.value[0]!) : null;
     if (!bounds || !node) return bounds ? { x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height, rotation: 0 } : null;
     if (node.coordinateGuide?.type === "Cartesian" && node.chartSpec?.plotArea) {
-      const plot = node.chartSpec.plotArea;
-      return nodeLocalBoundsFrame(node, {
-        minX: plot.x,
-        minY: plot.y,
-        maxX: plot.x + plot.width,
-        maxY: plot.y + plot.height,
-        width: plot.width,
-        height: plot.height,
-      });
+      const visualBounds = renderedNodeLocalSelectionBounds(node);
+      return nodeLocalBoundsFrame(node, getNodeAnchorBounds(node, visualBounds));
     }
     if (node.coordinateSystem?.type === "Cartesian") {
       const coordinateBounds = collectCartesianCoordinateBounds(node);
@@ -1725,9 +1735,8 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     if (nestedSelectionRelationships(node.id).length > 0) {
       return { x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height, rotation: 0 };
     }
-    if (node.compositionSpec?.type === "facet" && node.compositionSpec.facetCoordinateSystem === "Polar") {
-      const geometry = getPolarSelectionGeometry(node);
-      if (geometry) return nodeLocalBoundsFrame(node, geometry.bounds);
+    if (getPolarSelectionGeometry(node)) {
+      return nodeLocalBoundsFrame(node, getNodeAnchorBounds(node, renderedNodeLocalSelectionBounds(node)));
     }
     const visualBounds = renderedNodeLocalSelectionBounds(node) ?? getNodeSelectionBounds(node);
     return nodeLocalBoundsFrame(node, visualBounds);
@@ -5610,12 +5619,13 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           scaleX: 1,
           scaleY: 1,
           rotation: child.rotation,
+          anchorBounds: getNodeNestedAnchorBounds(child, renderedNodeLocalSelectionBounds(child)),
         };
         let next = resolveNestedRelationship(relationship.id, parentFrame, childFrame);
         if (fitToParentMark && isCartesianTreeChart(parent.chartSpec?.chartType)) {
           const fitScale = Math.max(0.01, Math.min(
-            bounds.width * 0.78 / Math.max(child.width, 1),
-            bounds.height * 0.78 / Math.max(child.height, 1),
+            bounds.width * 0.78 / Math.max(childFrame.anchorBounds.width, 1),
+            bounds.height * 0.78 / Math.max(childFrame.anchorBounds.height, 1),
           ));
           const parameters = relationship.parameters as Partial<RelativeNestedParameters>;
           // Keep the resolved scale as the relationship baseline so a later

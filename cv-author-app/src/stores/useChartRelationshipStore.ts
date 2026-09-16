@@ -188,9 +188,19 @@ const relativePositionResolver: NestedResolver = (relationship, parent, child) =
   const rotation = parent.rotation + parameters.rotation;
   const childWidth = child.width * scaleX;
   const childHeight = child.height * scaleY;
+  const childAnchorBounds = child.anchorBounds ?? {
+    x: 0,
+    y: 0,
+    width: child.width,
+    height: child.height,
+  };
+  const childAnchorPoint = {
+    x: childAnchorBounds.x + parameters.childAnchor.x * childAnchorBounds.width,
+    y: childAnchorBounds.y + parameters.childAnchor.y * childAnchorBounds.height,
+  };
   const childAnchorVector = rotate({
-    x: (parameters.childAnchor.x - 0.5) * childWidth,
-    y: (parameters.childAnchor.y - 0.5) * childHeight,
+    x: (childAnchorPoint.x - child.width / 2) * scaleX,
+    y: (childAnchorPoint.y - child.height / 2) * scaleY,
   }, rotation);
   const center = {
     x: anchor.x - childAnchorVector.x,
