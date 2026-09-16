@@ -83,6 +83,7 @@ import {
   uniqueHierarchyRows,
 } from "./treeLayout";
 import { adaptiveAxisFontSize, adaptiveLabel, measureLabelWidth } from "./adaptiveLabels";
+import { decodeWordCloudMask } from "./wordCloudMask";
 import { globalPalette } from "../config/global";
 
 const tableau = globalPalette.categorical;
@@ -1609,6 +1610,169 @@ function renderHexbin(input: GenericRenderInput) {
   return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="hexbin" data-radius="${configuredRadius}" data-scale="linear-linear" data-color-mode="${colorEncoding ? esc(colorEncoding.type) : "count"}" data-source-row-count="${points.length}" data-renderer="observable-hexbin@3">${marks}</g>`, plotArea: area, selectionBounds: area, scales: { x: { type: "linear", domain: xDomain, range: [area.x, area.x + area.width] }, y: { type: "linear", domain: yDomain, range: [area.y + area.height, area.y] } } };
 }
 
+type WordCloudWord = { word: string; weight: number };
+
+function wordCloudHash(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function occupancyIntegral(board: Uint8Array, width: number, height: number) {
+  const stride = width + 1;
+  const integral = new Uint32Array((height + 1) * stride);
+  for (let y = 0; y < height; y += 1) {
+    let rowSum = 0;
+    for (let x = 0; x < width; x += 1) {
+      rowSum += board[y * width + x] ?? 0;
+      integral[(y + 1) * stride + x + 1] = (integral[y * stride + x + 1] ?? 0) + rowSum;
+    }
+  }
+  return integral;
+}
+
+function occupiedRectSum(integral: Uint32Array, stride: number, x: number, y: number, width: number, height: number) {
+  const right = x + width;
+  const bottom = y + height;
+  return (integral[bottom * stride + right] ?? 0)
+    - (integral[y * stride + right] ?? 0)
+    - (integral[bottom * stride + x] ?? 0)
+    + (integral[y * stride + x] ?? 0);
+}
+
+function deterministicOpenPosition(
+  integral: Uint32Array,
+  maskWidth: number,
+  maskHeight: number,
+  boxWidth: number,
+  boxHeight: number,
+  seed: number,
+  centroid: { x: number; y: number },
+  centerBias: number,
+) {
+  if (boxWidth > maskWidth || boxHeight > maskHeight) return null;
+  const stride = maskWidth + 1;
+  let best: { x: number; y: number; score: number } | null = null;
+  const widthDenominator = Math.max(1, maskWidth - boxWidth);
+  const heightDenominator = Math.max(1, maskHeight - boxHeight);
+  for (let y = 0; y <= maskHeight - boxHeight; y += 1) {
+    for (let x = 0; x <= maskWidth - boxWidth; x += 1) {
+      if (occupiedRectSum(integral, stride, x, y, boxWidth, boxHeight) !== 0) continue;
+      const centerX = x + boxWidth / 2;
+      const centerY = y + boxHeight / 2;
+      const dx = (centerX - centroid.x) / widthDenominator;
+      const dy = (centerY - centroid.y) / heightDenominator;
+      const distance = dx * dx + dy * dy;
+      const noiseHash = wordCloudHash(`${seed}:${x}:${y}`);
+      const noise = noiseHash / 0xffffffff;
+      const score = centerBias * distance + (1 - centerBias) * noise;
+      if (!best || score < best.score) best = { x, y, score };
+    }
+  }
+  return best ? { x: best.x, y: best.y } : null;
+}
+
+function wordCloudMaskClipPath(rows: string, maskWidth: number, maskHeight: number, area: ChartPlotArea) {
+  const cellWidth = area.width / maskWidth;
+  const cellHeight = area.height / maskHeight;
+  return rows.split(";").slice(0, maskHeight).flatMap((row, y) => row.split(",").flatMap((run) => {
+    if (!run) return [];
+    const [start, end] = run.split("-").map(Number);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end! <= start!) return [];
+    const x0 = area.x + start! * cellWidth;
+    const x1 = area.x + end! * cellWidth;
+    const y0 = area.y + y * cellHeight;
+    const y1 = y0 + cellHeight;
+    return [`M${x0},${y0}H${x1}V${y1}H${x0}Z`];
+  })).join("");
+}
+
+function renderMaskedWordCloud(input: GenericRenderInput, words: WordCloudWord[], config: Record<string, unknown>) {
+  const maskWidth = Math.max(1, Math.round(Number(config.maskWidth ?? 0)));
+  const maskHeight = Math.max(1, Math.round(Number(config.maskHeight ?? 0)));
+  const maskRows = String(config.maskRows ?? "");
+  const mask = decodeWordCloudMask(maskRows, maskWidth, maskHeight);
+  const allowedCount = mask.reduce((sum, value) => sum + value, 0);
+  if (!allowedCount || !maskRows) return null;
+  const area: ChartPlotArea = { x: input.minX, y: input.minY, width: input.width, height: input.height };
+  const cellWidth = area.width / maskWidth;
+  const cellHeight = area.height / maskHeight;
+  const board = Uint8Array.from(mask, (allowed) => allowed ? 0 : 1);
+  let centroidX = 0;
+  let centroidY = 0;
+  mask.forEach((allowed, index) => {
+    if (!allowed) return;
+    centroidX += index % maskWidth + 0.5;
+    centroidY += Math.floor(index / maskWidth) + 0.5;
+  });
+  const centroid = { x: centroidX / allowedCount, y: centroidY / allowedCount };
+  const physicalArea = allowedCount * cellWidth * cellHeight;
+  const minimumFont = Math.max(7, Math.min(12, Math.sqrt(physicalArea) * 0.025));
+  const maximumFont = Math.max(16, Math.min(52, Math.sqrt(physicalArea) * 0.16));
+  const extent = finiteDomain(words.map((item) => item.weight), [0, 1]);
+  const fontScale = scaleLinear().domain(extent).range([minimumFont, maximumFont]).clamp(true);
+  const padding = Math.max(1, Math.min(8, Number(config.padding ?? 2)));
+  const preferHorizontal = Math.max(0, Math.min(1, Number(config.preferHorizontal ?? 0.9)));
+  const palette = globalPalette.categorical;
+  const placements: Array<WordCloudWord & { x: number; y: number; fontSize: number; rotation: number; color: string }> = [];
+  words.forEach((item, index) => {
+    const preferredVertical = maskHeight > maskWidth * 1.15
+      ? index % 3 !== 0
+      : (wordCloudHash(item.word) % 1000) / 1000 > preferHorizontal;
+    const rotations = preferredVertical ? [90, 0] : [0, 90];
+    let fontSize = fontScale(item.weight);
+    let placement: { x: number; y: number; rotation: number; boxWidth: number; boxHeight: number } | null = null;
+    while (fontSize >= minimumFont && !placement) {
+      for (const rotation of rotations) {
+        const textWidth = Math.max(fontSize, measureLabelWidth(item.word, fontSize));
+        const textHeight = fontSize * 1.08;
+        const physicalWidth = rotation === 90 ? textHeight : textWidth;
+        const physicalHeight = rotation === 90 ? textWidth : textHeight;
+        const boxWidth = Math.max(1, Math.ceil((physicalWidth + padding * 2) / cellWidth));
+        const boxHeight = Math.max(1, Math.ceil((physicalHeight + padding * 2) / cellHeight));
+        const integral = occupancyIntegral(board, maskWidth, maskHeight);
+        const position = deterministicOpenPosition(
+          integral,
+          maskWidth,
+          maskHeight,
+          boxWidth,
+          boxHeight,
+          wordCloudHash(`${item.word}:${index}:${Math.round(fontSize * 10)}:${rotation}`),
+          centroid,
+          index < 4 ? 0.82 : 0.18,
+        );
+        if (!position) continue;
+        placement = { ...position, rotation, boxWidth, boxHeight };
+        break;
+      }
+      if (!placement) fontSize -= Math.max(1, maximumFont / 22);
+    }
+    if (!placement) return;
+    for (let y = placement.y; y < placement.y + placement.boxHeight; y += 1) {
+      board.fill(1, y * maskWidth + placement.x, y * maskWidth + placement.x + placement.boxWidth);
+    }
+    placements.push({
+      ...item,
+      x: area.x + (placement.x + placement.boxWidth / 2) * cellWidth,
+      y: area.y + (placement.y + placement.boxHeight / 2) * cellHeight,
+      fontSize,
+      rotation: placement.rotation,
+      color: palette[index % palette.length] ?? "#334155",
+    });
+  });
+  const clipId = `word-cloud-mask-${input.chartId.replace(/[^a-z0-9_-]/gi, "-")}`;
+  const clipPath = wordCloudMaskClipPath(maskRows, maskWidth, maskHeight, area);
+  const marks = placements.map((item, index) => `<text data-chart-id="${esc(input.chartId)}" data-mark-role="point" data-mark-group-id="mark-group:${esc(input.chartId)}:word" data-category-key="${esc(item.word)}" data-weight="${item.weight}" x="${item.x}" y="${item.y}" dominant-baseline="middle" text-anchor="middle" transform="rotate(${item.rotation} ${item.x} ${item.y})" font-size="${item.fontSize}" font-weight="${index < 4 ? 700 : 500}" fill="${item.color}"><title>${esc(item.word)} · ${formatTick(item.weight)}</title>${esc(item.word)}</text>`).join("");
+  return {
+    content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="word-cloud" data-word-layout="mask" data-word-count="${placements.length}" data-mask-width="${maskWidth}" data-mask-height="${maskHeight}" data-mask-coverage="${allowedCount / mask.length}" data-renderer="integral-mask-word-cloud@1" font-family="sans-serif"><defs><clipPath id="${clipId}"><path d="${clipPath}"/></clipPath></defs><g clip-path="url(#${clipId})">${marks}</g></g>`,
+    plotArea: area,
+    selectionBounds: area,
+  };
+}
+
 function renderWordCloud(input: GenericRenderInput) {
   const wordEncoding = input.chartSpec.encodings.x;
   const weightEncoding = input.chartSpec.encodings.y;
@@ -1624,6 +1788,11 @@ function renderWordCloud(input: GenericRenderInput) {
     .sort((left, right) => right.weight - left.weight || left.word.localeCompare(right.word))
     .slice(0, 36);
   if (!words.length) throw new Error("Word Cloud requires at least one non-empty word.");
+  const config = sharedConfig(input, "word");
+  if (String(config.layout ?? "") === "shape") {
+    const masked = renderMaskedWordCloud(input, words, config);
+    if (masked) return masked;
+  }
   const extent = finiteDomain(words.map((item) => item.weight), [0, 1]);
   const font = scaleLinear().domain(extent).range([9, Math.max(16, Math.min(38, area.height * 0.28))]).clamp(true);
   const palette = globalPalette.categorical;

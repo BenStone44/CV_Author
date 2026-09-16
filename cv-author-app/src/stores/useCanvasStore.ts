@@ -167,6 +167,7 @@ import {
 } from "../utils/dimensionInference";
 import { canonicalGeoJsonJoinId, geoJsonFeatureIds } from "../utils/geoJsonGeometry";
 import { geographicGraphLineRecords } from "../utils/geographicGraphLinks";
+import { sampleSvgWordCloudMask } from "../utils/wordCloudMask";
 import {
   CHORD_POLAR_LINE_DATASET_ID,
   createDefaultChartSpec,
@@ -5522,6 +5523,61 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           targetBoundsCache.set(boundsCacheKey, bounds);
         }
         if (!bounds || bounds.width <= 0 || bounds.height <= 0) return;
+        const wordGroup = child.chartSpec?.markGroups?.find((group) => group.role === "word");
+        const shapeAdaptiveWordCloud = normalizeChartTemplate(child.chartSpec?.chartType ?? "") === "wordcloud"
+          && String(wordGroup?.sharedConfig.layout ?? "") === "shape";
+        if (shapeAdaptiveWordCloud && child.chartSpec && wordGroup) {
+          const maskGeometryMarks = targetGeometryMarks.flatMap((element) => {
+            const geometry = element as SVGGraphicsElement & {
+              isPointInFill?: (point: DOMPoint) => boolean;
+              isPointInStroke?: (point: DOMPoint) => boolean;
+            };
+            return geometry.isPointInFill || geometry.isPointInStroke
+              ? [element]
+              : Array.from(element.querySelectorAll<SVGGraphicsElement>("path,rect,circle,ellipse,polygon,polyline"));
+          });
+          const scopeElement = scopeGroupId
+            ? nodeElementsById.get(scopeGroupId)
+            : maskGeometryMarks[0]?.ownerSVGElement?.firstElementChild;
+          const mask = scopeElement instanceof SVGGraphicsElement
+            ? sampleSvgWordCloudMask(maskGeometryMarks, bounds, scopeElement)
+            : null;
+          if (mask) {
+            child.width = bounds.width;
+            child.height = bounds.height;
+            child.chartSpec = {
+              ...child.chartSpec,
+              markGroups: child.chartSpec.markGroups?.map((group) => group.id === wordGroup.id ? {
+                ...group,
+                sharedConfig: {
+                  ...group.sharedConfig,
+                  maskWidth: mask.width,
+                  maskHeight: mask.height,
+                  maskRows: mask.rows,
+                  maskCoverage: mask.coverage,
+                },
+              } : group),
+              renderer: undefined,
+              scales: undefined,
+              plotArea: undefined,
+            };
+            const parameters = relationship.parameters as Partial<RelativeNestedParameters>;
+            dispatchRelationship({
+              type: "update-nested",
+              relationshipId: relationship.id,
+              changes: {
+                parameters: {
+                  ...parameters,
+                  parentAnchor: { x: 0.5, y: 0.5 },
+                  childAnchor: { x: 0.5, y: 0.5 },
+                  offset: { x: 0, y: 0 },
+                  scale: { x: 1, y: 1 },
+                } as RelativeNestedParameters,
+              },
+            });
+            renderChartNode(child);
+          }
+        }
         const parentFrame = {
           x: bounds.minX,
           y: bounds.minY,
