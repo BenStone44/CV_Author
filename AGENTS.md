@@ -140,11 +140,11 @@ The Academic Scores example is the reference implementation for this workflow:
 - Streamgraph and nested Pie values: the eight academic subject columns, configured through fold bindings
 - Finished composition: Pie nested into Scatterplot points, with the Streamgraph vertically concatenated above the Scatterplot on their shared X axis
 
-Current Academic Scores preview record (captured 2026-09-15):
+Current Academic Scores preview record (captured 2026-09-16):
 
 - Editor source: `http://localhost:5173/editor/?case=academic-scores-nested-concat`
 - Website asset: `cv-author-app/public/site/gallery/cases/academic-scores/preview.svg`
-- SHA-256: `f2a7f5f145d481c6e9ffae3cf3990af4b4bdd4f6daf7dfdd1c83d18769bcbce6`
+- SHA-256: `92a1ec5e8222f446023d7ebc0c03749ff41144a7652971163be89b82862e3a31`
 - Editor frame: the Streamgraph and Scatterplot are each `720 × 330`, producing a `720 × 597.2175` vertically composed preview
 - Export structure: one 8-series Streamgraph, one 100-point Scatterplot, and 100 nested Pie marks containing 800 arcs
 
@@ -170,7 +170,7 @@ Current Shared Hierarchy preview record (captured 2026-09-15):
 - Editor frame: `640 × 640`; real angular Concat with shared Radius, common center, and six hierarchy levels below the root
 - Export structure: 54 Sunburst arcs in the lower 180°, 55 Radial Dendrogram nodes and 54 links in the upper 180°; node labels hidden, tooltips retained
 
-Current Geographic Network preview record (captured 2026-09-15):
+Current Geographic Network preview record (captured 2026-09-16):
 
 - Gallery order: third, after Shared Hierarchy; existing examples remain available.
 - Starter: `/editor/?starter=geographic-network` (Polygon, geographic Scatterplot, and Stacked Bar are independent; Link is added by dragging its catalog item onto the Scatterplot).
@@ -179,12 +179,12 @@ Current Geographic Network preview record (captured 2026-09-15):
 - Joins: Polygon uses `incident_zip`; Scatterplot uses `geo.point`; graph endpoints use `id` / `source` / `target`.
 - Composition: real Graph Link catalog drop → Polygon/Scatterplot Layer → Stacked Bar Nested on every node.
 - Preview: `cv-author-app/public/site/gallery/cases/geographic-network/preview.svg`.
-- SHA-256: `3406dc30afbb294ec8ed11b225a39597dc9365d09acc3d7e6793ae6a6a1a8418`.
+- SHA-256: `7941d6e0e295de740873afa7d7934411be762bdecc145d9d37c89ae79b7bc664`.
 - Frame: `900 × 800`; 177 matched ZIP geometry features, 10 graph nodes, 13 links, and 10 nested charts with 12 months × 5 travel-mode series (600 bar segments).
 - Export: serialized editor SVG containing the actual Mapbox/deck.gl canvas output as two embedded raster layers and the editor-rendered vector Nested charts. This is an explicit renderer export, not a browser screenshot. The case uses the editor light Mapbox style from master with the configured environment token. Polygon color aggregates sighting_count by matched ZIP geometry; ten offset message frames point back to the ten original nodes, each drawn as one closed path combining the rounded frame and tail.
 - Verification: all 600 exported bar values equal their corresponding node/month/field values in the case-owned graph CSV. ZIP values absent from the supplied GeoJSON are recorded in `case.json`.
 
-Current Dendrogram Profiles preview record (captured 2026-09-15):
+Current Dendrogram Profiles preview record (captured 2026-09-16):
 
 - Gallery order: last; replaces the former Tree & Leaf Axis starter while preserving the `tree-leaf-axis` slug.
 - Starter: `/editor/?starter=tree-leaf-axis` (three independent, fully bound blocks).
@@ -192,10 +192,10 @@ Current Dendrogram Profiles preview record (captured 2026-09-15):
 - Data: `public/site/gallery/cases/tree-leaf-axis/data/tree_nodes.csv`, originally copied from master’s `data/tree_nodes.csv`; 15 nodes × 12 months, with five numeric metrics.
 - Bindings: Dendrogram `node_id` / `parent_id`; Sector Radial Stacked Bar `month` with `metric_1`–`metric_5` folded to `metric` / `metric_value`; Area Chart `month` / `metric_1`.
 - Composition: left-to-right Dendrogram; two real Nested operations on every node, radial stacks on the left and areas on the right. Both inherit only `node_id`; original node dots are hidden. Links leave the right edge of the combined child footprint and enter the next pair’s left edge.
-- Frame: `1600 × 1800`; exported footprint `1827.5 × 2002`, approximately square.
+- Frame: `1600 × 1800`; exported footprint `1818.007817864418 × 2002`, approximately square.
 - Export structure: 15 structural nodes, 14 links, 30 Nested relationships, 900 radial sectors, and 15 areas with 12 monthly points each.
 - Preview: `cv-author-app/public/site/gallery/cases/tree-leaf-axis/preview.svg`.
-- SHA-256: `d76049ebcb28523a1caeffe927aa1cc2ddf0f91e57943dff82eec4448915e20c`.
+- SHA-256: `a8a823685fc8ae9c353cfb09a1c8690aed916bfcd18d835632461ed6fd8cabb7`.
 
 ## Anonymous Production Publishing
 

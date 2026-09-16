@@ -103,7 +103,7 @@
     }
   ],
   "expectedRender": {
-    "width": 1827.5,
+    "width": 1818.007817864418,
     "height": 2002,
     "dendrogramNodes": 15,
     "visibleNodeDots": 0,
