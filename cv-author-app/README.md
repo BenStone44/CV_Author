@@ -81,6 +81,14 @@ Vite builds all five entries together. The editor remains isolated from the publ
 
 Use this workflow for subsequent user-authorized releases to `https://visbricks.github.io/`. It records the procedure used successfully on `2026-09-15`. Do not publish merely because source files or this documentation have changed. Run the command blocks step by step in the same Bash session, stopping on failures and completing the manual review gates between them. Do not reuse an old temporary build as a new release.
 
+The release checks are automated behind one command. From `cv-author-app/`, use `npm run release:site` for a non-publishing dry run that creates, audits, stages, and browser-tests an isolated release. After reviewing its reported temporary checkout, a user-authorized production release is:
+
+```sh
+npm run release:site -- --publish --message="Publish the reviewed VisBricks update"
+```
+
+The command refuses a dirty source tree, an unexpected deploy key or public commit identity, stale third-party notices, identity-bearing build output, source maps, unreviewed stale public files, build/type errors, or failed staged/live browser checks. It preserves public history, normalizes Gallery capture metadata, backs up obsolete hashed assets outside the Pages checkout, waits for the exact Pages workflow, verifies all Gallery starters and completed cases, and compares every live public file with the staged bytes. The detailed gates below document what the command enforces and remain the recovery/reference procedure.
+
 #### 1. Confirm the source and dedicated publishing identity
 
 Inspect the source branch, worktree changes, and applicable `AGENTS.md` instructions. Preserve unrelated local changes. Editor changes must first be committed on `master` and deliberately synchronized into this website branch. Publishing the website does not mean committing all dirty source files or pushing this development repository.
