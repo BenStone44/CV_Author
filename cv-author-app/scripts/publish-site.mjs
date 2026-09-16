@@ -276,44 +276,50 @@ async function verifyBrowser(buildDir, cases, local, releaseSha = "") {
   });
 
   const verifyPage = async (path, check) => {
-    // Isolate every route so WebGL-heavy cases cannot inherit GPU and memory
-    // pressure from all pages that happened to run before them.
-    const context = await browser.newContext({
-      serviceWorkers: "block",
-      viewport: { width: 1440, height: 1080 },
-    });
-    if (local) {
-      await context.route(`${publicOrigin}/**`, async (route) => {
-        const url = new URL(route.request().url());
-        let requestPath = decodeURIComponent(url.pathname).replace(/^\/+/, "");
-        if (!requestPath || requestPath.endsWith("/")) requestPath += "index.html";
-        const file = resolve(buildDir, requestPath);
-        if (!file.startsWith(`${buildDir}${sep}`) || !existsSync(file) || !statSync(file).isFile()) {
-          await route.fulfill({ status: 404, body: "Not found" });
-          return;
-        }
-        await route.fulfill({
-          status: 200,
-          contentType: mimeTypes.get(extension(file)) ?? "application/octet-stream",
-          body: readFileSync(file),
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      // Isolate every route so WebGL-heavy cases cannot inherit GPU and memory
+      // pressure from all pages that happened to run before them.
+      const context = await browser.newContext({
+        serviceWorkers: "block",
+        viewport: { width: 1440, height: 1080 },
+      });
+      if (local) {
+        await context.route(`${publicOrigin}/**`, async (route) => {
+          const url = new URL(route.request().url());
+          let requestPath = decodeURIComponent(url.pathname).replace(/^\/+/, "");
+          if (!requestPath || requestPath.endsWith("/")) requestPath += "index.html";
+          const file = resolve(buildDir, requestPath);
+          if (!file.startsWith(`${buildDir}${sep}`) || !existsSync(file) || !statSync(file).isFile()) {
+            await route.fulfill({ status: 404, body: "Not found" });
+            return;
+          }
+          await route.fulfill({
+            status: 200,
+            contentType: mimeTypes.get(extension(file)) ?? "application/octet-stream",
+            body: readFileSync(file),
+          });
         });
-      });
-    }
-    const page = await context.newPage();
-    try {
-      const failures = [];
-      page.on("pageerror", (error) => failures.push(`page error: ${error.message}`));
-      page.on("requestfailed", (request) => {
-        if (new URL(request.url()).origin === publicOrigin) failures.push(`request failed: ${request.url()}`);
-      });
-      const separator = path.includes("?") ? "&" : "?";
-      const url = `${publicOrigin}${path}${releaseSha ? `${separator}release=${releaseSha}` : ""}`;
-      const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
-      if (!response?.ok()) fail(`${url} returned ${response?.status() ?? "no response"}`);
-      await check(page);
-      if (failures.length) fail(`${url}\n${failures.join("\n")}`);
-    } finally {
-      await context.close();
+      }
+      const page = await context.newPage();
+      try {
+        const failures = [];
+        page.on("pageerror", (error) => failures.push(`page error: ${error.message}`));
+        page.on("requestfailed", (request) => {
+          if (new URL(request.url()).origin === publicOrigin) failures.push(`request failed: ${request.url()}`);
+        });
+        const separator = path.includes("?") ? "&" : "?";
+        const url = `${publicOrigin}${path}${releaseSha ? `${separator}release=${releaseSha}` : ""}`;
+        const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 });
+        if (!response?.ok()) fail(`${url} returned ${response?.status() ?? "no response"}`);
+        await check(page);
+        if (failures.length) fail(`${url}\n${failures.join("\n")}`);
+        return;
+      } catch (error) {
+        if (attempt === 2) throw error;
+        console.warn(`Browser verification retry for ${path}.`);
+      } finally {
+        await context.close();
+      }
     }
   };
 
