@@ -55,6 +55,19 @@ function run(command, args, options = {}) {
   return result;
 }
 
+function runWithRetries(command, args, options = {}, attempts = 3) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return run(command, args, options);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) console.warn(`${command} failed; retrying (${attempt}/${attempts}).`);
+    }
+  }
+  throw lastError;
+}
+
 function output(command, args, options = {}) {
   return run(command, args, { ...options, capture: true }).stdout.trim();
 }
@@ -106,7 +119,7 @@ function configurePagesCheckout(pagesDir) {
   const identities = output("git", ["-C", pagesDir, "log", "--format=%an <%ae>%x09%cn <%ce>"]);
   const unexpected = identities.split("\n").filter((line) => line !== `${releaseIdentity}\t${releaseIdentity}`);
   if (unexpected.length) fail("The public repository contains an unexpected author or committer identity.");
-  run("git", ["-C", pagesDir, "push", "--dry-run", "origin", "HEAD:refs/heads/main"], {
+  runWithRetries("git", ["-C", pagesDir, "push", "--dry-run", "origin", "HEAD:refs/heads/main"], {
     env: { GIT_SSH_COMMAND: sshCommand },
   });
 }
@@ -452,7 +465,7 @@ async function main() {
   if (author !== releaseIdentity || committer !== releaseIdentity || subject !== commitMessage) {
     fail("Release commit metadata failed the final identity check.");
   }
-  run("git", ["-C", pagesDir, "push", "origin", "HEAD:refs/heads/main"], {
+  runWithRetries("git", ["-C", pagesDir, "push", "origin", "HEAD:refs/heads/main"], {
     env: { GIT_SSH_COMMAND: sshCommand },
   });
   if (output("git", ["-C", pagesDir, "status", "--porcelain"])) fail("Pages checkout is dirty after push.");
