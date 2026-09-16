@@ -1606,7 +1606,7 @@ function renderHexbin(input: GenericRenderInput) {
     const dash = normalizedRole.includes("receiver") ? ' stroke-dasharray="2 1.5"' : "";
     return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="hexagon" data-mark-group-id="mark-group:${esc(input.chartId)}:hexagon" data-count="${bin.length}" data-category-key="${esc(category)}" data-user-role="${esc(userRole)}" data-row-indices="${indices.join(",")}" transform="translate(${bin.x} ${bin.y})" d="${layout.hexagon()}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"${dash}><title>${category ? `${esc(category)} · ` : ""}${userRole ? `${esc(userRole)} · ` : ""}${bin.length}</title></path>`;
   }).join("");
-  return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="hexbin" data-radius="${configuredRadius}" data-scale="linear-linear" data-color-mode="${colorEncoding ? esc(colorEncoding.type) : "count"}" data-source-row-count="${points.length}" data-renderer="observable-hexbin@3">${marks}</g>`, plotArea: area, scales: { x: { type: "linear", domain: xDomain, range: [area.x, area.x + area.width] }, y: { type: "linear", domain: yDomain, range: [area.y + area.height, area.y] } } };
+  return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="hexbin" data-radius="${configuredRadius}" data-scale="linear-linear" data-color-mode="${colorEncoding ? esc(colorEncoding.type) : "count"}" data-source-row-count="${points.length}" data-renderer="observable-hexbin@3">${marks}</g>`, plotArea: area, selectionBounds: area, scales: { x: { type: "linear", domain: xDomain, range: [area.x, area.x + area.width] }, y: { type: "linear", domain: yDomain, range: [area.y + area.height, area.y] } } };
 }
 
 function renderWordCloud(input: GenericRenderInput) {
@@ -2065,6 +2065,7 @@ function renderGraphLink(input: GenericRenderInput) {
   return {
     content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="graph-link" data-renderer="deterministic-graph-link@1">${linkMarks}</g>`,
     plotArea: area,
+    selectionBounds: area,
     scales: polar ? undefined : { x: xScaleSpec, y: yScaleSpec },
   };
 }
