@@ -5543,6 +5543,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
             ? sampleSvgWordCloudMask(maskGeometryMarks, bounds, scopeElement)
             : null;
           if (mask) {
+            bounds = mask.bounds;
             child.width = bounds.width;
             child.height = bounds.height;
             child.chartSpec = {

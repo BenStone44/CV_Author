@@ -6,6 +6,7 @@ export type WordCloudMask = {
   height: number;
   rows: string;
   coverage: number;
+  bounds: Bounds;
 };
 
 export function encodeWordCloudMask(mask: ArrayLike<number>, width: number, height: number) {
@@ -64,6 +65,30 @@ function geometryContains(element: SVGGraphicsElement, point: { x: number; y: nu
   return false;
 }
 
+function geometryBoundsInScope(element: SVGGraphicsElement, relative: Matrix) {
+  try {
+    const box = element.getBBox();
+    const style = typeof getComputedStyle === "function" ? getComputedStyle(element) : null;
+    const stroke = style?.stroke ?? element.getAttribute("stroke") ?? "none";
+    const strokeWidth = stroke === "none" ? 0 : Math.max(0, Number.parseFloat(style?.strokeWidth
+      ?? element.getAttribute("stroke-width") ?? "0") || 0);
+    const padding = strokeWidth / 2;
+    const corners = [
+      transformPoint(relative, { x: box.x - padding, y: box.y - padding }),
+      transformPoint(relative, { x: box.x + box.width + padding, y: box.y - padding }),
+      transformPoint(relative, { x: box.x - padding, y: box.y + box.height + padding }),
+      transformPoint(relative, { x: box.x + box.width + padding, y: box.y + box.height + padding }),
+    ];
+    const minX = Math.min(...corners.map((point) => point.x));
+    const minY = Math.min(...corners.map((point) => point.y));
+    const maxX = Math.max(...corners.map((point) => point.x));
+    const maxY = Math.max(...corners.map((point) => point.y));
+    return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
+  } catch {
+    return null;
+  }
+}
+
 export function sampleSvgWordCloudMask(
   elements: SVGGraphicsElement[],
   bounds: Bounds,
@@ -80,18 +105,29 @@ export function sampleSvgWordCloudMask(
     if (!screenMatrix) return [];
     const relative = multiplyMatrix(inverseScope, domMatrix(screenMatrix));
     const inverse = invertMatrix(relative);
-    return inverse ? [{ element, inverse }] : [];
+    const geometryBounds = geometryBoundsInScope(element, relative);
+    return inverse ? [{ element, inverse, geometryBounds }] : [];
   });
   if (!transforms.length) return null;
-  const scale = Math.min(1, maximumDimension / Math.max(bounds.width, bounds.height));
-  const width = Math.max(8, Math.round(bounds.width * scale));
-  const height = Math.max(8, Math.round(bounds.height * scale));
+  const sampledBounds = transforms.reduce<Bounds | null>((merged, item) => {
+    if (!item.geometryBounds) return merged;
+    if (!merged) return item.geometryBounds;
+    const minX = Math.min(merged.minX, item.geometryBounds.minX);
+    const minY = Math.min(merged.minY, item.geometryBounds.minY);
+    const maxX = Math.max(merged.maxX, item.geometryBounds.maxX);
+    const maxY = Math.max(merged.maxY, item.geometryBounds.maxY);
+    return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
+  }, null) ?? bounds;
+  if (sampledBounds.width <= 0 || sampledBounds.height <= 0) return null;
+  const scale = Math.min(1, maximumDimension / Math.max(sampledBounds.width, sampledBounds.height));
+  const width = Math.max(8, Math.round(sampledBounds.width * scale));
+  const height = Math.max(8, Math.round(sampledBounds.height * scale));
   const mask = new Uint8Array(width * height);
   let allowedCount = 0;
   for (let y = 0; y < height; y += 1) {
-    const scopeY = bounds.minY + (y + 0.5) / height * bounds.height;
+    const scopeY = sampledBounds.minY + (y + 0.5) / height * sampledBounds.height;
     for (let x = 0; x < width; x += 1) {
-      const scopeX = bounds.minX + (x + 0.5) / width * bounds.width;
+      const scopeX = sampledBounds.minX + (x + 0.5) / width * sampledBounds.width;
       const allowed = transforms.some(({ element, inverse }) =>
         geometryContains(element, transformPoint(inverse, { x: scopeX, y: scopeY })));
       if (!allowed) continue;
@@ -105,5 +141,6 @@ export function sampleSvgWordCloudMask(
     height,
     rows: encodeWordCloudMask(mask, width, height),
     coverage: allowedCount / mask.length,
+    bounds: sampledBounds,
   };
 }
