@@ -63,10 +63,23 @@ export function nestedDecorationMarkup(decoration: NestedDecoration, width: numb
   return `<path d="${d}" ${style}/>`;
 }
 
+export function nestedDecorationAnchorFrame(child: NestedCalloutChildFrame) {
+  const anchor = child.anchorBounds ?? { x: 0, y: 0, width: child.width, height: child.height };
+  const scaleX = Math.abs(child.scaleX);
+  const scaleY = Math.abs(child.scaleY);
+  return {
+    x: anchor.x * scaleX,
+    y: anchor.y * scaleY,
+    width: anchor.width * scaleX,
+    height: anchor.height * scaleY,
+    nodeWidth: child.width * scaleX,
+    nodeHeight: child.height * scaleY,
+  };
+}
+
 export function nestedDecorationsMarkup(child: NestedCalloutChildFrame, decorations: readonly NestedDecoration[] | undefined) {
   const values = normalizeNestedDecorations(decorations);
   if (!values.length) return "";
-  const width = Math.abs(child.width * child.scaleX);
-  const height = Math.abs(child.height * child.scaleY);
-  return `<g transform="translate(${child.x} ${child.y}) rotate(${child.rotation} ${width / 2} ${height / 2})">${values.map((value) => nestedDecorationMarkup(value, width, height)).join("")}</g>`;
+  const frame = nestedDecorationAnchorFrame(child);
+  return `<g transform="translate(${child.x} ${child.y}) rotate(${child.rotation} ${frame.nodeWidth / 2} ${frame.nodeHeight / 2}) translate(${frame.x} ${frame.y})">${values.map((value) => nestedDecorationMarkup(value, frame.width, frame.height)).join("")}</g>`;
 }

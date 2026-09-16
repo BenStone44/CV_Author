@@ -1078,6 +1078,7 @@ export type NestedRenderPlacement = {
   retainParent: boolean;
   parameters: RelativeNestedParameters;
   child: CanvasNode;
+  anchorBounds: ChartPlotArea;
 };
 
 /**

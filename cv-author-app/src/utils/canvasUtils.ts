@@ -11,7 +11,12 @@ import type {
 import { getChartContract } from "./chartContracts";
 import { chartAxisLabelsVisible, chartAxisVisible } from "./chartAxes";
 import { RADIAL_DENDROGRAM_SELECTION_PADDING } from "./radialClusterLayout";
-import { nestedDecorationBounds, nestedDecorationsMarkup, normalizeNestedDecorations } from "./nestedDecorations";
+import {
+  nestedDecorationAnchorFrame,
+  nestedDecorationBounds,
+  nestedDecorationsMarkup,
+  normalizeNestedDecorations,
+} from "./nestedDecorations";
 import { isCartesianTreeChart } from "./treeLayout";
 
 export function clamp(value: number, min: number, max: number) {
@@ -927,18 +932,30 @@ export function computeSelectionBounds(nodes: CanvasNode[], ids: string[]): Boun
   return merged;
 }
 
-function serializeCanvasNode(node: CanvasNode, decorations: ReadonlyMap<string, readonly NestedDecoration[]>): string {
+function serializeCanvasNode(
+  node: CanvasNode,
+  decorations: ReadonlyMap<string, readonly NestedDecoration[]>,
+  decorationAnchorBounds: ReadonlyMap<string, ChartPlotArea>,
+): string {
   const transform = node.kind === "leaf"
     ? getLeafNodeTransform(node)
     : getNodeTransform(node);
   const content = node.renderedContent ?? (node.kind === "leaf"
     ? node.content
-    : node.children.map((child) => serializeCanvasNode(child, decorations)).join(""));
-  const decoration = nestedDecorationsMarkup(node, decorations.get(node.id));
+    : node.children.map((child) => serializeCanvasNode(child, decorations, decorationAnchorBounds)).join(""));
+  const decoration = nestedDecorationsMarkup(
+    { ...node, anchorBounds: decorationAnchorBounds.get(node.id) },
+    decorations.get(node.id),
+  );
   return `${decoration}<g transform="${transform}">${content}</g>`;
 }
 
-export function createCanvasNodesSvgMarkup(nodes: CanvasNode[], bounds: Bounds, decorations: ReadonlyMap<string, readonly NestedDecoration[]> = new Map()): string {
+export function createCanvasNodesSvgMarkup(
+  nodes: CanvasNode[],
+  bounds: Bounds,
+  decorations: ReadonlyMap<string, readonly NestedDecoration[]> = new Map(),
+  decorationAnchorBounds: ReadonlyMap<string, ChartPlotArea> = new Map(),
+): string {
   // Expand the export frame for relationship-owned backdrops, including nested
   // group transforms, so a frame outside the child is not clipped at export.
   const includeDecorations = (node: CanvasNode, toCanvas: (point: Point) => Point) => {
@@ -948,15 +965,19 @@ export function createCanvasNodesSvgMarkup(nodes: CanvasNode[], bounds: Bounds, 
       const y = (point.y - node.height / 2) * node.scaleY;
       return toCanvas({ x: node.x + node.width * node.scaleX / 2 + x * Math.cos(angle) - y * Math.sin(angle), y: node.y + node.height * node.scaleY / 2 + x * Math.sin(angle) + y * Math.cos(angle) });
     };
-    const decorationWidth = Math.abs(node.width * node.scaleX);
-    const decorationHeight = Math.abs(node.height * node.scaleY);
+    const decorationFrame = nestedDecorationAnchorFrame({
+      ...node,
+      anchorBounds: decorationAnchorBounds.get(node.id),
+    });
     const decorationPoint = (point: Point) => {
-      const x = point.x - decorationWidth / 2;
-      const y = point.y - decorationHeight / 2;
-      return toCanvas({ x: node.x + decorationWidth / 2 + x * Math.cos(angle) - y * Math.sin(angle), y: node.y + decorationHeight / 2 + x * Math.sin(angle) + y * Math.cos(angle) });
+      const x = point.x - decorationFrame.nodeWidth / 2;
+      const y = point.y - decorationFrame.nodeHeight / 2;
+      return toCanvas({ x: node.x + decorationFrame.nodeWidth / 2 + x * Math.cos(angle) - y * Math.sin(angle), y: node.y + decorationFrame.nodeHeight / 2 + x * Math.sin(angle) + y * Math.cos(angle) });
     };
     for (const item of normalizeNestedDecorations(decorations.get(node.id))) {
-      const box = nestedDecorationBounds(item, decorationWidth, decorationHeight);
+      const box = nestedDecorationBounds(item, decorationFrame.width, decorationFrame.height);
+      box.x += decorationFrame.x;
+      box.y += decorationFrame.y;
       const tail = item.kind === "bubble" ? Math.min(box.width, box.height) * .2 : 0;
       const points = [decorationPoint({ x: box.x, y: box.y }), decorationPoint({ x: box.x + box.width, y: box.y }), decorationPoint({ x: box.x, y: box.y + box.height + tail }), decorationPoint({ x: box.x + box.width, y: box.y + box.height + tail })];
       const minX = Math.min(...points.map((p) => p.x)) - item.strokeWidth;
@@ -976,6 +997,6 @@ export function createCanvasNodesSvgMarkup(nodes: CanvasNode[], bounds: Bounds, 
     clone.y -= bounds.minY;
     return clone;
   });
-  const content = normalizedNodes.map((node) => serializeCanvasNode(node, decorations)).join("");
+  const content = normalizedNodes.map((node) => serializeCanvasNode(node, decorations, decorationAnchorBounds)).join("");
   return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">${content}</svg>`;
 }

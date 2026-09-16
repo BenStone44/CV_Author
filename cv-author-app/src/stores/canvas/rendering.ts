@@ -8,7 +8,7 @@ import {
   isCartesianTreeChart,
   isCoordinateTreeChart,
 } from "../../utils/treeLayout";
-import { getCanvasObjectHitTargetBounds } from "../../utils/canvasUtils";
+import { getNodeAnchorBounds } from "../../utils/canvasUtils";
 import { chartDataPreparationKey, mergeSharedScale } from "./renderingData";
 import { normalizeNestedCallout } from "../../utils/nestedCallout";
 import { nestedDecorationBounds, normalizeNestedDecorations } from "../../utils/nestedDecorations";
@@ -641,7 +641,7 @@ export function useCanvasRendering(context: any) {
         // The rendered hit target is the source of truth for the child's
         // selectable footprint. It already accounts for plot-area padding,
         // polar occupied sectors, and Cartesian content offsets.
-        const hitBounds = getCanvasObjectHitTargetBounds(child);
+        const hitBounds = getNodeAnchorBounds(child);
         const scaledWidth = Math.abs(hitBounds.width * scaleX);
         const scaledHeight = Math.abs(hitBounds.height * scaleY);
         const polarBounds = getPolarOccupiedGeometry(child);
@@ -655,8 +655,8 @@ export function useCanvasRendering(context: any) {
         let framedWidth = callout.enabled ? width * callout.scale : width;
         let framedHeight = callout.enabled ? height * callout.scale : height;
         const decorations = normalizeNestedDecorations(parameters.decorations);
-        const childWidth = Math.abs(child.width * scaleX);
-        const childHeight = Math.abs(child.height * scaleY);
+        const childWidth = scaledWidth;
+        const childHeight = scaledHeight;
         for (const decoration of decorations) {
           const box = nestedDecorationBounds(decoration, childWidth, childHeight);
           const tail = decoration.kind === "bubble" ? Math.min(box.width, box.height) * 0.2 : 0;
@@ -667,12 +667,8 @@ export function useCanvasRendering(context: any) {
         }
         // Match the Nested resolver: offsets locate the child anchor, while
         // the occupied footprint may be off-center inside its canvas frame.
-        const localMinX = child.kind === "leaf" ? child.contentMinX : 0;
-        const localMinY = child.kind === "leaf" ? child.contentMinY : 0;
-        const occupiedX = ((hitBounds.minX + hitBounds.maxX) / 2 - localMinX
-          - (parameters.childAnchor?.x ?? 0.5) * child.width) * scaleX;
-        const occupiedY = ((hitBounds.minY + hitBounds.maxY) / 2 - localMinY
-          - (parameters.childAnchor?.y ?? 0.5) * child.height) * scaleY;
+        const occupiedX = (0.5 - (parameters.childAnchor?.x ?? 0.5)) * hitBounds.width * scaleX;
+        const occupiedY = (0.5 - (parameters.childAnchor?.y ?? 0.5)) * hitBounds.height * scaleY;
         const offset = {
           x: (parameters.offset?.x ?? 0) + occupiedX * Math.cos(rotation) - occupiedY * Math.sin(rotation),
           y: (parameters.offset?.y ?? 0) + occupiedX * Math.sin(rotation) + occupiedY * Math.cos(rotation),

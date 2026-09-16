@@ -393,6 +393,7 @@ export const CanvasNodeView: any = defineComponent({
           scaleX: child.scaleX,
           scaleY: child.scaleY,
           rotation: child.rotation,
+          anchorBounds: placement.anchorBounds,
         }, placement.parameters);
         const calloutNode = callout ? h("g", {
           class: "nested-callout",
@@ -415,7 +416,7 @@ export const CanvasNodeView: any = defineComponent({
           placement.parameters.decorations?.length ? h("g", {
             "data-nested-decorations": placement.relationshipId,
             "pointer-events": "none",
-            innerHTML: nestedDecorationsMarkup(child, placement.parameters.decorations),
+            innerHTML: nestedDecorationsMarkup({ ...child, anchorBounds: placement.anchorBounds }, placement.parameters.decorations),
           }) : null,
           h(NodeView, {
             key: child.id,

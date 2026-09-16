@@ -1,4 +1,4 @@
-import type { NestedCalloutSpec, Point, RelativeNestedParameters } from "../types";
+import type { ChartPlotArea, NestedCalloutSpec, Point, RelativeNestedParameters } from "../types";
 
 export const defaultNestedCallout: NestedCalloutSpec = {
   enabled: false,
@@ -13,6 +13,7 @@ export type NestedCalloutChildFrame = {
   scaleX: number;
   scaleY: number;
   rotation: number;
+  anchorBounds?: ChartPlotArea;
 };
 
 export type NestedCalloutGeometry = {
@@ -60,18 +61,28 @@ export function nestedCalloutGeometry(
 ): NestedCalloutGeometry | null {
   const callout = normalizeNestedCallout(parameters.callout);
   if (!callout.enabled) return null;
-  const childWidth = Math.abs(child.width * child.scaleX);
-  const childHeight = Math.abs(child.height * child.scaleY);
+  const anchorBounds = child.anchorBounds ?? { x: 0, y: 0, width: child.width, height: child.height };
+  const childWidth = Math.abs(anchorBounds.width * child.scaleX);
+  const childHeight = Math.abs(anchorBounds.height * child.scaleY);
   if (!(childWidth > 0 && childHeight > 0)) return null;
-  const center = {
-    x: child.x + childWidth / 2,
-    y: child.y + childHeight / 2,
+  const nodeCenter = {
+    x: child.x + Math.abs(child.width * child.scaleX) / 2,
+    y: child.y + Math.abs(child.height * child.scaleY) / 2,
   };
+  const unrotatedAnchorCenter = {
+    x: child.x + (anchorBounds.x + anchorBounds.width / 2) * Math.abs(child.scaleX),
+    y: child.y + (anchorBounds.y + anchorBounds.height / 2) * Math.abs(child.scaleY),
+  };
+  const centerDelta = rotate({
+    x: unrotatedAnchorCenter.x - nodeCenter.x,
+    y: unrotatedAnchorCenter.y - nodeCenter.y,
+  }, child.rotation);
+  const center = { x: nodeCenter.x + centerDelta.x, y: nodeCenter.y + centerDelta.y };
   const width = childWidth * callout.scale;
   const height = childHeight * callout.scale;
   const childAnchorVector = rotate({
-    x: (parameters.childAnchor.x - 0.5) * childWidth,
-    y: (parameters.childAnchor.y - 0.5) * childHeight,
+    x: (parameters.childAnchor.x - 0.5) * anchorBounds.width * child.scaleX,
+    y: (parameters.childAnchor.y - 0.5) * anchorBounds.height * child.scaleY,
   }, child.rotation);
   const resolvedChildAnchor = {
     x: center.x + childAnchorVector.x,

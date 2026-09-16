@@ -1576,6 +1576,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           callout: normalizeNestedCallout((relationship.parameters as Partial<RelativeNestedParameters>).callout),
         },
         child,
+        anchorBounds: getNodeNestedAnchorBounds(child, renderedNodeLocalSelectionBounds(child)),
       }];
     }),
   );
@@ -1583,7 +1584,13 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     const decorations = new Map(Object.values(chartRelationships.value.nestedRelationships)
       .filter((relationship) => relationship.status === "active")
       .map((relationship) => [relationship.childChartId, normalizeNestedDecorations((relationship.parameters as Partial<RelativeNestedParameters>).decorations)] as const));
-    const markup = serializeCanvasNodesSvgMarkup(nodes, bounds, decorations);
+    const decorationAnchorBounds = new Map(Array.from(decorations.keys()).flatMap((nodeId) => {
+      const child = findCanvasNode(nodeId);
+      return child
+        ? [[nodeId, getNodeNestedAnchorBounds(child, renderedNodeLocalSelectionBounds(child))] as const]
+        : [];
+    }));
+    const markup = serializeCanvasNodesSvgMarkup(nodes, bounds, decorations, decorationAnchorBounds);
     const hiddenParents = Object.values(chartRelationships.value.nestedRelationships)
       .filter((relationship) => relationship.status === "active"
         && (relationship.parameters as Partial<RelativeNestedParameters>).retainParent === false);
