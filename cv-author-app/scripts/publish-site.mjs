@@ -257,8 +257,14 @@ function extension(path) {
 }
 
 async function verifyBrowser(buildDir, cases, local, releaseSha = "") {
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ serviceWorkers: "block" });
+  const browser = await chromium.launch({
+    headless: true,
+    args: ["--enable-webgl", "--use-angle=swiftshader"],
+  });
+  const context = await browser.newContext({
+    serviceWorkers: "block",
+    viewport: { width: 1440, height: 1080 },
+  });
   if (local) {
     await context.route(`${publicOrigin}/**`, async (route) => {
       const url = new URL(route.request().url());
