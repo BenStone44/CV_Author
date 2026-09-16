@@ -34,11 +34,11 @@ type ParsedCsv = {
   errors: Papa.ParseError[];
 };
 
-// Datasets are session-scoped. Keep the store focused on the live source of
-// truth and let callers import/load data explicitly when a new session starts.
+// Datasets are session-scoped. case1.csv is the one bundled startup dataset;
+// larger editor examples remain explicit, on-demand imports.
 // Imported tables are immutable snapshots. Replace the collection or dataset
 // at explicit edit boundaries; do not proxy every CSV cell or GeoJSON point.
-const datasets = shallowRef<Dataset[]>([]);
+const datasets = shallowRef<Dataset[]>([defaultChartDataset]);
 const activeDatasetId = ref<string | null>(datasets.value[0]?.id ?? null);
 const parseError = ref("");
 const parseWarning = ref("");

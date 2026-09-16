@@ -14,14 +14,21 @@ import type {
   Point,
   SvgCandidate,
 } from "../../types";
-import { defaultDatasetForChartType, supportsDefaultChartData } from "../../utils/defaultChartData";
+import {
+  DEFAULT_CHART_DATASET_ID,
+  defaultDatasetForChartType,
+  supportsDefaultChartData,
+} from "../../utils/defaultChartData";
 import { canonicalGeoJsonJoinId, geoJsonFeatureIds } from "../../utils/geoJsonGeometry";
 
 export function datasetIdForNewChart(candidate: SvgCandidate, activeDatasetId?: string | null) {
-  return activeDatasetId
-    ?? (supportsDefaultChartData(candidate.chartType)
-      ? defaultDatasetForChartType(candidate.chartType).id
-      : undefined);
+  const defaultDatasetId = supportsDefaultChartData(candidate.chartType)
+    ? defaultDatasetForChartType(candidate.chartType).id
+    : undefined;
+  if (!activeDatasetId) return defaultDatasetId;
+  if (activeDatasetId === DEFAULT_CHART_DATASET_ID
+    && defaultDatasetId !== DEFAULT_CHART_DATASET_ID) return defaultDatasetId;
+  return activeDatasetId;
 }
 
 export function useCanvasImportOperations(context: any) {

@@ -5,6 +5,8 @@ import type {
   Dataset,
   SvgCandidate,
 } from "../types";
+import Papa from "papaparse";
+import case1Csv from "../../public/site/gallery/cases/_editor-samples/data/case1.csv?raw";
 import { getChartTemplateContract, normalizeChartTemplate } from "./chartTemplates";
 import { prepareChartData } from "./chartDataPipeline";
 import { renderDeterministicChart } from "./semanticRenderer";
@@ -17,16 +19,10 @@ export const DEFAULT_HEXBIN_DATASET_ID = "builtin:d3-hexbin-diamonds";
 export const CASE2_GRAPH_DATASET_ID = "builtin:case2-station-graph";
 export const HEXBIN_GRAPH_DATASET_ID = "builtin:hexbin-spread-graph";
 
-const groups = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"];
-const defaultRows = Array.from({ length: 10 }, (_, columnIndex) => groups.map((group, groupIndex) => ({
-  column: `C${String(columnIndex + 1).padStart(3, "0")}`,
-  group,
-  value: String(24 + columnIndex * 5 + groupIndex * 11),
-  change: String((columnIndex - 4) * 3 + groupIndex * 7),
-  x: String(10 + columnIndex * 9 + groupIndex),
-  y: String(18 + ((columnIndex * 13 + groupIndex * 17) % 82)),
-  magnitude: String(6 + ((columnIndex * 3 + groupIndex * 2) % 18)),
-}))).flat();
+const defaultRows = Papa.parse<Record<string, string>>(case1Csv, {
+  header: true,
+  skipEmptyLines: "greedy",
+}).data;
 
 const treeNodes = [
   ["root", "", "Global"],
@@ -118,24 +114,24 @@ const hexbinGraphLinkRows = Array.from({ length: 6 }, (_, areaIndex) => Array.fr
 })).flat(2);
 
 /**
- * One neutral, long-form table shared by the built-in chart templates.
- * It deliberately contains discrete, signed, quantitative, and size fields so
- * every core family can render without inventing family-specific sample data.
+ * The original case1.csv sample, bundled so the editor can restore its familiar
+ * startup data and previews without fetching it as an on-demand preset.
  */
 export const defaultChartDataset: Dataset = {
   id: DEFAULT_CHART_DATASET_ID,
-  name: "Default chart data",
+  name: "case1.csv",
   columns: [
-    { name: "column", type: "ordinal" },
-    { name: "group", type: "nominal" },
-    { name: "value", type: "quantitative" },
-    { name: "change", type: "quantitative" },
-    { name: "x", type: "quantitative" },
-    { name: "y", type: "quantitative" },
-    { name: "magnitude", type: "quantitative" },
+    { name: "id", type: "quantitative" },
+    { name: "person", type: "nominal" },
+    { name: "time", type: "ordinal" },
+    { name: "weight_kg", type: "quantitative" },
+    { name: "water_kg", type: "quantitative" },
+    { name: "fat_kg", type: "quantitative" },
+    { name: "muscle_kg", type: "quantitative" },
+    { name: "minerals_kg", type: "quantitative" },
   ],
   rows: defaultRows,
-  primaryKey: ["column", "group"],
+  primaryKey: ["id"],
 };
 
 /** Complete diamonds attachment used by the Observable D3 Hexbin example. */
@@ -257,13 +253,13 @@ export const defaultChordDataset: Dataset = {
   },
 };
 
-function groupFilter(): ChartDataTransform[] {
+function personFilter(): ChartDataTransform[] {
   return [{
-    id: "builtin-default:group-alpha",
+    id: "builtin-case1:person-a",
     kind: "filter",
     mode: "values",
-    field: "group",
-    values: ["Alpha"],
+    field: "person",
+    values: ["Person_A"],
     single: true,
     purpose: "filter",
   }];
@@ -403,10 +399,10 @@ export function createDefaultChartSpec(chartType: string): ChartSpec | null {
     return {
       ...base,
       encodings: {
-        x: { field: "x", type: "quantitative" },
-        y: { field: "y", type: "quantitative" },
-        color: { field: "group", type: "nominal" },
-        size: { field: "magnitude", type: "quantitative" },
+        x: { field: "time", type: "ordinal" },
+        y: { field: "weight_kg", type: "quantitative" },
+        color: { field: "person", type: "nominal" },
+        size: { field: "fat_kg", type: "quantitative" },
       },
     };
   }
@@ -414,9 +410,9 @@ export function createDefaultChartSpec(chartType: string): ChartSpec | null {
     return {
       ...base,
       encodings: {
-        x: { field: "column", type: "ordinal" },
-        y: { field: "group", type: "nominal" },
-        color: { field: "value", type: "quantitative" },
+        x: { field: "time", type: "ordinal" },
+        y: { field: "person", type: "nominal" },
+        color: { field: "weight_kg", type: "quantitative" },
       },
     };
   }
@@ -434,14 +430,16 @@ export function createDefaultChartSpec(chartType: string): ChartSpec | null {
     return {
       ...base,
       encodings: {
-        color: { field: "group", type: "nominal" },
+        color: { field: "person", type: "nominal" },
       },
       parallelFields: [
-        { field: "column", type: "ordinal" },
-        { field: "group", type: "nominal" },
-        { field: "value", type: "quantitative" },
-        { field: "change", type: "quantitative" },
-        { field: "magnitude", type: "quantitative" },
+        { field: "person", type: "nominal" },
+        { field: "time", type: "ordinal" },
+        { field: "weight_kg", type: "quantitative" },
+        { field: "water_kg", type: "quantitative" },
+        { field: "fat_kg", type: "quantitative" },
+        { field: "muscle_kg", type: "quantitative" },
+        { field: "minerals_kg", type: "quantitative" },
       ],
     };
   }
@@ -449,20 +447,20 @@ export function createDefaultChartSpec(chartType: string): ChartSpec | null {
     return {
       ...base,
       encodings: {
-        segment: { field: "column", type: "ordinal" },
-        theta: { field: "value", type: "quantitative" },
+        segment: { field: "time", type: "ordinal" },
+        theta: { field: "weight_kg", type: "quantitative" },
       },
       aggregations: { theta: "sum" },
-      dataTransforms: groupFilter(),
+      dataTransforms: personFilter(),
     };
   }
   if (normalized === "radarchart") {
-    const seriesEncoding = { field: "group", type: "nominal" as const };
+    const seriesEncoding = { field: "person", type: "nominal" as const };
     return {
       ...base,
       encodings: {
-        theta: { field: "column", type: "ordinal" },
-        radius: { field: "value", type: "quantitative" },
+        theta: { field: "time", type: "ordinal" },
+        radius: { field: "weight_kg", type: "quantitative" },
         series: seriesEncoding,
       },
       series: seriesEncoding,
@@ -474,37 +472,37 @@ export function createDefaultChartSpec(chartType: string): ChartSpec | null {
   const radialStackedBar = normalized === "radialstackedbarchart"
     || normalized === "radialrectstackedbarchart";
   if (radialBar || radialStackedBar) {
-    const seriesEncoding = { field: "group", type: "nominal" as const };
+    const seriesEncoding = { field: "person", type: "nominal" as const };
     return {
       ...base,
       encodings: {
-        segment: { field: "column", type: "ordinal" },
-        radius: { field: "value", type: "quantitative" },
+        segment: { field: "time", type: "ordinal" },
+        radius: { field: "weight_kg", type: "quantitative" },
         ...(radialStackedBar ? { series: seriesEncoding } : {}),
       },
       ...(radialStackedBar ? { series: seriesEncoding, seriesFields: [seriesEncoding] } : {}),
-      ...(!radialStackedBar ? { dataTransforms: groupFilter() } : {}),
+      ...(!radialStackedBar ? { dataTransforms: personFilter() } : {}),
     };
   }
   const circularStackedBar = normalized === "circularstackedbarchart";
   if (normalized === "circularbarchart" || circularStackedBar) {
-    const seriesEncoding = { field: "group", type: "nominal" as const };
+    const seriesEncoding = { field: "person", type: "nominal" as const };
     return {
       ...base,
       encodings: {
         ...(circularStackedBar
           ? {
-            theta: { field: "value", type: "quantitative" as const },
-            radius: { field: "column", type: "ordinal" as const },
+            theta: { field: "weight_kg", type: "quantitative" as const },
+            radius: { field: "time", type: "ordinal" as const },
           }
           : {
-            segment: { field: "column", type: "ordinal" as const },
-            theta: { field: "value", type: "quantitative" as const },
+            segment: { field: "time", type: "ordinal" as const },
+            theta: { field: "weight_kg", type: "quantitative" as const },
           }),
         ...(circularStackedBar ? { series: seriesEncoding } : {}),
       },
       ...(circularStackedBar ? { series: seriesEncoding, seriesFields: [seriesEncoding] } : {}),
-      ...(!circularStackedBar ? { dataTransforms: groupFilter() } : {}),
+      ...(!circularStackedBar ? { dataTransforms: personFilter() } : {}),
     };
   }
 
@@ -515,17 +513,16 @@ export function createDefaultChartSpec(chartType: string): ChartSpec | null {
     || normalized === "stackedareachart"
     || normalized === "streamgraph"
     || normalized === "horizonchart";
-  const valueField = normalized.includes("divergent") ? "change" : "value";
-  const seriesEncoding = { field: "group", type: "nominal" as const };
+  const seriesEncoding = { field: "person", type: "nominal" as const };
   return {
     ...base,
     encodings: {
-      x: { field: "column", type: "ordinal" },
-      y: { field: valueField, type: "quantitative" },
+      x: { field: "time", type: "ordinal" },
+      y: { field: "weight_kg", type: "quantitative" },
       ...(multiSeries ? { series: seriesEncoding } : {}),
     },
     ...(multiSeries ? { series: seriesEncoding, seriesFields: [seriesEncoding] } : {}),
-    ...(!multiSeries ? { dataTransforms: groupFilter() } : {}),
+    ...(!multiSeries ? { dataTransforms: personFilter() } : {}),
   };
 }
 
@@ -554,8 +551,10 @@ export function defaultChartSpecWithAppearance(chartSpec: ChartSpec, chartId: st
   } satisfies ChartSpec;
 }
 
-function densifyAreaPreviewDataset(dataset: Dataset): Dataset {
-  const progressionValues = Array.from(new Set(dataset.rows.map((row) => row.column ?? "")))
+function densifyAreaPreviewDataset(dataset: Dataset, chartSpec: ChartSpec): Dataset {
+  const progressionField = chartSpec.encodings.x?.field ?? "time";
+  const seriesField = chartSpec.series?.field ?? "person";
+  const progressionValues = Array.from(new Set(dataset.rows.map((row) => row[progressionField] ?? "")))
     .filter(Boolean);
   if (progressionValues.length < 2) return dataset;
   const numericFields = new Set(dataset.columns
@@ -563,17 +562,17 @@ function densifyAreaPreviewDataset(dataset: Dataset): Dataset {
     .map((column) => column.name));
   const rows: Dataset["rows"] = [];
   progressionValues.forEach((progression, progressionIndex) => {
-    const currentRows = dataset.rows.filter((row) => row.column === progression);
+    const currentRows = dataset.rows.filter((row) => row[progressionField] === progression);
     rows.push(...currentRows);
     const nextProgression = progressionValues[progressionIndex + 1];
     if (!nextProgression) return;
     const nextByGroup = new Map(dataset.rows
-      .filter((row) => row.column === nextProgression)
-      .map((row) => [row.group ?? "", row]));
+      .filter((row) => row[progressionField] === nextProgression)
+      .map((row) => [row[seriesField] ?? "", row]));
     currentRows.forEach((current) => {
-      const next = nextByGroup.get(current.group ?? "");
+      const next = nextByGroup.get(current[seriesField] ?? "");
       if (!next) return;
-      const midpoint: Record<string, string> = { ...current, column: `${progression}-mid` };
+      const midpoint: Record<string, string> = { ...current, [progressionField]: `${progression}-mid` };
       numericFields.forEach((field) => {
         const left = Number(current[field] ?? "");
         const right = Number(next[field] ?? "");
@@ -608,7 +607,7 @@ export function renderDefaultChartSvg(
       : null;
   const defaultDataset = defaultDatasetForChartType(chartType);
   const previewDataset = normalizeChartTemplate(chartType) === "area"
-    ? densifyAreaPreviewDataset(defaultDataset)
+    ? densifyAreaPreviewDataset(defaultDataset, chartSpec)
     : defaultDataset;
   const prepared = prepareChartData(
     `default-preview-${chartType}`,
