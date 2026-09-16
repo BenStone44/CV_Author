@@ -124,6 +124,10 @@ export function sampleSvgWordCloudMask(
   const height = Math.max(8, Math.round(sampledBounds.height * scale));
   const mask = new Uint8Array(width * height);
   let allowedCount = 0;
+  let minimumAllowedX = width;
+  let minimumAllowedY = height;
+  let maximumAllowedX = -1;
+  let maximumAllowedY = -1;
   for (let y = 0; y < height; y += 1) {
     const scopeY = sampledBounds.minY + (y + 0.5) / height * sampledBounds.height;
     for (let x = 0; x < width; x += 1) {
@@ -133,14 +137,36 @@ export function sampleSvgWordCloudMask(
       if (!allowed) continue;
       mask[y * width + x] = 1;
       allowedCount += 1;
+      minimumAllowedX = Math.min(minimumAllowedX, x);
+      minimumAllowedY = Math.min(minimumAllowedY, y);
+      maximumAllowedX = Math.max(maximumAllowedX, x);
+      maximumAllowedY = Math.max(maximumAllowedY, y);
     }
   }
   if (!allowedCount) return null;
+  const croppedWidth = maximumAllowedX - minimumAllowedX + 1;
+  const croppedHeight = maximumAllowedY - minimumAllowedY + 1;
+  const croppedMask = new Uint8Array(croppedWidth * croppedHeight);
+  for (let y = 0; y < croppedHeight; y += 1) {
+    for (let x = 0; x < croppedWidth; x += 1) {
+      croppedMask[y * croppedWidth + x] = mask[(y + minimumAllowedY) * width + x + minimumAllowedX] ?? 0;
+    }
+  }
+  const cellWidth = sampledBounds.width / width;
+  const cellHeight = sampledBounds.height / height;
+  const croppedBounds = {
+    minX: sampledBounds.minX + minimumAllowedX * cellWidth,
+    minY: sampledBounds.minY + minimumAllowedY * cellHeight,
+    maxX: sampledBounds.minX + (maximumAllowedX + 1) * cellWidth,
+    maxY: sampledBounds.minY + (maximumAllowedY + 1) * cellHeight,
+    width: croppedWidth * cellWidth,
+    height: croppedHeight * cellHeight,
+  };
   return {
-    width,
-    height,
-    rows: encodeWordCloudMask(mask, width, height),
-    coverage: allowedCount / mask.length,
-    bounds: sampledBounds,
+    width: croppedWidth,
+    height: croppedHeight,
+    rows: encodeWordCloudMask(croppedMask, croppedWidth, croppedHeight),
+    coverage: allowedCount / croppedMask.length,
+    bounds: croppedBounds,
   };
 }
