@@ -524,6 +524,7 @@ const chartContractData = {
     { channel: "x", label: "X", role: "dimension", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
     { channel: "y", label: "Y", role: "dimension", required: true, accepts: ["quantitative"], emptyLabel: "Not bound" },
     { channel: "color", label: "User type", role: "style", required: false, accepts: ["nominal", "ordinal", "quantitative"], emptyLabel: "Static" },
+    { channel: "shape", label: "Role style", role: "style", required: false, accepts: ["nominal", "ordinal"], emptyLabel: "Static" },
   ]),
   WordCloud: defineSchema("WordCloud", "Word Cloud", "wordcloud", [
     { channel: "x", label: "Word", semanticLabel: "Word", role: "dimension", required: true, accepts: ["nominal", "ordinal"], emptyLabel: "Not bound" },

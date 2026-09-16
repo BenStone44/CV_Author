@@ -1564,6 +1564,7 @@ function renderHexbin(input: GenericRenderInput) {
   const maximum = Math.max(1, ...bins.map((bin) => bin.length));
   const color = scaleSequential((value) => globalGradientColor(value, [0, 1])).domain([0, maximum / 2]);
   const colorEncoding = input.chartSpec.encodings.color;
+  const roleEncoding = input.chartSpec.encodings.shape;
   const colorValues = colorEncoding
     ? points.map((point) => point.row[colorEncoding.field] ?? "")
     : [];
@@ -1579,6 +1580,7 @@ function renderHexbin(input: GenericRenderInput) {
   const marks = bins.map((bin) => {
     const indices = bin.map((point) => point.rowIndex);
     const binColorValues = colorEncoding ? bin.map((point) => point.row[colorEncoding.field] ?? "") : [];
+    const binRoleValues = roleEncoding ? bin.map((point) => point.row[roleEncoding.field] ?? "") : [];
     const category = colorEncoding && colorEncoding.type !== "quantitative"
       ? Array.from(new Set(binColorValues)).sort((left, right) =>
         binColorValues.filter((value) => value === right).length - binColorValues.filter((value) => value === left).length)[0] ?? ""
@@ -1591,7 +1593,13 @@ function renderHexbin(input: GenericRenderInput) {
       : quantitativeColor && numericValues.length
         ? quantitativeColor(numericValues.reduce((sum, value) => sum + value, 0) / numericValues.length)
         : color(bin.length);
-    return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="hexagon" data-mark-group-id="mark-group:${esc(input.chartId)}:hexagon" data-count="${bin.length}" data-category-key="${esc(category)}" data-row-indices="${indices.join(",")}" transform="translate(${bin.x} ${bin.y})" d="${layout.hexagon()}" fill="${fill}" stroke="white" stroke-width="0.8"><title>${category ? `${esc(category)} · ` : ""}${bin.length}</title></path>`;
+    const userRole = Array.from(new Set(binRoleValues)).sort((left, right) =>
+      binRoleValues.filter((value) => value === right).length - binRoleValues.filter((value) => value === left).length)[0] ?? "";
+    const normalizedRole = userRole.toLowerCase();
+    const stroke = normalizedRole.includes("leader") ? "#0f172a" : normalizedRole.includes("receiver") ? "#64748b" : "white";
+    const strokeWidth = normalizedRole.includes("leader") ? 2.4 : normalizedRole.includes("receiver") ? 1.2 : 0.8;
+    const dash = normalizedRole.includes("receiver") ? ' stroke-dasharray="2 1.5"' : "";
+    return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="hexagon" data-mark-group-id="mark-group:${esc(input.chartId)}:hexagon" data-count="${bin.length}" data-category-key="${esc(category)}" data-user-role="${esc(userRole)}" data-row-indices="${indices.join(",")}" transform="translate(${bin.x} ${bin.y})" d="${layout.hexagon()}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"${dash}><title>${category ? `${esc(category)} · ` : ""}${userRole ? `${esc(userRole)} · ` : ""}${bin.length}</title></path>`;
   }).join("");
   return { content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="hexbin" data-radius="${configuredRadius}" data-scale="linear-linear" data-color-mode="${colorEncoding ? esc(colorEncoding.type) : "count"}" data-source-row-count="${points.length}" data-renderer="observable-hexbin@3">${marks}</g>`, plotArea: area, scales: { x: { type: "linear", domain: xDomain, range: [area.x, area.x + area.width] }, y: { type: "linear", domain: yDomain, range: [area.y + area.height, area.y] } } };
 }
