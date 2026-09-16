@@ -26,51 +26,11 @@ const requestedGallerySlug = new URLSearchParams(window.location.search).get('ex
 const selectedGalleryItem = galleryItems.find((item) => item.slug === requestedGallerySlug) ?? galleryItems[0]!
 const galleryDetailHref = (item: GalleryItem) => `/gallery/example/?example=${encodeURIComponent(item.slug)}`
 const galleryCardTags = (item: GalleryItem) => [...item.blocks, ...item.coordinateSystems]
-
-type HeroChartNode = {
-  title: string
-  image: string
-  slot: number
-  emphasized?: boolean
-}
-
-const heroChartPath = '/site/home/charts'
-const heroChartNodes: Record<string, HeroChartNode[]> = {
-  'academic-scores': [
-    { title: 'Streamgraph', image: `${heroChartPath}/streamgraph.png`, slot: 1 },
-    { title: 'Scatterplot', image: `${heroChartPath}/scatterplot.png`, slot: 2 },
-    { title: 'Pie Chart', image: `${heroChartPath}/pie-chart.png`, slot: 4 },
-  ],
-  'shared-hierarchy': [
-    { title: 'Sunburst', image: `${heroChartPath}/sunburst.png`, slot: 1 },
-    { title: 'Radial Dendrogram', image: `${heroChartPath}/radial-dendrogram.png`, slot: 4 },
-  ],
-  'geographic-network': [
-    { title: 'Polygon', image: `${heroChartPath}/polygon-layer.png`, slot: 1 },
-    { title: 'Scatterplot', image: `${heroChartPath}/scatterplot-layer.png`, slot: 2 },
-    { title: 'Graph Link', image: `${heroChartPath}/graph-link-geographic.png`, slot: 3 },
-    { title: 'Stacked Bar', image: `${heroChartPath}/stacked-bar.png`, slot: 4 },
-  ],
-  'polar-facet': [
-    { title: 'Chord', image: `${heroChartPath}/chord.png`, slot: 1, emphasized: true },
-    { title: 'Circular Stacked Bar', image: `${heroChartPath}/circular-stacked-bar.png`, slot: 4 },
-  ],
-  'matrix-network': [
-    { title: 'Matrix', image: `${heroChartPath}/matrix.png`, slot: 1 },
-    { title: 'Force Network', image: `${heroChartPath}/force-network.png`, slot: 2 },
-    { title: 'Top Stacked Bar', image: `${heroChartPath}/stacked-bar.png`, slot: 3 },
-    { title: 'Right Stacked Bar', image: `${heroChartPath}/stacked-bar.png`, slot: 4 },
-  ],
-  'tree-leaf-axis': [
-    { title: 'Dendrogram', image: `${heroChartPath}/dendrogram.png`, slot: 1 },
-    { title: 'Radial Stacked Bar', image: `${heroChartPath}/radial-stacked-bar.png`, slot: 3 },
-    { title: 'Area Chart', image: `${heroChartPath}/area-chart.png`, slot: 4 },
-  ],
-}
-
-const activeHeroCaseIndex = ref(0)
-const activeHeroCase = computed(() => galleryItems[activeHeroCaseIndex.value] ?? galleryItems[0]!)
-const activeHeroCharts = computed(() => heroChartNodes[activeHeroCase.value.slug] ?? [])
+const homepageGalleryRows = [
+  galleryItems.slice(0, 3),
+  galleryItems.slice(3, 7),
+  galleryItems.slice(7, 10),
+]
 
 if (page === 'galleryDetail') document.title = `${selectedGalleryItem.title} · VisBricks Gallery`
 if (page === 'api') document.title = 'API · VisBricks'
@@ -260,53 +220,26 @@ const tutorials = [
           </div>
         </div>
 
-        <div class="hero-visual" aria-label="Gallery compositions and the chart blocks used to build them">
-          <Transition name="hero-case" mode="out-in">
-            <div :key="activeHeroCase.slug" class="hero-network-stage">
-              <div class="hero-network-grid" aria-hidden="true"></div>
-              <svg class="hero-network-lines" viewBox="0 0 640 500" preserveAspectRatio="none" aria-hidden="true">
-                <path v-if="activeHeroCharts.some((chart) => chart.slot === 1)" d="M112 75 C180 78 186 150 234 181" />
-                <path v-if="activeHeroCharts.some((chart) => chart.slot === 2)" d="M528 82 C463 88 454 151 405 180" />
-                <path v-if="activeHeroCharts.some((chart) => chart.slot === 3)" d="M110 423 C175 410 185 354 231 324" />
-                <path v-if="activeHeroCharts.some((chart) => chart.slot === 4)" d="M531 419 C469 407 456 353 410 325" />
-              </svg>
-
-              <a class="hero-case-card" :href="galleryDetailHref(activeHeroCase)">
-                <span class="hero-case-eyebrow">COMPOSED CASE · {{ activeHeroCase.number }}</span>
-                <span class="hero-case-image">
-                  <img :src="activeHeroCase.image" :alt="`${activeHeroCase.title} finished composition`">
-                </span>
-                <span class="hero-case-caption">
-                  <strong>{{ activeHeroCase.title }}</strong>
-                  <span aria-hidden="true">↗</span>
-                </span>
-              </a>
-
-              <figure
-                v-for="chart in activeHeroCharts"
-                :key="`${activeHeroCase.slug}-${chart.title}`"
-                class="hero-chart-node"
-                :class="[`hero-chart-node--${chart.slot}`, { 'hero-chart-node--emphasized': chart.emphasized }]"
-              >
-                <img :src="chart.image" alt="">
-                <figcaption>{{ chart.title }}</figcaption>
-              </figure>
-            </div>
-          </Transition>
-
-          <div class="hero-case-picker" role="group" aria-label="Choose a Gallery case to preview">
-            <button
-              v-for="(item, index) in galleryItems"
-              :key="item.slug"
-              type="button"
-              :aria-label="`Show ${item.title}`"
-              :aria-pressed="activeHeroCaseIndex === index"
-              :title="item.title"
-              @click="activeHeroCaseIndex = index"
+        <div class="hero-visual">
+          <div class="hero-gallery" aria-label="The first ten VisBricks Gallery cases">
+            <div
+              v-for="(row, rowIndex) in homepageGalleryRows"
+              :key="rowIndex"
+              class="hero-gallery-row"
             >
-              <img :src="item.thumbnail" alt="" loading="lazy" decoding="async">
-              <span>{{ item.number }}</span>
-            </button>
+              <a
+                v-for="item in row"
+                :key="item.slug"
+                class="hero-gallery-card"
+                :href="galleryDetailHref(item)"
+              >
+                <img
+                  :src="item.thumbnail"
+                  :alt="`${item.title} finished composition`"
+                  decoding="async"
+                >
+              </a>
+            </div>
           </div>
         </div>
       </section>
