@@ -4,16 +4,16 @@
   --site-ink: #432818;
   --site-ink-deep: #283618;
   --site-muted: #728196;
-  --site-paper: #fefae0;
-  --site-card: #fff3d0;
+  --site-paper: #fffef7;
+  --site-card: #fffbee;
   --site-line: rgb(67 40 24 / 24%);
   --site-accent: #99582a;
   --site-rust: #bc6c25;
-  --site-cream: #ffe6a7;
+  --site-cream: #fefae0;
   --site-olive: #606c38;
   --site-sky: #669bbc;
   --site-accent-soft: rgb(153 88 42 / 13%);
-  --site-cream-soft: rgb(255 230 167 / 32%);
+  --site-cream-soft: rgb(254 250 224 / 70%);
   --site-sky-soft: rgb(102 155 188 / 15%);
   --site-olive-soft: rgb(96 108 56 / 14%);
   --site-shadow: 0 18px 50px rgb(67 40 24 / 10%);
@@ -83,7 +83,7 @@ button:focus-visible {
   padding: 0 20px 0 22px;
   border: 1px solid var(--site-line);
   border-radius: var(--site-radius-medium);
-  background: rgb(254 250 224 / 84%);
+  background: rgb(255 254 247 / 84%);
   box-shadow: var(--site-shadow-small);
   backdrop-filter: blur(18px);
 }
@@ -369,7 +369,7 @@ button:focus-visible {
   padding: 30px;
   border: 1px solid var(--site-line);
   border-radius: var(--site-radius-medium);
-  background: rgb(254 250 224 / 62%);
+  background: rgb(255 254 247 / 62%);
 }
 
 .principle-grid article + article {
@@ -502,7 +502,7 @@ button:focus-visible {
 
 .learn-copy p {
   margin: 0 0 30px;
-  color: rgb(254 250 224 / 72%);
+  color: rgb(255 254 247 / 72%);
   line-height: 1.7;
 }
 
@@ -612,7 +612,7 @@ button:focus-visible {
   place-items: center;
   border: 1px solid var(--site-line);
   border-radius: 50%;
-  background: rgb(254 250 224 / 90%);
+  background: rgb(255 254 247 / 90%);
   font-family: var(--site-font-mono);
   font-size: 11px;
   box-shadow: var(--site-shadow-small);
@@ -892,7 +892,7 @@ button:focus-visible {
 .detail-compose-card > div > p:last-child {
   max-width: 680px;
   margin: 14px 0 0;
-  color: rgb(254 250 224 / 72%);
+  color: rgb(255 254 247 / 72%);
   font-size: 13px;
   line-height: 1.7;
 }
@@ -1158,7 +1158,7 @@ button:focus-visible {
   padding: 9px;
   border: 1px solid rgb(67 40 24 / 15%);
   border-radius: 11px;
-  background: rgb(255 230 167 / 30%);
+  background: rgb(254 250 224 / 30%);
 }
 
 .composition-flow-inputs {
@@ -1220,7 +1220,7 @@ button:focus-visible {
 
 .composition-flow-result {
   height: 58px;
-  background: rgb(255 230 167 / 55%);
+  background: rgb(254 250 224 / 55%);
 }
 
 .composition-flow-diagram--layer .composition-flow-result i:nth-child(1),
@@ -1229,7 +1229,7 @@ button:focus-visible {
   height: 31px;
   border: 1px solid var(--site-ink);
   border-radius: 5px;
-  background: rgb(255 230 167 / 86%);
+  background: rgb(254 250 224 / 86%);
 }
 .composition-flow-diagram--layer .composition-flow-result i:nth-child(1) { top: 17px; left: 9px; }
 .composition-flow-diagram--layer .composition-flow-result i:nth-child(2) { top: 9px; left: 20px; background: rgb(102 155 188 / 48%); }
@@ -1242,7 +1242,7 @@ button:focus-visible {
   width: 22px;
   border: 1px solid var(--site-ink);
   border-radius: 4px;
-  background: rgb(255 230 167 / 84%);
+  background: rgb(254 250 224 / 84%);
 }
 .composition-flow-diagram--concat .composition-flow-result i:nth-child(1) { left: 8px; }
 .composition-flow-diagram--concat .composition-flow-result i:nth-child(2) { right: 8px; background: rgb(102 155 188 / 40%); }
@@ -1253,7 +1253,7 @@ button:focus-visible {
   height: 17px;
   border: 1px solid var(--site-ink);
   border-radius: 3px;
-  background: rgb(255 230 167 / 82%);
+  background: rgb(254 250 224 / 82%);
 }
 .composition-flow-diagram--facet .composition-flow-result i:nth-child(1) { top: 8px; left: 8px; }
 .composition-flow-diagram--facet .composition-flow-result i:nth-child(2) { top: 8px; right: 8px; }
@@ -1265,7 +1265,7 @@ button:focus-visible {
   inset: 7px;
   border: 1px solid var(--site-ink);
   border-radius: 8px;
-  background: rgb(255 230 167 / 70%);
+  background: rgb(254 250 224 / 70%);
 }
 .composition-flow-diagram--nested .composition-flow-result i:nth-child(2) {
   top: 19px;
@@ -1393,7 +1393,7 @@ button:focus-visible {
   overflow: hidden;
   border: 1px solid var(--site-line);
   border-radius: 18px;
-  background: rgb(254 250 224 / 68%);
+  background: rgb(255 254 247 / 68%);
 }
 .api-block-card--expanded {
   grid-column: 1 / -1;
@@ -1500,7 +1500,7 @@ button:focus-visible {
   padding: 16px;
   border: 1px solid var(--site-line);
   border-radius: 12px;
-  background: rgb(254 250 224 / 60%);
+  background: rgb(255 254 247 / 60%);
 }
 .api-spec-columns ul { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
 .api-spec-columns li { display: grid; gap: 3px; }
@@ -1519,7 +1519,7 @@ button:focus-visible {
   margin: 0;
   padding: 18px;
   overflow: auto;
-  border-top: 1px solid rgb(254 250 224 / 20%);
+  border-top: 1px solid rgb(255 254 247 / 20%);
   font-size: 9px;
   font-weight: 400;
   line-height: 1.6;

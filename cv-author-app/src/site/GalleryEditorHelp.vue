@@ -81,7 +81,7 @@ body:has(.gallery-editor-bar) #app > .app-shell {
   height: 56px;
   padding: 0 24px;
   border-bottom: 1px solid #d9c7a3;
-  background: #fefae0;
+  background: #fffef7;
   color: #432818;
   font: 400 13px/1.5 Arial, sans-serif;
 }
@@ -100,11 +100,11 @@ body:has(.gallery-editor-bar) #app > .app-shell {
   padding: 8px 12px;
   border: 1px solid #99582a;
   border-radius: 8px;
-  background: #fff3d0;
+  background: #fffbee;
   color: #432818;
 }
 .gallery-editor-help-button > span { display: grid; place-items: center; width: 19px; height: 19px; border: 1px solid currentColor; border-radius: 50%; }
-.gallery-editor-help-button:hover, .gallery-help-links button:hover { background: #ffe6a7; }
+.gallery-editor-help-button:hover, .gallery-help-links button:hover { background: #fefae0; }
 .gallery-creation-help {
   position: absolute;
   top: 64px;
@@ -136,7 +136,7 @@ body:has(.gallery-editor-bar) #app > .app-shell {
 .gallery-help-preview summary { padding: 8px 0; cursor: pointer; font-weight: 700; }
 .gallery-help-preview img { display: block; width: 100%; height: 220px; object-fit: contain; background: white; border: 1px solid #e9dfcd; }
 .gallery-help-links { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; justify-content: space-between; }
-.gallery-help-links button { padding: 8px 10px; border: 1px solid #99582a; border-radius: 6px; background: #fff3d0; color: #432818; }
+.gallery-help-links button { padding: 8px 10px; border: 1px solid #99582a; border-radius: 6px; background: #fffbee; color: #432818; }
 .gallery-help-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 @media (max-width: 640px) {
   .gallery-editor-bar { padding: 0 12px; gap: 12px; }
