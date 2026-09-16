@@ -5523,10 +5523,18 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
           targetBoundsCache.set(boundsCacheKey, bounds);
         }
         if (!bounds || bounds.width <= 0 || bounds.height <= 0) return;
-        const wordGroup = child.chartSpec?.markGroups?.find((group) => group.role === "word");
+        const existingWordGroup = child.chartSpec?.markGroups?.find((group) => group.role === "word");
         const shapeAdaptiveWordCloud = normalizeChartTemplate(child.chartSpec?.chartType ?? "") === "wordcloud"
-          && String(wordGroup?.sharedConfig.layout ?? "") === "shape";
-        if (shapeAdaptiveWordCloud && child.chartSpec && wordGroup) {
+          && String(existingWordGroup?.sharedConfig.layout ?? "shape") !== "rectangle";
+        if (shapeAdaptiveWordCloud && child.chartSpec) {
+          const wordGroup = existingWordGroup ?? {
+            id: `mark-group:${child.id}:word`,
+            chartId: child.id,
+            role: "word",
+            memberKeys: [],
+            allowOverrides: true,
+            sharedConfig: {},
+          };
           const maskGeometryMarks = targetGeometryMarks.flatMap((element) => {
             const geometry = element as SVGGraphicsElement & {
               isPointInFill?: (point: DOMPoint) => boolean;
@@ -5546,18 +5554,23 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
             bounds = mask.bounds;
             child.width = bounds.width;
             child.height = bounds.height;
+            const markGroups = child.chartSpec.markGroups ?? [];
+            const configuredWordGroup = {
+              ...wordGroup,
+              sharedConfig: {
+                ...wordGroup.sharedConfig,
+                layout: "shape",
+                maskWidth: mask.width,
+                maskHeight: mask.height,
+                maskRows: mask.rows,
+                maskCoverage: mask.coverage,
+              },
+            };
             child.chartSpec = {
               ...child.chartSpec,
-              markGroups: child.chartSpec.markGroups?.map((group) => group.id === wordGroup.id ? {
-                ...group,
-                sharedConfig: {
-                  ...group.sharedConfig,
-                  maskWidth: mask.width,
-                  maskHeight: mask.height,
-                  maskRows: mask.rows,
-                  maskCoverage: mask.coverage,
-                },
-              } : group),
+              markGroups: existingWordGroup
+                ? markGroups.map((group) => group.id === wordGroup.id ? configuredWordGroup : group)
+                : [...markGroups, configuredWordGroup],
               renderer: undefined,
               scales: undefined,
               plotArea: undefined,
