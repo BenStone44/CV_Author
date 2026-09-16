@@ -35,8 +35,8 @@
     }
   ],
   "expectedRender": {
-    "users": 1920,
-    "hexagons": 1920,
+    "users": 1881,
+    "hexagons": 1881,
     "communities": 8,
     "userTypes": 3,
     "retweetLinks": 392
@@ -49,7 +49,7 @@
   "gallery": {
     "number": "09",
     "title": "Retweet Community Honeycomb",
-    "description": "A dense one-user-per-hex social field, partitioned into eight colored communities and crossed by hierarchical retweet arcs.",
+    "description": "A dense, ragged hexagonal social field, divided by eight organically winding communities and crossed by hierarchical retweet arcs.",
     "tags": [
       "Layer",
       "Hexbin",
@@ -65,7 +65,7 @@
     "file": {
       "type": "GRAPH CSV",
       "name": "retweet_users.csv + retweet_links.csv",
-      "description": "1,920 users on an exact honeycomb lattice in eight communities, with leader-to-retweeter-to-receiver propagation edges.",
+      "description": "1,881 users form a densely packed hexagonal island with an uneven perimeter and eight irregular communities, linked by leader-to-retweeter-to-receiver propagation edges.",
       "files": [
         "retweet_users.csv",
         "retweet_links.csv"
@@ -78,7 +78,7 @@
       },
       {
         "field": "community",
-        "role": "Hex fill, forming four contiguous regions"
+        "role": "Hex fill, forming eight contiguous regions with irregular boundaries"
       },
       {
         "field": "user_type",
@@ -89,7 +89,7 @@
         "role": "Retweet relationship, endpoints, and strength"
       }
     ],
-    "composition": "Layer curved Graph Link arcs over a tightly packed Hexbin on shared X and Y scales. Eight communities control fill; user_type controls the role border; edges mainly flow from opinion leaders to retweeters and then receivers.",
+    "composition": "Layer curved Graph Link arcs over a tightly packed Hexbin on shared X and Y scales. The users form one roughly hexagonal island with a broken outer rim; warped community regions avoid straight grid-like boundaries. Eight communities control fill, user_type controls the role border, and edges mainly flow from opinion leaders to retweeters and then receivers.",
     "editorHelp": {
       "introduction": "The starter places the packed Hexbin and bound retweet Graph Link separately.",
       "steps": [
@@ -105,7 +105,7 @@
   },
   "preview": {
     "path": "preview.svg",
-    "sha256": "d6fa1cb91e856a532a9bf1b7a791aaec8a17b4098d8862543ed868d580000eb5",
+    "sha256": "5746c0dce8de2c2e8a7a6887610614e59d439480225444f5312f2f3d1920b8b1",
     "source": "http://localhost:5173/editor/?case=retweet-community-hexbin-links",
     "capturedOn": "2026-09-16"
   }
