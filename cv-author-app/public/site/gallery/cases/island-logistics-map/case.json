@@ -134,7 +134,7 @@
   },
   "preview": {
     "path": "preview.svg",
-    "sha256": "2b608b1a6d53b53238234b767326f5c733394d0e56a9ff63c0c274aca259eeb3",
+    "sha256": "2968790bbc81a6c55cd6a665cb268f5d542a77dc806ebb05c9994148a92c39a7",
     "source": "http://localhost:5173/editor/?case=island-logistics-map-layer-nested-bars",
     "capturedOn": "2026-09-16"
   }

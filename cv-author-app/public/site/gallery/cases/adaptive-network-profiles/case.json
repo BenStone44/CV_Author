@@ -137,7 +137,7 @@
   },
   "preview": {
     "path": "preview.svg",
-    "sha256": "c2a2bec892744d740428f1b372b4e183e7dd7eb62969a163d6ae1330f9c30ba6",
+    "sha256": "6afbe7c685df040308d8325cb51dd516129d1f9ec7ff6d823bd5e4e7f1214b3f",
     "source": "http://localhost:5173/editor/?case=force-network-typed-nested-charts",
     "capturedOn": "2026-09-16"
   }

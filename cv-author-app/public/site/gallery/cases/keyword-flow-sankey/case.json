@@ -99,7 +99,7 @@
   },
   "preview": {
     "path": "preview.svg",
-    "sha256": "2a92063207803f6d472e0d0faf8dd3e4348e1f5a9d0191fa087b4e9549f42a83",
+    "sha256": "e0ca531770f4468eff027bcc46d044e93951d761be12f36b500cc6082c225f1f",
     "source": "http://localhost:5173/editor/?case=sankey-ribbon-nested-wordclouds",
     "capturedOn": "2026-09-16"
   }

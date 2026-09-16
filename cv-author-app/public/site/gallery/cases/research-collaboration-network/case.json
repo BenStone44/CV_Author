@@ -3,7 +3,7 @@
   "starter": "research-collaboration-network",
   "completedCase": "research-collaboration-network-nested-profiles",
   "status": "complete",
-"blocks": [
+  "blocks": [
     {
       "chartType": "ForceDirectedGraph",
       "bindings": {
@@ -110,7 +110,7 @@
   },
   "preview": {
     "path": "preview.svg",
-    "sha256": "25013f8de29b6277fb4cd4b57cd4f63dd7af3c60c302a764d9dc99543b1d028f",
+    "sha256": "8ca8b56a5380844a5b36ed80d1dfa021ecb37b4eeacf8e968ad297fe1cd84cee",
     "source": "http://localhost:5173/editor/?case=research-collaboration-network-nested-profiles",
     "capturedOn": "2026-09-16"
   }

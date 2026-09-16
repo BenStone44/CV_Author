@@ -111,7 +111,7 @@
   },
   "preview": {
     "path": "preview.svg",
-    "sha256": "8840ff177424a0a088e469f459f6c37fbfe5a449e2cf87f29f26adc1c5694432",
+    "sha256": "864a00fd2c5b1240a0041f7620b13380a37e3db982c94fc14b10d0dd5d134e91",
     "source": "http://localhost:5173/editor/?case=parallel-axis-nested-distributions",
     "capturedOn": "2026-09-16"
   }

@@ -3,7 +3,7 @@
   "starter": "climate-risk-dashboard",
   "completedCase": "climate-risk-dashboard-nested-concat",
   "status": "complete",
-"blocks": [
+  "blocks": [
     {
       "chartType": "StackedAreaChart",
       "bindings": {
@@ -125,7 +125,7 @@
   },
   "preview": {
     "path": "preview.svg",
-    "sha256": "b0894d1dc786b26879d4f36ffcdb5446b5b20c02dd61edf69ac900c3916d51b8",
+    "sha256": "6d2b65d5b9bffa1126d286be7708175e16cef5b41d2ec253c3805ec4ebc13edb",
     "source": "http://localhost:5173/editor/?case=climate-risk-dashboard-nested-concat",
     "capturedOn": "2026-09-16"
   }

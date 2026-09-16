@@ -3,7 +3,7 @@
   "starter": "customer-journey-constellation",
   "completedCase": "customer-journey-constellation-nested-concat",
   "status": "complete",
-"blocks": [
+  "blocks": [
     {
       "chartType": "Scatterplot",
       "bindings": {
@@ -120,7 +120,7 @@
   },
   "preview": {
     "path": "preview.svg",
-    "sha256": "eb4533db3768b039a573549c3a2b88011e365340a960170b36249acc3c2ed4b7",
+    "sha256": "72c8d4bb190241b4a8055211702b8f9e934c4b453f47470f6cb5551e47a8e45f",
     "source": "http://localhost:5173/editor/?case=customer-journey-constellation-nested-concat",
     "capturedOn": "2026-09-16"
   }
