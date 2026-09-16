@@ -449,7 +449,24 @@ async function main() {
     "diff", "--cached", "--check", "--", ".", ":(exclude)assets/*.js",
   ]);
   if (!output("git", ["-C", pagesDir, "diff", "--cached", "--name-only"])) {
-    console.log("No public artifact changes; no release commit was created.");
+    const releaseSha = output("git", ["-C", pagesDir, "rev-parse", "HEAD"]);
+    if (publish) {
+      const workflow = await waitForPagesWorkflow(releaseSha);
+      await verifyBrowser(buildDir, cases, false, releaseSha);
+      await compareLiveFiles(buildDir, releaseSha, removedFiles);
+      console.log(JSON.stringify({
+        releaseSha,
+        workflowId: workflow.id,
+        workflowUrl: workflow.html_url,
+        galleryCases: cases.length,
+        verifiedFiles: listFiles(buildDir).length,
+        removedFiles,
+        releaseDir,
+        reusedRelease: true,
+      }, null, 2));
+      return;
+    }
+    console.log("No public artifact changes; the staged release matches the current Pages commit.");
     return;
   }
   if (!publish) {
