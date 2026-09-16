@@ -96,7 +96,7 @@ Keep every Gallery example self-contained under `cv-author-app/public/site/galle
 
 - `case.json` records the stable slug, Starter/Case identifiers, Gallery content, data files, block types, bindings, composition operations, expected render structure, and preview digest.
 - `configure.js` owns the executable bindings, frames, and composition replay shared by starter and completed case. The editor supplies its existing operations through `galleryCaseLoader.ts`; do not copy case-specific setup back into stores. Shared Hierarchy also owns `chart-specs.json`.
-- `index.json` in the cases directory lists the six Gallery slugs in display order. The website and capture script read this manifest and each case’s metadata.
+- `index.json` in the cases directory lists all Gallery slugs in display order. The website and capture script read this manifest and each case’s metadata.
 - `_editor-samples/` retains the existing chart defaults and data-menu samples still required by the editor; it is not a Gallery entry. Root-level `data/` duplicates and the duplicate public GeoJSON were removed from this website branch after byte-for-byte verification; master retains its research/source copies.
 - `data/` contains website-owned CSV copies for every table used by that case. Graph examples keep node and edge CSVs beside their primary table. Do not point a Gallery case at research data or a root-level fixture without also preserving its deployable case-owned copy here.
 - `preview.svg` is the preferred completed Editor export. A legacy `preview.png` is allowed only for an example that does not yet have a completed recording Case, and its unfinished status must remain explicit in `case.json`.
@@ -200,14 +200,23 @@ Current Dendrogram Profiles preview record (captured 2026-09-16):
 ## Anonymous Production Publishing
 
 - For every future production release, follow the [reusable publishing procedure in `cv-author-app/README.md`](cv-author-app/README.md#repeatable-anonymous-publishing-procedure). This is the required default workflow, not merely a record of the first deployment. A documentation or local commit request alone does not authorize a new deployment.
-- The primary public deployment target is `https://visbricks.github.io/`, backed by `VisBricks/visbricks.github.io` on `main`. A local source commit is not a deployment; verify the live site after publishing.
+- The primary public deployment target is `https://visbricks.github.io/`, backed by `VisBricks/visbricks.github.io` on `main`. A local source commit is not a deployment. The release command performs all automated checks before pushing; post-push production verification is user-owned and must not be run by agents unless the user explicitly requests it.
 - Anonymity is a release requirement. Audit rendered pages, HTML metadata, bundled JavaScript/CSS, SVG/image metadata, downloadable files, public links, commit metadata, and the publishing identity before any external write.
 - Publish only reviewed production artifacts from a temporary build directory into a separate checkout of the Pages repository. Never push or merge this development repository's source history, remote configuration, research files, logs, credentials, source maps, or internal documentation into that public repository. Preserve required third-party licenses and attribution.
 - Use the existing project-only release identity for both Git author and committer: `VisBricks <visbricks-site@users.noreply.github.com>`. Apply it only to the isolated publishing checkout/command; do not overwrite global Git identity or rewrite development history. Do not include personal signatures, co-author trailers, source-repository links, or development commit hashes in public release messages.
 - Anonymous commit metadata alone is insufficient. Verify the authenticated publisher independently; use a repository-scoped deploy key or a project-owned GitHub App/automation identity that has been reviewed for public identity leakage. Do not publish with a personal-account SSH key or token. Never request that private keys or tokens be pasted into chat or committed.
 - If a suitable publishing identity is unavailable, stop before pushing, report that the release remains unpublished, and ask the user to configure project-scoped credentials securely. Do not weaken anonymity requirements or promise absolute anonymity from GitHub or repository administrators.
 - Audit existing public history and visible organization/profile links; do not force-push or delete history to conceal identity without explicit user approval. Use a normal fast-forward update of the verified target.
-- Verify `/`, `/gallery/`, `/gallery/example/?example=shared-hierarchy`, `/tutorials/`, `/editor/`, prepared starters, and completed cases after publication. Record the deployment commit and verification result only after GitHub Pages has actually published the release.
+- Before pushing, verify the isolated production build at `/`, `/gallery/`, `/gallery/example/?example=shared-hierarchy`, `/tutorials/`, `/api/`, `/editor/`, every prepared starter, and every completed case. After pushing, report the exact deployment commit as published and awaiting user verification. Move it into the verified release record only after the user confirms the production checks documented in `cv-author-app/README.md`.
+
+### Latest Published Release Awaiting User Verification
+
+- Pushed on `2026-09-16` to `VisBricks/visbricks.github.io`, `main`.
+- Deployment commit: `c4b0583c78366f2b01d7d9ee83c2064e280dd5d9` (`Publish on-demand editor data loading`).
+- Authentication used the repository-scoped deploy key; both author and committer are `VisBricks <visbricks-site@users.noreply.github.com>`.
+- All automated pre-push gates passed: source cleanliness, generated assets, publishing identity and dry-run, type checking, fresh temporary production build, anonymity and source-map audit, stale-file review, staged diff checks, and the isolated browser matrix for the website entries, all 16 prepared starters, and all 16 completed cases.
+- The release adds raster Gallery thumbnails and on-demand editor data loading. A normal editor launch makes no initial case CSV requests; selecting a sample loads that sample, and Gallery starter/completed-case routes load only their case-owned data.
+- Post-push checks were intentionally not completed by the agent. This release remains published but unverified until the user confirms the Pages workflow and production behavior.
 
 ### Latest Verified Production Release
 

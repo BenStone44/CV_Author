@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
   cpSync,
   existsSync,
@@ -84,10 +83,6 @@ function listFiles(root, includeHidden = false) {
   };
   visit(root);
   return files.sort();
-}
-
-function sha256(value) {
-  return createHash("sha256").update(value).digest("hex");
 }
 
 function validateSource() {
@@ -269,7 +264,7 @@ function extension(path) {
   return match?.[1].toLowerCase() ?? "";
 }
 
-async function verifyBrowser(buildDir, cases, local, releaseSha = "") {
+async function verifyBrowser(buildDir, cases) {
   const browser = await chromium.launch({
     headless: true,
     args: ["--enable-webgl", "--use-angle=swiftshader"],
@@ -283,23 +278,21 @@ async function verifyBrowser(buildDir, cases, local, releaseSha = "") {
         serviceWorkers: "block",
         viewport: { width: 1440, height: 1080 },
       });
-      if (local) {
-        await context.route(`${publicOrigin}/**`, async (route) => {
-          const url = new URL(route.request().url());
-          let requestPath = decodeURIComponent(url.pathname).replace(/^\/+/, "");
-          if (!requestPath || requestPath.endsWith("/")) requestPath += "index.html";
-          const file = resolve(buildDir, requestPath);
-          if (!file.startsWith(`${buildDir}${sep}`) || !existsSync(file) || !statSync(file).isFile()) {
-            await route.fulfill({ status: 404, body: "Not found" });
-            return;
-          }
-          await route.fulfill({
-            status: 200,
-            contentType: mimeTypes.get(extension(file)) ?? "application/octet-stream",
-            body: readFileSync(file),
-          });
+      await context.route(`${publicOrigin}/**`, async (route) => {
+        const url = new URL(route.request().url());
+        let requestPath = decodeURIComponent(url.pathname).replace(/^\/+/, "");
+        if (!requestPath || requestPath.endsWith("/")) requestPath += "index.html";
+        const file = resolve(buildDir, requestPath);
+        if (!file.startsWith(`${buildDir}${sep}`) || !existsSync(file) || !statSync(file).isFile()) {
+          await route.fulfill({ status: 404, body: "Not found" });
+          return;
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: mimeTypes.get(extension(file)) ?? "application/octet-stream",
+          body: readFileSync(file),
         });
-      }
+      });
       const page = await context.newPage();
       try {
         const failures = [];
@@ -307,8 +300,7 @@ async function verifyBrowser(buildDir, cases, local, releaseSha = "") {
         page.on("requestfailed", (request) => {
           if (new URL(request.url()).origin === publicOrigin) failures.push(`request failed: ${request.url()}`);
         });
-        const separator = path.includes("?") ? "&" : "?";
-        const url = `${publicOrigin}${path}${releaseSha ? `${separator}release=${releaseSha}` : ""}`;
+        const url = `${publicOrigin}${path}`;
         const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 });
         if (!response?.ok()) fail(`${url} returned ${response?.status() ?? "no response"}`);
         await check(page);
@@ -379,38 +371,6 @@ async function verifyBrowser(buildDir, cases, local, releaseSha = "") {
   }
 }
 
-async function waitForPagesWorkflow(releaseSha) {
-  const deadline = Date.now() + 10 * 60_000;
-  while (Date.now() < deadline) {
-    const response = await fetch("https://api.github.com/repos/VisBricks/visbricks.github.io/actions/runs?per_page=20", {
-      headers: { Accept: "application/vnd.github+json", "User-Agent": "VisBricks-release" },
-    });
-    if (!response.ok) fail(`GitHub Actions API returned ${response.status}`);
-    const data = await response.json();
-    const workflow = data.workflow_runs?.find((run) => run.head_sha === releaseSha && run.name === "pages build and deployment");
-    if (workflow?.status === "completed") {
-      if (workflow.conclusion !== "success") fail(`Pages workflow ${workflow.id} concluded ${workflow.conclusion}`);
-      return workflow;
-    }
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10_000));
-  }
-  fail(`Timed out waiting for the Pages workflow for ${releaseSha}`);
-}
-
-async function compareLiveFiles(buildDir, releaseSha, removedFiles) {
-  for (const file of listFiles(buildDir)) {
-    const local = readFileSync(join(buildDir, file));
-    const response = await fetch(`${publicOrigin}/${file}?release=${releaseSha}`, { cache: "no-store" });
-    if (!response.ok) fail(`Live file /${file} returned ${response.status}`);
-    const live = Buffer.from(await response.arrayBuffer());
-    if (sha256(local) !== sha256(live)) fail(`Live file differs from the staged release: /${file}`);
-  }
-  for (const file of removedFiles) {
-    const response = await fetch(`${publicOrigin}/${file}?release=${releaseSha}`, { cache: "no-store" });
-    if (response.status !== 404) fail(`Removed asset is still public: /${file} (${response.status})`);
-  }
-}
-
 async function main() {
   console.log(`Mode: ${publish ? "publish" : "prepare only"}`);
   validateSource();
@@ -436,7 +396,7 @@ async function main() {
   auditBuild(buildDir);
   const removedFiles = syncBuild(buildDir, pagesDir, backupDir);
   run("git", ["-C", pagesDir, "diff", "--check"]);
-  await verifyBrowser(buildDir, cases, true);
+  await verifyBrowser(buildDir, cases);
 
   run("git", ["-C", pagesDir, "add", "-A"]);
   run("git", ["-C", pagesDir, "diff", "--cached", "--stat"]);
@@ -450,23 +410,16 @@ async function main() {
   ]);
   if (!output("git", ["-C", pagesDir, "diff", "--cached", "--name-only"])) {
     const releaseSha = output("git", ["-C", pagesDir, "rev-parse", "HEAD"]);
-    if (publish) {
-      const workflow = await waitForPagesWorkflow(releaseSha);
-      await verifyBrowser(buildDir, cases, false, releaseSha);
-      await compareLiveFiles(buildDir, releaseSha, removedFiles);
-      console.log(JSON.stringify({
-        releaseSha,
-        workflowId: workflow.id,
-        workflowUrl: workflow.html_url,
-        galleryCases: cases.length,
-        verifiedFiles: listFiles(buildDir).length,
-        removedFiles,
-        releaseDir,
-        reusedRelease: true,
-      }, null, 2));
-      return;
-    }
-    console.log("No public artifact changes; the staged release matches the current Pages commit.");
+    console.log("No public artifact changes; the pre-push checks passed and the staged release matches the current Pages commit.");
+    console.log(JSON.stringify({
+      releaseSha,
+      galleryCases: cases.length,
+      preflightFiles: listFiles(buildDir).length,
+      removedFiles,
+      releaseDir,
+      reusedRelease: true,
+      postPublishVerification: "user-owned",
+    }, null, 2));
     return;
   }
   if (!publish) {
@@ -493,17 +446,13 @@ async function main() {
   });
   if (output("git", ["-C", pagesDir, "status", "--porcelain"])) fail("Pages checkout is dirty after push.");
 
-  const workflow = await waitForPagesWorkflow(releaseSha);
-  await verifyBrowser(buildDir, cases, false, releaseSha);
-  await compareLiveFiles(buildDir, releaseSha, removedFiles);
   console.log(JSON.stringify({
     releaseSha,
-    workflowId: workflow.id,
-    workflowUrl: workflow.html_url,
     galleryCases: cases.length,
-    verifiedFiles: listFiles(buildDir).length,
+    preflightFiles: listFiles(buildDir).length,
     removedFiles,
     releaseDir,
+    postPublishVerification: "user-owned",
   }, null, 2));
 }
 
