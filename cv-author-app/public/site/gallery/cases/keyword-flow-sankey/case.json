@@ -35,8 +35,9 @@
     "sankeyRibbons": 8,
     "nestedWordClouds": 8,
     "keywordRowsPerRibbon": 24,
-    "renderedKeywordsPerRibbon": "22–24",
-    "renderedKeywordMarks": 188
+    "renderedKeywordsPerRibbon": 24,
+    "renderedKeywordMarks": 192,
+    "wordCloudLayout": "adaptive binary mask"
   },
   "data": [
     "data/flow_keywords.csv",
@@ -46,7 +47,7 @@
   "gallery": {
     "number": "10",
     "title": "Keyword Flow Ribbons",
-    "description": "Eight Sankey bands are filled with dense, semantically focused word clouds scaled to the transition they explain.",
+    "description": "Eight Sankey bands are filled with dense semantic word clouds packed directly inside each curved ribbon silhouette.",
     "tags": [
       "Nested",
       "Sankey",
@@ -82,7 +83,7 @@
         "role": "Keyword color"
       }
     ],
-    "composition": "Nest Word Cloud into every Sankey link mark. The ribbon source and target become inherited filters, so each cloud contains only that transition's vocabulary; its independent X/Y scale expands the words across the band's length and thickness.",
+    "composition": "Nest Word Cloud into every Sankey link mark. Each parent mark is sampled into an arbitrary binary mask, then an integral-occupancy layout packs the source-target vocabulary inside that exact region and clips the resulting SVG text to its silhouette.",
     "editorHelp": {
       "introduction": "The starter provides one bound Sankey and one bound Word Cloud using the same graph dataset.",
       "steps": [
@@ -91,14 +92,14 @@
           "source": "Word Cloud",
           "target": "Sankey ribbon marks",
           "action": "Nest across all links; source and target are inherited as child filters.",
-          "result": "Every band receives its own 24-keyword semantic cloud, scaled to fill the ribbon while retaining the original flow width and color."
+          "result": "Every band receives its own 24-keyword semantic cloud, adaptively packed and clipped to the curved ribbon rather than a rectangular child frame."
         }
       ]
     }
   },
   "preview": {
     "path": "preview.svg",
-    "sha256": "4b528e26bff742249348961673d669942b5e2231c14e6850ba9b0b3ea1aacc74",
+    "sha256": "2a92063207803f6d472e0d0faf8dd3e4348e1f5a9d0191fa087b4e9549f42a83",
     "source": "http://localhost:5173/editor/?case=sankey-ribbon-nested-wordclouds",
     "capturedOn": "2026-09-16"
   }
