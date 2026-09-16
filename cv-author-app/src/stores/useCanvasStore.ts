@@ -5833,6 +5833,7 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
     setSingleBarValueOrder,
     setValueFilters,
     setChartDataTransforms,
+    createInitialChartSpec,
     resetChartBindingsForDataset,
     setDeckglMapStyle,
     setDeckglMapViewState,

@@ -14,8 +14,15 @@ import type {
   Point,
   SvgCandidate,
 } from "../../types";
-import { defaultDatasetForChartType } from "../../utils/defaultChartData";
+import { defaultDatasetForChartType, supportsDefaultChartData } from "../../utils/defaultChartData";
 import { canonicalGeoJsonJoinId, geoJsonFeatureIds } from "../../utils/geoJsonGeometry";
+
+export function datasetIdForNewChart(candidate: SvgCandidate, activeDatasetId?: string | null) {
+  return activeDatasetId
+    ?? (supportsDefaultChartData(candidate.chartType)
+      ? defaultDatasetForChartType(candidate.chartType).id
+      : undefined);
+}
 
 export function useCanvasImportOperations(context: any) {
   const {
@@ -76,6 +83,12 @@ export function useCanvasImportOperations(context: any) {
   function createInitialChartSpec(chartType: string, datasetId: string): ChartSpec {
     const defaultSpec = createDefaultChartSpec(chartType);
     const unbound = createUnboundChartSpec(chartType, datasetId);
+    if (defaultSpec?.datasetId === datasetId) {
+      return {
+        ...unbound,
+        ...defaultSpec,
+      };
+    }
     const normalizedChartType = chartType.replace(/[\s_-]/g, "").toLowerCase();
     const dataset = getDataset(datasetId);
     if (normalizedChartType === "forcedirectedgraph" && dataset?.graph) {
@@ -452,10 +465,7 @@ export function useCanvasImportOperations(context: any) {
         candidate.coordinateSystem,
         candidate.renderMode === "static-layer" ? undefined : candidate.chartType,
         preferredDatasetId
-          ?? activeDataset.value?.id
-          ?? (templateFamily === "flow" && candidate.chartType.replace(/[\s_-]/g, "").toLowerCase() === "chord"
-            ? defaultDatasetForChartType(candidate.chartType).id
-            : undefined),
+          ?? datasetIdForNewChart(candidate, activeDataset.value?.id),
         candidate.renderMode === "static-layer" ? "deckgl" : undefined,
         candidate.renderMode === "static-layer" ? candidate.layerType : undefined,
         candidate.renderMode === "static-layer" ? candidate.mapStyleUrl : undefined,
