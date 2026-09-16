@@ -145,7 +145,7 @@
   min-height: 0;
   overflow: hidden;
   border: 1px solid var(--frontend-border-subtle);
-  background: var(--frontend-surface-raised);
+  background: var(--frontend-component-block-card);
 }
 .implemented-template-category__tile img {
   width: 100%;
@@ -266,7 +266,7 @@
   padding: 5px;
   border: 1px solid var(--frontend-border-subtle);
   border-radius: 6px;
-  background: var(--frontend-surface-raised);
+  background: var(--frontend-component-block-card);
   color: #432818;
   cursor: grab;
   transition: border-color 140ms ease, background 140ms ease;

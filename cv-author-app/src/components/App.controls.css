@@ -152,7 +152,7 @@
   padding: 7px;
   border: 1px solid var(--frontend-border-subtle);
   border-radius: 8px;
-  background: var(--frontend-surface-raised);
+  background: var(--frontend-component-block-card);
   cursor: grab;
   transition:
     border-color 160ms ease,

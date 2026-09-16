@@ -46,9 +46,9 @@ export const frontendPalette = {
   surface: {
     canvas: "#fffef7",
     panel: "#fffef7",
-    raised: "#fffbee",
-    soft: "#fefae0",
-    sidebar: "#fefae0",
+    raised: "#fffef7",
+    soft: "#fffef7",
+    sidebar: "#fffef7",
   },
   text: {
     primary: "#432818",
@@ -57,7 +57,7 @@ export const frontendPalette = {
     inverse: "#fffef7",
   },
   control: {
-    accent: "#fefae0",
+    accent: "#fffef7",
     accentStrong: "#99582a",
     sliderTrack: "#bc6c25",
     sliderThumb: "#606c38",
@@ -72,10 +72,11 @@ export const frontendPalette = {
     danger: "#b42318",
   },
   components: {
-    data: "#fefae0",
-    chart: "#fefae0",
-    composition: "#f3faf7",
-    inspector: "#fffbee",
+    data: "#fffef7",
+    chart: "#fffef7",
+    composition: "#fffef7",
+    inspector: "#fffef7",
+    blockCard: "#fefae0",
   },
   series: [
     "#432818",
@@ -112,6 +113,7 @@ export const frontendPaletteCssVariables = {
   "--frontend-component-chart": frontendPalette.components.chart,
   "--frontend-component-composition": frontendPalette.components.composition,
   "--frontend-component-inspector": frontendPalette.components.inspector,
+  "--frontend-component-block-card": frontendPalette.components.blockCard,
   "--frontend-status-info": frontendPalette.status.info,
   "--frontend-status-success": frontendPalette.status.success,
   "--frontend-status-warning": frontendPalette.status.warning,
