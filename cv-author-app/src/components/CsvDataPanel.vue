@@ -16,21 +16,6 @@ import {
   Upload,
   X,
 } from "@lucide/vue";
-import case1Csv from "../../public/site/gallery/cases/_editor-samples/data/case1.csv?raw";
-import case2Csv from "../../public/site/gallery/cases/geographic-network/data/case2.csv?raw";
-import case3Csv from "../../public/site/gallery/cases/_editor-samples/data/case3.csv?raw";
-import chordPolarLineNodesCsv from "../../public/site/gallery/cases/polar-facet/data/chord_polar_line_nodes.csv?raw";
-import chordPolarLineLinksCsv from "../../public/site/gallery/cases/polar-facet/data/chord_polar_line_links.csv?raw";
-import academicScoresCsv from "../../public/site/gallery/cases/_editor-samples/data/academic_scores.csv?raw";
-import academicScoresWideCsv from "../../public/site/gallery/cases/academic-scores/data/academic_scores_wide.csv?raw";
-import treeNodesCsv from "../../public/site/gallery/cases/tree-leaf-axis/data/tree_nodes.csv?raw";
-import deepTreeCsv from "../../public/site/gallery/cases/shared-hierarchy/data/tree.csv?raw";
-import graphNodesCsv from "../../public/site/gallery/cases/_editor-samples/data/nodes.csv?raw";
-import graphEdgesCsv from "../../public/site/gallery/cases/_editor-samples/data/edges.csv?raw";
-import case2GraphNodesCsv from "../../public/site/gallery/cases/geographic-network/data/case2_graph_nodes.csv?raw";
-import case2GraphLinksCsv from "../../public/site/gallery/cases/geographic-network/data/case2_graph_links.csv?raw";
-import hexbinGraphNodesCsv from "../../public/site/gallery/cases/_editor-samples/data/hexbin_graph_nodes.csv?raw";
-import hexbinGraphLinksCsv from "../../public/site/gallery/cases/_editor-samples/data/hexbin_graph_links.csv?raw";
 import { useDatasetStore } from "../stores/useDatasetStore";
 import type {
   ChartDataTransform,
@@ -48,6 +33,62 @@ import {
 } from "../utils/csvColumnDrag";
 
 const previewRowLimit = 250;
+const presetIdPrefix = "preset:";
+
+type TablePreset = {
+  id: string;
+  label: string;
+  kind: "table";
+  file: { name: string; path: string };
+};
+
+type GraphPreset = {
+  id: string;
+  label: string;
+  kind: "graph";
+  nodes: { name: string; path: string };
+  edges: { name: string; path: string };
+};
+
+type DataPreset = TablePreset | GraphPreset;
+
+const dataPresets: DataPreset[] = [
+  { id: "case1", label: "case1.csv", kind: "table", file: { name: "case1.csv", path: "/site/gallery/cases/_editor-samples/data/case1.csv" } },
+  { id: "case2", label: "case2.csv", kind: "table", file: { name: "case2.csv", path: "/site/gallery/cases/geographic-network/data/case2.csv" } },
+  { id: "case3", label: "case3.csv", kind: "table", file: { name: "case3.csv", path: "/site/gallery/cases/_editor-samples/data/case3.csv" } },
+  { id: "academic-scores", label: "academic_scores.csv", kind: "table", file: { name: "academic_scores.csv", path: "/site/gallery/cases/_editor-samples/data/academic_scores.csv" } },
+  { id: "academic-scores-wide", label: "academic_scores_wide.csv", kind: "table", file: { name: "academic_scores_wide.csv", path: "/site/gallery/cases/academic-scores/data/academic_scores_wide.csv" } },
+  { id: "tree-nodes", label: "tree_nodes.csv", kind: "table", file: { name: "tree_nodes.csv", path: "/site/gallery/cases/tree-leaf-axis/data/tree_nodes.csv" } },
+  { id: "shared-hierarchy", label: "tree.csv", kind: "table", file: { name: "tree.csv", path: "/site/gallery/cases/shared-hierarchy/data/tree.csv" } },
+  {
+    id: "force-graph",
+    label: "nodes.csv + edges.csv",
+    kind: "graph",
+    nodes: { name: "nodes.csv", path: "/site/gallery/cases/_editor-samples/data/nodes.csv" },
+    edges: { name: "edges.csv", path: "/site/gallery/cases/_editor-samples/data/edges.csv" },
+  },
+  {
+    id: "polar-line-graph",
+    label: "chord_polar_line_nodes.csv + chord_polar_line_links.csv",
+    kind: "graph",
+    nodes: { name: "chord_polar_line_nodes.csv", path: "/site/gallery/cases/polar-facet/data/chord_polar_line_nodes.csv" },
+    edges: { name: "chord_polar_line_links.csv", path: "/site/gallery/cases/polar-facet/data/chord_polar_line_links.csv" },
+  },
+  {
+    id: "geographic-graph",
+    label: "geo",
+    kind: "graph",
+    nodes: { name: "case2_graph_nodes.csv", path: "/site/gallery/cases/geographic-network/data/case2_graph_nodes.csv" },
+    edges: { name: "case2_graph_links.csv", path: "/site/gallery/cases/geographic-network/data/case2_graph_links.csv" },
+  },
+  {
+    id: "hexbin-graph",
+    label: "hexbin_graph_nodes.csv + hexbin_graph_links.csv",
+    kind: "graph",
+    nodes: { name: "hexbin_graph_nodes.csv", path: "/site/gallery/cases/_editor-samples/data/hexbin_graph_nodes.csv" },
+    edges: { name: "hexbin_graph_links.csv", path: "/site/gallery/cases/_editor-samples/data/hexbin_graph_links.csv" },
+  },
+];
 
 const props = defineProps<{
   loadPresets?: boolean;
@@ -69,6 +110,8 @@ const graphEdgesFileInput = ref<HTMLInputElement | null>(null);
 const graphNodesFile = ref<File | null>(null);
 const graphEdgesFile = ref<File | null>(null);
 const importMenuOpen = ref(false);
+const presetLoading = ref(false);
+const presetLoadError = ref("");
 const expandedWidth = ref(304);
 const canExpand = ref(false);
 const isExpanded = ref(false);
@@ -83,7 +126,6 @@ const {
   importGraphDataset,
   getDataset,
   setActiveDataset,
-  renameDataset,
   setColumnType,
   geometrySources,
   activeGeometrySource,
@@ -120,6 +162,11 @@ const presetDatasets = computed(() => {
   datasets.value.forEach((dataset) => byName.set(dataset.name, dataset));
   return Array.from(byName.values());
 });
+const availableDataPresets = computed(() => props.loadPresets === false
+  ? []
+  : dataPresets.filter((preset) => !presetDatasets.value.some((dataset) => dataset.name === preset.label)));
+const hasDatasetOptions = computed(() => presetDatasets.value.length > 0 || availableDataPresets.value.length > 0);
+const dataIsLoading = computed(() => isLoading.value || presetLoading.value);
 const isGraph = computed(() => !!activeDataset.value?.graph);
 const columns = computed(() => activeDataset.value?.columns ?? []);
 const geographicJoinField = ref("");
@@ -250,11 +297,42 @@ function updateExpandedWidth() {
 
 async function onDatasetChange(event: Event) {
   const datasetId = (event.target as HTMLSelectElement).value;
-  if (datasetId) {
-    setActiveDataset(datasetId);
-    const dataset = getDataset(datasetId);
-    if (dataset) await syncLocalGeometry(dataset);
-    emit("datasetChange", datasetId);
+  if (!datasetId) return;
+  if (datasetId.startsWith(presetIdPrefix)) {
+    await loadDataPreset(datasetId.slice(presetIdPrefix.length));
+    return;
+  }
+  setActiveDataset(datasetId);
+  const dataset = getDataset(datasetId);
+  if (dataset) await syncLocalGeometry(dataset);
+  emit("datasetChange", datasetId);
+}
+
+async function fetchPresetFile(file: { name: string; path: string }) {
+  const response = await fetch(file.path);
+  if (!response.ok) throw new Error(`Unable to load ${file.name} (${response.status}).`);
+  return new File([await response.blob()], file.name, { type: "text/csv" });
+}
+
+async function loadDataPreset(presetId: string) {
+  const preset = dataPresets.find((candidate) => candidate.id === presetId);
+  if (!preset || presetLoading.value) return;
+  presetLoading.value = true;
+  presetLoadError.value = "";
+  try {
+    const dataset = preset.kind === "table"
+      ? await importDataset(await fetchPresetFile(preset.file))
+      : await importGraphDataset(
+        ...await Promise.all([fetchPresetFile(preset.nodes), fetchPresetFile(preset.edges)]),
+        preset.label,
+      );
+    if (!dataset) return;
+    await syncLocalGeometry(dataset);
+    emit("datasetChange", dataset.id);
+  } catch (error) {
+    presetLoadError.value = error instanceof Error ? error.message : `Unable to load ${preset.label}.`;
+  } finally {
+    presetLoading.value = false;
   }
 }
 
@@ -545,59 +623,6 @@ function onWindowKeydown(event: KeyboardEvent) {
   if (event.key === "Escape" && transformEditorMode.value) closeTransformEditor();
 }
 
-async function ensurePresetDatasets() {
-  const presets = [
-    { name: "case1.csv", source: case1Csv },
-    { name: "case2.csv", source: case2Csv },
-    { name: "case3.csv", source: case3Csv },
-    { name: "academic_scores.csv", source: academicScoresCsv },
-    { name: "academic_scores_wide.csv", source: academicScoresWideCsv },
-    { name: "tree_nodes.csv", source: treeNodesCsv },
-    { name: "tree.csv", source: deepTreeCsv },
-  ];
-  for (const preset of presets) {
-    if (!datasets.value.some((dataset) => dataset.name === preset.name)) {
-      await importDataset(new File([preset.source], preset.name, { type: "text/csv" }));
-    }
-  }
-  if (!datasets.value.some((dataset) => dataset.name === "nodes.csv + edges.csv")) {
-    await importGraphDataset(
-      new File([graphNodesCsv], "nodes.csv", { type: "text/csv" }),
-      new File([graphEdgesCsv], "edges.csv", { type: "text/csv" }),
-      "nodes.csv + edges.csv",
-    );
-  }
-  if (!datasets.value.some((dataset) => dataset.name === "chord_polar_line_nodes.csv + chord_polar_line_links.csv")) {
-    await importGraphDataset(
-      new File([chordPolarLineNodesCsv], "chord_polar_line_nodes.csv", { type: "text/csv" }),
-      new File([chordPolarLineLinksCsv], "chord_polar_line_links.csv", { type: "text/csv" }),
-      "chord_polar_line_nodes.csv + chord_polar_line_links.csv",
-    );
-  }
-  const legacyGeoDataset = datasets.value.find(
-    (dataset) => dataset.name === "case2_graph_nodes.csv + case2_graph_links.csv",
-  );
-  if (legacyGeoDataset) {
-    renameDataset(legacyGeoDataset.id, "geo");
-  } else if (!datasets.value.some((dataset) => dataset.name === "geo")) {
-    await importGraphDataset(
-      new File([case2GraphNodesCsv], "case2_graph_nodes.csv", { type: "text/csv" }),
-      new File([case2GraphLinksCsv], "case2_graph_links.csv", { type: "text/csv" }),
-      "geo",
-    );
-  }
-  if (!datasets.value.some((dataset) => dataset.name === "hexbin_graph_nodes.csv + hexbin_graph_links.csv")) {
-    await importGraphDataset(
-      new File([hexbinGraphNodesCsv], "hexbin_graph_nodes.csv", { type: "text/csv" }),
-      new File([hexbinGraphLinksCsv], "hexbin_graph_links.csv", { type: "text/csv" }),
-      "hexbin_graph_nodes.csv + hexbin_graph_links.csv",
-    );
-  }
-  const preferred = presetDatasets.value.find((dataset) => dataset.name === "case1.csv") ?? presetDatasets.value[0];
-  if (preferred) setActiveDataset(preferred.id);
-  await nextTick(updateExpandedWidth);
-}
-
 async function syncLocalGeometry(dataset: Dataset) {
   const binding = localGeometryBindings.find((item) => item.datasetName === dataset.name);
   const joinColumns = dataset.graph?.nodes.columns ?? dataset.columns;
@@ -641,7 +666,6 @@ async function syncLocalGeometry(dataset: Dataset) {
 onMounted(() => {
   window.addEventListener("resize", updateExpandedWidth);
   window.addEventListener("keydown", onWindowKeydown);
-  if (props.loadPresets !== false) void ensurePresetDatasets();
 });
 onBeforeUnmount(() => {
   window.removeEventListener("resize", updateExpandedWidth);
@@ -777,7 +801,7 @@ onUpdated(() => {
           <button
             type="button"
             class="graph-import__submit"
-            :disabled="!graphNodesFile || !graphEdgesFile || isLoading"
+            :disabled="!graphNodesFile || !graphEdgesFile || dataIsLoading"
             @click="importGraphFiles"
           >
             Import graph
@@ -788,24 +812,36 @@ onUpdated(() => {
 
     <div
       class="data-panel__meta"
-      :class="{ 'data-panel__meta--empty': presetDatasets.length === 0 }"
+      :class="{ 'data-panel__meta--empty': !hasDatasetOptions }"
     >
       <select
         class="data-panel__dataset-select"
         :value="activeDataset?.id ?? ''"
         aria-label="Select dataset"
-        :disabled="isLoading || presetDatasets.length === 0"
+        :disabled="dataIsLoading || !hasDatasetOptions"
         @change="onDatasetChange"
       >
-        <option v-for="dataset in presetDatasets" :key="dataset.id" :value="dataset.id">
-          {{ dataset.name }}
-        </option>
+        <option value="" disabled>{{ dataIsLoading ? "Loading data…" : "Select data…" }}</option>
+        <optgroup v-if="presetDatasets.length" label="Loaded">
+          <option v-for="dataset in presetDatasets" :key="dataset.id" :value="dataset.id">
+            {{ dataset.name }}
+          </option>
+        </optgroup>
+        <optgroup v-if="availableDataPresets.length" label="Examples (load on selection)">
+          <option
+            v-for="preset in availableDataPresets"
+            :key="preset.id"
+            :value="`${presetIdPrefix}${preset.id}`"
+          >
+            {{ preset.label }}
+          </option>
+        </optgroup>
       </select>
       <span>{{ tableStatus }}</span>
     </div>
 
-    <p v-if="parseError" class="data-panel__message data-panel__message--error">
-      {{ parseError }}
+    <p v-if="presetLoadError || parseError" class="data-panel__message data-panel__message--error">
+      {{ presetLoadError || parseError }}
     </p>
     <p v-else-if="parseWarning" class="data-panel__message">
       {{ parseWarning }}
@@ -1046,7 +1082,7 @@ onUpdated(() => {
 
     <div v-else class="data-panel__empty" aria-live="polite">
       <FileSpreadsheet :size="34" aria-hidden="true" />
-      <span>{{ isLoading ? "Reading data" : "No data" }}</span>
+      <span>{{ dataIsLoading ? "Reading data" : "No data" }}</span>
     </div>
 
     <footer v-if="!isGraph && rows.length > previewRowLimit" class="data-panel__footer">

@@ -10,10 +10,8 @@ import {
   ticks,
 } from "d3";
 import { hexbin } from "d3-hexbin";
-import Papa from "papaparse";
 import type { Dataset, SvgCandidate } from "../types";
-import diamondsCsv from "../../public/site/gallery/cases/_editor-samples/data/d3_hexbin_diamonds.csv?raw";
-import { renderDefaultChartSvg, stripSvgTextElements } from "./defaultChartData";
+import { defaultHexbinDataset, renderDefaultChartSvg, stripSvgTextElements } from "./defaultChartData";
 import { globalGradientColor } from "./visualMapping";
 import {
   createRadialClusterLayout,
@@ -83,10 +81,7 @@ function observableContourTemplateSvg() {
 type DiamondDatum = { carat: number; price: number };
 
 function observableHexbinTemplateSvg() {
-  const diamonds = Papa.parse<{ carat?: string; price?: string }>(diamondsCsv, {
-    header: true,
-    skipEmptyLines: "greedy",
-  }).data.flatMap((row) => {
+  const diamonds = defaultHexbinDataset.rows.flatMap((row) => {
     const carat = Number(row.carat);
     const price = Number(row.price);
     return carat > 0 && price > 0 ? [{ carat, price }] : [];

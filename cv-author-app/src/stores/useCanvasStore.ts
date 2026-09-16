@@ -173,12 +173,10 @@ import { canonicalGeoJsonJoinId, geoJsonFeatureIds } from "../utils/geoJsonGeome
 import { geographicGraphLineRecords } from "../utils/geographicGraphLinks";
 import { sampleSvgWordCloudMask } from "../utils/wordCloudMask";
 import {
-  CHORD_POLAR_LINE_DATASET_ID,
   createDefaultChartSpec,
   defaultChartDataset,
   defaultChartSpecWithAppearance,
   isDefaultChartDataSpec,
-  MATRIX_PIE_NETWORK_DATASET_ID,
   replaceDefaultDataBinding,
   supportsDefaultChartData,
 } from "../utils/defaultChartData";
@@ -4625,8 +4623,12 @@ export function useCanvasStore(canvasRef: Ref<HTMLElement | null>) {
 
   /** Place data-bound Gallery blocks without composing them for the visitor. */
   async function loadGalleryStarter(starterId: string, preferredDatasetId?: string, compose = false) {
-    if (starterId === "polar-facet") return loadChordCircularStackedFacetCase(CHORD_POLAR_LINE_DATASET_ID, compose);
-    if (starterId === "matrix-network") return loadMatrixPieNetworkCase(MATRIX_PIE_NETWORK_DATASET_ID, compose);
+    if (starterId === "polar-facet") return preferredDatasetId
+      ? loadChordCircularStackedFacetCase(preferredDatasetId, compose)
+      : false;
+    if (starterId === "matrix-network") return preferredDatasetId
+      ? loadMatrixPieNetworkCase(preferredDatasetId, compose)
+      : false;
     if (starterId === "shared-hierarchy") return preferredDatasetId ? loadSharedHierarchyCase(preferredDatasetId, compose) : false;
     if (starterId === "tree-leaf-axis") return loadDendrogramProfilesCase(compose);
     if (starterId === "geographic-network") return loadGeographicNetworkCase(compose);

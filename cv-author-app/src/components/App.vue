@@ -64,14 +64,6 @@ import {
 } from "../utils/treeLayout";
 import { markMatchesNestedDataKey } from "../stores/canvas/nestedMarkIdentity";
 import { frontendPalette, globalPalette } from "../config/global";
-import {
-  CHORD_POLAR_LINE_DATASET_ID,
-  chordPolarLineDataset,
-  MATRIX_PIE_NETWORK_DATASET_ID,
-  matrixPieNetworkDataset,
-} from "../utils/defaultChartData";
-import academicScoresWideCsv from "../../public/site/gallery/cases/academic-scores/data/academic_scores_wide.csv?raw";
-
 const EMPTY_SELECTION_IDS: string[] = [];
 const NESTED_MAX_DIAMETER = 360;
 const CHORD_CIRCULAR_STACKED_CASE = "chord-circular-stacked-facet-concat";
@@ -105,6 +97,7 @@ const galleryStarterIds = new Set([
 const requestedStarter = requestedStarterValue && galleryStarterIds.has(requestedStarterValue)
   ? requestedStarterValue
   : null;
+const hasRequestedGalleryEntry = !!requestedCase || !!requestedStarter;
 const isChordCircularStackedCase = requestedCase === CHORD_CIRCULAR_STACKED_CASE
   || requestedCase === LEGACY_CHORD_POLAR_LINE_CASE;
 const isMatrixPieNetworkCase = requestedCase === MATRIX_FORCE_HEATMAP_CASE
@@ -112,9 +105,9 @@ const isMatrixPieNetworkCase = requestedCase === MATRIX_FORCE_HEATMAP_CASE
 const isAcademicScoresCase = requestedCase === ACADEMIC_SCORES_CASE;
 const isSharedHierarchyCase = requestedCase === SHARED_HIERARCHY_CASE_ID;
 const isDendrogramGallery = requestedCase === "dendrogram-nested-radial-area"
-  || new URLSearchParams(window.location.search).get("starter") === "tree-leaf-axis";
+  || requestedStarter === "tree-leaf-axis";
 const isGeographicGallery = requestedCase === "geographic-network-layer-nested-bars"
-  || new URLSearchParams(window.location.search).get("starter") === "geographic-network";
+  || requestedStarter === "geographic-network";
 const showcaseCaseSlugs = new Map([
   ["parallel-axis-nested-distributions", "axis-distribution-profiles"],
   ["force-network-typed-nested-charts", "adaptive-network-profiles"],
@@ -129,33 +122,6 @@ const showcaseCaseSlugs = new Map([
 ]);
 const showcaseCaseSlug = requestedCase ? showcaseCaseSlugs.get(requestedCase) : undefined;
 const datasetStore = useDatasetStore();
-const starterDatasets = requestedStarter === "polar-facet"
-  ? [chordPolarLineDataset]
-  : requestedStarter === "matrix-network"
-    ? [matrixPieNetworkDataset]
-    : [];
-if (starterDatasets.length > 0) {
-  const starterDatasetIds = new Set(starterDatasets.map((dataset) => dataset.id));
-  datasetStore.datasets.value = [
-    ...datasetStore.datasets.value.filter((dataset) => !starterDatasetIds.has(dataset.id)),
-    ...starterDatasets,
-  ];
-  datasetStore.setActiveDataset(starterDatasets[0]!.id);
-}
-if (!requestedStarter && isChordCircularStackedCase) {
-  datasetStore.datasets.value = [
-    ...datasetStore.datasets.value.filter((dataset) => dataset.id !== CHORD_POLAR_LINE_DATASET_ID),
-    chordPolarLineDataset,
-  ];
-  datasetStore.setActiveDataset(CHORD_POLAR_LINE_DATASET_ID);
-}
-if (!requestedStarter && isMatrixPieNetworkCase) {
-  datasetStore.datasets.value = [
-    ...datasetStore.datasets.value.filter((dataset) => dataset.id !== MATRIX_PIE_NETWORK_DATASET_ID),
-    matrixPieNetworkDataset,
-  ];
-  datasetStore.setActiveDataset(MATRIX_PIE_NETWORK_DATASET_ID);
-}
 
 const canvasRef = ref<HTMLElement | null>(null);
 const encodingInspectorOpen = ref(true);
@@ -1508,32 +1474,70 @@ function onCoordinateAxisReverse(axis: "x" | "y") {
   reverseCoordinateAxis(node, axis);
 }
 
+async function fetchCaseCsv(path: string, name: string) {
+  const response = await fetch(path);
+  if (!response.ok) throw new Error(`Unable to load ${name} (${response.status}).`);
+  return new File([await response.blob()], name, { type: "text/csv" });
+}
+
+async function loadSharedHierarchyExample(compose: boolean) {
+  const dataset = await datasetStore.importDataset(await fetchCaseCsv(
+    "/site/gallery/cases/shared-hierarchy/data/tree.csv",
+    "tree.csv",
+  ));
+  return dataset ? loadSharedHierarchyCase(dataset.id, compose) : false;
+}
+
+async function loadPolarFacetDataset() {
+  return datasetStore.importGraphDataset(
+    await fetchCaseCsv("/site/gallery/cases/polar-facet/data/chord_polar_line_nodes.csv", "chord_polar_line_nodes.csv"),
+    await fetchCaseCsv("/site/gallery/cases/polar-facet/data/chord_polar_line_links.csv", "chord_polar_line_links.csv"),
+    "chord_polar_line_nodes.csv + chord_polar_line_links.csv",
+  );
+}
+
+async function loadMatrixNetworkDataset() {
+  const [tableFile, nodesFile, edgesFile] = await Promise.all([
+    fetchCaseCsv("/site/gallery/cases/matrix-network/data/matrix_force_heatmap.csv", "matrix_force_heatmap.csv"),
+    fetchCaseCsv("/site/gallery/cases/matrix-network/data/matrix_force_nodes.csv", "matrix_force_nodes.csv"),
+    fetchCaseCsv("/site/gallery/cases/matrix-network/data/matrix_force_edges.csv", "matrix_force_edges.csv"),
+  ]);
+  const table = await datasetStore.importDataset(tableFile);
+  const graph = await datasetStore.importGraphDataset(nodesFile, edgesFile, "matrix-network-graph");
+  if (!table || !graph?.graph) return null;
+  const merged = {
+    ...table,
+    name: "matrix_force_heatmap.csv + matrix_force_nodes.csv + matrix_force_edges.csv",
+    graph: graph.graph,
+  };
+  datasetStore.datasets.value = [
+    ...datasetStore.datasets.value.filter((dataset) => dataset.id !== table.id && dataset.id !== graph.id),
+    merged,
+  ];
+  datasetStore.setActiveDataset(merged.id);
+  return merged;
+}
+
 async function loadAcademicScoresWideData(compose = false) {
-  const dataset = await datasetStore.importDataset(new File(
-    [academicScoresWideCsv],
+  const dataset = await datasetStore.importDataset(await fetchCaseCsv(
+    "/site/gallery/cases/academic-scores/data/academic_scores_wide.csv",
     "academic_scores_wide.csv",
-    { type: "text/csv" },
   ));
   return dataset ? loadGalleryStarter("academic-scores", dataset.id, compose) : false;
 }
 
-async function loadSharedHierarchyExample(compose: boolean) {
-  try {
-    const response = await fetch("/site/gallery/cases/shared-hierarchy/data/tree.csv");
-    if (!response.ok) throw new Error(`Hierarchy CSV request failed: ${response.status}`);
-    const dataset = await datasetStore.importDataset(new File([await response.text()], "tree.csv", { type: "text/csv" }));
-    return dataset ? loadSharedHierarchyCase(dataset.id, compose) : false;
-  } catch (error) {
-    document.documentElement.dataset.galleryStarterError = String(error);
-    return false;
-  }
-}
-
 async function loadRequestedGalleryStarter(starterId: string) {
   if (starterId === "shared-hierarchy") return loadSharedHierarchyExample(false);
-  return starterId === "academic-scores"
-    ? loadAcademicScoresWideData()
-    : loadGalleryStarter(starterId);
+  if (starterId === "academic-scores") return loadAcademicScoresWideData();
+  if (starterId === "polar-facet") {
+    const dataset = await loadPolarFacetDataset();
+    return dataset ? loadGalleryStarter(starterId, dataset.id) : false;
+  }
+  if (starterId === "matrix-network") {
+    const dataset = await loadMatrixNetworkDataset();
+    return dataset ? loadGalleryStarter(starterId, dataset.id) : false;
+  }
+  return loadGalleryStarter(starterId);
 }
 
 function exposeRenderedCaseSvg() {
@@ -1624,9 +1628,15 @@ onMounted(() => {
     document.documentElement.dataset.caseId = requestedCase;
     document.documentElement.dataset.caseStatus = "loading";
     void nextTick(async () => {
-      const loaded = await loadChordCircularStackedFacetCase(CHORD_POLAR_LINE_DATASET_ID);
-      await nextTick();
-      document.documentElement.dataset.caseStatus = loaded && exposeRenderedCaseSvg() ? "ready" : "error";
+      try {
+        const dataset = await loadPolarFacetDataset();
+        const loaded = dataset ? await loadChordCircularStackedFacetCase(dataset.id) : false;
+        await nextTick();
+        document.documentElement.dataset.caseStatus = loaded && exposeRenderedCaseSvg() ? "ready" : "error";
+      } catch (error) {
+        document.documentElement.dataset.galleryStarterError = String(error);
+        document.documentElement.dataset.caseStatus = "error";
+      }
     });
   } else if (showcaseCaseSlug) {
     document.documentElement.dataset.caseId = requestedCase ?? "";
@@ -1666,9 +1676,15 @@ onMounted(() => {
     document.documentElement.dataset.caseId = requestedCase;
     document.documentElement.dataset.caseStatus = "loading";
     void nextTick(async () => {
-      const loaded = await loadMatrixPieNetworkCase(MATRIX_PIE_NETWORK_DATASET_ID);
-      await nextTick();
-      document.documentElement.dataset.caseStatus = loaded && exposeRenderedCaseSvg() ? "ready" : "error";
+      try {
+        const dataset = await loadMatrixNetworkDataset();
+        const loaded = dataset ? await loadMatrixPieNetworkCase(dataset.id) : false;
+        await nextTick();
+        document.documentElement.dataset.caseStatus = loaded && exposeRenderedCaseSvg() ? "ready" : "error";
+      } catch (error) {
+        document.documentElement.dataset.galleryStarterError = String(error);
+        document.documentElement.dataset.caseStatus = "error";
+      }
     });
   }
 });

@@ -5,23 +5,6 @@ import type {
   Dataset,
   SvgCandidate,
 } from "../types";
-import Papa from "papaparse";
-import defaultChartDataCsv from "../../public/site/gallery/cases/_editor-samples/data/default_chart_data.csv?raw";
-import defaultTreeDataCsv from "../../public/site/gallery/cases/tree-leaf-axis/data/tree_nodes.csv?raw";
-import defaultGraphNodesCsv from "../../public/site/gallery/cases/_editor-samples/data/nodes.csv?raw";
-import defaultGraphEdgesCsv from "../../public/site/gallery/cases/_editor-samples/data/edges.csv?raw";
-import defaultChordNodesCsv from "../../public/site/gallery/cases/_editor-samples/data/chord_nodes.csv?raw";
-import defaultChordEdgesCsv from "../../public/site/gallery/cases/_editor-samples/data/chord_edges.csv?raw";
-import d3HexbinDiamondsCsv from "../../public/site/gallery/cases/_editor-samples/data/d3_hexbin_diamonds.csv?raw";
-import case2GraphNodesCsv from "../../public/site/gallery/cases/geographic-network/data/case2_graph_nodes.csv?raw";
-import case2GraphLinksCsv from "../../public/site/gallery/cases/geographic-network/data/case2_graph_links.csv?raw";
-import hexbinGraphNodesCsv from "../../public/site/gallery/cases/_editor-samples/data/hexbin_graph_nodes.csv?raw";
-import hexbinGraphLinksCsv from "../../public/site/gallery/cases/_editor-samples/data/hexbin_graph_links.csv?raw";
-import chordPolarLineNodesCsv from "../../public/site/gallery/cases/polar-facet/data/chord_polar_line_nodes.csv?raw";
-import chordPolarLineLinksCsv from "../../public/site/gallery/cases/polar-facet/data/chord_polar_line_links.csv?raw";
-import matrixForceHeatmapCsv from "../../public/site/gallery/cases/matrix-network/data/matrix_force_heatmap.csv?raw";
-import matrixForceNodesCsv from "../../public/site/gallery/cases/matrix-network/data/matrix_force_nodes.csv?raw";
-import matrixForceEdgesCsv from "../../public/site/gallery/cases/matrix-network/data/matrix_force_edges.csv?raw";
 import { getChartTemplateContract, normalizeChartTemplate } from "./chartTemplates";
 import { prepareChartData } from "./chartDataPipeline";
 import { renderDeterministicChart } from "./semanticRenderer";
@@ -33,52 +16,106 @@ export const DEFAULT_CHORD_DATASET_ID = "builtin:default-chord-data";
 export const DEFAULT_HEXBIN_DATASET_ID = "builtin:d3-hexbin-diamonds";
 export const CASE2_GRAPH_DATASET_ID = "builtin:case2-station-graph";
 export const HEXBIN_GRAPH_DATASET_ID = "builtin:hexbin-spread-graph";
-export const CHORD_POLAR_LINE_DATASET_ID = "builtin:chord-polar-line-facet-graph";
-export const MATRIX_PIE_NETWORK_DATASET_ID = "builtin:matrix-pie-network";
 
-const defaultRows = Papa.parse<Record<string, string>>(defaultChartDataCsv, {
-  header: true,
-  skipEmptyLines: "greedy",
-}).data;
+const groups = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"];
+const defaultRows = Array.from({ length: 10 }, (_, columnIndex) => groups.map((group, groupIndex) => ({
+  column: `C${String(columnIndex + 1).padStart(3, "0")}`,
+  group,
+  value: String(24 + columnIndex * 5 + groupIndex * 11),
+  change: String((columnIndex - 4) * 3 + groupIndex * 7),
+  x: String(10 + columnIndex * 9 + groupIndex),
+  y: String(18 + ((columnIndex * 13 + groupIndex * 17) % 82)),
+  magnitude: String(6 + ((columnIndex * 3 + groupIndex * 2) % 18)),
+}))).flat();
 
-const defaultTreeRows = Papa.parse<Record<string, string>>(defaultTreeDataCsv, {
-  header: true,
-  skipEmptyLines: "greedy",
-}).data;
+const treeNodes = [
+  ["root", "", "Global"],
+  ["north", "root", "North"], ["south", "root", "South"],
+  ["north_a", "north", "North A"], ["north_b", "north", "North B"],
+  ["south_a", "south", "South A"], ["south_b", "south", "South B"],
+  ["north_a_1", "north_a", "North A1"], ["north_a_2", "north_a", "North A2"],
+  ["north_b_1", "north_b", "North B1"], ["north_b_2", "north_b", "North B2"],
+  ["south_a_1", "south_a", "South A1"], ["south_a_2", "south_a", "South A2"],
+  ["south_b_1", "south_b", "South B1"], ["south_b_2", "south_b", "South B2"],
+] as const;
+const defaultTreeRows = treeNodes.flatMap(([nodeId, parentId, label], nodeIndex) =>
+  Array.from({ length: 12 }, (_, monthIndex) => ({
+    node_id: nodeId,
+    parent_id: parentId,
+    label,
+    month: `2025-${String(monthIndex + 1).padStart(2, "0")}`,
+    weight: String(100 - nodeIndex * 3),
+    metric_1: String((monthIndex + 1) * 5 + nodeIndex),
+    metric_2: String((13 - monthIndex) * 4 + nodeIndex),
+    metric_3: String((monthIndex + 1) * 3 + nodeIndex + 2),
+    metric_4: String((13 - monthIndex) * 30 + nodeIndex + 3),
+    metric_5: String((monthIndex + 1) * 2 + nodeIndex + 1),
+  })),
+);
 
-const defaultGraphNodeRows = Papa.parse<Record<string, string>>(defaultGraphNodesCsv, {
-  header: true,
-  skipEmptyLines: "greedy",
-}).data;
-
-const defaultGraphEdgeRows = Papa.parse<Record<string, string>>(defaultGraphEdgesCsv, {
-  header: true,
-  skipEmptyLines: "greedy",
-}).data;
-
-const defaultChordNodeRows = Papa.parse<Record<string, string>>(defaultChordNodesCsv, {
-  header: true,
-  skipEmptyLines: "greedy",
-}).data;
-
-const defaultChordEdgeRows = Papa.parse<Record<string, string>>(defaultChordEdgesCsv, {
-  header: true,
-  skipEmptyLines: "greedy",
-}).data;
-
-const defaultHexbinRows = Papa.parse<Record<string, string>>(d3HexbinDiamondsCsv, {
-  header: true,
-  skipEmptyLines: "greedy",
-}).data;
-const case2GraphNodeRows = Papa.parse<Record<string, string>>(case2GraphNodesCsv, { header: true, skipEmptyLines: "greedy" }).data;
-const case2GraphLinkRows = Papa.parse<Record<string, string>>(case2GraphLinksCsv, { header: true, skipEmptyLines: "greedy" }).data;
-const hexbinGraphNodeRows = Papa.parse<Record<string, string>>(hexbinGraphNodesCsv, { header: true, skipEmptyLines: "greedy" }).data;
-const hexbinGraphLinkRows = Papa.parse<Record<string, string>>(hexbinGraphLinksCsv, { header: true, skipEmptyLines: "greedy" }).data;
-const chordPolarLineNodeRows = Papa.parse<Record<string, string>>(chordPolarLineNodesCsv, { header: true, skipEmptyLines: "greedy" }).data;
-const chordPolarLineLinkRows = Papa.parse<Record<string, string>>(chordPolarLineLinksCsv, { header: true, skipEmptyLines: "greedy" }).data;
-const matrixForceHeatmapRows = Papa.parse<Record<string, string>>(matrixForceHeatmapCsv, { header: true, skipEmptyLines: "greedy" }).data;
-const matrixForceNodeRows = Papa.parse<Record<string, string>>(matrixForceNodesCsv, { header: true, skipEmptyLines: "greedy" }).data;
-const matrixForceEdgeRows = Papa.parse<Record<string, string>>(matrixForceEdgesCsv, { header: true, skipEmptyLines: "greedy" }).data;
+const defaultGraphNodeRows = ["Ada", "Bruno", "Cleo", "Dara", "Eli", "Faye"].map((id, index) => ({
+  id,
+  group: String(index % 3 + 1),
+  size: String(8 + index * 2),
+  label: id,
+}));
+const defaultGraphEdgeRows = defaultGraphNodeRows.flatMap((node, index) => [1, 2].map((offset) => ({
+  source: node.id,
+  target: defaultGraphNodeRows[(index + offset) % defaultGraphNodeRows.length]!.id,
+  value: String(1 + (index + offset) % 5),
+})));
+const chordIds = ["black", "blond", "brown", "red"];
+const defaultChordNodeRows = chordIds.map((id) => ({ id, label: id }));
+const defaultChordEdgeRows = chordIds.flatMap((source, sourceIndex) => chordIds.map((target, targetIndex) => ({
+  source,
+  target,
+  value: String(3200 + ((sourceIndex + 2) * (targetIndex + 3) * 977) % 9000),
+})));
+const defaultHexbinRows = Array.from({ length: 1200 }, (_, index) => ({
+  carat: (0.2 + (index % 120) / 30).toFixed(2),
+  price: String(300 + ((index * 137) % 18200)),
+}));
+const geoPointIds = ["10307", "11231", "11224", "10021", "10027", "10458", "11368", "11432", "11691", "11201"];
+const case2GraphNodeRows = geoPointIds.flatMap((id, pointIndex) => Array.from({ length: 12 }, (_, monthIndex) => ({
+  id,
+  point: id,
+  label: `Station ${pointIndex + 1}`,
+  station_type: pointIndex % 2 ? "Transit" : "Residential",
+  month: String(monthIndex + 1),
+  pedestrian_trips: String(150 + pointIndex * 19 + monthIndex * 7),
+  bicycle_trips: String(30 + pointIndex * 5 + monthIndex * 4),
+  transit_rides: String(210 + pointIndex * 23 + monthIndex * 9),
+  vehicle_trips: String(340 + pointIndex * 17 + monthIndex * 11),
+  delivery_trips: String(70 + pointIndex * 6 + monthIndex * 3),
+})));
+const case2GraphLinkRows = Array.from({ length: 13 }, (_, index) => ({
+  source: geoPointIds[index % geoPointIds.length]!,
+  target: geoPointIds[(index * 3 + 1) % geoPointIds.length]!,
+  value: String(index % 5 + 1),
+}));
+const hexbinGraphNodeRows = Array.from({ length: 180 }, (_, index) => {
+  const areaIndex = Math.floor(index / 30);
+  const localIndex = index % 30;
+  const row = Math.floor(index / 15);
+  const column = index % 15;
+  return {
+    hex_id: `hex-${row}-${column}`,
+    x: (column * 1.05).toFixed(2),
+    y: (row * 0.91).toFixed(2),
+    arealabel: `Area-${areaIndex + 1}`,
+    typelabel: localIndex === 0 ? "leader" : localIndex <= 10 ? "middle" : "normal",
+    weight: String(1 + (index * 7) % 12),
+  };
+});
+const hexbinGraphLinkRows = Array.from({ length: 6 }, (_, areaIndex) => Array.from({ length: 10 }, (_, offset) => {
+  const leader = hexbinGraphNodeRows[areaIndex * 30]!;
+  const middle = hexbinGraphNodeRows[areaIndex * 30 + offset + 1]!;
+  const normal = hexbinGraphNodeRows[areaIndex * 30 + 11 + offset]!;
+  return [
+    { source: leader.hex_id, target: middle.hex_id, value: String(offset % 5 + 1) },
+    { source: middle.hex_id, target: normal.hex_id, value: String((offset + 2) % 5 + 1) },
+  ];
+})).flat(2);
 
 /**
  * One neutral, long-form table shared by the built-in chart templates.
@@ -145,82 +182,6 @@ export const hexbinGraphDataset: Dataset = {
       { name: "arealabel", type: "nominal" }, { name: "typelabel", type: "nominal" }, { name: "weight", type: "quantitative" },
     ], rows: hexbinGraphNodeRows },
     edges: { columns: [{ name: "source", type: "nominal" }, { name: "target", type: "nominal" }, { name: "value", type: "quantitative" }], rows: hexbinGraphLinkRows },
-  },
-};
-
-/** Graph-backed Chord with dense per-node series for the Circular Stacked Bar Facet case. */
-export const chordPolarLineDataset: Dataset = {
-  id: CHORD_POLAR_LINE_DATASET_ID,
-  name: "chord_polar_line_nodes.csv + chord_polar_line_links.csv",
-  columns: [],
-  rows: [],
-  graph: {
-    nodes: {
-      columns: [
-        { name: "node_id", type: "nominal" },
-        { name: "label", type: "nominal" },
-        { name: "week", type: "ordinal" },
-        { name: "energy_source", type: "nominal" },
-        { name: "generation_gwh", type: "quantitative" },
-      ],
-      rows: chordPolarLineNodeRows,
-    },
-    edges: {
-      columns: [
-        { name: "source", type: "nominal" },
-        { name: "target", type: "nominal" },
-        { name: "flow_twh", type: "quantitative" },
-      ],
-      rows: chordPolarLineLinkRows,
-    },
-  },
-};
-
-/** A graph-derived 20 x 20 heatmap with a weighted force-network overlay. */
-export const matrixPieNetworkDataset: Dataset = {
-  id: MATRIX_PIE_NETWORK_DATASET_ID,
-  name: "matrix_force_heatmap.csv + matrix_force_nodes.csv + matrix_force_edges.csv",
-  columns: [
-    { name: "cell_id", type: "nominal" },
-    { name: "row_group", type: "ordinal" },
-    { name: "column_group", type: "ordinal" },
-    { name: "channel_a", type: "quantitative" },
-    { name: "channel_b", type: "quantitative" },
-    { name: "channel_c", type: "quantitative" },
-    { name: "channel_d", type: "quantitative" },
-    { name: "channel_e", type: "quantitative" },
-    { name: "heat_value", type: "quantitative" },
-  ],
-  rows: matrixForceHeatmapRows,
-  primaryKey: ["cell_id"],
-  graph: {
-    nodes: {
-      columns: [
-        { name: "id", type: "nominal" },
-        { name: "label", type: "nominal" },
-        { name: "community", type: "nominal" },
-        { name: "density", type: "nominal" },
-        { name: "weight", type: "quantitative" },
-        { name: "channel_a", type: "quantitative" },
-        { name: "channel_b", type: "quantitative" },
-        { name: "channel_c", type: "quantitative" },
-        { name: "channel_d", type: "quantitative" },
-        { name: "channel_e", type: "quantitative" },
-        { name: "dominant_component", type: "nominal" },
-        { name: "layout_x", type: "quantitative" },
-        { name: "layout_y", type: "quantitative" },
-      ],
-      rows: matrixForceNodeRows,
-    },
-    edges: {
-      columns: [
-        { name: "source", type: "nominal" },
-        { name: "target", type: "nominal" },
-        { name: "weight", type: "quantitative" },
-        { name: "kind", type: "nominal" },
-      ],
-      rows: matrixForceEdgeRows,
-    },
   },
 };
 
