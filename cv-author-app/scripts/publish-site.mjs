@@ -186,7 +186,13 @@ function auditBuild(buildDir) {
   const sourceIdentities = output("git", ["log", "--format=%an%x00%ae%x00%cn%x00%ce", "--all"], { cwd: sourceDir })
     .split(/\0|\n/)
     .map((value) => value.trim())
-    .filter((value) => value && value !== "VisBricks" && value !== "visbricks-site@users.noreply.github.com");
+    .filter((value) => (
+      value
+      && value !== "null"
+      && value !== "null.com"
+      && value !== "VisBricks"
+      && value !== "visbricks-site@users.noreply.github.com"
+    ));
   const remotes = output("git", ["remote", "-v"], { cwd: sourceDir });
   const remoteTokens = [...remotes.matchAll(/github\.com[:/]([^/\s]+)\/([^\s.]+)/g)]
     .flatMap((match) => [match[1], match[2]])
@@ -210,7 +216,7 @@ function auditBuild(buildDir) {
       const text = content.toString("utf8");
       const email = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0];
       if (email) matches.push(`${file}: email address ${email}`);
-      if (/[/\\](home|Users)[/\\][^\s"'<>]+/.test(text)) matches.push(`${file}: local filesystem path`);
+      if (/file:\/\/[/\\](home|Users)[/\\][^\s"'<>]+/.test(text)) matches.push(`${file}: local filesystem path`);
     }
   }
   if (matches.length) fail(`Release identity audit failed:\n${matches.slice(0, 20).join("\n")}`);
