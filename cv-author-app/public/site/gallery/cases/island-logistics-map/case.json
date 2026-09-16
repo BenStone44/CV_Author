@@ -136,6 +136,12 @@
     "path": "preview.svg",
     "sha256": "2968790bbc81a6c55cd6a665cb268f5d542a77dc806ebb05c9994148a92c39a7",
     "source": "http://localhost:5173/editor/?case=island-logistics-map-layer-nested-bars",
-    "capturedOn": "2026-09-16"
+    "capturedOn": "2026-09-16",
+    "thumbnail": {
+      "path": "thumbnail.png",
+      "sha256": "fcc3e22c26b2a6d3f2646f0ed30496516934dc6a53bb51e6ed846a7509e45702",
+      "width": 384,
+      "height": 324
+    }
   }
 }

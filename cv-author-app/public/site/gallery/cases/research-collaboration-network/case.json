@@ -112,6 +112,12 @@
     "path": "preview.svg",
     "sha256": "8ca8b56a5380844a5b36ed80d1dfa021ecb37b4eeacf8e968ad297fe1cd84cee",
     "source": "http://localhost:5173/editor/?case=research-collaboration-network-nested-profiles",
-    "capturedOn": "2026-09-16"
+    "capturedOn": "2026-09-16",
+    "thumbnail": {
+      "path": "thumbnail.png",
+      "sha256": "ee81a9f32c80d084f4d5562e3e0c1a3c70337b5391df6fa6213a84d0fc1f7069",
+      "width": 384,
+      "height": 297
+    }
   }
 }

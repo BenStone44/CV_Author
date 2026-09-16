@@ -139,6 +139,12 @@
     "path": "preview.svg",
     "sha256": "6afbe7c685df040308d8325cb51dd516129d1f9ec7ff6d823bd5e4e7f1214b3f",
     "source": "http://localhost:5173/editor/?case=force-network-typed-nested-charts",
-    "capturedOn": "2026-09-16"
+    "capturedOn": "2026-09-16",
+    "thumbnail": {
+      "path": "thumbnail.png",
+      "sha256": "d2abade096d241f36c0b7ce8b7b6af53735ac12fce7dd517aa654917b8602451",
+      "width": 384,
+      "height": 273
+    }
   }
 }

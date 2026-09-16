@@ -122,6 +122,12 @@
     "path": "preview.svg",
     "sha256": "72c8d4bb190241b4a8055211702b8f9e934c4b453f47470f6cb5551e47a8e45f",
     "source": "http://localhost:5173/editor/?case=customer-journey-constellation-nested-concat",
-    "capturedOn": "2026-09-16"
+    "capturedOn": "2026-09-16",
+    "thumbnail": {
+      "path": "thumbnail.png",
+      "sha256": "cabda296f7e6f5937f7a0334620291fa19fe34e5efc7699f4423da5f9cf999f3",
+      "width": 384,
+      "height": 206
+    }
   }
 }

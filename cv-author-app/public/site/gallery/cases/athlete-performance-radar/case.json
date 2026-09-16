@@ -3,7 +3,7 @@
   "starter": "athlete-performance-radar",
   "completedCase": "athlete-performance-radar-angular-concat",
   "status": "complete",
-"blocks": [
+  "blocks": [
     {
       "chartType": "RadarChart",
       "bindings": {
@@ -105,6 +105,12 @@
     "path": "preview.svg",
     "sha256": "40ee79f8a8b5ccc880e4cebe3f52e2ebbeef61babdb76f1b7cbd127f2d63fd3e",
     "source": "http://localhost:5173/editor/?case=athlete-performance-radar-angular-concat",
-    "capturedOn": "2026-09-16"
+    "capturedOn": "2026-09-16",
+    "thumbnail": {
+      "path": "thumbnail.png",
+      "sha256": "eae4fb5ae5c6bbd0e5757f39d4236b60037cc3cf71342e3f920ce5295be36326",
+      "width": 384,
+      "height": 384
+    }
   }
 }

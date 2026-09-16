@@ -89,6 +89,8 @@ npm run release:site -- --publish --message="Publish the reviewed VisBricks upda
 
 The command refuses a dirty source tree, an unexpected deploy key or public commit identity, stale third-party notices, identity-bearing build output, source maps, unreviewed stale public files, build/type errors, or failed staged/live browser checks. It preserves public history, normalizes Gallery capture metadata, backs up obsolete hashed assets outside the Pages checkout, waits for the exact Pages workflow, verifies all Gallery starters and completed cases, and compares every live public file with the staged bytes. The detailed gates below document what the command enforces and remain the recovery/reference procedure.
 
+`npm run prebuild` also regenerates a 384 px `thumbnail.png` beside every Gallery case from its canonical editor-exported `preview.svg`. Overview and Featured cards lazy-load these raster thumbnails to avoid parsing all full-resolution SVGs at once; detail pages and editor guidance continue to use the original SVG. Commit both files when a preview changes.
+
 #### 1. Confirm the source and dedicated publishing identity
 
 Inspect the source branch, worktree changes, and applicable `AGENTS.md` instructions. Preserve unrelated local changes. Editor changes must first be committed on `master` and deliberately synchronized into this website branch. Publishing the website does not mean committing all dirty source files or pushing this development repository.

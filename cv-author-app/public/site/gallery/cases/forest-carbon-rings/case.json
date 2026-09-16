@@ -3,7 +3,7 @@
   "starter": "forest-carbon-rings",
   "completedCase": "forest-carbon-rings-angular-concat",
   "status": "complete",
-"blocks": [
+  "blocks": [
     {
       "chartType": "Sunburst",
       "bindings": {
@@ -106,6 +106,12 @@
     "path": "preview.svg",
     "sha256": "7051ddf655cd4cf79c2dc4077f1c3016845a88ef3eecf1e6dab2e6910cb5f7d3",
     "source": "http://localhost:5173/editor/?case=forest-carbon-rings-angular-concat",
-    "capturedOn": "2026-09-16"
+    "capturedOn": "2026-09-16",
+    "thumbnail": {
+      "path": "thumbnail.png",
+      "sha256": "92ce61981f04b47ed07e91e8aa70958d97eadd824df11a6b37c4df68bd3a72ec",
+      "width": 384,
+      "height": 384
+    }
   }
 }

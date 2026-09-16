@@ -304,7 +304,7 @@ const tutorials = [
               :title="item.title"
               @click="activeHeroCaseIndex = index"
             >
-              <img :src="item.image" alt="">
+              <img :src="item.thumbnail" alt="" loading="lazy" decoding="async">
               <span>{{ item.number }}</span>
             </button>
           </div>
@@ -347,7 +347,7 @@ const tutorials = [
         </div>
         <div class="featured-grid">
           <a v-for="item in galleryItems.slice(0, 3)" :key="item.title" class="gallery-card" :href="galleryDetailHref(item)">
-            <div class="gallery-image"><img :src="item.image" :alt="item.title"></div>
+            <div class="gallery-image"><img :src="item.thumbnail" :alt="item.title" loading="lazy" decoding="async"></div>
             <div class="gallery-card-copy">
               <h3>{{ item.title }}</h3>
               <span>{{ item.tags.join(' · ') }}</span>
@@ -385,7 +385,7 @@ const tutorials = [
           :aria-label="`View ${item.title} example`"
         >
           <div class="gallery-overview-image">
-            <img :src="item.image" :alt="`${item.title} finished composition preview`">
+            <img :src="item.thumbnail" :alt="`${item.title} finished composition preview`" loading="lazy" decoding="async">
           </div>
           <div class="gallery-overview-copy">
             <ul class="tag-list gallery-overview-tags" aria-label="Chart and coordinate-system types">

@@ -101,6 +101,12 @@
     "path": "preview.svg",
     "sha256": "e0ca531770f4468eff027bcc46d044e93951d761be12f36b500cc6082c225f1f",
     "source": "http://localhost:5173/editor/?case=sankey-ribbon-nested-wordclouds",
-    "capturedOn": "2026-09-16"
+    "capturedOn": "2026-09-16",
+    "thumbnail": {
+      "path": "thumbnail.png",
+      "sha256": "848ecd8b6ca5c6506b6b3abd1db4d09df79855526ebd27e543335e6270e41521",
+      "width": 384,
+      "height": 233
+    }
   }
 }

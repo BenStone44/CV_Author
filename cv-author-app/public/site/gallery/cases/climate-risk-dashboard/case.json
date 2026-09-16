@@ -127,6 +127,12 @@
     "path": "preview.svg",
     "sha256": "6d2b65d5b9bffa1126d286be7708175e16cef5b41d2ec253c3805ec4ebc13edb",
     "source": "http://localhost:5173/editor/?case=climate-risk-dashboard-nested-concat",
-    "capturedOn": "2026-09-16"
+    "capturedOn": "2026-09-16",
+    "thumbnail": {
+      "path": "thumbnail.png",
+      "sha256": "3c28528e5a143cf9b49e579aa8110e2b3676bec6c54c4755996ffba891dd30d6",
+      "width": 384,
+      "height": 298
+    }
   }
 }

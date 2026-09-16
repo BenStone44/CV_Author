@@ -85,4 +85,3 @@ const definition = {
 export async function configure(context, compose = true) {
   return configureShowcase(context, definition, compose);
 }
-

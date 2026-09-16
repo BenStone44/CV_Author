@@ -390,9 +390,9 @@ async function compareLiveFiles(buildDir, releaseSha, removedFiles) {
 async function main() {
   console.log(`Mode: ${publish ? "publish" : "prepare only"}`);
   validateSource();
-  run("npm", ["run", "generate:site-api"]);
+  run("npm", ["run", "prebuild"]);
   if (output("git", ["status", "--porcelain"], { cwd: sourceDir })) {
-    fail("The generated API catalog changed. Review and commit it before releasing.");
+    fail("Generated website assets changed. Review and commit them before releasing.");
   }
 
   const releaseDir = mkdtempSync(join(tmpdir(), "visbricks-release."));

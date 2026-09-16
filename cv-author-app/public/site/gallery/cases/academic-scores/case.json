@@ -149,6 +149,12 @@
     "path": "preview.svg",
     "sha256": "92a1ec5e8222f446023d7ebc0c03749ff41144a7652971163be89b82862e3a31",
     "source": "http://localhost:5173/editor/?case=academic-scores-nested-concat",
-    "capturedOn": "2026-09-16"
+    "capturedOn": "2026-09-16",
+    "thumbnail": {
+      "path": "thumbnail.png",
+      "sha256": "dc965f3e2c9ff50fb2a9c96dca9fd78b377ab47a995b1006b89bc68eed2bd64f",
+      "width": 384,
+      "height": 318
+    }
   }
 }
