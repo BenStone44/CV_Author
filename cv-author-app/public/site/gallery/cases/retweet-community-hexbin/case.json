@@ -35,11 +35,11 @@
     }
   ],
   "expectedRender": {
-    "users": 512,
-    "hexagons": 512,
-    "communities": 4,
+    "users": 1920,
+    "hexagons": 1920,
+    "communities": 8,
     "userTypes": 3,
-    "retweetLinks": 348
+    "retweetLinks": 392
   },
   "data": [
     "data/retweet_users.csv",
@@ -49,7 +49,7 @@
   "gallery": {
     "number": "09",
     "title": "Retweet Community Honeycomb",
-    "description": "A tightly packed one-user-per-hex social map, partitioned into colored communities and crossed by real retweet links.",
+    "description": "A dense one-user-per-hex social field, partitioned into eight colored communities and crossed by hierarchical retweet arcs.",
     "tags": [
       "Layer",
       "Hexbin",
@@ -65,7 +65,7 @@
     "file": {
       "type": "GRAPH CSV",
       "name": "retweet_users.csv + retweet_links.csv",
-      "description": "512 users on an exact honeycomb lattice with community and user-role labels, plus local and cross-community retweet edges.",
+      "description": "1,920 users on an exact honeycomb lattice in eight communities, with leader-to-retweeter-to-receiver propagation edges.",
       "files": [
         "retweet_users.csv",
         "retweet_links.csv"
@@ -89,7 +89,7 @@
         "role": "Retweet relationship, endpoints, and strength"
       }
     ],
-    "composition": "Layer Graph Link over a fully packed Hexbin on shared X and Y scales. Community controls fill; user_type independently controls the role border.",
+    "composition": "Layer curved Graph Link arcs over a tightly packed Hexbin on shared X and Y scales. Eight communities control fill; user_type controls the role border; edges mainly flow from opinion leaders to retweeters and then receivers.",
     "editorHelp": {
       "introduction": "The starter places the packed Hexbin and bound retweet Graph Link separately.",
       "steps": [
@@ -105,7 +105,7 @@
   },
   "preview": {
     "path": "preview.svg",
-    "sha256": "43bc9411e8c2b255721b48cfffe880461e8b8133e525ecb402b899f5b80fd147",
+    "sha256": "d6fa1cb91e856a532a9bf1b7a791aaec8a17b4098d8862543ed868d580000eb5",
     "source": "http://localhost:5173/editor/?case=retweet-community-hexbin-links",
     "capturedOn": "2026-09-16"
   }

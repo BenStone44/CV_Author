@@ -61,7 +61,7 @@ export async function configure(context, compose = true) {
     valueFields: ["engagement", "reach", "response"].map((field) => ({ field, type: "quantitative" })),
     axes: { x: { visible: false, labelsVisible: false }, y: { visible: false, labelsVisible: false } },
     renderer: undefined, scales: undefined, plotArea: undefined };
-  sources.push({ type: "bar", node: bar, ids: ["N01", "N02", "N03", "N04"], shape: "rounded-rect", fill: "#fff7ed" });
+  sources.push({ type: "bar", node: bar, ids: ["N01", "N02", "N03", "N04"], shape: "rounded-rect", fill: "none" });
 
   const line = await create("LineGraph", { x: 1570, y: 310, width: 280, height: 190 }, profiles.line.id);
   line.name = "Signal trajectory";
@@ -69,7 +69,7 @@ export async function configure(context, compose = true) {
     encodings: { x: { field: "period", type: "ordinal" }, y: { field: "signal", type: "quantitative" } },
     axes: { x: { visible: false, labelsVisible: false }, y: { visible: false, labelsVisible: false } },
     renderer: undefined, scales: undefined, plotArea: undefined };
-  sources.push({ type: "line", node: line, ids: ["N05", "N06", "N07", "N08"], shape: "rounded-rect", fill: "#eff6ff" });
+  sources.push({ type: "line", node: line, ids: ["N05", "N06", "N07", "N08"], shape: "rounded-rect", fill: "none" });
 
   const heatmap = await create("MatrixDiagram", { x: 1570, y: 540, width: 240, height: 240 }, profiles.heatmap.id);
   heatmap.name = "Local map heatmap";
@@ -77,7 +77,7 @@ export async function configure(context, compose = true) {
     encodings: { x: { field: "grid_x", type: "ordinal" }, y: { field: "grid_y", type: "ordinal" }, color: { field: "intensity", type: "quantitative" } },
     axes: { x: { visible: false, labelsVisible: false }, y: { visible: false, labelsVisible: false } },
     renderer: undefined, scales: undefined, plotArea: undefined };
-  sources.push({ type: "heatmap", node: heatmap, ids: ["N09", "N10", "N11", "N12"], shape: "rounded-rect", fill: "#ecfeff" });
+  sources.push({ type: "heatmap", node: heatmap, ids: ["N09", "N10", "N11", "N12"], shape: "rounded-rect", fill: "none" });
 
   const radar = await create("RadarChart", { x: 1570, y: 820, width: 250, height: 250 }, profiles.radar.id);
   radar.name = "Capability radar";
@@ -85,7 +85,7 @@ export async function configure(context, compose = true) {
     encodings: { theta: { field: "metric", type: "nominal" }, radius: { field: "value", type: "quantitative" } },
     axes: { theta: { visible: false, labelsVisible: false }, radius: { visible: false, labelsVisible: false } },
     renderer: undefined, scales: undefined, plotArea: undefined };
-  sources.push({ type: "radar", node: radar, ids: ["N13", "N14", "N15", "N16"], shape: "circle", fill: "#f5f3ff" });
+  sources.push({ type: "radar", node: radar, ids: ["N13", "N14", "N15", "N16"], shape: "circle", fill: "none" });
 
   sources.forEach(({ node }) => {
     renderChartNode(node);

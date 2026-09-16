@@ -95,7 +95,7 @@
         "role": "Parallel path color"
       }
     ],
-    "composition": "Nest one Box Plot at the center of each Parallel Coordinates axis, then nest a metric-specific Line Chart above every axis with rounded frames.",
+    "composition": "Nest one Box Plot directly on each Parallel Coordinates axis using the same metric domain and vertical extent, then place a metric-specific Line Chart above every axis without background frames.",
     "editorHelp": {
       "introduction": "The starter places three fully bound blocks independently.",
       "steps": [
@@ -111,7 +111,7 @@
   },
   "preview": {
     "path": "preview.svg",
-    "sha256": "201411102174598630855c432dffadbc653af2605412435935a69459c54af7d4",
+    "sha256": "8840ff177424a0a088e469f459f6c37fbfe5a449e2cf87f29f26adc1c5694432",
     "source": "http://localhost:5173/editor/?case=parallel-axis-nested-distributions",
     "capturedOn": "2026-09-16"
   }

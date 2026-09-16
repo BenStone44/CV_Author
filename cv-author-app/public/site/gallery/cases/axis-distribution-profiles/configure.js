@@ -41,7 +41,7 @@ export async function configure(context, compose = true) {
   renderChartNode(parallel);
   registerChartRelationship(parallel);
 
-  const box = await create("SingleBoxplot", { x: 1450, y: 380, width: 260, height: 220 });
+  const box = await create("SingleBoxplot", { x: 1450, y: 250, width: 180, height: 650 });
   box.name = "Axis distributions";
   box.chartSpec = {
     ...box.chartSpec,
@@ -125,6 +125,15 @@ export async function configure(context, compose = true) {
       child.chartSpec = {
         ...child.chartSpec,
         encodings: { ...child.chartSpec.encodings, y: { field: fieldForRelationship(relationship), type: "quantitative" } },
+        markGroups: (() => {
+          const field = fieldForRelationship(relationship);
+          const values = dataset.rows.map((row) => Number(row[field])).filter(Number.isFinite);
+          const minimum = Math.min(...values);
+          const maximum = Math.max(...values);
+          const padding = (maximum - minimum || Math.max(1, Math.abs(minimum))) * 0.06;
+          return [{ id: `box:${child.id}`, chartId: child.id, role: "box", memberKeys: [], allowOverrides: true,
+            sharedConfig: { domainMin: minimum - padding, domainMax: maximum + padding } }];
+        })(),
         renderer: undefined, scales: undefined, plotArea: undefined,
       };
       renderChartNode(child);
@@ -139,17 +148,15 @@ export async function configure(context, compose = true) {
   if (compose) {
     await nestOnAxes(box, {
       parentAnchor: { x: 0.5, y: 0.52 }, childAnchor: { x: 0.5, y: 0.5 },
-      offset: { x: 0, y: 18 }, scale: { x: 0.48, y: 0.48 }, rotation: 0,
+      offset: { x: 0, y: 0 }, scale: { x: 0.55, y: 1.024 }, rotation: 0,
       retainParent: true, callout: { enabled: false, scale: 1 },
-      decorations: [{ id: "box-frame", kind: "rounded-rect", x: -0.06, y: -0.08, width: 1.12, height: 1.16,
-        fill: "#ffffff", stroke: "#94a3b8", strokeWidth: 1.2, cornerRadius: 14, opacity: 0.88 }],
+      decorations: [],
     });
     await nestOnAxes(line, {
       parentAnchor: { x: 0.5, y: 0 }, childAnchor: { x: 0.5, y: 1 },
       offset: { x: 0, y: -20 }, scale: { x: 0.5, y: 0.5 }, rotation: 0,
       retainParent: true, callout: { enabled: false, scale: 1 },
-      decorations: [{ id: "line-frame", kind: "rounded-rect", x: -0.05, y: -0.08, width: 1.1, height: 1.16,
-        fill: "#f8fafc", stroke: "#64748b", strokeWidth: 1.1, cornerRadius: 12, opacity: 0.94 }],
+      decorations: [],
     });
     closeNestedPositionEditor();
     scheduleNestedChildLayout();
