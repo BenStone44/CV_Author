@@ -1407,7 +1407,12 @@ function renderBoxplot(input: GenericRenderInput) {
     });
     const area = input.sharedPlotArea ?? plotArea(input, 30);
     const yDomain = finiteDomain(groups.flatMap((group) => [group.range[0], group.range[1], ...group.outliers.map((item) => item.y)]));
-    const y = scaleLinear().domain(yDomain).nice().range([area.y + area.height, area.y]);
+    const boxConfig = sharedConfig(input, "box");
+    const configuredDomain = [Number(boxConfig.domainMin), Number(boxConfig.domainMax)] as [number, number];
+    const usesConfiguredDomain = configuredDomain.every(Number.isFinite) && configuredDomain[1] > configuredDomain[0];
+    const y = scaleLinear().domain(usesConfiguredDomain ? configuredDomain : yDomain);
+    if (!usesConfiguredDomain) y.nice();
+    y.range([area.y + area.height, area.y]);
     const x = scalePoint<string>().domain(categories).range([area.x, area.x + area.width]).padding(0.7);
     const step = categories.length > 1 ? Math.abs((x(categories[1]!) ?? area.x) - (x(categories[0]!) ?? area.x)) : area.width;
     const boxWidth = Math.max(12, Math.min(72, step * 0.56));
@@ -1960,6 +1965,8 @@ function renderGraphLink(input: GenericRenderInput) {
   const valueEncoding = input.chartSpec.encodings.value;
   const colorEncoding = input.chartSpec.encodings.color;
   const sizeEncoding = input.chartSpec.encodings.size;
+  const linkConfig = sharedConfig(input, "link");
+  const curved = linkConfig.curve === "arc";
   const area = input.sharedPlotArea ?? plotArea(input, 10);
   const nodeColumns = new Set(graph.nodes.columns.map((column) => column.name));
   const xField = ["x", "longitude", "lon"].find((field) => nodeColumns.has(field));
@@ -2035,7 +2042,7 @@ function renderGraphLink(input: GenericRenderInput) {
     const value = Number(row[sizeEncoding.field] ?? "");
     return Number.isFinite(value) ? Math.max(1, Math.min(12, value)) : 2;
   };
-  const linkMarks = edgeRows.map(({ row, source, target }) => {
+  const linkMarks = edgeRows.map(({ row, source, target }, edgeIndex) => {
     const sourceNode = nodeById.get(source)!;
     const targetNode = nodeById.get(target)!;
     const sourcePoint = polar
@@ -2044,7 +2051,16 @@ function renderGraphLink(input: GenericRenderInput) {
     const targetPoint = polar
       ? polarPoints.get(target)!
       : { x: indexPosition(targetNode, xField, xScale), y: indexPosition(targetNode, yField, yScale) };
-    return `<line data-chart-id="${esc(input.chartId)}" data-mark-role="link" data-mark-group-id="mark-group:${esc(input.chartId)}:link" data-source="${esc(source)}" data-target="${esc(target)}" x1="${sourcePoint.x}" y1="${sourcePoint.y}" x2="${targetPoint.x}" y2="${targetPoint.y}" stroke="${esc(colorFor(row, sourceNode.index))}" stroke-opacity="0.72" stroke-width="${widthFor(row)}" vector-effect="non-scaling-stroke"><title>${esc(source)} to ${esc(target)}${valueEncoding ? `\\n${formatTick(Number(row[valueEncoding.field] ?? 0))}` : ""}</title></line>`;
+    const title = `<title>${esc(source)} to ${esc(target)}${valueEncoding ? `\\n${formatTick(Number(row[valueEncoding.field] ?? 0))}` : ""}</title>`;
+    const style = `stroke="${esc(colorFor(row, sourceNode.index))}" stroke-opacity="0.66" stroke-width="${widthFor(row)}" fill="none" vector-effect="non-scaling-stroke"`;
+    if (!curved) return `<line data-chart-id="${esc(input.chartId)}" data-mark-role="link" data-mark-group-id="mark-group:${esc(input.chartId)}:link" data-source="${esc(source)}" data-target="${esc(target)}" x1="${sourcePoint.x}" y1="${sourcePoint.y}" x2="${targetPoint.x}" y2="${targetPoint.y}" ${style}>${title}</line>`;
+    const dx = targetPoint.x - sourcePoint.x;
+    const dy = targetPoint.y - sourcePoint.y;
+    const distance = Math.max(1, Math.hypot(dx, dy));
+    const bend = Math.min(distance * 0.24, 72) * (edgeIndex % 2 === 0 ? 1 : -1);
+    const controlX = (sourcePoint.x + targetPoint.x) / 2 - dy / distance * bend;
+    const controlY = (sourcePoint.y + targetPoint.y) / 2 + dx / distance * bend;
+    return `<path data-chart-id="${esc(input.chartId)}" data-mark-role="link" data-mark-group-id="mark-group:${esc(input.chartId)}:link" data-source="${esc(source)}" data-target="${esc(target)}" data-link-curve="arc" d="M${sourcePoint.x},${sourcePoint.y} Q${controlX},${controlY} ${targetPoint.x},${targetPoint.y}" ${style}>${title}</path>`;
   }).join("");
   return {
     content: `<g data-chart-id="${esc(input.chartId)}" data-chart-type="graph-link" data-renderer="deterministic-graph-link@1">${linkMarks}</g>`,
